@@ -1,7 +1,0 @@
-/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/CMakeFiles/edit_cache.dir
-/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/CMakeFiles/rebuild_cache.dir
-/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/CMakeFiles/md-editor.dir
-/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/CMakeFiles/edit_cache.dir
-/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/CMakeFiles/rebuild_cache.dir
-/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/CMakeFiles/md-editor_autogen_timestamp_deps.dir
-/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/CMakeFiles/md-editor_autogen.dir

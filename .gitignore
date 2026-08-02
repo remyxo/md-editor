@@ -1,0 +1,6 @@
+build/
+.cache/
+*.o
+*.pro.user
+moc_*.cpp
+qrc_*.cpp
