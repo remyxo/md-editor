@@ -1,0 +1,133 @@
+{
+	"BUILD_DIR" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/md-editor_autogen",
+	"CMAKE_BINARY_DIR" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build",
+	"CMAKE_CURRENT_BINARY_DIR" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src",
+	"CMAKE_CURRENT_SOURCE_DIR" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/src",
+	"CMAKE_EXECUTABLE" : "/usr/bin/cmake",
+	"CMAKE_LIST_FILES" : 
+	[
+		"/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/src/CMakeLists.txt",
+		"/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/src/resources/app.qrc"
+	],
+	"CMAKE_SOURCE_DIR" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd",
+	"CROSS_CONFIG" : false,
+	"DEP_FILE" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/md-editor_autogen/deps",
+	"DEP_FILE_RULE_NAME" : "md-editor_autogen/timestamp",
+	"HEADERS" : 
+	[
+		[
+			"/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/src/app/Application.h",
+			"Mu",
+			"VJIZ3MDCXP/moc_Application.cpp",
+			null
+		]
+	],
+	"HEADER_EXTENSIONS" : [ "h", "hh", "h++", "hm", "hpp", "hxx", "in", "txx" ],
+	"INCLUDE_DIR" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/md-editor_autogen/include",
+	"MOC_COMPILATION_FILE" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/md-editor_autogen/mocs_compilation.cpp",
+	"MOC_DEFINITIONS" : 
+	[
+		"QT_CORE_LIB",
+		"QT_GUI_LIB",
+		"QT_NETWORK_LIB",
+		"QT_OPENGL_LIB",
+		"QT_POSITIONING_LIB",
+		"QT_PRINTSUPPORT_LIB",
+		"QT_QMLINTEGRATION_LIB",
+		"QT_QMLMETA_LIB",
+		"QT_QMLMODELS_LIB",
+		"QT_QMLWORKERSCRIPT_LIB",
+		"QT_QML_LIB",
+		"QT_QUICK_LIB",
+		"QT_WEBCHANNEL_LIB",
+		"QT_WEBENGINECORE_LIB",
+		"QT_WEBENGINEWIDGETS_LIB",
+		"QT_WIDGETS_LIB"
+	],
+	"MOC_DEPEND_FILTERS" : 
+	[
+		[
+			"Q_PLUGIN_METADATA",
+			"[\n][ \t]*Q_PLUGIN_METADATA[ \t]*\\([^\\)]*FILE[ \t]*\"([^\"]+)\""
+		]
+	],
+	"MOC_INCLUDES" : 
+	[
+		"/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/src",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtWidgets",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtCore",
+		"/home/daijd/qt6-local/usr/lib/x86_64-linux-gnu/qt6/mkspecs/linux-g++",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtGui",
+		"/home/daijd/qt6-local/usr/include",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtWebEngineWidgets",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtWebEngineCore",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtNetwork",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtQuick",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtQml",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtQmlIntegration",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtQmlMeta",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtQmlModels",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtQmlWorkerScript",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtOpenGL",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtWebChannel",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtPositioning",
+		"/home/daijd/qt6-local/usr/include/x86_64-linux-gnu/qt6/QtPrintSupport",
+		"/usr/include/c++/14",
+		"/usr/include/x86_64-linux-gnu/c++/14",
+		"/usr/include/c++/14/backward",
+		"/usr/lib/gcc/x86_64-linux-gnu/14/include",
+		"/usr/local/include",
+		"/usr/include/x86_64-linux-gnu",
+		"/usr/include"
+	],
+	"MOC_MACRO_NAMES" : 
+	[
+		"Q_OBJECT",
+		"Q_GADGET",
+		"Q_NAMESPACE",
+		"Q_NAMESPACE_EXPORT",
+		"Q_GADGET_EXPORT",
+		"Q_ENUM_NS"
+	],
+	"MOC_OPTIONS" : [],
+	"MOC_PATH_PREFIX" : false,
+	"MOC_PREDEFS_CMD" : 
+	[
+		"/usr/bin/c++",
+		"-std=gnu++17",
+		"-dM",
+		"-E",
+		"-c",
+		"/usr/share/cmake-3.31/Modules/CMakeCXXCompilerABI.cpp"
+	],
+	"MOC_PREDEFS_FILE" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/md-editor_autogen/moc_predefs.h",
+	"MOC_RELAXED_MODE" : false,
+	"MOC_SKIP" : 
+	[
+		"/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/qrc_app.cpp"
+	],
+	"MULTI_CONFIG" : false,
+	"PARALLEL" : 4,
+	"PARSE_CACHE_FILE" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/CMakeFiles/md-editor_autogen.dir/ParseCache.txt",
+	"QT_MOC_EXECUTABLE" : "/home/daijd/qt6-local/usr/lib/qt6/libexec/moc",
+	"QT_UIC_EXECUTABLE" : "",
+	"QT_VERSION_MAJOR" : 6,
+	"QT_VERSION_MINOR" : 8,
+	"SETTINGS_FILE" : "/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/build/src/CMakeFiles/md-editor_autogen.dir/AutogenUsed.txt",
+	"SOURCES" : 
+	[
+		[
+			"/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/src/app/Application.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/.claude/worktrees/md-editor-sdd/src/main.cpp",
+			"Mu",
+			null
+		]
+	],
+	"USE_BETTER_GRAPH" : true,
+	"VERBOSITY" : 0
+}
