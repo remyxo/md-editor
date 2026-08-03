@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Markdown Editor</title>
+<link rel="stylesheet" href="editor.css">
+</head>
+<body>
+<div id="editor"></div>
+
+<!--
+  运行时依赖说明：
+  TipTap v2 的官方 UMD 构建存在模块化依赖问题（需要 ProseMirror 全局对象，
+  且 StarterKit 内部还依赖 ~19 个子扩展 UMD）。因此这里不逐个加载分散的 UMD 文件，
+  而是加载由 esbuild 打包成的单一 bundle：tiptap-all.js。
+  该 bundle 内置了 @tiptap/core、@tiptap/starter-kit、所有扩展、
+  ProseMirror（state/view/model/transform/keymap/commands/schema-list）以及 lowlight/highlight.js。
+  web/ 目录下保留的各独立 .js 文件为参考/原始库文件，不在此加载。
+-->
+
+<!-- 编辑器核心 bundle（TipTap + ProseMirror + 扩展 + 语法高亮） -->
+<script src="tiptap-all.js"></script>
+
+<!-- Qt WebChannel -->
+<script src="qwebchannel.js"></script>
+
+<!-- 编辑器初始化 -->
+<script src="editor.js"></script>
+</body>
+</html>

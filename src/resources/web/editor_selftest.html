@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Editor Self Test</title>
+<link rel="stylesheet" href="editor.css">
+</head>
+<body>
+<div id="editor"></div>
+<script src="tiptap-all.js"></script>
+<script src="qwebchannel.js"></script>
+<script src="editor.js"></script>
+<script>
+// 自检脚本：初始化编辑器，执行一组命令，并设置背景色表示结果
+// 绿色 = 通过，红色 = 失败
+window.setTimeout(function() {
+  var api = window.editorApi;
+  var log = [];
+  var ok = !!(api && api.editor);
+  log.push('editorApi.editor initialized: ' + ok);
+  if (ok) {
+    try {
+      api.setContent('<h1>标题</h1><p>正文段落</p>');
+      var html = api.getContent();
+      log.push('getContent: ' + html);
+      ok = ok && html.indexOf('标题') >= 0 && html.indexOf('正文段落') >= 0;
+      api.toggleBold();
+      api.undo();
+      api.redo();
+      api.insertTable(3, 3);
+      api.insertHorizontalRule();
+      log.push('commands executed');
+    } catch (e) {
+      ok = false;
+      log.push('command error: ' + e.message);
+    }
+  } else {
+    log.push('window.TipTap: ' + (window.TipTap ? 'present' : 'MISSING'));
+    log.push('editorApi: ' + (window.editorApi ? 'present' : 'MISSING'));
+  }
+  document.body.style.backgroundColor = ok ? '#00cc00' : '#cc0000';
+  document.body.style.color = '#000000';
+  var r = document.createElement('pre');
+  r.textContent = 'RESULT=' + (ok ? 'OK' : 'FAIL') + '\n' + log.join('\n');
+  document.body.appendChild(r);
+  window.__SELFTEST_RESULT__ = ok ? 'OK' : 'FAIL';
+}, 1500);
+</script>
+</body>
+</html>
