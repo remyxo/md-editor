@@ -4,6 +4,7 @@
 int main(int argc, char *argv[])
 {
     Application app(argc, argv);
+    app.themeManager()->switchTheme("light");
 
     QMainWindow window;
     window.setWindowTitle("Markdown Editor");

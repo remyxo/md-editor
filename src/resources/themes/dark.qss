@@ -1,0 +1,147 @@
+/* 暗色主题 — 现代化扁平风格 */
+QMainWindow {
+    background-color: #1e1e1e;
+}
+
+QMenuBar {
+    background-color: #2d2d2d;
+    border-bottom: 1px solid #3d3d3d;
+    padding: 2px 0;
+    font-size: 13px;
+    color: #cccccc;
+}
+
+QMenuBar::item {
+    padding: 4px 12px;
+    border-radius: 4px;
+    margin: 2px 2px;
+}
+
+QMenuBar::item:selected {
+    background-color: #3d3d3d;
+}
+
+QMenu {
+    background-color: #2d2d2d;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    padding: 4px 0;
+    color: #cccccc;
+}
+
+QMenu::item {
+    padding: 6px 32px 6px 16px;
+    font-size: 13px;
+}
+
+QMenu::item:selected {
+    background-color: #0078d4;
+    color: #ffffff;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: #3d3d3d;
+    margin: 4px 8px;
+}
+
+QToolBar {
+    background-color: #2d2d2d;
+    border-bottom: 1px solid #3d3d3d;
+    padding: 4px 8px;
+    spacing: 4px;
+}
+
+QToolButton {
+    border: none;
+    border-radius: 4px;
+    padding: 6px 8px;
+    color: #cccccc;
+    font-size: 14px;
+}
+
+QToolButton:hover {
+    background-color: #3d3d3d;
+}
+
+QToolButton:pressed, QToolButton:checked {
+    background-color: #4d4d4d;
+}
+
+QTreeView {
+    background-color: #252526;
+    border: none;
+    font-size: 13px;
+    color: #cccccc;
+}
+
+QTreeView::item {
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+QTreeView::item:selected {
+    background-color: #094771;
+    color: #ffffff;
+}
+
+QTreeView::item:hover:!selected {
+    background-color: #2a2d2e;
+}
+
+QTabWidget::pane {
+    border: none;
+    background-color: #1e1e1e;
+}
+
+QTabBar::tab {
+    background-color: #2d2d2d;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    margin: 2px 2px;
+    font-size: 13px;
+    color: #999999;
+}
+
+QTabBar::tab:selected {
+    background-color: #1e1e1e;
+    color: #ffffff;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #3d3d3d;
+}
+
+QStatusBar {
+    background-color: #2d2d2d;
+    border-top: 1px solid #3d3d3d;
+    font-size: 12px;
+    color: #999999;
+    padding: 2px 8px;
+}
+
+QSplitter::handle {
+    background-color: #3d3d3d;
+    width: 1px;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: #424242;
+    border-radius: 4px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #555555;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}

@@ -1,10 +1,12 @@
 set(SOURCES
     main.cpp
     app/Application.cpp
+    app/ThemeManager.cpp
 )
 
 set(HEADERS
     app/Application.h
+    app/ThemeManager.h
 )
 
 qt_add_resources(RESOURCES resources/app.qrc)
