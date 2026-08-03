@@ -4,7 +4,7 @@
 
 ThemeManager::ThemeManager(QObject *parent)
     : QObject(parent)
-    , m_currentTheme("light")
+    , m_currentTheme("")
 {
 }
 
