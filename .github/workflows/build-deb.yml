@@ -1,0 +1,55 @@
+name: Build DEB Package
+
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04  # 接近 Debian 13 (Trixie) 的环境
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # 获取 tag 信息
+
+    - name: 安装构建依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake g++ \
+          qt6-base-dev qt6-base-dev-tools \
+          qt6-webengine-dev qt6-webengine-dev-tools \
+          qt6-webchannel-dev \
+          qmake6
+
+    - name: 配置 CMake (Release)
+      run: |
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+
+    - name: 构建
+      run: cmake --build build --parallel $(nproc)
+
+    - name: 打包 DEB
+      run: |
+        cd build
+        cpack -G DEB
+        echo "=== 生成的 DEB 包 ==="
+        ls -lh *.deb
+
+    - name: 上传 DEB 制品
+      uses: actions/upload-artifact@v4
+      with:
+        name: md-editor-deb
+        path: build/*.deb
+
+    - name: 发布 Release（tag 推送时）
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: build/*.deb
+        generate_release_notes: true
