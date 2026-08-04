@@ -46,7 +46,7 @@ window.editorApi = {
             extensions: extensions,
             onUpdate: function(args) {
                 var editor = args.editor;
-                if (this.bridge) this.bridge.contentChanged(editor.isDirty);
+                if (this.bridge) this.bridge.contentChanged(!!editor.isDirty);
                 this.notifyHeadings();
             }.bind(this),
             onSelectionUpdate: function(args) {
@@ -76,7 +76,7 @@ window.editorApi = {
         var headings = [];
         this.editor.state.doc.descendants(function(node, pos) {
             if (node.type.name === 'heading') {
-                headings.push({ level: node.attrs.level, text: node.textContent, pos: pos });
+                headings.push({ level: node.attrs.level, text: node.textContent || '', pos: pos });
             }
         });
         this.bridge.headingsChanged(JSON.stringify(headings));

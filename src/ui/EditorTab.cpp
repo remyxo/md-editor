@@ -67,15 +67,7 @@ void EditorTab::setupWebChannel()
 void EditorTab::onPageLoadFinished(bool ok)
 {
     m_pageLoaded = ok;
-    if (ok) {
-        // 页面加载完成后初始化 QWebChannel JS 端
-        runJsCommand(R"(
-            if (typeof QWebChannel !== 'undefined') {
-                new QWebChannel(qt.webChannelTransport, function(channel) {
-                    window.editorApi.bridge = channel.objects.bridge;
-                });
-            }
-        )");
-    }
+    // QWebChannel JS 端初始化已由 editor.js 中的 DOMContentLoaded 处理
+    // setupWebChannel() 在 load() 之前调用，确保 qt.webChannelTransport 可用
     emit pageLoadFinished(ok);
 }
