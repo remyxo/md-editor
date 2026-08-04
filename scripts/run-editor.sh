@@ -1,2 +1,3 @@
 #!/bin/bash
-exec "$(dirname "$0")/../build/src/md-editor" "$@"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$PROJECT_DIR/build/src/md-editor" "$@"

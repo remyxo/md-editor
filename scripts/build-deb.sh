@@ -2,14 +2,16 @@
 # 本地构建 deb 包
 set -e
 
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD_DIR="$PROJECT_DIR/build-deb"
+
 echo "=== 构建 md-editor deb 包 ==="
 
-BUILD_DIR="build-deb"
 rm -rf "$BUILD_DIR"
 mkdir "$BUILD_DIR"
 cd "$BUILD_DIR"
 
-cmake .. \
+cmake "$PROJECT_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTS=OFF
 
