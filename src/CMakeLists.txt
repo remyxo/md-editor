@@ -17,6 +17,7 @@ set(SOURCES
     ui/SearchBar.cpp
     ui/SettingsDialog.cpp
     ui/TableGridPopup.cpp
+    ui/AboutDialog.cpp
     ui/MainWindow.cpp
 )
 
@@ -38,6 +39,7 @@ set(HEADERS
     ui/SearchBar.h
     ui/SettingsDialog.h
     ui/TableGridPopup.h
+    ui/AboutDialog.h
     ui/MainWindow.h
 )
 

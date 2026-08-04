@@ -10,6 +10,7 @@
 #include "SearchBar.h"
 #include "SettingsDialog.h"
 #include "TableGridPopup.h"
+#include "AboutDialog.h"
 #include "../core/EditorBridge.h"
 #include "../core/FileManager.h"
 #include "../core/MarkdownHandler.h"
@@ -131,6 +132,10 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::undo, this, [this]() { runEditorCommand("window.editorApi.undo();"); });
     connect(m_menuBar, &MenuBar::redo, this, [this]() { runEditorCommand("window.editorApi.redo();"); });
     connect(m_menuBar, &MenuBar::showSettings, this, &MainWindow::onShowSettings);
+    connect(m_menuBar, &MenuBar::showAbout, this, [this]() {
+        AboutDialog dlg(this);
+        dlg.exec();
+    });
 
     // === 工具栏信号 ===
     connect(m_toolBar, &ToolBar::boldClicked, this, &MainWindow::onBoldClicked);

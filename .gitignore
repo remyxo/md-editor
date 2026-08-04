@@ -1,6 +1,7 @@
 build/
 .cache/
 .claude/
+.superpowers/
 *.o
 *.pro.user
 moc_*.cpp
