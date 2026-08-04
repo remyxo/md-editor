@@ -79,5 +79,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
 {
     QTextDocument doc;
     doc.setHtml(html);
-    return doc.toMarkdown();
+    QString md = doc.toMarkdown();
+    // QTextDocument 在末尾添加多余空行，去掉
+    while (md.endsWith('\n'))
+        md.chop(1);
+    return md;
 }
