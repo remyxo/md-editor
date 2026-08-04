@@ -4,6 +4,7 @@ set(SOURCES
     app/ThemeManager.cpp
     core/EditorBridge.cpp
     ui/EditorTab.cpp
+    ui/TabWidget.cpp
 )
 
 set(HEADERS
@@ -11,6 +12,7 @@ set(HEADERS
     app/ThemeManager.h
     core/EditorBridge.h
     ui/EditorTab.h
+    ui/TabWidget.h
 )
 
 qt_add_resources(RESOURCES resources/app.qrc)
