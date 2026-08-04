@@ -40,12 +40,10 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS
 # 推荐安装
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "qt6-translations-l10n")
 
-# 安装规则
+# 安装到 /usr/local
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr/local")
+
+# 安装规则 — 只安装二进制，不安装脚本
 install(TARGETS md-editor RUNTIME DESTINATION bin)
-install(DIRECTORY scripts/ DESTINATION share/md-editor/scripts
-    FILES_MATCHING PATTERN "*.sh"
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
-                GROUP_READ GROUP_EXECUTE
-                WORLD_READ WORLD_EXECUTE)
 
 include(CPack)
