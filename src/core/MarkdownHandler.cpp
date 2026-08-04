@@ -5,10 +5,18 @@
 static bool isParagraphLine(const QString &line)
 {
     if (line.isEmpty()) return false;
-    QChar c = line.trimmed()[0];
-    return c != '#' && c != '-' && c != '>' && c != '|' && c != '`'
-           && !(c >= '0' && c <= '9' && line.trimmed().length() > 1
-                && line.trimmed()[1] == '.');
+    QString trimmed = line.trimmed();
+    QChar c = trimmed[0];
+    // 跳过行内代码反引号（非代码块标记）
+    if (c == '`') {
+        // 代码块以 ``` 开头，行内代码以单个 ` 开头 → 仍是正文
+        if (!trimmed.startsWith("```"))
+            return true;
+        return false;
+    }
+    return c != '#' && c != '-' && c != '>' && c != '|'
+           && !(c >= '0' && c <= '9' && trimmed.length() > 1
+                && trimmed[1] == '.');
 }
 
 QString MarkdownHandler::toHtml(const QString &markdown)
