@@ -25,7 +25,9 @@
 #include <QSettings>
 #include <QShortcut>
 #include <QKeySequence>
-#include <QSettings>
+#include <QInputDialog>
+#include <QRegularExpression>
+#include <QLineEdit>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -259,7 +261,23 @@ void MainWindow::onHeadingSelected(int level)
 
 void MainWindow::onInsertTable()
 {
-    runEditorCommand("window.editorApi.insertTable(3, 3);");
+    // 弹出对话框选择行列数
+    bool ok;
+    QString text = QInputDialog::getText(this, "插入表格",
+        "输入行列数（如 3x4）：", QLineEdit::Normal, "3x3", &ok);
+    if (!ok || text.isEmpty()) return;
+
+    int rows = 3, cols = 3;
+    QRegularExpression re("(\\d+)\\s*[xX×]\\s*(\\d+)");
+    QRegularExpressionMatch m = re.match(text);
+    if (m.hasMatch()) {
+        rows = m.captured(1).toInt();
+        cols = m.captured(2).toInt();
+    }
+    rows = qBound(1, rows, 20);
+    cols = qBound(1, cols, 20);
+    QString js = QString("window.editorApi.insertTable(%1, %2);").arg(rows).arg(cols);
+    runEditorCommand(js);
 }
 
 void MainWindow::onInsertLink()

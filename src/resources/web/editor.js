@@ -149,6 +149,14 @@ window.editorApi = {
     insertTable: function(rows, cols) {
         if (this.editor) this.editor.commands.insertTable({ rows: rows || 3, cols: cols || 3, withHeaderRow: true });
     },
+    addRowBefore: function() { if (this.editor) this.editor.commands.addRowBefore(); },
+    addRowAfter: function() { if (this.editor) this.editor.commands.addRowAfter(); },
+    deleteRow: function() { if (this.editor) this.editor.commands.deleteRow(); },
+    addColumnBefore: function() { if (this.editor) this.editor.commands.addColumnBefore(); },
+    addColumnAfter: function() { if (this.editor) this.editor.commands.addColumnAfter(); },
+    deleteColumn: function() { if (this.editor) this.editor.commands.deleteColumn(); },
+    deleteTable: function() { if (this.editor) this.editor.commands.deleteTable(); },
+    isInTable: function() { return this.editor ? this.editor.isActive('table') : false; },
     insertLink: function(url) {
         if (!this.editor) return;
         if (url) { this.editor.commands.setLink({ href: url }); return; }
@@ -180,11 +188,14 @@ window.editorApi = {
 // DOM 加载完成后初始化
 document.addEventListener('DOMContentLoaded', function() {
     window.editorApi.init();
+    // init 内部可能触发 onUpdate，强制重置为未修改
+    window.editorApi._dirty = false;
+    window.editorApi._loading = false;
     // QWebChannel 初始化
     if (typeof QWebChannel !== 'undefined') {
         new QWebChannel(qt.webChannelTransport, function(channel) {
             window.editorApi.bridge = channel.objects.bridge;
-            // 桥接就绪后同步脏状态
+            // 桥接就绪后同步脏状态（新文档始终是干净的）
             window.editorApi._notifyDirty();
         });
     } else {

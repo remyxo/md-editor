@@ -52,6 +52,41 @@ void EditorWebView::setupContextMenu()
     connect(selectAllAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::SelectAll);
     });
+
+    m_contextMenu->addSeparator();
+
+    // 表格操作子菜单
+    QMenu *tableMenu = m_contextMenu->addMenu("表格");
+    QAction *addRowBefore = tableMenu->addAction("上方插入行");
+    connect(addRowBefore, &QAction::triggered, [this]() {
+        page()->runJavaScript("window.editorApi.addRowBefore();");
+    });
+    QAction *addRowAfter = tableMenu->addAction("下方插入行");
+    connect(addRowAfter, &QAction::triggered, [this]() {
+        page()->runJavaScript("window.editorApi.addRowAfter();");
+    });
+    QAction *delRow = tableMenu->addAction("删除当前行");
+    connect(delRow, &QAction::triggered, [this]() {
+        page()->runJavaScript("window.editorApi.deleteRow();");
+    });
+    tableMenu->addSeparator();
+    QAction *addColBefore = tableMenu->addAction("左侧插入列");
+    connect(addColBefore, &QAction::triggered, [this]() {
+        page()->runJavaScript("window.editorApi.addColumnBefore();");
+    });
+    QAction *addColAfter = tableMenu->addAction("右侧插入列");
+    connect(addColAfter, &QAction::triggered, [this]() {
+        page()->runJavaScript("window.editorApi.addColumnAfter();");
+    });
+    QAction *delCol = tableMenu->addAction("删除当前列");
+    connect(delCol, &QAction::triggered, [this]() {
+        page()->runJavaScript("window.editorApi.deleteColumn();");
+    });
+    tableMenu->addSeparator();
+    QAction *delTable = tableMenu->addAction("删除表格");
+    connect(delTable, &QAction::triggered, [this]() {
+        page()->runJavaScript("window.editorApi.deleteTable();");
+    });
 }
 
 void EditorWebView::contextMenuEvent(QContextMenuEvent *event)
