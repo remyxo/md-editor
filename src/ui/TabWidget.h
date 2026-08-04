@@ -26,12 +26,16 @@ signals:
     void editorBridgeCreated(EditorBridge *bridge);
     void tabSaveRequested(int index);
 
+public slots:
+    void completePendingTabClose();
+
 private slots:
     void onTabCloseRequested(int index);
     void onCurrentChanged(int index);
 
 private:
     int m_nextTabId;
+    int m_pendingCloseIndex;
     QMap<int, EditorTab *> m_tabs;
     QString generateUntitledName();
 };

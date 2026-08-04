@@ -6,7 +6,7 @@
 #include <QFileInfo>
 
 TabWidget::TabWidget(QWidget *parent)
-    : QTabWidget(parent), m_nextTabId(1)
+    : QTabWidget(parent), m_nextTabId(1), m_pendingCloseIndex(-1)
 {
     setTabsClosable(true);
     setMovable(true);
@@ -90,13 +90,28 @@ void TabWidget::onTabCloseRequested(int index)
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         if (r == QMessageBox::Cancel) return;
         if (r == QMessageBox::Save) {
+            m_pendingCloseIndex = index;
             emit tabSaveRequested(index);
-            return; // 保存由 MainWindow 异步处理，本次不关闭
+            return; // 保存由 MainWindow 异步处理，完成后调用 completePendingTabClose()
         }
     }
     m_tabs.remove(tab->bridge()->tabId());
     removeTab(index);
     tab->deleteLater();
+}
+
+void TabWidget::completePendingTabClose()
+{
+    if (m_pendingCloseIndex < 0 || m_pendingCloseIndex >= count())
+        return;
+    int idx = m_pendingCloseIndex;
+    m_pendingCloseIndex = -1;
+    EditorTab *tab = tabAt(idx);
+    if (tab) {
+        m_tabs.remove(tab->bridge()->tabId());
+        removeTab(idx);
+        tab->deleteLater();
+    }
 }
 
 void TabWidget::onCurrentChanged(int index)

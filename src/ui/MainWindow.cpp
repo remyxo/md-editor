@@ -364,6 +364,7 @@ void MainWindow::onSaveFile()
                 if (idx >= 0) {
                     m_tabWidget->markTabSaved(idx, filePath);
                 }
+                m_tabWidget->completePendingTabClose();
             } else {
                 m_statusBar->showMessage("保存失败", 3000);
             }
@@ -393,6 +394,7 @@ void MainWindow::onSaveFileAs()
                 if (idx >= 0) {
                     m_tabWidget->markTabSaved(idx, path);
                 }
+                m_tabWidget->completePendingTabClose();
             } else {
                 m_statusBar->showMessage("保存失败", 3000);
             }
