@@ -2,7 +2,7 @@
 #include <QAction>
 #include <QLabel>
 #include <QJsonObject>
-#include <QWidget>
+#include <QIcon>
 
 ToolBar::ToolBar(QWidget *parent)
     : QToolBar(parent)
@@ -20,16 +20,17 @@ ToolBar::ToolBar(QWidget *parent)
 {
     setObjectName("mainToolBar");
     setMovable(false);
+    setIconSize(QSize(20, 20));
     setupUi();
 }
 
-// 辅助：创建带 objectName 的 action
-static QAction *makeAction(QToolBar *bar, const QString &text,
-                           const QString &objName, const QString &tip)
+static QAction *makeAction(QToolBar *bar, const QString &objName,
+                           const QString &tip, const QString &iconPath)
 {
-    QAction *a = bar->addAction(text);
+    QAction *a = bar->addAction(QIcon(iconPath), "");
     a->setObjectName(objName);
     a->setToolTip(tip);
+    a->setCheckable(false);
     return a;
 }
 
@@ -58,59 +59,71 @@ void ToolBar::setupUi()
 
     addSeparator();
 
-    // === 文本格式按钮 — 彩色 ===
-    m_boldAction = makeAction(this, "𝐁", "boldAction", "加粗 (Ctrl+B)");
+    // === 文本格式按钮 ===
+    m_boldAction = makeAction(this, "boldAction",
+        "加粗 (Ctrl+B)", ":/icons/bold.svg");
     m_boldAction->setCheckable(true);
 
-    m_italicAction = makeAction(this, "𝑰", "italicAction", "斜体 (Ctrl+I)");
+    m_italicAction = makeAction(this, "italicAction",
+        "斜体 (Ctrl+I)", ":/icons/italic.svg");
     m_italicAction->setCheckable(true);
 
-    m_strikeAction = makeAction(this, "S̶", "strikeAction", "删除线");
+    m_strikeAction = makeAction(this, "strikeAction",
+        "删除线", ":/icons/strikethrough.svg");
     m_strikeAction->setCheckable(true);
 
-    m_codeAction = makeAction(this, "<>", "codeAction", "行内代码");
+    m_codeAction = makeAction(this, "codeAction",
+        "行内代码", ":/icons/code.svg");
     m_codeAction->setCheckable(true);
 
-    m_underlineAction = makeAction(this, "U̲", "underlineAction", "下划线");
+    m_underlineAction = makeAction(this, "underlineAction",
+        "下划线", ":/icons/underline.svg");
     m_underlineAction->setCheckable(true);
 
-    m_highlightAction = makeAction(this, "🖍", "highlightAction", "高亮");
+    m_highlightAction = makeAction(this, "highlightAction",
+        "高亮", ":/icons/highlight.svg");
     m_highlightAction->setCheckable(true);
 
     addSeparator();
 
     // === 结构按钮 ===
-    m_bulletListAction = makeAction(this, "• ≡", "bulletListAction", "无序列表");
+    m_bulletListAction = makeAction(this, "bulletListAction",
+        "无序列表", ":/icons/list-bullet.svg");
     m_bulletListAction->setCheckable(true);
 
-    m_orderedListAction = makeAction(this, "1.", "orderedListAction", "有序列表");
+    m_orderedListAction = makeAction(this, "orderedListAction",
+        "有序列表", ":/icons/list-ordered.svg");
     m_orderedListAction->setCheckable(true);
 
-    m_taskListAction = makeAction(this, "☑", "taskListAction", "任务列表");
+    m_taskListAction = makeAction(this, "taskListAction",
+        "任务列表", ":/icons/task-list.svg");
     m_taskListAction->setCheckable(true);
 
-    m_blockquoteAction = makeAction(this, "❝", "blockquoteAction", "引用");
+    m_blockquoteAction = makeAction(this, "blockquoteAction",
+        "引用", ":/icons/blockquote.svg");
     m_blockquoteAction->setCheckable(true);
 
     addSeparator();
 
     // === 插入按钮 ===
-    makeAction(this, "🔗", "linkAction", "插入链接");
-    makeAction(this, "🖼", "imageAction", "插入图片");
-    makeAction(this, "▦", "tableAction", "插入表格");
-    makeAction(this, "—", "hrAction", "分割线");
+    makeAction(this, "linkAction",
+        "插入链接", ":/icons/link.svg");
+    makeAction(this, "imageAction",
+        "插入图片", ":/icons/image.svg");
+    makeAction(this, "tableAction",
+        "插入表格", ":/icons/table.svg");
+    makeAction(this, "hrAction",
+        "分割线", ":/icons/horizontal-rule.svg");
 
     addSeparator();
 
-    // === 视图按钮 ===
-    makeAction(this, "<>", "sourceAction", "切换源码模式");
+    // === 视图 / 导出 ===
+    makeAction(this, "sourceAction",
+        "切换源码模式", ":/icons/source-code.svg");
+    makeAction(this, "pdfAction",
+        "导出 PDF", ":/icons/pdf.svg");
 
-    addSeparator();
-
-    // === 导出按钮 ===
-    makeAction(this, "📄", "pdfAction", "导出 PDF");
-
-    // 连接所有 action 信号
+    // === 信号连接 ===
     connect(m_boldAction, &QAction::triggered, this, &ToolBar::boldClicked);
     connect(m_italicAction, &QAction::triggered, this, &ToolBar::italicClicked);
     connect(m_strikeAction, &QAction::triggered, this, &ToolBar::strikethroughClicked);
@@ -122,7 +135,6 @@ void ToolBar::setupUi()
     connect(m_taskListAction, &QAction::triggered, this, &ToolBar::taskListClicked);
     connect(m_blockquoteAction, &QAction::triggered, this, &ToolBar::blockquoteClicked);
 
-    // 插入/视图/导出按钮通过 findChild 连接（或直接在 makeAction 后连接）
     for (QAction *a : findChildren<QAction *>()) {
         if (a->objectName() == "linkAction")
             connect(a, &QAction::triggered, this, &ToolBar::linkClicked);
@@ -141,7 +153,6 @@ void ToolBar::setupUi()
 
 void ToolBar::updateFormatState(const QJsonObject &f)
 {
-    // 标题下拉
     if (f.contains("heading")) {
         int level = f["heading"].toInt();
         int idx = m_headingCombo->findData(level);
@@ -151,7 +162,6 @@ void ToolBar::updateFormatState(const QJsonObject &f)
             m_headingCombo->blockSignals(false);
         }
     }
-    // 文本格式 — 切换 checked 状态（不触发信号）
 #define TOGGLE_CHECK(act, key) if (f.contains(key)) { act->blockSignals(true); act->setChecked(f[key].toBool()); act->blockSignals(false); }
     TOGGLE_CHECK(m_boldAction, "bold");
     TOGGLE_CHECK(m_italicAction, "italic");

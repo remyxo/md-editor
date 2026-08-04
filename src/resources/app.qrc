@@ -2,6 +2,22 @@
     <qresource prefix="/">
         <file>themes/light.qss</file>
         <file>themes/dark.qss</file>
+        <file>icons/bold.svg</file>
+        <file>icons/italic.svg</file>
+        <file>icons/strikethrough.svg</file>
+        <file>icons/code.svg</file>
+        <file>icons/underline.svg</file>
+        <file>icons/highlight.svg</file>
+        <file>icons/list-bullet.svg</file>
+        <file>icons/list-ordered.svg</file>
+        <file>icons/task-list.svg</file>
+        <file>icons/blockquote.svg</file>
+        <file>icons/link.svg</file>
+        <file>icons/image.svg</file>
+        <file>icons/table.svg</file>
+        <file>icons/horizontal-rule.svg</file>
+        <file>icons/source-code.svg</file>
+        <file>icons/pdf.svg</file>
         <file>web/editor.html</file>
         <file>web/editor.css</file>
         <file>web/editor.js</file>

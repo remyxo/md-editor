@@ -1,4 +1,5 @@
 #include "EditorTab.h"
+#include "../core/MarkdownHandler.h"
 #include <QVBoxLayout>
 #include <QWebEngineSettings>
 #include <QWebEnginePage>
@@ -37,11 +38,12 @@ void EditorTab::loadFile(const QString &path, const QString &content)
 {
     Q_UNUSED(path)
     if (m_pageLoaded) {
-        QString escaped = content;
-        escaped.replace("\\", "\\\\");
-        escaped.replace("`", "\\`");
-        escaped.replace("$", "\\$");
-        QString js = QString("window.editorApi.setContent(`%1`);").arg(escaped);
+        // MD → HTML 转换后送入编辑器，实现 WYSIWYG
+        QString html = MarkdownHandler::toHtml(content);
+        html.replace("\\", "\\\\");
+        html.replace("`", "\\`");
+        html.replace("$", "\\$");
+        QString js = QString("window.editorApi.setContent(`%1`);").arg(html);
         runJsCommand(js);
     }
 }

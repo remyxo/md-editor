@@ -77,27 +77,31 @@ QToolButton:pressed, QToolButton:checked {
     background-color: #d0d0d0;
 }
 
-/* 文本格式 — 彩色 */
-QToolButton#boldAction      { color: #1a73e8; font-weight: bold; }
-QToolButton#italicAction    { color: #0d904f; font-style: italic; }
+/* 文本格式 — SVG 图标的彩色（stroke="currentColor"） */
+QToolButton#boldAction      { color: #1a73e8; }
+QToolButton#italicAction    { color: #0d904f; }
 QToolButton#strikeAction    { color: #d93025; }
 QToolButton#codeAction      { color: #e37400; }
 QToolButton#underlineAction { color: #7b1fa2; }
 QToolButton#highlightAction { color: #f9ab00; }
 
-/* 结构按钮 */
+/* 结构按钮 — 深灰图标 */
 QToolButton#bulletListAction,
 QToolButton#orderedListAction,
 QToolButton#taskListAction,
 QToolButton#blockquoteAction { color: #5f6368; }
 
-/* 插入按钮 — 蓝色调 */
+/* 插入按钮 — 蓝色调图标 */
 QToolButton#linkAction,
 QToolButton#imageAction,
 QToolButton#tableAction,
 QToolButton#hrAction { color: #1967d2; }
 
-/* checked 状态：背景高亮，保留各按钮的彩色 */
+/* 视图/导出 */
+QToolButton#sourceAction { color: #5f6368; }
+QToolButton#pdfAction    { color: #d93025; }
+
+/* checked 状态：背景高亮，保留彩色图标 */
 QToolButton:checked {
     background-color: #cce0f5;
 }

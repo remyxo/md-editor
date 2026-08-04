@@ -161,10 +161,14 @@ window.editorApi = {
 // DOM 加载完成后初始化
 document.addEventListener('DOMContentLoaded', function() {
     window.editorApi.init();
-    // QWebChannel 初始化（由 C++ 侧在页面加载后注入 qt.webChannelTransport）
+    // QWebChannel 初始化
     if (typeof QWebChannel !== 'undefined') {
         new QWebChannel(qt.webChannelTransport, function(channel) {
             window.editorApi.bridge = channel.objects.bridge;
+            // 桥接就绪后同步初始脏状态
+            if (window.editorApi.editor) {
+                window.editorApi.bridge.contentChanged(!!window.editorApi.editor.isDirty);
+            }
         });
     } else {
         console.warn('QWebChannel 未连接：请在浏览器中独立测试时忽略此警告。');
