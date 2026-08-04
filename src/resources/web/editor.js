@@ -14,29 +14,26 @@ window.editorApi = {
 
         var Editor = TipTap.Editor;
         var StarterKit = window.TipTapStarterKit;
-        var Table = window.TipTapExtensionTable;
+        var TableKit = window.TipTapExtensionTableKit;
         var TaskList = window.TipTapExtensionTaskList;
         var TaskItem = window.TipTapExtensionTaskItem;
         var Highlight = window.TipTapExtensionHighlight;
         var Image = window.TipTapExtensionImage;
-        var Link = window.TipTapExtensionLink;
         var Placeholder = window.TipTapExtensionPlaceholder;
-        var Underline = window.TipTapExtensionUnderline;
         var CodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
+        // v3 StarterKit includes Link and Underline
 
         var extensions = [
             StarterKit.configure({
                 codeBlock: false,
                 heading: { levels: [1, 2, 3, 4, 5, 6] }
             }),
-            Table.configure({ resizable: true }),
+            TableKit.configure({ resizable: true }),
             TaskList,
             TaskItem.configure({ nested: true }),
             Highlight,
             Image.configure({ allowBase64: true }),
-            Link.configure({ openOnClick: false }),
             Placeholder.configure({ placeholder: '开始编写 Markdown...' }),
-            Underline,
         ];
 
         // 语法高亮代码块（StarterKit 中已禁用默认 codeBlock，这里使用 lowlight 版本）

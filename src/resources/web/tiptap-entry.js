@@ -8,27 +8,25 @@
  */
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import { Table } from '@tiptap/extension-table';
+import { TableKit } from '@tiptap/extension-table';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
-import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
-import Underline from '@tiptap/extension-underline';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { createLowlight, common } from 'lowlight';
+
+// v3 StarterKit 已包含 Link 和 Underline，不需要单独导入
 
 // 供 editor.js 使用的全局对象
 window.TipTap = { Editor };
 window.TipTapStarterKit = StarterKit;
-window.TipTapExtensionTable = Table;
+window.TipTapExtensionTableKit = TableKit;
 window.TipTapExtensionTaskList = TaskList;
 window.TipTapExtensionTaskItem = TaskItem;
 window.TipTapExtensionHighlight = Highlight;
 window.TipTapExtensionImage = Image;
-window.TipTapExtensionLink = Link;
 window.TipTapExtensionPlaceholder = Placeholder;
-window.TipTapExtensionUnderline = Underline;
 window.TipTapExtensionCodeBlockLowlight = CodeBlockLowlight;
 window.lowlight = createLowlight(common);

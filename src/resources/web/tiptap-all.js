@@ -21243,7 +21243,7 @@ ${prefix}
       )
     );
   }
-  var UNICODE_WHITESPACE_PATTERN, UNICODE_WHITESPACE_REGEX, UNICODE_WHITESPACE_REGEX_END, UNICODE_WHITESPACE_REGEX_GLOBAL, MARKDOWN_LINK_INPUT_REGEX, MARKDOWN_LINK_PASTE_REGEX, Link, index_default;
+  var UNICODE_WHITESPACE_PATTERN, UNICODE_WHITESPACE_REGEX, UNICODE_WHITESPACE_REGEX_END, UNICODE_WHITESPACE_REGEX_GLOBAL, MARKDOWN_LINK_INPUT_REGEX, MARKDOWN_LINK_PASTE_REGEX, Link;
   var init_dist19 = __esm({
     "node_modules/@tiptap/extension-link/dist/index.js"() {
       init_dist9();
@@ -21526,7 +21526,6 @@ ${prefix}
           return plugins;
         }
       });
-      index_default = Link;
     }
   });
 
@@ -23258,7 +23257,7 @@ ${prefix}
   });
 
   // node_modules/@tiptap/extension-underline/dist/index.js
-  var Underline, index_default2;
+  var Underline;
   var init_dist24 = __esm({
     "node_modules/@tiptap/extension-underline/dist/index.js"() {
       init_dist9();
@@ -23331,7 +23330,6 @@ ${prefix}
           };
         }
       });
-      index_default2 = Underline;
     }
   });
 
@@ -24985,7 +24983,7 @@ ${prefix}
   });
 
   // node_modules/@tiptap/starter-kit/dist/index.js
-  var StarterKit, index_default3;
+  var StarterKit, index_default;
   var init_dist30 = __esm({
     "node_modules/@tiptap/starter-kit/dist/index.js"() {
       init_dist9();
@@ -25079,7 +25077,7 @@ ${prefix}
           return extensions;
         }
       });
-      index_default3 = StarterKit;
+      index_default = StarterKit;
     }
   });
 
@@ -27585,27 +27583,27 @@ ${prefix}
   });
 
   // node_modules/@tiptap/extension-task-list/dist/index.js
-  var index_default4;
+  var index_default2;
   var init_dist33 = __esm({
     "node_modules/@tiptap/extension-task-list/dist/index.js"() {
       init_dist20();
       init_dist20();
-      index_default4 = TaskList;
+      index_default2 = TaskList;
     }
   });
 
   // node_modules/@tiptap/extension-task-item/dist/index.js
-  var index_default5;
+  var index_default3;
   var init_dist34 = __esm({
     "node_modules/@tiptap/extension-task-item/dist/index.js"() {
       init_dist20();
       init_dist20();
-      index_default5 = TaskItem;
+      index_default3 = TaskItem;
     }
   });
 
   // node_modules/@tiptap/extension-highlight/dist/index.js
-  var inputRegex4, pasteRegex2, Highlight, index_default6;
+  var inputRegex4, pasteRegex2, Highlight, index_default4;
   var init_dist35 = __esm({
     "node_modules/@tiptap/extension-highlight/dist/index.js"() {
       init_dist9();
@@ -27713,12 +27711,12 @@ ${prefix}
           ];
         }
       });
-      index_default6 = Highlight;
+      index_default4 = Highlight;
     }
   });
 
   // node_modules/@tiptap/extension-image/dist/index.js
-  var inputRegex5, Image, index_default7;
+  var inputRegex5, Image, index_default5;
   var init_dist36 = __esm({
     "node_modules/@tiptap/extension-image/dist/index.js"() {
       init_dist9();
@@ -27914,17 +27912,17 @@ ${prefix}
           ];
         }
       });
-      index_default7 = Image;
+      index_default5 = Image;
     }
   });
 
   // node_modules/@tiptap/extension-placeholder/dist/index.js
-  var index_default8;
+  var index_default6;
   var init_dist37 = __esm({
     "node_modules/@tiptap/extension-placeholder/dist/index.js"() {
       init_dist29();
       init_dist29();
-      index_default8 = Placeholder;
+      index_default6 = Placeholder;
     }
   });
 
@@ -29584,7 +29582,7 @@ ${prefix}
     });
     return lowlightPlugin;
   }
-  var CodeBlockLowlight, index_default9;
+  var CodeBlockLowlight, index_default7;
   var init_dist38 = __esm({
     "node_modules/@tiptap/extension-code-block-lowlight/dist/index.js"() {
       init_dist13();
@@ -29620,7 +29618,7 @@ ${prefix}
           ];
         }
       });
-      index_default9 = CodeBlockLowlight;
+      index_default7 = CodeBlockLowlight;
     }
   });
 
@@ -43369,22 +43367,18 @@ ${prefix}
       init_dist34();
       init_dist35();
       init_dist36();
-      init_dist19();
       init_dist37();
-      init_dist24();
       init_dist38();
       init_lowlight();
       window.TipTap = { Editor };
-      window.TipTapStarterKit = index_default3;
-      window.TipTapExtensionTable = Table;
-      window.TipTapExtensionTaskList = index_default4;
-      window.TipTapExtensionTaskItem = index_default5;
-      window.TipTapExtensionHighlight = index_default6;
-      window.TipTapExtensionImage = index_default7;
-      window.TipTapExtensionLink = index_default;
-      window.TipTapExtensionPlaceholder = index_default8;
-      window.TipTapExtensionUnderline = index_default2;
-      window.TipTapExtensionCodeBlockLowlight = index_default9;
+      window.TipTapStarterKit = index_default;
+      window.TipTapExtensionTableKit = TableKit;
+      window.TipTapExtensionTaskList = index_default2;
+      window.TipTapExtensionTaskItem = index_default3;
+      window.TipTapExtensionHighlight = index_default4;
+      window.TipTapExtensionImage = index_default5;
+      window.TipTapExtensionPlaceholder = index_default6;
+      window.TipTapExtensionCodeBlockLowlight = index_default7;
       window.lowlight = createLowlight(grammars);
     }
   });
