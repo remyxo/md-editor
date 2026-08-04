@@ -21,6 +21,7 @@
 #include <QTextStream>
 #include <QShortcut>
 #include <QKeySequence>
+#include <QSettings>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -32,6 +33,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 启动时新建一个空白标签页
     m_tabWidget->openNewTab();
+
+    // 恢复上次会话（在最后调用，确保所有组件已初始化）
+    restoreSession();
 }
 
 MainWindow::~MainWindow() {}
@@ -320,4 +324,81 @@ void MainWindow::onShowSettings()
 {
     SettingsDialog dialog(m_fileManager, this);
     dialog.exec();
+}
+
+// === 会话保存与恢复 ===
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    saveSession();
+    QMainWindow::closeEvent(event);
+}
+
+void MainWindow::saveSession()
+{
+    QSettings settings("md-editor", "md-editor");
+
+    // 保存打开的文件列表（未命名标签页保存为空字符串）
+    QStringList openFiles;
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        openFiles << m_tabWidget->tabToolTip(i);
+    }
+    settings.setValue("session/openFiles", openFiles);
+
+    // 保存当前活动标签页
+    settings.setValue("session/activeTab", m_tabWidget->currentIndex());
+
+    // 保存窗口几何信息
+    settings.setValue("session/geometry", saveGeometry());
+
+    settings.sync();
+}
+
+void MainWindow::restoreSession()
+{
+    QSettings settings("md-editor", "md-editor");
+
+    // 仅在设置中启用「启动时恢复上次会话」时恢复
+    if (!settings.value("session/restore", true).toBool())
+        return;
+
+    const QStringList openFiles = settings.value("session/openFiles").toStringList();
+    if (openFiles.isEmpty())
+        return; // 无会话记录，保留启动时的空白标签页
+
+    // 关闭启动时的空白标签页
+    if (m_tabWidget->count() > 0) {
+        EditorTab *tab = m_tabWidget->tabAt(0);
+        m_tabWidget->removeTab(0);
+        if (tab) tab->deleteLater();
+    }
+
+    // 恢复所有标签页
+    for (const QString &path : openFiles) {
+        if (path.isEmpty()) {
+            // 未命名标签页
+            m_tabWidget->openNewTab();
+        } else if (QFile::exists(path)) {
+            // 文件已存在才恢复，避免弹出错误提示
+            QString content = m_fileManager->readFile(path);
+            m_tabWidget->openFileTab(path, content);
+        }
+    }
+
+    // 若所有文件都不存在，保留一个空白标签页
+    if (m_tabWidget->count() == 0) {
+        m_tabWidget->openNewTab();
+    }
+
+    // 恢复活动标签页
+    int activeTab = settings.value("session/activeTab", 0).toInt();
+    if (activeTab >= 0 && activeTab < m_tabWidget->count()) {
+        m_tabWidget->setCurrentIndex(activeTab);
+    }
+
+    // 恢复窗口几何信息
+    QByteArray geometry = settings.value("session/geometry").toByteArray();
+    if (!geometry.isEmpty()) {
+        restoreGeometry(geometry);
+    }
 }

@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QSplitter>
+#include <QCloseEvent>
 
 class MenuBar;
 class ToolBar;
@@ -42,11 +43,18 @@ private slots:
     // 设置
     void onShowSettings();
 
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
 private:
     void setupUi();
     void connectSignals();
     void runEditorCommand(const QString &js);
     EditorBridge *currentBridge() const;
+
+    // 会话恢复
+    void saveSession();
+    void restoreSession();
 
     MenuBar *m_menuBar;
     ToolBar *m_toolBar;
