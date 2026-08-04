@@ -77,10 +77,80 @@ QString MarkdownHandler::extractTitle(const QString &markdown)
 
 QString MarkdownHandler::fromHtml(const QString &html)
 {
+    // QTextDocument::toMarkdown() 不能正确处理 <code> / <pre>
+    // 策略：先替换代码为占位符 → toMarkdown() → 还原占位符
+
+    QStringList placeholders, backups;
+    QString processed = html;
+
+    // 1) 代码块：多重 <pre>（每行一个，QTextDocument 特有）→ 合并
+    {
+        QRegularExpression preRe(
+            R"(<pre[^>]*>(.*?)</pre>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        int n = 0;
+        int searchFrom = 0;
+        while (true) {
+            auto m = preRe.match(processed, searchFrom);
+            if (!m.hasMatch()) break;
+
+            QStringList lines;
+            int blockStart = m.capturedStart();
+            int blockEnd = blockStart + m.capturedLength();
+            lines << m.captured(1);
+            searchFrom = blockEnd;
+
+            while (true) {
+                auto next = preRe.match(processed, searchFrom);
+                if (!next.hasMatch()) break;
+                QString between = processed.mid(blockEnd,
+                    next.capturedStart() - blockEnd);
+                if (between.trimmed().isEmpty()) {
+                    lines << next.captured(1);
+                    blockEnd = next.capturedStart() + next.capturedLength();
+                    searchFrom = blockEnd;
+                } else {
+                    break;
+                }
+            }
+
+            QString code = lines.join('\n');
+            code.remove(QRegularExpression("<[^>]*>"));
+            code = code.trimmed();
+            QString ph = QString("\x01CB%1\x01").arg(n++);
+            placeholders << ph;
+            backups << "```\n" + code + "\n```";
+            processed.replace(blockStart, blockEnd - blockStart, ph);
+            searchFrom = blockStart + ph.length();
+        }
+    }
+
+    // 2) 行内代码 <span ...monospace...>text</span> → 占位符
+    {
+        QRegularExpression re(
+            R"(<span[^>]*font-family:\s*'monospace'[^>]*>(.*?)</span>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        int n = 0;
+        int offset = 0;
+        while (true) {
+            auto m = re.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("\x02IC%1\x02").arg(n++);
+            placeholders << ph;
+            backups << "`" + m.captured(1) + "`";
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
+
     QTextDocument doc;
-    doc.setHtml(html);
+    doc.setHtml(processed);
     QString md = doc.toMarkdown();
-    // QTextDocument 在末尾添加多余空行，去掉
+
+    // 3) 还原占位符
+    for (int i = 0; i < placeholders.size(); ++i)
+        md.replace(placeholders[i], backups[i]);
+
     while (md.endsWith('\n'))
         md.chop(1);
     return md;
