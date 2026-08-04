@@ -4,7 +4,6 @@
 #include <QWebEngineSettings>
 #include <QWebEnginePage>
 #include <QUrl>
-#include <QDebug>
 #include <QContextMenuEvent>
 #include <QAction>
 
@@ -153,7 +152,6 @@ void EditorTab::loadFile(const QString &path, const QString &content)
             html = fullHtml;
         }
 
-        qDebug() << "[EditorTab] loadFile <br> count:" << html.count("<br");
         QString escaped = html;
         escaped.replace("\\", "\\\\");
         escaped.replace("`", "\\`");
