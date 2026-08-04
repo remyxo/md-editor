@@ -10,6 +10,9 @@ set(SOURCES
     ui/FileTree.cpp
     ui/OutlineTree.cpp
     ui/SideBar.cpp
+    ui/StatusBar.cpp
+    ui/SearchBar.cpp
+    ui/MainWindow.cpp
 )
 
 set(HEADERS
@@ -23,6 +26,9 @@ set(HEADERS
     ui/FileTree.h
     ui/OutlineTree.h
     ui/SideBar.h
+    ui/StatusBar.h
+    ui/SearchBar.h
+    ui/MainWindow.h
 )
 
 qt_add_resources(RESOURCES resources/app.qrc)

@@ -1,0 +1,56 @@
+#ifndef MD_EDITOR_MAINWINDOW_H
+#define MD_EDITOR_MAINWINDOW_H
+
+#include <QMainWindow>
+#include <QSplitter>
+
+class MenuBar;
+class ToolBar;
+class SideBar;
+class TabWidget;
+class StatusBar;
+class SearchBar;
+class EditorBridge;
+
+class MainWindow : public QMainWindow {
+    Q_OBJECT
+public:
+    explicit MainWindow(QWidget *parent = nullptr);
+    ~MainWindow();
+
+private slots:
+    void onEditorBridgeCreated(EditorBridge *bridge);
+    void onTabChanged(int tabId);
+
+    // 工具栏响应
+    void onBoldClicked();
+    void onItalicClicked();
+    void onHeadingSelected(int level);
+    void onInsertTable();
+    void onInsertLink();
+    void onInsertImage();
+    void onToggleSourceMode();
+    void onExportPdf();
+    void onThemeSwitch(const QString &theme);
+
+    // 文件操作
+    void onOpenFolder();
+    void onFileDoubleClicked(const QString &path);
+    void onNewFile();
+
+private:
+    void setupUi();
+    void connectSignals();
+    void runEditorCommand(const QString &js);
+    EditorBridge *currentBridge() const;
+
+    MenuBar *m_menuBar;
+    ToolBar *m_toolBar;
+    SideBar *m_sideBar;
+    TabWidget *m_tabWidget;
+    StatusBar *m_statusBar;
+    SearchBar *m_searchBar;
+    QSplitter *m_splitter;
+};
+
+#endif // MD_EDITOR_MAINWINDOW_H

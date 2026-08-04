@@ -1,14 +1,11 @@
-#include <QMainWindow>
 #include "app/Application.h"
+#include "ui/MainWindow.h"
 
 int main(int argc, char *argv[])
 {
     Application app(argc, argv);
-    app.themeManager()->switchTheme("light");
 
-    QMainWindow window;
-    window.setWindowTitle("Markdown Editor");
-    window.resize(1280, 800);
+    MainWindow window;
     window.show();
 
     return app.exec();
