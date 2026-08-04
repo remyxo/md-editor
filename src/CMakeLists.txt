@@ -3,12 +3,14 @@ set(SOURCES
     app/Application.cpp
     app/ThemeManager.cpp
     core/EditorBridge.cpp
+    ui/EditorTab.cpp
 )
 
 set(HEADERS
     app/Application.h
     app/ThemeManager.h
     core/EditorBridge.h
+    ui/EditorTab.h
 )
 
 qt_add_resources(RESOURCES resources/app.qrc)
