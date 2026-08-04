@@ -18,6 +18,8 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QFile>
+#include <QJsonObject>
+#include <QWebEnginePage>
 #include <QTextStream>
 #include <QShortcut>
 #include <QKeySequence>
@@ -122,6 +124,10 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::insertImage, this, &MainWindow::onInsertImage);
     connect(m_menuBar, &MenuBar::insertTable, this, &MainWindow::onInsertTable);
     connect(m_menuBar, &MenuBar::quit, this, &MainWindow::close);
+    connect(m_menuBar, &MenuBar::saveFile, this, &MainWindow::onSaveFile);
+    connect(m_menuBar, &MenuBar::saveFileAs, this, &MainWindow::onSaveFileAs);
+    connect(m_menuBar, &MenuBar::undo, this, [this]() { runEditorCommand("window.editorApi.undo();"); });
+    connect(m_menuBar, &MenuBar::redo, this, [this]() { runEditorCommand("window.editorApi.redo();"); });
     connect(m_menuBar, &MenuBar::showSettings, this, &MainWindow::onShowSettings);
 
     // === 工具栏信号 ===
@@ -196,6 +202,10 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
             [this](const QJsonArray &headings, int /*tabId*/) {
                 m_sideBar->outlineTree()->updateHeadings(headings);
             });
+
+    // 连接格式状态同步 → 工具栏
+    connect(bridge, &EditorBridge::formatStateChanged, this,
+            &MainWindow::onFormatChanged);
 }
 
 void MainWindow::onTabChanged(int tabId)
@@ -311,13 +321,74 @@ void MainWindow::onFileDoubleClicked(const QString &path)
     file.close();
 
     EditorTab *tab = m_tabWidget->openFileTab(path, content);
-    Q_UNUSED(tab)
+    tab->webView()->setProperty("filePath", path);
     m_statusBar->updateFilePath(path);
 }
 
 void MainWindow::onNewFile()
 {
     m_tabWidget->openNewTab();
+}
+
+void MainWindow::onSaveFile()
+{
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    if (!tab) return;
+
+    QString filePath = tab->webView()->property("filePath").toString();
+    if (filePath.isEmpty() || !QFile::exists(filePath)) {
+        onSaveFileAs();
+        return;
+    }
+    // 异步获取 JS 内容，然后写入
+    tab->webView()->page()->runJavaScript(
+        "window.editorApi.getContent();",
+        [this, tab, filePath](const QVariant &result) {
+            QString content = result.toString();
+            if (m_fileManager->writeFile(filePath, content)) {
+                m_statusBar->showMessage("已保存", 2000);
+                int idx = m_tabWidget->indexOf(tab);
+                if (idx >= 0) {
+                    m_tabWidget->markTabSaved(idx, filePath);
+                }
+            } else {
+                m_statusBar->showMessage("保存失败", 3000);
+            }
+        }
+    );
+}
+
+void MainWindow::onSaveFileAs()
+{
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    if (!tab) return;
+
+    QString path = QFileDialog::getSaveFileName(this, "另存为", "untitled.md",
+                                                 "Markdown 文件 (*.md *.markdown)");
+    if (path.isEmpty()) return;
+
+    tab->webView()->page()->runJavaScript(
+        "window.editorApi.getContent();",
+        [this, tab, path](const QVariant &result) {
+            QString content = result.toString();
+            if (m_fileManager->writeFile(path, content)) {
+                m_statusBar->showMessage("已保存", 2000);
+                tab->webView()->setProperty("filePath", path);
+                int idx = m_tabWidget->indexOf(tab);
+                if (idx >= 0) {
+                    m_tabWidget->markTabSaved(idx, path);
+                    m_tabWidget->setTabDirty(idx, false);
+                }
+            } else {
+                m_statusBar->showMessage("保存失败", 3000);
+            }
+        }
+    );
+}
+
+void MainWindow::onFormatChanged(const QJsonObject &format, int /*tabId*/)
+{
+    m_toolBar->updateFormatState(format);
 }
 
 void MainWindow::onShowSettings()

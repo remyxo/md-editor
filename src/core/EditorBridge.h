@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QJsonArray>
+#include <QJsonObject>
 
 class EditorBridge : public QObject {
     Q_OBJECT
@@ -15,12 +16,14 @@ public slots:
     void cursorChanged(int line, int col);
     void contentChanged(bool dirty);
     void headingsChanged(const QString &json);
+    void formatChanged(const QString &json);
 
 signals:
     // 通知 C++ UI 组件
     void cursorPositionChanged(int line, int col, int tabId);
     void dirtyStateChanged(bool dirty, int tabId);
     void headingsUpdated(const QJsonArray &headings, int tabId);
+    void formatStateChanged(const QJsonObject &format, int tabId);
 
 private:
     int m_tabId;

@@ -1,9 +1,21 @@
 #include "ToolBar.h"
 #include <QAction>
 #include <QLabel>
+#include <QJsonObject>
 
 ToolBar::ToolBar(QWidget *parent)
     : QToolBar(parent)
+    , m_headingCombo(nullptr)
+    , m_boldAction(nullptr)
+    , m_italicAction(nullptr)
+    , m_strikeAction(nullptr)
+    , m_codeAction(nullptr)
+    , m_underlineAction(nullptr)
+    , m_highlightAction(nullptr)
+    , m_bulletListAction(nullptr)
+    , m_orderedListAction(nullptr)
+    , m_taskListAction(nullptr)
+    , m_blockquoteAction(nullptr)
 {
     setObjectName("mainToolBar");
     setMovable(false);
@@ -33,62 +45,71 @@ void ToolBar::setupUi()
 
     addSeparator();
 
-    // 文本格式按钮
-    QAction *boldAction = addAction("B");
-    boldAction->setToolTip("加粗 (Ctrl+B)");
-    boldAction->setCheckable(true);
-    QFont boldFont = boldAction->font();
+    // 文本格式按钮 — 存储为成员，设为 checkable
+    m_boldAction = addAction("B");
+    m_boldAction->setToolTip("加粗 (Ctrl+B)");
+    m_boldAction->setCheckable(true);
+    QFont boldFont = m_boldAction->font();
     boldFont.setBold(true);
-    boldAction->setFont(boldFont);
-    connect(boldAction, &QAction::triggered, this, &ToolBar::boldClicked);
+    m_boldAction->setFont(boldFont);
+    connect(m_boldAction, &QAction::triggered, this, &ToolBar::boldClicked);
 
-    QAction *italicAction = addAction("I");
-    italicAction->setToolTip("斜体 (Ctrl+I)");
-    QFont italicFont = italicAction->font();
+    m_italicAction = addAction("I");
+    m_italicAction->setToolTip("斜体 (Ctrl+I)");
+    m_italicAction->setCheckable(true);
+    QFont italicFont = m_italicAction->font();
     italicFont.setItalic(true);
-    italicAction->setFont(italicFont);
-    connect(italicAction, &QAction::triggered, this, &ToolBar::italicClicked);
+    m_italicAction->setFont(italicFont);
+    connect(m_italicAction, &QAction::triggered, this, &ToolBar::italicClicked);
 
-    QAction *strikeAction = addAction("S");
-    strikeAction->setToolTip("删除线");
-    QFont strikeFont = strikeAction->font();
+    m_strikeAction = addAction("S");
+    m_strikeAction->setToolTip("删除线");
+    m_strikeAction->setCheckable(true);
+    QFont strikeFont = m_strikeAction->font();
     strikeFont.setStrikeOut(true);
-    strikeAction->setFont(strikeFont);
-    connect(strikeAction, &QAction::triggered, this, &ToolBar::strikethroughClicked);
+    m_strikeAction->setFont(strikeFont);
+    connect(m_strikeAction, &QAction::triggered, this, &ToolBar::strikethroughClicked);
 
-    QAction *codeAction = addAction("<>");
-    codeAction->setToolTip("行内代码");
-    connect(codeAction, &QAction::triggered, this, &ToolBar::codeClicked);
+    m_codeAction = addAction("<>");
+    m_codeAction->setToolTip("行内代码");
+    m_codeAction->setCheckable(true);
+    connect(m_codeAction, &QAction::triggered, this, &ToolBar::codeClicked);
 
-    QAction *underlineAction = addAction("U");
-    underlineAction->setToolTip("下划线");
-    QFont ulFont = underlineAction->font();
+    m_underlineAction = addAction("U");
+    m_underlineAction->setToolTip("下划线");
+    m_underlineAction->setCheckable(true);
+    QFont ulFont = m_underlineAction->font();
     ulFont.setUnderline(true);
-    underlineAction->setFont(ulFont);
-    connect(underlineAction, &QAction::triggered, this, &ToolBar::underlineClicked);
+    m_underlineAction->setFont(ulFont);
+    connect(m_underlineAction, &QAction::triggered, this, &ToolBar::underlineClicked);
 
-    QAction *highlightAction = addAction("马克");
-    highlightAction->setToolTip("高亮");
-    connect(highlightAction, &QAction::triggered, this, &ToolBar::highlightClicked);
+    m_highlightAction = addAction("马克");
+    m_highlightAction->setToolTip("高亮");
+    m_highlightAction->setCheckable(true);
+    connect(m_highlightAction, &QAction::triggered, this, &ToolBar::highlightClicked);
 
     addSeparator();
 
-    // 结构按钮
-    QAction *ulAction = addAction("☰");
-    ulAction->setToolTip("无序列表");
-    connect(ulAction, &QAction::triggered, this, &ToolBar::bulletListClicked);
+    // 结构按钮 — 存储为成员，设为 checkable
+    m_bulletListAction = addAction("☰");
+    m_bulletListAction->setToolTip("无序列表");
+    m_bulletListAction->setCheckable(true);
+    connect(m_bulletListAction, &QAction::triggered, this, &ToolBar::bulletListClicked);
 
-    QAction *olAction = addAction("1.");
-    olAction->setToolTip("有序列表");
-    connect(olAction, &QAction::triggered, this, &ToolBar::orderedListClicked);
+    m_orderedListAction = addAction("1.");
+    m_orderedListAction->setToolTip("有序列表");
+    m_orderedListAction->setCheckable(true);
+    connect(m_orderedListAction, &QAction::triggered, this, &ToolBar::orderedListClicked);
 
-    QAction *taskAction = addAction("☑");
-    taskAction->setToolTip("任务列表");
-    connect(taskAction, &QAction::triggered, this, &ToolBar::taskListClicked);
+    m_taskListAction = addAction("☑");
+    m_taskListAction->setToolTip("任务列表");
+    m_taskListAction->setCheckable(true);
+    connect(m_taskListAction, &QAction::triggered, this, &ToolBar::taskListClicked);
 
-    QAction *quoteAction = addAction("\"");
-    quoteAction->setToolTip("引用");
-    connect(quoteAction, &QAction::triggered, this, &ToolBar::blockquoteClicked);
+    m_blockquoteAction = addAction("\"");
+    m_blockquoteAction->setToolTip("引用");
+    m_blockquoteAction->setCheckable(true);
+    connect(m_blockquoteAction, &QAction::triggered, this, &ToolBar::blockquoteClicked);
 
     addSeparator();
 
@@ -122,4 +143,31 @@ void ToolBar::setupUi()
     QAction *pdfAction = addAction("📄");
     pdfAction->setToolTip("导出 PDF");
     connect(pdfAction, &QAction::triggered, this, &ToolBar::pdfExportClicked);
+}
+
+void ToolBar::updateFormatState(const QJsonObject &f)
+{
+    // 标题下拉
+    if (f.contains("heading")) {
+        int level = f["heading"].toInt();
+        int idx = m_headingCombo->findData(level);
+        if (idx >= 0) {
+            m_headingCombo->blockSignals(true);
+            m_headingCombo->setCurrentIndex(idx);
+            m_headingCombo->blockSignals(false);
+        }
+    }
+    // 文本格式 — 切换 checked 状态（不触发信号）
+#define TOGGLE_CHECK(act, key) if (f.contains(key)) { act->blockSignals(true); act->setChecked(f[key].toBool()); act->blockSignals(false); }
+    TOGGLE_CHECK(m_boldAction, "bold");
+    TOGGLE_CHECK(m_italicAction, "italic");
+    TOGGLE_CHECK(m_strikeAction, "strike");
+    TOGGLE_CHECK(m_codeAction, "code");
+    TOGGLE_CHECK(m_underlineAction, "underline");
+    TOGGLE_CHECK(m_highlightAction, "highlight");
+    TOGGLE_CHECK(m_bulletListAction, "bulletList");
+    TOGGLE_CHECK(m_orderedListAction, "orderedList");
+    TOGGLE_CHECK(m_taskListAction, "taskList");
+    TOGGLE_CHECK(m_blockquoteAction, "blockquote");
+#undef TOGGLE_CHECK
 }

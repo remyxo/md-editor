@@ -32,3 +32,12 @@ void EditorBridge::headingsChanged(const QString &json)
         emit headingsUpdated(doc.array(), m_tabId);
     }
 }
+
+void EditorBridge::formatChanged(const QString &json)
+{
+    QJsonParseError error;
+    QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &error);
+    if (error.error == QJsonParseError::NoError && doc.isObject()) {
+        emit formatStateChanged(doc.object(), m_tabId);
+    }
+}

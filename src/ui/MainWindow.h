@@ -39,6 +39,11 @@ private slots:
     void onOpenFolder();
     void onFileDoubleClicked(const QString &path);
     void onNewFile();
+    void onSaveFile();
+    void onSaveFileAs();
+
+    // 格式同步
+    void onFormatChanged(const QJsonObject &format, int tabId);
 
     // 设置
     void onShowSettings();

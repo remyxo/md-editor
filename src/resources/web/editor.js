@@ -62,8 +62,8 @@ window.editorApi = {
                         }
                     });
                     this.bridge.cursorChanged(line, col);
+                    this.notifyFormat();
                 }
-                // 更新标题结构
                 this.notifyHeadings();
             }.bind(this),
         });
@@ -80,6 +80,37 @@ window.editorApi = {
             }
         });
         this.bridge.headingsChanged(JSON.stringify(headings));
+    },
+
+    notifyFormat: function() {
+        if (!this.editor || !this.bridge) return;
+        var ed = this.editor;
+        var format = {};
+        // 标题级别
+        if (ed.isActive('heading')) {
+            for (var lv = 1; lv <= 6; lv++) {
+                if (ed.isActive('heading', { level: lv })) { format.heading = lv; break; }
+            }
+        } else {
+            format.heading = 0;
+        }
+        // 文本格式
+        format.bold = !!ed.isActive('bold');
+        format.italic = !!ed.isActive('italic');
+        format.strike = !!ed.isActive('strike');
+        format.code = !!ed.isActive('code');
+        format.underline = !!ed.isActive('underline');
+        format.highlight = !!ed.isActive('highlight');
+        // 结构
+        format.bulletList = !!ed.isActive('bulletList');
+        format.orderedList = !!ed.isActive('orderedList');
+        format.taskList = !!ed.isActive('taskList');
+        format.blockquote = !!ed.isActive('blockquote');
+        // 链接和表格
+        format.link = !!ed.isActive('link');
+        format.table = !!ed.isActive('table');
+
+        this.bridge.formatChanged(JSON.stringify(format));
     },
 
     // C++ 侧调用的命令
