@@ -7,22 +7,5 @@
         <file>web/editor.js</file>
         <file>web/qwebchannel.js</file>
         <file>web/tiptap-all.js</file>
-        <file>web/tiptap-core.js</file>
-        <file>web/tiptap-starter-kit.js</file>
-        <file>web/tiptap-extension-table.js</file>
-        <file>web/tiptap-extension-task-list.js</file>
-        <file>web/tiptap-extension-task-item.js</file>
-        <file>web/tiptap-extension-highlight.js</file>
-        <file>web/tiptap-extension-image.js</file>
-        <file>web/tiptap-extension-link.js</file>
-        <file>web/tiptap-extension-placeholder.js</file>
-        <file>web/tiptap-extension-underline.js</file>
-        <file>web/tiptap-extension-code-block-lowlight.js</file>
-        <file>web/prosemirror-state.js</file>
-        <file>web/prosemirror-view.js</file>
-        <file>web/prosemirror-model.js</file>
-        <file>web/prosemirror-transform.js</file>
-        <file>web/lowlight.js</file>
-        <file>web/highlight.min.js</file>
     </qresource>
 </RCC>
