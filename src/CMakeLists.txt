@@ -5,6 +5,7 @@ set(SOURCES
     core/EditorBridge.cpp
     ui/EditorTab.cpp
     ui/TabWidget.cpp
+    ui/ToolBar.cpp
 )
 
 set(HEADERS
@@ -13,6 +14,7 @@ set(HEADERS
     core/EditorBridge.h
     ui/EditorTab.h
     ui/TabWidget.h
+    ui/ToolBar.h
 )
 
 qt_add_resources(RESOURCES resources/app.qrc)
