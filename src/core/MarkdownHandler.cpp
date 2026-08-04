@@ -125,7 +125,59 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
     }
 
-    // 2) 行内代码 <span ...monospace...>text</span> → 占位符
+    // 2) 引用 → > 前缀
+    {
+        int n = 0;
+        // QTextDocument 样式: <p margin-left:40px...>text</p>
+        QRegularExpression bqRe(
+            R"(<p[^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*>(.*?)</p>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        int offset = 0;
+        while (true) {
+            auto m = bqRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString text = m.captured(1);
+            text.remove(QRegularExpression("<[^>]*>"));
+            text = text.trimmed();
+            QStringList lines = text.split('\n');
+            QString quoted;
+            for (const QString &l : lines)
+                quoted += "> " + l.trimmed() + "\n";
+            quoted = quoted.trimmed();
+            QString ph = QString("\x03BQ%1\x03").arg(n++);
+            placeholders << ph;
+            backups << quoted;
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+        // <blockquote> 标签（TipTap 编辑器格式）
+        QRegularExpression bqTagRe(
+            R"(<blockquote[^>]*>(.*?)</blockquote>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        offset = 0;
+        while (true) {
+            auto m = bqTagRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString inner = m.captured(1);
+            inner.remove(QRegularExpression("<[^>]*>"));
+            inner = inner.trimmed();
+            QStringList lines = inner.split('\n');
+            QString quoted;
+            for (const QString &l : lines) {
+                QString trimmed = l.trimmed();
+                if (!trimmed.isEmpty())
+                    quoted += "> " + trimmed + "\n";
+            }
+            quoted = quoted.trimmed();
+            QString ph = QString("\x03BQ%1\x03").arg(n++);
+            placeholders << ph;
+            backups << quoted;
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
+
+    // 3) 行内代码 <span ...monospace...>text</span> → 占位符
     {
         QRegularExpression re(
             R"(<span[^>]*font-family:\s*'monospace'[^>]*>(.*?)</span>)",
