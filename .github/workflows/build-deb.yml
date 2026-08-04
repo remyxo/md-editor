@@ -7,9 +7,12 @@ on:
   pull_request:
     branches: [master, main]
 
+permissions:
+  contents: write
+
 jobs:
   build:
-    runs-on: ubuntu-24.04  # 接近 Debian 13 (Trixie) 的环境
+    runs-on: ubuntu-24.04
 
     steps:
     - name: 检出代码
