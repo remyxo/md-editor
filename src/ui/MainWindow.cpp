@@ -222,7 +222,9 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
 void MainWindow::onTabChanged(int tabId)
 {
     Q_UNUSED(tabId)
-    // 更新当前标签页关联的状态栏和大纲
+    // 切换标签时重置表格状态
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    if (tab) tab->setInTable(false);
 }
 
 EditorBridge *MainWindow::currentBridge() const
@@ -413,6 +415,11 @@ void MainWindow::onSaveFileAs()
 void MainWindow::onFormatChanged(const QJsonObject &format, int /*tabId*/)
 {
     m_toolBar->updateFormatState(format);
+    // 同步表格内状态到当前标签的右键菜单
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    if (tab && format.contains("table")) {
+        tab->setInTable(format["table"].toBool());
+    }
 }
 
 void MainWindow::onShowSettings()

@@ -12,12 +12,14 @@ class EditorWebView : public QWebEngineView {
     Q_OBJECT
 public:
     explicit EditorWebView(QWidget *parent = nullptr);
+    void setInTable(bool inTable);
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
     QMenu *m_contextMenu;
+    bool m_inTable;
     void setupContextMenu();
 };
 
@@ -32,6 +34,7 @@ public:
     void loadFile(const QString &path, const QString &content);
     void setEditorTheme(const QString &theme);
     void setEditorFont(const QString &family, int size);
+    void setInTable(bool inTable);
     void runJsCommand(const QString &js);
 
 signals:
