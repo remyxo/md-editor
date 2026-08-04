@@ -54,9 +54,30 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     doc.setMarkdown(processed);
     QString html = doc.toHtml();
 
-    // 后处理：BRMARKER → <br>（setMarkdown 在标记后插入了空格，一并去除）
+    // 后处理 1: BRMARKER → <br>
     html.replace(MARKER + " ", "<br>");
     html.replace(MARKER, "<br>");
+
+    // 后处理 2: QTextDocument 内联样式 → 语义标签
+    //    引用: <p margin-left:40px>... → <blockquote><p>...</p></blockquote>
+    {
+        QRegularExpression re(
+            R"(<p([^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*)>(.*?)</p>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        html.replace(re, "<blockquote><p\\1>\\2</p></blockquote>");
+    }
+    //    monospace span → <code>
+    {
+        QRegularExpression re(
+            R"(<span[^>]*font-family:\s*'monospace'[^>]*>(.*?)</span>)");
+        html.replace(re, "<code>\\1</code>");
+    }
+    //    ==highlight== → <mark>（QTextDocument 不识别此语法，== 留存为纯文本）
+    {
+        QRegularExpression re("==([^=\n]+?)==");
+        html.replace(re, "<mark>\\1</mark>");
+    }
+
     return html;
 }
 
