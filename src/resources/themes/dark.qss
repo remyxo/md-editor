@@ -48,16 +48,23 @@ QMenu::separator {
 QToolBar {
     background-color: #2d2d2d;
     border-bottom: 1px solid #3d3d3d;
-    padding: 4px 8px;
-    spacing: 4px;
+    padding: 6px 10px;
+    spacing: 6px;
+}
+
+QToolBar::separator {
+    width: 1px;
+    margin: 4px 6px;
+    background-color: #3d3d3d;
 }
 
 QToolButton {
     border: none;
-    border-radius: 4px;
-    padding: 6px 8px;
+    border-radius: 5px;
+    padding: 7px 10px;
     color: #cccccc;
-    font-size: 14px;
+    font-size: 16px;
+    min-width: 24px;
 }
 
 QToolButton:hover {
@@ -66,6 +73,25 @@ QToolButton:hover {
 
 QToolButton:pressed, QToolButton:checked {
     background-color: #4d4d4d;
+}
+
+/* 文本格式 — 暗色主题彩色 */
+QToolButton#boldAction      { color: #8ab4f8; font-weight: bold; }
+QToolButton#italicAction    { color: #81c995; font-style: italic; }
+QToolButton#strikeAction    { color: #f28b82; }
+QToolButton#codeAction      { color: #fbbc04; }
+QToolButton#underlineAction { color: #c58af9; }
+QToolButton#highlightAction { color: #fdd663; }
+
+/* 插入按钮 */
+QToolButton#linkAction,
+QToolButton#imageAction,
+QToolButton#tableAction,
+QToolButton#hrAction { color: #8ab4f8; }
+
+/* checked 状态：背景高亮，保留各按钮的彩色 */
+QToolButton:checked {
+    background-color: #1a3a5c;
 }
 
 QTreeView {
@@ -145,3 +171,61 @@ QScrollBar::handle:vertical:hover {
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0;
 }
+
+/* 对话框和表单控件 — 暗色 */
+QDialog { background-color: #2d2d2d; }
+QLabel { color: #cccccc; }
+
+QGroupBox {
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    margin-top: 12px;
+    padding-top: 16px;
+    font-size: 13px;
+    color: #cccccc;
+}
+
+QGroupBox::title {
+    left: 12px;
+    padding: 0 6px;
+    color: #cccccc;
+}
+
+QCheckBox { color: #cccccc; spacing: 8px; }
+
+QComboBox, QSpinBox, QFontComboBox {
+    background-color: #3d3d3d;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #cccccc;
+    font-size: 13px;
+}
+
+QComboBox:hover, QSpinBox:hover, QFontComboBox:hover { border-color: #8ab4f8; }
+QComboBox QAbstractItemView {
+    background-color: #3d3d3d;
+    color: #cccccc;
+    selection-background-color: #094771;
+}
+
+QPushButton {
+    background-color: #3d3d3d;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 6px 16px;
+    color: #cccccc;
+    font-size: 13px;
+}
+QPushButton:hover { background-color: #4d4d4d; border-color: #8ab4f8; }
+QPushButton:pressed { background-color: #555; }
+
+QLineEdit {
+    background-color: #3d3d3d;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #cccccc;
+    font-size: 13px;
+}
+QLineEdit:focus { border-color: #8ab4f8; }

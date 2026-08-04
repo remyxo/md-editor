@@ -50,16 +50,23 @@ QMenu::separator {
 QToolBar {
     background-color: #ffffff;
     border-bottom: 1px solid #e0e0e0;
-    padding: 4px 8px;
-    spacing: 4px;
+    padding: 6px 10px;
+    spacing: 6px;
+}
+
+QToolBar::separator {
+    width: 1px;
+    margin: 4px 6px;
+    background-color: #d8d8d8;
 }
 
 QToolButton {
     border: none;
-    border-radius: 4px;
-    padding: 6px 8px;
-    font-size: 14px;
-    color: #333333;
+    border-radius: 5px;
+    padding: 7px 10px;
+    font-size: 16px;
+    color: #444444;
+    min-width: 24px;
 }
 
 QToolButton:hover {
@@ -68,6 +75,31 @@ QToolButton:hover {
 
 QToolButton:pressed, QToolButton:checked {
     background-color: #d0d0d0;
+}
+
+/* 文本格式 — 彩色 */
+QToolButton#boldAction      { color: #1a73e8; font-weight: bold; }
+QToolButton#italicAction    { color: #0d904f; font-style: italic; }
+QToolButton#strikeAction    { color: #d93025; }
+QToolButton#codeAction      { color: #e37400; }
+QToolButton#underlineAction { color: #7b1fa2; }
+QToolButton#highlightAction { color: #f9ab00; }
+
+/* 结构按钮 */
+QToolButton#bulletListAction,
+QToolButton#orderedListAction,
+QToolButton#taskListAction,
+QToolButton#blockquoteAction { color: #5f6368; }
+
+/* 插入按钮 — 蓝色调 */
+QToolButton#linkAction,
+QToolButton#imageAction,
+QToolButton#tableAction,
+QToolButton#hrAction { color: #1967d2; }
+
+/* checked 状态：背景高亮，保留各按钮的彩色 */
+QToolButton:checked {
+    background-color: #cce0f5;
 }
 
 QTreeView {

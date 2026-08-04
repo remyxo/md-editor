@@ -2,6 +2,7 @@
 #include <QAction>
 #include <QLabel>
 #include <QJsonObject>
+#include <QWidget>
 
 ToolBar::ToolBar(QWidget *parent)
     : QToolBar(parent)
@@ -22,19 +23,31 @@ ToolBar::ToolBar(QWidget *parent)
     setupUi();
 }
 
+// 辅助：创建带 objectName 的 action
+static QAction *makeAction(QToolBar *bar, const QString &text,
+                           const QString &objName, const QString &tip)
+{
+    QAction *a = bar->addAction(text);
+    a->setObjectName(objName);
+    a->setToolTip(tip);
+    return a;
+}
+
 void ToolBar::setupUi()
 {
     // 标题下拉选择器
-    addWidget(new QLabel(" 标题 "));
+    QLabel *headingLabel = new QLabel(" 标题 ");
+    headingLabel->setStyleSheet("color: #555; font-size: 15px;");
+    addWidget(headingLabel);
     m_headingCombo = new QComboBox(this);
     m_headingCombo->addItem("正文", 0);
-    m_headingCombo->addItem("标题 1", 1);
-    m_headingCombo->addItem("标题 2", 2);
-    m_headingCombo->addItem("标题 3", 3);
-    m_headingCombo->addItem("标题 4", 4);
-    m_headingCombo->addItem("标题 5", 5);
-    m_headingCombo->addItem("标题 6", 6);
-    m_headingCombo->setFixedWidth(100);
+    m_headingCombo->addItem("H1", 1);
+    m_headingCombo->addItem("H2", 2);
+    m_headingCombo->addItem("H3", 3);
+    m_headingCombo->addItem("H4", 4);
+    m_headingCombo->addItem("H5", 5);
+    m_headingCombo->addItem("H6", 6);
+    m_headingCombo->setFixedWidth(72);
     addWidget(m_headingCombo);
 
     connect(m_headingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -45,104 +58,85 @@ void ToolBar::setupUi()
 
     addSeparator();
 
-    // 文本格式按钮 — 存储为成员，设为 checkable
-    m_boldAction = addAction("B");
-    m_boldAction->setToolTip("加粗 (Ctrl+B)");
+    // === 文本格式按钮 — 彩色 ===
+    m_boldAction = makeAction(this, "𝐁", "boldAction", "加粗 (Ctrl+B)");
     m_boldAction->setCheckable(true);
-    QFont boldFont = m_boldAction->font();
-    boldFont.setBold(true);
-    m_boldAction->setFont(boldFont);
-    connect(m_boldAction, &QAction::triggered, this, &ToolBar::boldClicked);
 
-    m_italicAction = addAction("I");
-    m_italicAction->setToolTip("斜体 (Ctrl+I)");
+    m_italicAction = makeAction(this, "𝑰", "italicAction", "斜体 (Ctrl+I)");
     m_italicAction->setCheckable(true);
-    QFont italicFont = m_italicAction->font();
-    italicFont.setItalic(true);
-    m_italicAction->setFont(italicFont);
-    connect(m_italicAction, &QAction::triggered, this, &ToolBar::italicClicked);
 
-    m_strikeAction = addAction("S");
-    m_strikeAction->setToolTip("删除线");
+    m_strikeAction = makeAction(this, "S̶", "strikeAction", "删除线");
     m_strikeAction->setCheckable(true);
-    QFont strikeFont = m_strikeAction->font();
-    strikeFont.setStrikeOut(true);
-    m_strikeAction->setFont(strikeFont);
-    connect(m_strikeAction, &QAction::triggered, this, &ToolBar::strikethroughClicked);
 
-    m_codeAction = addAction("<>");
-    m_codeAction->setToolTip("行内代码");
+    m_codeAction = makeAction(this, "<>", "codeAction", "行内代码");
     m_codeAction->setCheckable(true);
-    connect(m_codeAction, &QAction::triggered, this, &ToolBar::codeClicked);
 
-    m_underlineAction = addAction("U");
-    m_underlineAction->setToolTip("下划线");
+    m_underlineAction = makeAction(this, "U̲", "underlineAction", "下划线");
     m_underlineAction->setCheckable(true);
-    QFont ulFont = m_underlineAction->font();
-    ulFont.setUnderline(true);
-    m_underlineAction->setFont(ulFont);
-    connect(m_underlineAction, &QAction::triggered, this, &ToolBar::underlineClicked);
 
-    m_highlightAction = addAction("马克");
-    m_highlightAction->setToolTip("高亮");
+    m_highlightAction = makeAction(this, "🖍", "highlightAction", "高亮");
     m_highlightAction->setCheckable(true);
-    connect(m_highlightAction, &QAction::triggered, this, &ToolBar::highlightClicked);
 
     addSeparator();
 
-    // 结构按钮 — 存储为成员，设为 checkable
-    m_bulletListAction = addAction("☰");
-    m_bulletListAction->setToolTip("无序列表");
+    // === 结构按钮 ===
+    m_bulletListAction = makeAction(this, "• ≡", "bulletListAction", "无序列表");
     m_bulletListAction->setCheckable(true);
-    connect(m_bulletListAction, &QAction::triggered, this, &ToolBar::bulletListClicked);
 
-    m_orderedListAction = addAction("1.");
-    m_orderedListAction->setToolTip("有序列表");
+    m_orderedListAction = makeAction(this, "1.", "orderedListAction", "有序列表");
     m_orderedListAction->setCheckable(true);
-    connect(m_orderedListAction, &QAction::triggered, this, &ToolBar::orderedListClicked);
 
-    m_taskListAction = addAction("☑");
-    m_taskListAction->setToolTip("任务列表");
+    m_taskListAction = makeAction(this, "☑", "taskListAction", "任务列表");
     m_taskListAction->setCheckable(true);
-    connect(m_taskListAction, &QAction::triggered, this, &ToolBar::taskListClicked);
 
-    m_blockquoteAction = addAction("\"");
-    m_blockquoteAction->setToolTip("引用");
+    m_blockquoteAction = makeAction(this, "❝", "blockquoteAction", "引用");
     m_blockquoteAction->setCheckable(true);
+
+    addSeparator();
+
+    // === 插入按钮 ===
+    makeAction(this, "🔗", "linkAction", "插入链接");
+    makeAction(this, "🖼", "imageAction", "插入图片");
+    makeAction(this, "▦", "tableAction", "插入表格");
+    makeAction(this, "—", "hrAction", "分割线");
+
+    addSeparator();
+
+    // === 视图按钮 ===
+    makeAction(this, "<>", "sourceAction", "切换源码模式");
+
+    addSeparator();
+
+    // === 导出按钮 ===
+    makeAction(this, "📄", "pdfAction", "导出 PDF");
+
+    // 连接所有 action 信号
+    connect(m_boldAction, &QAction::triggered, this, &ToolBar::boldClicked);
+    connect(m_italicAction, &QAction::triggered, this, &ToolBar::italicClicked);
+    connect(m_strikeAction, &QAction::triggered, this, &ToolBar::strikethroughClicked);
+    connect(m_codeAction, &QAction::triggered, this, &ToolBar::codeClicked);
+    connect(m_underlineAction, &QAction::triggered, this, &ToolBar::underlineClicked);
+    connect(m_highlightAction, &QAction::triggered, this, &ToolBar::highlightClicked);
+    connect(m_bulletListAction, &QAction::triggered, this, &ToolBar::bulletListClicked);
+    connect(m_orderedListAction, &QAction::triggered, this, &ToolBar::orderedListClicked);
+    connect(m_taskListAction, &QAction::triggered, this, &ToolBar::taskListClicked);
     connect(m_blockquoteAction, &QAction::triggered, this, &ToolBar::blockquoteClicked);
 
-    addSeparator();
-
-    // 插入按钮
-    QAction *linkAction = addAction("🔗");
-    linkAction->setToolTip("插入链接");
-    connect(linkAction, &QAction::triggered, this, &ToolBar::linkClicked);
-
-    QAction *imageAction = addAction("🖼");
-    imageAction->setToolTip("插入图片");
-    connect(imageAction, &QAction::triggered, this, &ToolBar::imageClicked);
-
-    QAction *tableAction = addAction("⊞");
-    tableAction->setToolTip("插入表格");
-    connect(tableAction, &QAction::triggered, this, &ToolBar::tableClicked);
-
-    QAction *hrAction = addAction("—");
-    hrAction->setToolTip("分割线");
-    connect(hrAction, &QAction::triggered, this, &ToolBar::horizontalRuleClicked);
-
-    addSeparator();
-
-    // 视图按钮
-    QAction *sourceAction = addAction("<>");
-    sourceAction->setToolTip("切换源码模式");
-    connect(sourceAction, &QAction::triggered, this, &ToolBar::sourceToggleClicked);
-
-    addSeparator();
-
-    // 导出按钮
-    QAction *pdfAction = addAction("📄");
-    pdfAction->setToolTip("导出 PDF");
-    connect(pdfAction, &QAction::triggered, this, &ToolBar::pdfExportClicked);
+    // 插入/视图/导出按钮通过 findChild 连接（或直接在 makeAction 后连接）
+    for (QAction *a : findChildren<QAction *>()) {
+        if (a->objectName() == "linkAction")
+            connect(a, &QAction::triggered, this, &ToolBar::linkClicked);
+        else if (a->objectName() == "imageAction")
+            connect(a, &QAction::triggered, this, &ToolBar::imageClicked);
+        else if (a->objectName() == "tableAction")
+            connect(a, &QAction::triggered, this, &ToolBar::tableClicked);
+        else if (a->objectName() == "hrAction")
+            connect(a, &QAction::triggered, this, &ToolBar::horizontalRuleClicked);
+        else if (a->objectName() == "sourceAction")
+            connect(a, &QAction::triggered, this, &ToolBar::sourceToggleClicked);
+        else if (a->objectName() == "pdfAction")
+            connect(a, &QAction::triggered, this, &ToolBar::pdfExportClicked);
+    }
 }
 
 void ToolBar::updateFormatState(const QJsonObject &f)
