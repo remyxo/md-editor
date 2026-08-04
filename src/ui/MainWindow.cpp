@@ -11,6 +11,7 @@
 #include "SettingsDialog.h"
 #include "../core/EditorBridge.h"
 #include "../core/FileManager.h"
+#include "../core/MarkdownHandler.h"
 #include "../app/Application.h"
 #include "../app/ThemeManager.h"
 
@@ -340,12 +341,13 @@ void MainWindow::onSaveFile()
         onSaveFileAs();
         return;
     }
-    // 异步获取 JS 内容，然后写入
+    // 异步获取 JS HTML 内容 → 转 Markdown → 写入
     tab->webView()->page()->runJavaScript(
         "window.editorApi.getContent();",
         [this, tab, filePath](const QVariant &result) {
-            QString content = result.toString();
-            if (m_fileManager->writeFile(filePath, content)) {
+            QString html = result.toString();
+            QString md = MarkdownHandler::fromHtml(html);
+            if (m_fileManager->writeFile(filePath, md)) {
                 m_statusBar->showMessage("已保存", 2000);
                 int idx = m_tabWidget->indexOf(tab);
                 if (idx >= 0) {
@@ -370,8 +372,9 @@ void MainWindow::onSaveFileAs()
     tab->webView()->page()->runJavaScript(
         "window.editorApi.getContent();",
         [this, tab, path](const QVariant &result) {
-            QString content = result.toString();
-            if (m_fileManager->writeFile(path, content)) {
+            QString html = result.toString();
+            QString md = MarkdownHandler::fromHtml(html);
+            if (m_fileManager->writeFile(path, md)) {
                 m_statusBar->showMessage("已保存", 2000);
                 tab->webView()->setProperty("filePath", path);
                 int idx = m_tabWidget->indexOf(tab);

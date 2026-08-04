@@ -104,14 +104,17 @@ QTabBar::tab {
     padding: 6px 16px;
     margin: 2px 2px;
     font-size: 13px;
+    color: #333333;
 }
 
 QTabBar::tab:selected {
     background-color: #ffffff;
+    color: #111111;
 }
 
 QTabBar::tab:hover:!selected {
     background-color: #dcdcdc;
+    color: #333333;
 }
 
 QStatusBar {

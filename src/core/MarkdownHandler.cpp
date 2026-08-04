@@ -23,3 +23,10 @@ QString MarkdownHandler::extractTitle(const QString &markdown)
     QRegularExpressionMatch m = re.match(markdown);
     return m.hasMatch() ? m.captured(1).trimmed() : QString();
 }
+
+QString MarkdownHandler::fromHtml(const QString &html)
+{
+    QTextDocument doc;
+    doc.setHtml(html);
+    return doc.toMarkdown();
+}
