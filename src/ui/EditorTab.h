@@ -4,7 +4,22 @@
 #include <QWidget>
 #include <QWebEngineView>
 #include <QWebChannel>
+#include <QMenu>
 #include "../core/EditorBridge.h"
+
+// 自定义 WebEngineView，重写上下文菜单为中文
+class EditorWebView : public QWebEngineView {
+    Q_OBJECT
+public:
+    explicit EditorWebView(QWidget *parent = nullptr);
+
+protected:
+    void contextMenuEvent(QContextMenuEvent *event) override;
+
+private:
+    QMenu *m_contextMenu;
+    void setupContextMenu();
+};
 
 class EditorTab : public QWidget {
     Q_OBJECT
@@ -28,7 +43,7 @@ private slots:
 private:
     void setupWebChannel();
     int m_tabId;
-    QWebEngineView *m_webView;
+    EditorWebView *m_webView;
     QWebChannel *m_webChannel;
     EditorBridge *m_bridge;
     bool m_pageLoaded;

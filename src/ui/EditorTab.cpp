@@ -4,11 +4,68 @@
 #include <QWebEngineSettings>
 #include <QWebEnginePage>
 #include <QUrl>
+#include <QContextMenuEvent>
+#include <QAction>
+
+// ===== EditorWebView — 中文上下文菜单 =====
+
+EditorWebView::EditorWebView(QWidget *parent)
+    : QWebEngineView(parent), m_contextMenu(nullptr)
+{
+}
+
+void EditorWebView::setupContextMenu()
+{
+    if (m_contextMenu) return;
+    m_contextMenu = new QMenu(this);
+
+    QAction *undoAct = m_contextMenu->addAction("撤销(&U)");
+    connect(undoAct, &QAction::triggered, [this]() {
+        page()->triggerAction(QWebEnginePage::Undo);
+    });
+
+    QAction *redoAct = m_contextMenu->addAction("重做(&R)");
+    connect(redoAct, &QAction::triggered, [this]() {
+        page()->triggerAction(QWebEnginePage::Redo);
+    });
+
+    m_contextMenu->addSeparator();
+
+    QAction *cutAct = m_contextMenu->addAction("剪切(&X)");
+    connect(cutAct, &QAction::triggered, [this]() {
+        page()->triggerAction(QWebEnginePage::Cut);
+    });
+
+    QAction *copyAct = m_contextMenu->addAction("复制(&C)");
+    connect(copyAct, &QAction::triggered, [this]() {
+        page()->triggerAction(QWebEnginePage::Copy);
+    });
+
+    QAction *pasteAct = m_contextMenu->addAction("粘贴(&V)");
+    connect(pasteAct, &QAction::triggered, [this]() {
+        page()->triggerAction(QWebEnginePage::Paste);
+    });
+
+    m_contextMenu->addSeparator();
+
+    QAction *selectAllAct = m_contextMenu->addAction("全选(&A)");
+    connect(selectAllAct, &QAction::triggered, [this]() {
+        page()->triggerAction(QWebEnginePage::SelectAll);
+    });
+}
+
+void EditorWebView::contextMenuEvent(QContextMenuEvent *event)
+{
+    setupContextMenu();
+    m_contextMenu->popup(event->globalPos());
+}
+
+// ===== EditorTab =====
 
 EditorTab::EditorTab(int tabId, QWidget *parent)
     : QWidget(parent)
     , m_tabId(tabId)
-    , m_webView(new QWebEngineView(this))
+    , m_webView(new EditorWebView(this))
     , m_webChannel(new QWebChannel(this))
     , m_bridge(new EditorBridge(tabId, this))
     , m_pageLoaded(false)
