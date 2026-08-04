@@ -1,4 +1,0 @@
-# Hashes of file build rules.
-57182fa2e467851a441e94b79966441b src/CMakeFiles/md-editor_autogen
-326e3ddadba2626a31b342054e55610b src/md-editor_autogen/timestamp
-125f2d2a75e6dc3bd8ecf9b405b1fe89 src/qrc_app.cpp
