@@ -24,6 +24,7 @@ public:
 signals:
     void currentTabChanged(int tabId);
     void editorBridgeCreated(EditorBridge *bridge);
+    void tabSaveRequested(int index);
 
 private slots:
     void onTabCloseRequested(int index);

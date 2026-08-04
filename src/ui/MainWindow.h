@@ -47,6 +47,7 @@ private slots:
 
     // 设置
     void onShowSettings();
+    void applyEditorFont();
 
 protected:
     void closeEvent(QCloseEvent *event) override;

@@ -53,6 +53,13 @@ void EditorTab::setEditorTheme(const QString &theme)
     }
 }
 
+void EditorTab::setEditorFont(const QString &family, int size)
+{
+    if (m_pageLoaded) {
+        runJsCommand(QString("window.editorApi.setFont('%1', %2);").arg(family).arg(size));
+    }
+}
+
 void EditorTab::runJsCommand(const QString &js)
 {
     m_webView->page()->runJavaScript(js);

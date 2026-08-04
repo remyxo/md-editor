@@ -89,7 +89,10 @@ void TabWidget::onTabCloseRequested(int index)
             QString("文件 '%1' 有未保存的更改。\n是否保存？").arg(tabText(index)),
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         if (r == QMessageBox::Cancel) return;
-        // Save handling will be added in Task 11 (FileManager)
+        if (r == QMessageBox::Save) {
+            emit tabSaveRequested(index);
+            return; // 保存由 MainWindow 异步处理，本次不关闭
+        }
     }
     m_tabs.remove(tab->bridge()->tabId());
     removeTab(index);

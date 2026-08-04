@@ -22,6 +22,7 @@
 #include <QJsonObject>
 #include <QWebEnginePage>
 #include <QTextStream>
+#include <QSettings>
 #include <QShortcut>
 #include <QKeySequence>
 #include <QSettings>
@@ -173,6 +174,8 @@ void MainWindow::connectSignals()
             this, &MainWindow::onEditorBridgeCreated);
     connect(m_tabWidget, &TabWidget::currentTabChanged,
             this, &MainWindow::onTabChanged);
+    connect(m_tabWidget, &TabWidget::tabSaveRequested,
+            this, [this](int) { onSaveFile(); });
 
     // === 文件树 ===
     connect(m_sideBar->fileTree(), &FileTree::fileDoubleClicked,
@@ -207,6 +210,13 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
     // 连接格式状态同步 → 工具栏
     connect(bridge, &EditorBridge::formatStateChanged, this,
             &MainWindow::onFormatChanged);
+
+    // 页面加载完成后应用字体设置
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    if (tab) {
+        connect(tab, &EditorTab::pageLoadFinished, this,
+                [this](bool ok) { if (ok) applyEditorFont(); });
+    }
 }
 
 void MainWindow::onTabChanged(int tabId)
@@ -398,12 +408,41 @@ void MainWindow::onShowSettings()
 {
     SettingsDialog dialog(m_fileManager, this);
     dialog.exec();
+    applyEditorFont();
+}
+
+void MainWindow::applyEditorFont()
+{
+    QSettings settings("md-editor", "md-editor");
+    QString family = settings.value("editor/font", "Sans Serif").toString();
+    int size = settings.value("editor/fontSize", 16).toInt();
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        EditorTab *tab = m_tabWidget->tabAt(i);
+        if (tab) tab->setEditorFont(family, size);
+    }
 }
 
 // === 会话保存与恢复 ===
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // 检查所有标签页是否有未保存的更改
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        QString title = m_tabWidget->tabText(i);
+        if (title.startsWith("● ")) {
+            auto r = QMessageBox::question(this, "未保存的更改",
+                QString("'%1' 有未保存的更改。\n\n是否保存后关闭？").arg(title),
+                QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+            if (r == QMessageBox::Cancel) {
+                event->ignore();
+                return;
+            }
+            if (r == QMessageBox::Save) {
+                m_tabWidget->setCurrentIndex(i);
+                onSaveFile(); // 保存当前文件
+            }
+        }
+    }
     saveSession();
     QMainWindow::closeEvent(event);
 }

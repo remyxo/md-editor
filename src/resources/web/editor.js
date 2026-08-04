@@ -152,6 +152,10 @@ window.editorApi = {
         if (theme === 'dark') document.body.classList.add('dark');
         else document.body.classList.remove('dark');
     },
+    setFont: function(family, size) {
+        if (family) document.body.style.fontFamily = family;
+        if (size) document.body.style.fontSize = size + 'px';
+    },
 };
 
 // DOM 加载完成后初始化
