@@ -34,6 +34,7 @@ signals:
     void switchTheme(const QString &name);
 
     void showAbout();
+    void showSettings();
 
 private:
     void setupUi();

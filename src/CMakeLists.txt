@@ -15,6 +15,7 @@ set(SOURCES
     ui/SideBar.cpp
     ui/StatusBar.cpp
     ui/SearchBar.cpp
+    ui/SettingsDialog.cpp
     ui/MainWindow.cpp
 )
 
@@ -34,6 +35,7 @@ set(HEADERS
     ui/SideBar.h
     ui/StatusBar.h
     ui/SearchBar.h
+    ui/SettingsDialog.h
     ui/MainWindow.h
 )
 

@@ -11,6 +11,7 @@ class TabWidget;
 class StatusBar;
 class SearchBar;
 class EditorBridge;
+class FileManager;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -38,6 +39,9 @@ private slots:
     void onFileDoubleClicked(const QString &path);
     void onNewFile();
 
+    // 设置
+    void onShowSettings();
+
 private:
     void setupUi();
     void connectSignals();
@@ -50,6 +54,7 @@ private:
     TabWidget *m_tabWidget;
     StatusBar *m_statusBar;
     SearchBar *m_searchBar;
+    FileManager *m_fileManager;
     QSplitter *m_splitter;
 };
 

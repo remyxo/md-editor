@@ -110,6 +110,11 @@ void MenuBar::setupUi()
     // === 帮助菜单 ===
     m_helpMenu = addMenu("帮助(&H)");
 
+    QAction *settingsAct = m_helpMenu->addAction("设置...");
+    connect(settingsAct, &QAction::triggered, this, &MenuBar::showSettings);
+
+    m_helpMenu->addSeparator();
+
     QAction *aboutAct = m_helpMenu->addAction("关于...");
     connect(aboutAct, &QAction::triggered, this, &MenuBar::showAbout);
 }

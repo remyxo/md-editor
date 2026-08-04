@@ -8,7 +8,9 @@
 #include "EditorTab.h"
 #include "StatusBar.h"
 #include "SearchBar.h"
+#include "SettingsDialog.h"
 #include "../core/EditorBridge.h"
+#include "../core/FileManager.h"
 #include "../app/Application.h"
 #include "../app/ThemeManager.h"
 
@@ -23,6 +25,8 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
+    m_fileManager = new FileManager(this);
+
     setupUi();
     connectSignals();
 
@@ -114,6 +118,7 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::insertImage, this, &MainWindow::onInsertImage);
     connect(m_menuBar, &MenuBar::insertTable, this, &MainWindow::onInsertTable);
     connect(m_menuBar, &MenuBar::quit, this, &MainWindow::close);
+    connect(m_menuBar, &MenuBar::showSettings, this, &MainWindow::onShowSettings);
 
     // === 工具栏信号 ===
     connect(m_toolBar, &ToolBar::boldClicked, this, &MainWindow::onBoldClicked);
@@ -309,4 +314,10 @@ void MainWindow::onFileDoubleClicked(const QString &path)
 void MainWindow::onNewFile()
 {
     m_tabWidget->openNewTab();
+}
+
+void MainWindow::onShowSettings()
+{
+    SettingsDialog dialog(m_fileManager, this);
+    dialog.exec();
 }
