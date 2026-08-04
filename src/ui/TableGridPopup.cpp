@@ -36,8 +36,13 @@ void TableGridPopup::paintEvent(QPaintEvent *)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
-    // 背景
+    // 白色背景 + 外边框
     p.fillRect(rect(), QColor(255, 255, 255));
+    p.setPen(QPen(QColor(180, 180, 180), 1));
+    p.drawRect(rect().adjusted(0, 0, -1, -1));
+
+    // 顶部阴影效果
+    p.fillRect(QRect(0, 0, width(), 1), QColor(200, 200, 200));
 
     QColor borderColor(190, 190, 190);
     QColor fillColor(0x00, 0x78, 0xd4, 70);
@@ -90,7 +95,7 @@ void TableGridPopup::mousePressEvent(QMouseEvent *event)
 
 void TableGridPopup::mouseMoveEvent(QMouseEvent *event)
 {
-    if (!m_dragging) return;
+    // 无论是否按下，鼠标移动时即时高亮
     int row, col;
     cellFromPos(event->pos(), row, col);
     if (row != m_hoverRow || col != m_hoverCol) {
