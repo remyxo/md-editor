@@ -7,6 +7,9 @@ set(SOURCES
     ui/TabWidget.cpp
     ui/ToolBar.cpp
     ui/MenuBar.cpp
+    ui/FileTree.cpp
+    ui/OutlineTree.cpp
+    ui/SideBar.cpp
 )
 
 set(HEADERS
@@ -17,6 +20,9 @@ set(HEADERS
     ui/TabWidget.h
     ui/ToolBar.h
     ui/MenuBar.h
+    ui/FileTree.h
+    ui/OutlineTree.h
+    ui/SideBar.h
 )
 
 qt_add_resources(RESOURCES resources/app.qrc)
