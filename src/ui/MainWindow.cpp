@@ -415,7 +415,7 @@ void MainWindow::applyEditorFont()
 {
     QSettings settings("md-editor", "md-editor");
     QString family = settings.value("editor/font", "Sans Serif").toString();
-    int size = settings.value("editor/fontSize", 16).toInt();
+    int size = settings.value("editor/fontSize", 18).toInt();
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);
         if (tab) tab->setEditorFont(family, size);

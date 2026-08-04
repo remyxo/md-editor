@@ -121,7 +121,7 @@ void SettingsDialog::loadSettings()
         settings.value("session/restore", true).toBool());
     m_fontCombo->setCurrentText(
         settings.value("editor/font", "Sans Serif").toString());
-    m_fontSizeSpin->setValue(settings.value("editor/fontSize", 16).toInt());
+    m_fontSizeSpin->setValue(settings.value("editor/fontSize", 18).toInt());
     m_lineNumbersCheck->setChecked(
         settings.value("editor/lineNumbers", true).toBool());
     m_wordWrapCheck->setChecked(
