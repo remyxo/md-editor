@@ -15,6 +15,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
 
 private:
@@ -23,9 +24,10 @@ private:
     static constexpr int kCellSize = 24;
     static constexpr int kPadding = 8;
 
-    int m_hoverRow;
-    int m_hoverCol;
+    int m_hoverRow, m_hoverCol;
+    bool m_dragging;
 
+    void cellFromPos(const QPoint &pos, int &row, int &col) const;
     QRect cellRect(int row, int col) const;
 };
 
