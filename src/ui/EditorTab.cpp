@@ -4,6 +4,7 @@
 #include <QWebEngineSettings>
 #include <QWebEnginePage>
 #include <QUrl>
+#include <QDebug>
 #include <QContextMenuEvent>
 #include <QAction>
 
@@ -138,12 +139,27 @@ void EditorTab::loadFile(const QString &path, const QString &content)
 {
     Q_UNUSED(path)
     if (m_pageLoaded) {
-        // MD → HTML 转换后送入编辑器，实现 WYSIWYG
-        QString html = MarkdownHandler::toHtml(content);
-        html.replace("\\", "\\\\");
-        html.replace("`", "\\`");
-        html.replace("$", "\\$");
-        QString js = QString("window.editorApi.setContent(`%1`);").arg(html);
+        // MD → HTML 转换
+        QString fullHtml = MarkdownHandler::toHtml(content);
+
+        // 提取 <body> 内容（QTextDocument::toHtml 返回完整 HTML 文档）
+        int bodyStart = fullHtml.indexOf("<body");
+        int bodyEnd = fullHtml.indexOf("</body>");
+        QString html;
+        if (bodyStart >= 0 && bodyEnd > bodyStart) {
+            bodyStart = fullHtml.indexOf('>', bodyStart) + 1;
+            html = fullHtml.mid(bodyStart, bodyEnd - bodyStart).trimmed();
+        } else {
+            html = fullHtml;
+        }
+
+        qDebug() << "[EditorTab] MD→HTML body <br> count:" << html.count("<br");
+
+        QString escaped = html;
+        escaped.replace("\\", "\\\\");
+        escaped.replace("`", "\\`");
+        escaped.replace("$", "\\$");
+        QString js = QString("window.editorApi.setContent(`%1`);").arg(escaped);
         runJsCommand(js);
     }
 }
