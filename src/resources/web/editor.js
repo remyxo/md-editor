@@ -2,6 +2,11 @@
 window.editorApi = {
     editor: null,
     bridge: null,
+    _dirty: false,
+    _loading: false,
+    _notifyDirty: function() {
+        if (this.bridge) this.bridge.contentChanged(!!this._dirty);
+    },
 
     init: function() {
         var TipTap = window.TipTap;
@@ -45,8 +50,11 @@ window.editorApi = {
             element: document.querySelector('#editor'),
             extensions: extensions,
             onUpdate: function(args) {
-                var editor = args.editor;
-                if (this.bridge) this.bridge.contentChanged(!!editor.isDirty);
+                if (this._loading) return;  // setContent 触发的更新忽略
+                if (!this._dirty) {
+                    this._dirty = true;
+                    if (this.bridge) this.bridge.contentChanged(true);
+                }
                 this.notifyHeadings();
             }.bind(this),
             onSelectionUpdate: function(args) {
@@ -115,7 +123,14 @@ window.editorApi = {
 
     // C++ 侧调用的命令
     getContent: function() { return this.editor ? this.editor.getHTML() : ''; },
-    setContent: function(html) { if (this.editor) this.editor.commands.setContent(html); },
+    setContent: function(html) {
+        if (!this.editor) return;
+        this._loading = true;
+        this._dirty = false;
+        this.editor.commands.setContent(html);
+        this._loading = false;
+        if (this.bridge) this.bridge.contentChanged(false);
+    },
     toggleBold: function() { if (this.editor) this.editor.commands.toggleBold(); },
     toggleItalic: function() { if (this.editor) this.editor.commands.toggleItalic(); },
     toggleStrike: function() { if (this.editor) this.editor.commands.toggleStrike(); },
@@ -156,6 +171,10 @@ window.editorApi = {
         if (family) document.body.style.fontFamily = family;
         if (size) document.body.style.fontSize = size + 'px';
     },
+    markClean: function() {
+        this._dirty = false;
+        if (this.bridge) this.bridge.contentChanged(false);
+    },
 };
 
 // DOM 加载完成后初始化
@@ -165,10 +184,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (typeof QWebChannel !== 'undefined') {
         new QWebChannel(qt.webChannelTransport, function(channel) {
             window.editorApi.bridge = channel.objects.bridge;
-            // 桥接就绪后同步初始脏状态
-            if (window.editorApi.editor) {
-                window.editorApi.bridge.contentChanged(!!window.editorApi.editor.isDirty);
-            }
+            // 桥接就绪后同步脏状态
+            window.editorApi._notifyDirty();
         });
     } else {
         console.warn('QWebChannel 未连接：请在浏览器中独立测试时忽略此警告。');

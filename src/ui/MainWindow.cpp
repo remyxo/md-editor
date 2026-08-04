@@ -359,6 +359,7 @@ void MainWindow::onSaveFile()
             QString md = MarkdownHandler::fromHtml(html);
             if (m_fileManager->writeFile(filePath, md)) {
                 m_statusBar->showMessage("已保存", 2000);
+                tab->runJsCommand("window.editorApi.markClean();");
                 int idx = m_tabWidget->indexOf(tab);
                 if (idx >= 0) {
                     m_tabWidget->markTabSaved(idx, filePath);
@@ -386,11 +387,11 @@ void MainWindow::onSaveFileAs()
             QString md = MarkdownHandler::fromHtml(html);
             if (m_fileManager->writeFile(path, md)) {
                 m_statusBar->showMessage("已保存", 2000);
+                tab->runJsCommand("window.editorApi.markClean();");
                 tab->webView()->setProperty("filePath", path);
                 int idx = m_tabWidget->indexOf(tab);
                 if (idx >= 0) {
                     m_tabWidget->markTabSaved(idx, path);
-                    m_tabWidget->setTabDirty(idx, false);
                 }
             } else {
                 m_statusBar->showMessage("保存失败", 3000);
