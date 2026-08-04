@@ -3,6 +3,7 @@ set(SOURCES
     app/Application.cpp
     app/ThemeManager.cpp
     core/EditorBridge.cpp
+    core/FileManager.cpp
     ui/EditorTab.cpp
     ui/TabWidget.cpp
     ui/ToolBar.cpp
@@ -19,6 +20,7 @@ set(HEADERS
     app/Application.h
     app/ThemeManager.h
     core/EditorBridge.h
+    core/FileManager.h
     ui/EditorTab.h
     ui/TabWidget.h
     ui/ToolBar.h
