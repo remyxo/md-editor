@@ -4,6 +4,8 @@ set(SOURCES
     app/ThemeManager.cpp
     core/EditorBridge.cpp
     core/FileManager.cpp
+    core/MarkdownHandler.cpp
+    core/PdfExporter.cpp
     ui/EditorTab.cpp
     ui/TabWidget.cpp
     ui/ToolBar.cpp
@@ -21,6 +23,8 @@ set(HEADERS
     app/ThemeManager.h
     core/EditorBridge.h
     core/FileManager.h
+    core/MarkdownHandler.h
+    core/PdfExporter.h
     ui/EditorTab.h
     ui/TabWidget.h
     ui/ToolBar.h
