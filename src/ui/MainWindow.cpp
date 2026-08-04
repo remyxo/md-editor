@@ -36,10 +36,7 @@ MainWindow::MainWindow(QWidget *parent)
     setupUi();
     connectSignals();
 
-    // 启动时新建一个空白标签页
-    m_tabWidget->openNewTab();
-
-    // 恢复上次会话（在最后调用，确保所有组件已初始化）
+    // 恢复上次会话（无会话时自动新建空白标签页）
     restoreSession();
 }
 
@@ -474,10 +471,12 @@ void MainWindow::saveSession()
 {
     QSettings settings("md-editor", "md-editor");
 
-    // 保存打开的文件列表（未命名标签页保存为空字符串）
+    // 保存打开的文件列表（跳过未命名的空白标签页）
     QStringList openFiles;
     for (int i = 0; i < m_tabWidget->count(); ++i) {
-        openFiles << m_tabWidget->tabToolTip(i);
+        QString path = m_tabWidget->tabToolTip(i);
+        if (!path.isEmpty())
+            openFiles << path;
     }
     settings.setValue("session/openFiles", openFiles);
 
@@ -499,29 +498,22 @@ void MainWindow::restoreSession()
         return;
 
     const QStringList openFiles = settings.value("session/openFiles").toStringList();
-    if (openFiles.isEmpty())
-        return; // 无会话记录，保留启动时的空白标签页
-
-    // 关闭启动时的空白标签页
-    if (m_tabWidget->count() > 0) {
-        EditorTab *tab = m_tabWidget->tabAt(0);
-        m_tabWidget->removeTab(0);
-        if (tab) tab->deleteLater();
+    if (openFiles.isEmpty()) {
+        m_tabWidget->openNewTab();
+        return;
     }
 
-    // 恢复所有标签页
+    // 恢复标签页（跳过未命名的空白标签页）
     for (const QString &path : openFiles) {
         if (path.isEmpty()) {
-            // 未命名标签页
-            m_tabWidget->openNewTab();
+            continue; // 不恢复未命名的空白标签
         } else if (QFile::exists(path)) {
-            // 文件已存在才恢复，避免弹出错误提示
             QString content = m_fileManager->readFile(path);
             m_tabWidget->openFileTab(path, content);
         }
     }
 
-    // 若所有文件都不存在，保留一个空白标签页
+    // 若所有文件都不存在或均为空，创建一个空白标签页
     if (m_tabWidget->count() == 0) {
         m_tabWidget->openNewTab();
     }
