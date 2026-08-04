@@ -6,6 +6,7 @@ set(SOURCES
     ui/EditorTab.cpp
     ui/TabWidget.cpp
     ui/ToolBar.cpp
+    ui/MenuBar.cpp
 )
 
 set(HEADERS
@@ -15,6 +16,7 @@ set(HEADERS
     ui/EditorTab.h
     ui/TabWidget.h
     ui/ToolBar.h
+    ui/MenuBar.h
 )
 
 qt_add_resources(RESOURCES resources/app.qrc)
