@@ -4,3 +4,4 @@ build/
 *.pro.user
 moc_*.cpp
 qrc_*.cpp
+node_modules/
