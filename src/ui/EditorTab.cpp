@@ -4,7 +4,6 @@
 #include <QWebEngineSettings>
 #include <QWebEnginePage>
 #include <QUrl>
-#include <QDebug>
 #include <QContextMenuEvent>
 #include <QAction>
 
@@ -152,8 +151,6 @@ void EditorTab::loadFile(const QString &path, const QString &content)
         } else {
             html = fullHtml;
         }
-
-        qDebug() << "[EditorTab] MD→HTML body <br> count:" << html.count("<br");
 
         QString escaped = html;
         escaped.replace("\\", "\\\\");
