@@ -71,21 +71,17 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 
 ## 环境要求
 
-- **开发环境**：Debian 13，Qt 6.4+ 本地安装于 `/home/daijd/qt6-local/usr`
-- **运行脚本**：`scripts/run-editor.sh` 设置 `LD_LIBRARY_PATH` / `QTWEBENGINEPROCESS_PATH` 等环境变量
+- **开发环境**：Debian 13，Qt6 系统安装 (`apt install qt6-base-dev qt6-webengine-dev qt6-webchannel-dev`)
+- **运行方式**：`./scripts/run-editor.sh` 或直接 `build/src/md-editor`
 - **GitHub Actions**：`ubuntu-24.04`，Qt 6.4.2
 
 ## 构建命令
 
 ```bash
-# 本地开发
 mkdir build && cd build
-cmake .. -DCMAKE_PREFIX_PATH=/home/daijd/qt6-local/usr -DCMAKE_BUILD_TYPE=Debug
+cmake .. -DCMAKE_BUILD_TYPE=Debug
 make -j$(nproc)
 ctest --output-on-failure
-
-# 打包
-cpack -G DEB
 ```
 
 ## 已知问题 & 待完善

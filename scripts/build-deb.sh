@@ -10,7 +10,6 @@ mkdir "$BUILD_DIR"
 cd "$BUILD_DIR"
 
 cmake .. \
-    -DCMAKE_PREFIX_PATH=/home/daijd/qt6-local/usr \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTS=OFF
 
