@@ -74,11 +74,13 @@ QTreeView {
     background-color: #ffffff;
     border: none;
     font-size: 13px;
+    color: #333333;
 }
 
 QTreeView::item {
     padding: 4px 8px;
     border-radius: 4px;
+    color: #333333;
 }
 
 QTreeView::item:selected {
@@ -143,4 +145,115 @@ QScrollBar::handle:vertical:hover {
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0;
+}
+
+/* 对话框和表单控件 */
+QDialog {
+    background-color: #ffffff;
+}
+
+QLabel {
+    color: #333333;
+}
+
+QGroupBox {
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    margin-top: 12px;
+    padding-top: 16px;
+    font-size: 13px;
+    color: #333333;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+    color: #333333;
+}
+
+QCheckBox {
+    color: #333333;
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QComboBox {
+    background-color: #ffffff;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #333333;
+    font-size: 13px;
+    min-width: 80px;
+}
+
+QComboBox:hover {
+    border-color: #0078d4;
+}
+
+QComboBox::drop-down {
+    border: none;
+    padding-right: 6px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    color: #333333;
+    selection-background-color: #0078d4;
+    selection-color: #ffffff;
+}
+
+QSpinBox, QFontComboBox {
+    background-color: #ffffff;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #333333;
+    font-size: 13px;
+}
+
+QSpinBox:hover, QFontComboBox:hover {
+    border-color: #0078d4;
+}
+
+QPushButton {
+    background-color: #f0f0f0;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    padding: 6px 16px;
+    color: #333333;
+    font-size: 13px;
+}
+
+QPushButton:hover {
+    background-color: #e0e0e0;
+    border-color: #0078d4;
+}
+
+QPushButton:pressed {
+    background-color: #d0d0d0;
+}
+
+QLineEdit {
+    background-color: #ffffff;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #333333;
+    font-size: 13px;
+}
+
+QLineEdit:focus {
+    border-color: #0078d4;
+}
+
+QTabWidget QWidget {
+    background-color: #ffffff;
 }
