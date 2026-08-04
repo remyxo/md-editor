@@ -2,6 +2,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPixmap>
 #include <QPushButton>
 
 AboutDialog::AboutDialog(QWidget *parent)
@@ -11,8 +12,14 @@ AboutDialog::AboutDialog(QWidget *parent)
     setFixedSize(400, 260);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setSpacing(12);
-    layout->setContentsMargins(32, 24, 32, 24);
+    layout->setSpacing(8);
+    layout->setContentsMargins(32, 20, 32, 20);
+
+    // 图标
+    QLabel *iconLabel = new QLabel();
+    iconLabel->setPixmap(QPixmap(":/icons/md-editor.svg").scaled(48, 48, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    iconLabel->setAlignment(Qt::AlignCenter);
+    layout->addWidget(iconLabel);
 
     // 应用名称
     QLabel *nameLabel = new QLabel("Markdown Editor");

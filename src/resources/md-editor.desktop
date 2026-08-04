@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Markdown Editor
+Name[zh_CN]=Markdown 编辑器
+Comment=A WYSIWYG Markdown editor based on Qt6
+Comment[zh_CN]=基于 Qt6 的 Markdown 所见即所得编辑器
+Exec=md-editor
+Icon=md-editor
+Categories=Office;WordProcessor;Qt;
+Terminal=false
+StartupNotify=true
+MimeType=text/markdown;

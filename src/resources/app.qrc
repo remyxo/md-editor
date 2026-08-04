@@ -18,6 +18,7 @@
         <file>icons/horizontal-rule.svg</file>
         <file>icons/source-code.svg</file>
         <file>icons/pdf.svg</file>
+        <file>icons/md-editor.svg</file>
         <file>web/editor.html</file>
         <file>web/editor.css</file>
         <file>web/editor.js</file>

@@ -43,7 +43,12 @@ set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "qt6-translations-l10n")
 # 安装到 /usr/local
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr/local")
 
-# 安装规则 — 只安装二进制，不安装脚本
+# 安装规则
 install(TARGETS md-editor RUNTIME DESTINATION bin)
+install(FILES src/resources/icons/md-editor.svg
+    DESTINATION share/icons/hicolor/scalable/apps
+    RENAME md-editor.svg)
+install(FILES src/resources/md-editor.desktop
+    DESTINATION share/applications)
 
 include(CPack)

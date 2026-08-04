@@ -1,0 +1,14 @@
+Architecture: amd64
+Depends: libqt6widgets6 (>= 6.4), libqt6webenginewidgets6 (>= 6.4), libqt6webchannel6 (>= 6.4), libqt6gui6 (>= 6.4), libqt6core6 (>= 6.4), qt6-qpa-plugins
+Description: Markdown WYSIWYG Editor based on Qt6 + TipTap
+ 基于 Qt6 + TipTap 的 Markdown 所见即所得编辑器。
+ 支持标准 Markdown 语法、文件树管理、多标签页、
+ PDF 导出和亮色/暗色主题。
+Maintainer: daijd
+Package: md-editor
+Priority: optional
+Recommends: qt6-translations-l10n
+Section: editors
+Version: 0.1.0
+Installed-Size: 660
+

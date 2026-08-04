@@ -1,0 +1,325 @@
+{
+	"BUILD_DIR" : "/home/daijd/claude-workspace/md-editor/build-deb/src/md-editor_autogen",
+	"CMAKE_BINARY_DIR" : "/home/daijd/claude-workspace/md-editor/build-deb",
+	"CMAKE_CURRENT_BINARY_DIR" : "/home/daijd/claude-workspace/md-editor/build-deb/src",
+	"CMAKE_CURRENT_SOURCE_DIR" : "/home/daijd/claude-workspace/md-editor/src",
+	"CMAKE_EXECUTABLE" : "/usr/bin/cmake",
+	"CMAKE_LIST_FILES" : 
+	[
+		"/home/daijd/claude-workspace/md-editor/src/CMakeLists.txt",
+		"/home/daijd/claude-workspace/md-editor/src/resources/app.qrc"
+	],
+	"CMAKE_SOURCE_DIR" : "/home/daijd/claude-workspace/md-editor",
+	"CROSS_CONFIG" : false,
+	"DEP_FILE" : "/home/daijd/claude-workspace/md-editor/build-deb/src/md-editor_autogen/deps",
+	"DEP_FILE_RULE_NAME" : "md-editor_autogen/timestamp",
+	"HEADERS" : 
+	[
+		[
+			"/home/daijd/claude-workspace/md-editor/src/app/Application.h",
+			"Mu",
+			"VJIZ3MDCXP/moc_Application.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/app/ThemeManager.h",
+			"Mu",
+			"VJIZ3MDCXP/moc_ThemeManager.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/core/EditorBridge.h",
+			"Mu",
+			"TAC5DWH4SE/moc_EditorBridge.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/core/FileManager.h",
+			"Mu",
+			"TAC5DWH4SE/moc_FileManager.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/core/MarkdownHandler.h",
+			"Mu",
+			"TAC5DWH4SE/moc_MarkdownHandler.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/core/PdfExporter.h",
+			"Mu",
+			"TAC5DWH4SE/moc_PdfExporter.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/AboutDialog.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_AboutDialog.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/EditorTab.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_EditorTab.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/FileTree.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_FileTree.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/MainWindow.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_MainWindow.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/MenuBar.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_MenuBar.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/OutlineTree.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_OutlineTree.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/SearchBar.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_SearchBar.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/SettingsDialog.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_SettingsDialog.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/SideBar.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_SideBar.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/StatusBar.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_StatusBar.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/TabWidget.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_TabWidget.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/TableGridPopup.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_TableGridPopup.cpp",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/ToolBar.h",
+			"Mu",
+			"UYX5XTB5RZ/moc_ToolBar.cpp",
+			null
+		]
+	],
+	"HEADER_EXTENSIONS" : [ "h", "hh", "h++", "hm", "hpp", "hxx", "in", "txx" ],
+	"INCLUDE_DIR" : "/home/daijd/claude-workspace/md-editor/build-deb/src/md-editor_autogen/include",
+	"MOC_COMPILATION_FILE" : "/home/daijd/claude-workspace/md-editor/build-deb/src/md-editor_autogen/mocs_compilation.cpp",
+	"MOC_DEFINITIONS" : 
+	[
+		"MD_EDITOR_VERSION=\"0.1.0\"",
+		"QT_CORE_LIB",
+		"QT_GUI_LIB",
+		"QT_NETWORK_LIB",
+		"QT_NO_DEBUG",
+		"QT_OPENGL_LIB",
+		"QT_POSITIONING_LIB",
+		"QT_PRINTSUPPORT_LIB",
+		"QT_QMLINTEGRATION_LIB",
+		"QT_QMLMETA_LIB",
+		"QT_QMLMODELS_LIB",
+		"QT_QMLWORKERSCRIPT_LIB",
+		"QT_QML_LIB",
+		"QT_QUICK_LIB",
+		"QT_WEBCHANNEL_LIB",
+		"QT_WEBENGINECORE_LIB",
+		"QT_WEBENGINEWIDGETS_LIB",
+		"QT_WIDGETS_LIB"
+	],
+	"MOC_DEPEND_FILTERS" : 
+	[
+		[
+			"Q_PLUGIN_METADATA",
+			"[\n][ \t]*Q_PLUGIN_METADATA[ \t]*\\([^\\)]*FILE[ \t]*\"([^\"]+)\""
+		]
+	],
+	"MOC_INCLUDES" : 
+	[
+		"/home/daijd/claude-workspace/md-editor/src",
+		"/usr/include/x86_64-linux-gnu/qt6/QtWidgets",
+		"/usr/include/x86_64-linux-gnu/qt6",
+		"/usr/include/x86_64-linux-gnu/qt6/QtCore",
+		"/usr/lib/x86_64-linux-gnu/qt6/mkspecs/linux-g++",
+		"/usr/include/x86_64-linux-gnu/qt6/QtGui",
+		"/usr/include/x86_64-linux-gnu/qt6/QtWebEngineWidgets",
+		"/usr/include/x86_64-linux-gnu/qt6/QtWebEngineCore",
+		"/usr/include/x86_64-linux-gnu/qt6/QtNetwork",
+		"/usr/include/x86_64-linux-gnu/qt6/QtQuick",
+		"/usr/include/x86_64-linux-gnu/qt6/QtQml",
+		"/usr/include/x86_64-linux-gnu/qt6/QtQmlIntegration",
+		"/usr/include/x86_64-linux-gnu/qt6/QtQmlMeta",
+		"/usr/include/x86_64-linux-gnu/qt6/QtQmlModels",
+		"/usr/include/x86_64-linux-gnu/qt6/QtQmlWorkerScript",
+		"/usr/include/x86_64-linux-gnu/qt6/QtOpenGL",
+		"/usr/include/x86_64-linux-gnu/qt6/QtWebChannel",
+		"/usr/include/x86_64-linux-gnu/qt6/QtPositioning",
+		"/usr/include/x86_64-linux-gnu/qt6/QtPrintSupport",
+		"/usr/include",
+		"/usr/include/c++/14",
+		"/usr/include/x86_64-linux-gnu/c++/14",
+		"/usr/include/c++/14/backward",
+		"/usr/lib/gcc/x86_64-linux-gnu/14/include",
+		"/usr/local/include",
+		"/usr/include/x86_64-linux-gnu"
+	],
+	"MOC_MACRO_NAMES" : 
+	[
+		"Q_OBJECT",
+		"Q_GADGET",
+		"Q_NAMESPACE",
+		"Q_NAMESPACE_EXPORT",
+		"Q_GADGET_EXPORT",
+		"Q_ENUM_NS"
+	],
+	"MOC_OPTIONS" : [],
+	"MOC_PATH_PREFIX" : false,
+	"MOC_PREDEFS_CMD" : 
+	[
+		"/usr/bin/c++",
+		"-std=gnu++17",
+		"-dM",
+		"-E",
+		"-c",
+		"/usr/share/cmake-3.31/Modules/CMakeCXXCompilerABI.cpp"
+	],
+	"MOC_PREDEFS_FILE" : "/home/daijd/claude-workspace/md-editor/build-deb/src/md-editor_autogen/moc_predefs.h",
+	"MOC_RELAXED_MODE" : false,
+	"MOC_SKIP" : [ "/home/daijd/claude-workspace/md-editor/build-deb/src/qrc_app.cpp" ],
+	"MULTI_CONFIG" : false,
+	"PARALLEL" : 4,
+	"PARSE_CACHE_FILE" : "/home/daijd/claude-workspace/md-editor/build-deb/src/CMakeFiles/md-editor_autogen.dir/ParseCache.txt",
+	"QT_MOC_EXECUTABLE" : "/usr/lib/qt6/libexec/moc",
+	"QT_UIC_EXECUTABLE" : "",
+	"QT_VERSION_MAJOR" : 6,
+	"QT_VERSION_MINOR" : 8,
+	"SETTINGS_FILE" : "/home/daijd/claude-workspace/md-editor/build-deb/src/CMakeFiles/md-editor_autogen.dir/AutogenUsed.txt",
+	"SOURCES" : 
+	[
+		[
+			"/home/daijd/claude-workspace/md-editor/src/app/Application.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/app/ThemeManager.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/core/EditorBridge.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/core/FileManager.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/core/MarkdownHandler.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/core/PdfExporter.cpp",
+			"Mu",
+			null
+		],
+		[ "/home/daijd/claude-workspace/md-editor/src/main.cpp", "Mu", null ],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/AboutDialog.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/EditorTab.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/FileTree.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/MainWindow.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/MenuBar.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/OutlineTree.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/SearchBar.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/SettingsDialog.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/SideBar.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/StatusBar.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/TabWidget.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/TableGridPopup.cpp",
+			"Mu",
+			null
+		],
+		[
+			"/home/daijd/claude-workspace/md-editor/src/ui/ToolBar.cpp",
+			"Mu",
+			null
+		]
+	],
+	"USE_BETTER_GRAPH" : true,
+	"VERBOSITY" : 0
+}
