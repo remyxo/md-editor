@@ -1,5 +1,6 @@
 build/
 .cache/
+.claude/
 *.o
 *.pro.user
 moc_*.cpp
