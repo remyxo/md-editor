@@ -512,7 +512,8 @@ void MainWindow::restoreSession()
             continue; // 不恢复未命名的空白标签
         } else if (QFile::exists(path)) {
             QString content = m_fileManager->readFile(path);
-            m_tabWidget->openFileTab(path, content);
+            EditorTab *tab = m_tabWidget->openFileTab(path, content);
+            tab->webView()->setProperty("filePath", path);
         }
     }
 
