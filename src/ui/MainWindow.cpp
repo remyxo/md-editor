@@ -18,6 +18,7 @@
 #include "../app/ThemeManager.h"
 
 #include <QVBoxLayout>
+#include <QIcon>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QFile>
@@ -45,6 +46,7 @@ MainWindow::~MainWindow() {}
 void MainWindow::setupUi()
 {
     setWindowTitle("Markdown Editor");
+    setWindowIcon(QIcon(":/icons/md-editor.svg"));
     resize(1280, 800);
 
     // 菜单栏
