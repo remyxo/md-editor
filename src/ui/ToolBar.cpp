@@ -42,7 +42,7 @@ void ToolBar::setupUi()
 {
     // 标题下拉选择器
     QLabel *headingLabel = new QLabel(" 标题 ");
-    headingLabel->setStyleSheet("color: #555; font-size: 15px;");
+    headingLabel->setObjectName("headingLabel");
     addWidget(headingLabel);
     m_headingCombo = new QComboBox(this);
     m_headingCombo->addItem("正文", 0);

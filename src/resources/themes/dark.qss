@@ -52,6 +52,11 @@ QToolBar {
     spacing: 6px;
 }
 
+QLabel#headingLabel {
+    color: #c4c9ce;
+    font-size: 15px;
+}
+
 QToolBar::separator {
     width: 1px;
     margin: 4px 6px;
