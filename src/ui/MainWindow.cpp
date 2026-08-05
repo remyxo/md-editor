@@ -106,6 +106,7 @@ void MainWindow::setupUi()
     QSettings settings("md-editor", "md-editor");
     QString savedTheme = settings.value("appearance/theme", "light").toString();
     Application::instance()->themeManager()->switchTheme(savedTheme);
+    m_toolBar->refreshThemeIcons(savedTheme);
 }
 
 void MainWindow::connectSignals()

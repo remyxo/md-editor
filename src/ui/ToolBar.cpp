@@ -65,69 +65,69 @@ void ToolBar::setupUi()
 
     // === 文本格式按钮 ===
     m_boldAction = makeAction(this, &m_iconPaths, "boldAction",
-        "加粗 (Ctrl+B)", ":/icons/bold.svg");
+        "加粗 (Ctrl+B)", ":/icons/light/bold.svg");
     m_boldAction->setCheckable(true);
 
     m_italicAction = makeAction(this, &m_iconPaths, "italicAction",
-        "斜体 (Ctrl+I)", ":/icons/italic.svg");
+        "斜体 (Ctrl+I)", ":/icons/light/italic.svg");
     m_italicAction->setCheckable(true);
 
     m_strikeAction = makeAction(this, &m_iconPaths, "strikeAction",
-        "删除线", ":/icons/strikethrough.svg");
+        "删除线", ":/icons/light/strikethrough.svg");
     m_strikeAction->setCheckable(true);
 
     m_underlineAction = makeAction(this, &m_iconPaths, "underlineAction",
-        "下划线", ":/icons/underline.svg");
+        "下划线", ":/icons/light/underline.svg");
     m_underlineAction->setCheckable(true);
 
     m_highlightAction = makeAction(this, &m_iconPaths, "highlightAction",
-        "高亮", ":/icons/highlight.svg");
+        "高亮", ":/icons/light/highlight.svg");
     m_highlightAction->setCheckable(true);
 
     addSeparator();
 
     // === 结构按钮 ===
     m_bulletListAction = makeAction(this, &m_iconPaths, "bulletListAction",
-        "无序列表", ":/icons/list-bullet.svg");
+        "无序列表", ":/icons/light/list-bullet.svg");
     m_bulletListAction->setCheckable(true);
 
     m_orderedListAction = makeAction(this, &m_iconPaths, "orderedListAction",
-        "有序列表", ":/icons/list-ordered.svg");
+        "有序列表", ":/icons/light/list-ordered.svg");
     m_orderedListAction->setCheckable(true);
 
     m_taskListAction = makeAction(this, &m_iconPaths, "taskListAction",
-        "任务列表", ":/icons/task-list.svg");
+        "任务列表", ":/icons/light/task-list.svg");
     m_taskListAction->setCheckable(true);
 
     m_blockquoteAction = makeAction(this, &m_iconPaths, "blockquoteAction",
-        "引用", ":/icons/blockquote.svg");
+        "引用", ":/icons/light/blockquote.svg");
     m_blockquoteAction->setCheckable(true);
 
     addSeparator();
 
     // === 插入按钮 ===
     makeAction(this, &m_iconPaths, "linkAction",
-        "插入链接", ":/icons/link.svg");
+        "插入链接", ":/icons/light/link.svg");
     makeAction(this, &m_iconPaths, "imageAction",
-        "插入图片", ":/icons/image.svg");
+        "插入图片", ":/icons/light/image.svg");
     makeAction(this, &m_iconPaths, "tableAction",
-        "插入表格", ":/icons/table.svg");
+        "插入表格", ":/icons/light/table.svg");
     m_codeAction = makeAction(this, &m_iconPaths, "codeAction",
-        "行内代码", ":/icons/code.svg");
+        "行内代码", ":/icons/light/code.svg");
     m_codeAction->setCheckable(true);
     m_codeBlockAction = makeAction(this, &m_iconPaths, "codeBlockAction",
-        "代码块", ":/icons/code-block.svg");
+        "代码块", ":/icons/light/code-block.svg");
     m_codeBlockAction->setCheckable(true);
     makeAction(this, &m_iconPaths, "hrAction",
-        "分割线", ":/icons/horizontal-rule.svg");
+        "分割线", ":/icons/light/horizontal-rule.svg");
 
     addSeparator();
 
     // === 视图 / 导出 ===
     makeAction(this, &m_iconPaths, "sourceAction",
-        "切换源码模式", ":/icons/source-code.svg");
+        "切换源码模式", ":/icons/light/source-code.svg");
     makeAction(this, &m_iconPaths, "pdfAction",
-        "导出 PDF", ":/icons/pdf.svg");
+        "导出 PDF", ":/icons/light/pdf.svg");
 
     // === 信号连接 ===
     connect(m_boldAction, &QAction::triggered, this, &ToolBar::boldClicked);
@@ -199,7 +199,7 @@ void ToolBar::applyIconTheme(const QString &theme)
         // 为暗色主题切换成 dark/ 目录下的图标
         if (isDark) {
             QString darkPath = lightPath;
-            darkPath.replace("/icons/", "/icons/dark/");
+            darkPath.replace("/light/", "/dark/");
             action->setIcon(QIcon(darkPath));
         } else {
             action->setIcon(QIcon(lightPath));

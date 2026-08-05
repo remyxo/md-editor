@@ -2,21 +2,24 @@
     <qresource prefix="/">
         <file>themes/light.qss</file>
         <file>themes/dark.qss</file>
-        <file>icons/bold.svg</file>
-        <file>icons/italic.svg</file>
-        <file>icons/strikethrough.svg</file>
-        <file>icons/code.svg</file>
-        <file>icons/underline.svg</file>
-        <file>icons/highlight.svg</file>
-        <file>icons/list-bullet.svg</file>
-        <file>icons/list-ordered.svg</file>
-        <file>icons/task-list.svg</file>
-        <file>icons/blockquote.svg</file>
-        <file>icons/link.svg</file>
-        <file>icons/image.svg</file>
-        <file>icons/table.svg</file>
-        <file>icons/code-block.svg</file>
-        <file>icons/horizontal-rule.svg</file>
+        <file>icons/md-editor.svg</file>
+        <file>icons/light/bold.svg</file>
+        <file>icons/light/italic.svg</file>
+        <file>icons/light/strikethrough.svg</file>
+        <file>icons/light/code.svg</file>
+        <file>icons/light/underline.svg</file>
+        <file>icons/light/highlight.svg</file>
+        <file>icons/light/list-bullet.svg</file>
+        <file>icons/light/list-ordered.svg</file>
+        <file>icons/light/task-list.svg</file>
+        <file>icons/light/blockquote.svg</file>
+        <file>icons/light/link.svg</file>
+        <file>icons/light/image.svg</file>
+        <file>icons/light/table.svg</file>
+        <file>icons/light/code-block.svg</file>
+        <file>icons/light/horizontal-rule.svg</file>
+        <file>icons/light/source-code.svg</file>
+        <file>icons/light/pdf.svg</file>
         <file>icons/dark/bold.svg</file>
         <file>icons/dark/italic.svg</file>
         <file>icons/dark/strikethrough.svg</file>
@@ -34,9 +37,6 @@
         <file>icons/dark/horizontal-rule.svg</file>
         <file>icons/dark/source-code.svg</file>
         <file>icons/dark/pdf.svg</file>
-        <file>icons/source-code.svg</file>
-        <file>icons/pdf.svg</file>
-        <file>icons/md-editor.svg</file>
         <file>web/editor.html</file>
         <file>web/editor.css</file>
         <file>web/editor.js</file>
