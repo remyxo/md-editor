@@ -133,8 +133,12 @@ QTreeView::item:hover:!selected {
     background-color: #e8e8e8;
 }
 
+QTabWidget {
+    border: none;
+}
 QTabWidget::pane {
     border: 1px solid #e0e0e0;
+    border-top: 1px solid #e0e0e0;
     background-color: #f5f5f5;
 }
 
