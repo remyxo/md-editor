@@ -167,8 +167,12 @@ QStatusBar {
     padding: 2px 8px;
 }
 
+QMainWindow::separator {
+    width: 1px;
+    background: #333;
+}
 QSplitter::handle {
-    background-color: #3d3d3d;
+    background-color: #333;
     width: 1px;
 }
 

@@ -3,7 +3,6 @@
 #include <QLabel>
 #include <QJsonObject>
 #include <QIcon>
-#include <QPalette>
 
 ToolBar::ToolBar(QWidget *parent)
     : QToolBar(parent)
@@ -194,20 +193,11 @@ void ToolBar::refreshThemeIcons(const QString &theme)
 void ToolBar::applyIconTheme(const QString &theme)
 {
     bool isDark = (theme == "dark");
-    // 设置调色板让 SVG currentColor 跟随主题
-    QPalette pal = palette();
-    pal.setColor(QPalette::ButtonText, isDark ? QColor("#c4c9ce") : QColor("#222"));
-    setPalette(pal);
-
     for (auto it = m_iconPaths.begin(); it != m_iconPaths.end(); ++it) {
         QAction *action = it.key();
-        QString lightPath = it.value();
-        if (isDark) {
-            QString darkPath = lightPath;
-            darkPath.replace("/light/", "/dark/");
-            action->setIcon(QIcon(darkPath));
-        } else {
-            action->setIcon(QIcon(lightPath));
-        }
+        QString path = it.value();
+        if (isDark)
+            path.replace("/light/", "/dark/");
+        action->setIcon(QIcon(path));
     }
 }
