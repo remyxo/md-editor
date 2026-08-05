@@ -26,7 +26,6 @@
 #include <QWebEnginePage>
 #include <QTextStream>
 #include <QSettings>
-#include <QTimer>
 #include <QShortcut>
 #include <QKeySequence>
 
@@ -320,14 +319,14 @@ void MainWindow::onExportPdf()
 void MainWindow::onThemeSwitch(const QString &theme)
 {
     Application::instance()->themeManager()->switchTheme(theme);
+    // 强制 QSS 生效
+    qApp->processEvents();
+    // 现在设置图标（QSS 已应用，图标直接用硬编码颜色 SVGs）
+    m_toolBar->refreshThemeIcons(theme);
     // 保存主题偏好
     QSettings settings("md-editor", "md-editor");
     settings.setValue("appearance/theme", theme);
     settings.sync();
-    // QSS 同步应用后刷新图标（延迟到事件循环，确保 QSS 先生效）
-    QTimer::singleShot(0, this, [this, theme]() {
-        m_toolBar->refreshThemeIcons(theme);
-    });
     // 同步到所有已打开的标签页
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);

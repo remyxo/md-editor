@@ -67,7 +67,6 @@ QToolButton {
     border: none;
     border-radius: 5px;
     padding: 7px 10px;
-    color: #cccccc;
     font-size: 16px;
     min-width: 24px;
 }
