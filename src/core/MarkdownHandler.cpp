@@ -159,6 +159,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
             auto m = bqTagRe.match(processed, offset);
             if (!m.hasMatch()) break;
             QString inner = m.captured(1);
+            // 块级标签 → 换行，保留段落边界
+            inner.replace(QRegularExpression("</?p[^>]*>"), "\n");
+            inner.replace(QRegularExpression("</?div[^>]*>"), "\n");
             inner.replace("<br>", "\n");
             inner.replace("<br/>", "\n");
             inner.replace("<br />", "\n");
@@ -187,7 +190,6 @@ QString MarkdownHandler::fromHtml(const QString &html)
             auto m = bqRe.match(processed, offset);
             if (!m.hasMatch()) break;
             QString text = m.captured(1);
-            // <br> → 换行，然后清除其余 HTML 标签
             text.replace("<br>", "\n");
             text.replace("<br/>", "\n");
             text.replace("<br />", "\n");
