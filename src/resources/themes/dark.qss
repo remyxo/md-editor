@@ -47,7 +47,7 @@ QMenu::separator {
 
 QToolBar {
     background-color: #2d2d2d;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid #383838;
     padding: 6px 10px;
     spacing: 6px;
 }
@@ -134,6 +134,7 @@ QTabWidget {
 }
 QTabWidget::pane {
     border: 1px solid #333;
+    border-top: none;
     background-color: #1e1e1e;
 }
 

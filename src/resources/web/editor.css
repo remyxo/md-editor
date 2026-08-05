@@ -221,6 +221,7 @@ body.dark .ProseMirror mark {
     width: 100%;
     max-width: 80%;
     min-width: 800px;
+    min-height: 100vh;
     margin: 0 auto;
     display: block;
     border: none;
