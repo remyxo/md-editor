@@ -200,7 +200,11 @@ window.editorApi = {
     },
     setFont: function(family, size) {
         if (family) document.body.style.fontFamily = family;
-        if (size) document.body.style.fontSize = size + 'px';
+        if (size) {
+            document.body.style.fontSize = size + 'px';
+            var sv = document.getElementById('source-view');
+            if (sv) sv.style.fontSize = size + 'px';
+        }
     },
     markClean: function() {
         this._dirty = false;
