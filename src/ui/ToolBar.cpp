@@ -193,10 +193,14 @@ void ToolBar::refreshThemeIcons(const QString &theme)
 void ToolBar::applyIconTheme(const QString &theme)
 {
     bool isDark = (theme == "dark");
+    // 设置调色板让 SVG currentColor 跟随主题
+    QPalette pal = palette();
+    pal.setColor(QPalette::ButtonText, isDark ? QColor("#c4c9ce") : QColor("#333"));
+    setPalette(pal);
+
     for (auto it = m_iconPaths.begin(); it != m_iconPaths.end(); ++it) {
         QAction *action = it.key();
         QString lightPath = it.value();
-        // 为暗色主题切换成 dark/ 目录下的图标
         if (isDark) {
             QString darkPath = lightPath;
             darkPath.replace("/light/", "/dark/");
