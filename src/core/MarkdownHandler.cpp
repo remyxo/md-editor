@@ -216,15 +216,31 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
     }
 
-    // 4) 行内代码 <span ...monospace...>text</span> → 占位符
+    // 4) 行内代码 <code>text</code> 及 <span monospace> → 占位符
     {
-        QRegularExpression re(
-            R"(<span[^>]*font-family:\s*'monospace'[^>]*>(.*?)</span>)",
+        // <code> 标签（TipTap 输出）
+        QRegularExpression codeRe(
+            R"(<code[^>]*>(.*?)</code>)",
             QRegularExpression::DotMatchesEverythingOption);
         int n = 0;
         int offset = 0;
         while (true) {
-            auto m = re.match(processed, offset);
+            auto m = codeRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("\x05CD%1\x05").arg(n++);
+            placeholders << ph;
+            backups << "`" + m.captured(1) + "`";
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+        // <span monospace>（QTextDocument 原始输出）
+        QRegularExpression spanRe(
+            R"(<span[^>]*font-family:\s*'monospace'[^>]*>(.*?)</span>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        n = 0;
+        offset = 0;
+        while (true) {
+            auto m = spanRe.match(processed, offset);
             if (!m.hasMatch()) break;
             QString ph = QString("\x02IC%1\x02").arg(n++);
             placeholders << ph;
