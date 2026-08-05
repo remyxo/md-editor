@@ -13,7 +13,9 @@ TabWidget::TabWidget(QWidget *parent)
     setMovable(true);
     setDocumentMode(true);
     tabBar()->setDrawBase(false);
-    tabBar()->setStyleSheet("border: none; background: transparent;");
+    tabBar()->setStyleSheet("QTabBar { border: none; background: transparent; }"
+                            "QTabBar::tab { border: none; }");
+    setStyleSheet("QTabWidget::pane { border: none; }");
     connect(this, &QTabWidget::tabCloseRequested, this, &TabWidget::onTabCloseRequested);
     connect(this, &QTabWidget::currentChanged, this, &TabWidget::onCurrentChanged);
 }
