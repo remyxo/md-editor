@@ -87,7 +87,7 @@ QToolButton#highlightAction { color: #fdd663; }
 QToolButton#bulletListAction,
 QToolButton#orderedListAction,
 QToolButton#taskListAction,
-QToolButton#blockquoteAction { color: #9aa0a6; }
+QToolButton#blockquoteAction { color: #bdc1c6; }
 
 /* 插入按钮 */
 QToolButton#linkAction,
@@ -96,7 +96,7 @@ QToolButton#tableAction,
 QToolButton#hrAction { color: #8ab4f8; }
 
 /* 视图/导出 */
-QToolButton#sourceAction { color: #9aa0a6; }
+QToolButton#sourceAction { color: #bdc1c6; }
 QToolButton#pdfAction    { color: #f28b82; }
 
 /* checked 状态：背景高亮 */

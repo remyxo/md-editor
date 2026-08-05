@@ -103,7 +103,9 @@ void MainWindow::setupUi()
     });
 
     // 初始化亮色主题
-    Application::instance()->themeManager()->switchTheme("light");
+    QSettings settings("md-editor", "md-editor");
+    QString savedTheme = settings.value("appearance/theme", "light").toString();
+    Application::instance()->themeManager()->switchTheme(savedTheme);
 }
 
 void MainWindow::connectSignals()
@@ -316,6 +318,10 @@ void MainWindow::onExportPdf()
 void MainWindow::onThemeSwitch(const QString &theme)
 {
     Application::instance()->themeManager()->switchTheme(theme);
+    // 保存主题偏好
+    QSettings settings("md-editor", "md-editor");
+    settings.setValue("appearance/theme", theme);
+    settings.sync();
     // 同步到所有已打开的标签页
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);
