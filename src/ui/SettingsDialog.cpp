@@ -148,9 +148,10 @@ void SettingsDialog::onAccepted()
     settings.setValue("editor/tabSize", m_tabSizeSpin->value());
     settings.sync();
 
-    // 应用主题
-    Application::instance()->themeManager()->switchTheme(
-        m_themeCombo->currentData().toString());
+    // 应用主题并持久化
+    QString theme = m_themeCombo->currentData().toString();
+    Application::instance()->themeManager()->switchTheme(theme);
+    settings.setValue("appearance/theme", theme);
 
     accept();
 }
