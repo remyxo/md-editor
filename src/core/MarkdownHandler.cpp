@@ -198,7 +198,25 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
     }
 
-    // 3) 行内代码 <span ...monospace...>text</span> → 占位符
+    // 3) 高亮 <mark>text</mark> → ==text==
+    {
+        QRegularExpression re(
+            R"(<mark[^>]*>(.*?)</mark>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        int n = 0;
+        int offset = 0;
+        while (true) {
+            auto m = re.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("\x04MK%1\x04").arg(n++);
+            placeholders << ph;
+            backups << "==" + m.captured(1) + "==";
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
+
+    // 4) 行内代码 <span ...monospace...>text</span> → 占位符
     {
         QRegularExpression re(
             R"(<span[^>]*font-family:\s*'monospace'[^>]*>(.*?)</span>)",
