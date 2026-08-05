@@ -215,9 +215,8 @@ body.dark .ProseMirror mark {
     height: 0;
 }
 
-/* 源码视图 */
+/* 源码视图（默认隐藏由 HTML inline style 控制，JS 切换时修改） */
 #source-view {
-    display: none;
     width: 100%;
     min-height: 100vh;
     border: none;

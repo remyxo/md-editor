@@ -4,6 +4,7 @@ window.editorApi = {
     bridge: null,
     _dirty: false,
     _loading: false,
+    isSourceMode: false,
     _notifyDirty: function() {
         if (this.bridge) this.bridge.contentChanged(!!this._dirty);
     },
