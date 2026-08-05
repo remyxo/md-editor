@@ -34,6 +34,7 @@ public:
     void loadFile(const QString &path, const QString &content);
     void setEditorTheme(const QString &theme);
     void setEditorFont(const QString &family, int size);
+    void setEditorWidth(int width);
     void setInTable(bool inTable);
     void runJsCommand(const QString &js);
 

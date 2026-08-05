@@ -229,7 +229,7 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (tab) {
         connect(tab, &EditorTab::pageLoadFinished, this,
-                [this](bool ok) { if (ok) applyEditorFont(); });
+                [this](bool ok) { if (ok) { applyEditorFont(); applyEditorWidth(); } });
     }
 }
 
@@ -444,6 +444,7 @@ void MainWindow::onShowSettings()
     SettingsDialog dialog(m_fileManager, this);
     dialog.exec();
     applyEditorFont();
+    applyEditorWidth();
 }
 
 void MainWindow::applyEditorFont()
@@ -454,6 +455,16 @@ void MainWindow::applyEditorFont()
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);
         if (tab) tab->setEditorFont(family, size);
+    }
+}
+
+void MainWindow::applyEditorWidth()
+{
+    QSettings settings("md-editor", "md-editor");
+    int width = settings.value("editor/width", 860).toInt();
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        EditorTab *tab = m_tabWidget->tabAt(i);
+        if (tab) tab->setEditorWidth(width);
     }
 }
 

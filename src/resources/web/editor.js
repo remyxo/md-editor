@@ -206,6 +206,17 @@ window.editorApi = {
             if (sv) sv.style.fontSize = size + 'px';
         }
     },
+    setWidth: function(width) {
+        var ed = document.getElementById('editor');
+        var sv = document.getElementById('source-view');
+        if (width === 0) {
+            if (ed) ed.style.maxWidth = 'none';
+            if (sv) sv.style.maxWidth = 'none';
+        } else {
+            if (ed) ed.style.maxWidth = width + 'px';
+            if (sv) sv.style.maxWidth = width + 'px';
+        }
+    },
     markClean: function() {
         this._dirty = false;
         if (this.bridge) this.bridge.contentChanged(false);

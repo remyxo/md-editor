@@ -72,6 +72,14 @@ void SettingsDialog::setupUi()
     m_tabSizeSpin->setRange(2, 8);
     m_tabSizeSpin->setSuffix(" 空格");
     editorForm->addRow("Tab 宽度:", m_tabSizeSpin);
+
+    m_widthSpin = new QSpinBox();
+    m_widthSpin->setRange(0, 2000);
+    m_widthSpin->setSingleStep(20);
+    m_widthSpin->setSuffix(" px");
+    m_widthSpin->setSpecialValueText("自适应");
+    m_widthSpin->setValue(860);
+    editorForm->addRow("编辑区宽度:", m_widthSpin);
     tabs->addTab(editorTab, "编辑器");
 
     // === 外观 ===
@@ -127,6 +135,7 @@ void SettingsDialog::loadSettings()
     m_wordWrapCheck->setChecked(
         settings.value("editor/wordWrap", true).toBool());
     m_tabSizeSpin->setValue(settings.value("editor/tabSize", 4).toInt());
+    m_widthSpin->setValue(settings.value("editor/width", 860).toInt());
 
     QString theme = Application::instance()->themeManager()->currentTheme();
     m_themeCombo->setCurrentIndex(m_themeCombo->findData(theme));
@@ -146,6 +155,7 @@ void SettingsDialog::onAccepted()
     settings.setValue("editor/lineNumbers", m_lineNumbersCheck->isChecked());
     settings.setValue("editor/wordWrap", m_wordWrapCheck->isChecked());
     settings.setValue("editor/tabSize", m_tabSizeSpin->value());
+    settings.setValue("editor/width", m_widthSpin->value());
     settings.sync();
 
     // 应用主题并持久化

@@ -175,6 +175,13 @@ void EditorTab::setEditorFont(const QString &family, int size)
     }
 }
 
+void EditorTab::setEditorWidth(int width)
+{
+    if (m_pageLoaded) {
+        runJsCommand(QString("window.editorApi.setWidth(%1);").arg(width));
+    }
+}
+
 void EditorTab::setInTable(bool inTable)
 {
     m_webView->setInTable(inTable);

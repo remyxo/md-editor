@@ -32,6 +32,7 @@ private:
     QCheckBox *m_lineNumbersCheck;
     QCheckBox *m_wordWrapCheck;
     QSpinBox *m_tabSizeSpin;
+    QSpinBox *m_widthSpin;
 
     // 外观
     QComboBox *m_themeCombo;
