@@ -7,14 +7,14 @@ static bool isParagraphLine(const QString &line)
     if (line.isEmpty()) return false;
     QString trimmed = line.trimmed();
     QChar c = trimmed[0];
-    // 跳过行内代码反引号（非代码块标记）
     if (c == '`') {
-        // 代码块以 ``` 开头，行内代码以单个 ` 开头 → 仍是正文
         if (!trimmed.startsWith("```"))
             return true;
         return false;
     }
-    return c != '#' && c != '-' && c != '>' && c != '|'
+    // 引用行也是正文（需保留内部换行）
+    if (c == '>') return true;
+    return c != '#' && c != '-' && c != '|'
            && !(c >= '0' && c <= '9' && trimmed.length() > 1
                 && trimmed[1] == '.');
 }
@@ -138,7 +138,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString code = lines.join('\n');
             code.remove(QRegularExpression("<[^>]*>"));
             code = code.trimmed();
-            QString ph = QString("\x01CB%1\x01").arg(n++);
+            QString ph = QString("ZZCB%1ZZ").arg(n++);
             placeholders << ph;
             backups << "```\n" + code + "\n```";
             processed.replace(blockStart, blockEnd - blockStart, ph);
@@ -147,50 +147,61 @@ QString MarkdownHandler::fromHtml(const QString &html)
     }
 
     // 2) 引用 → > 前缀
+    //    （跳过已被 <blockquote> 包裹的，由后续 blockquote 标签步处理）
     {
         int n = 0;
-        // QTextDocument 样式: <p margin-left:40px...>text</p>
-        QRegularExpression bqRe(
-            R"(<p[^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*>(.*?)</p>)",
-            QRegularExpression::DotMatchesEverythingOption);
-        int offset = 0;
-        while (true) {
-            auto m = bqRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            QString text = m.captured(1);
-            text.remove(QRegularExpression("<[^>]*>"));
-            text = text.trimmed();
-            QStringList lines = text.split('\n');
-            QString quoted;
-            for (const QString &l : lines)
-                quoted += "> " + l.trimmed() + "\n";
-            quoted = quoted.trimmed();
-            QString ph = QString("\x03BQ%1\x03").arg(n++);
-            placeholders << ph;
-            backups << quoted;
-            processed.replace(m.capturedStart(), m.capturedLength(), ph);
-            offset = m.capturedStart() + ph.length();
-        }
-        // <blockquote> 标签（TipTap 编辑器格式）
+        // <blockquote> 标签先处理
         QRegularExpression bqTagRe(
             R"(<blockquote[^>]*>(.*?)</blockquote>)",
             QRegularExpression::DotMatchesEverythingOption);
-        offset = 0;
+        int offset = 0;
         while (true) {
             auto m = bqTagRe.match(processed, offset);
             if (!m.hasMatch()) break;
             QString inner = m.captured(1);
+            inner.replace("<br>", "\n");
+            inner.replace("<br/>", "\n");
+            inner.replace("<br />", "\n");
             inner.remove(QRegularExpression("<[^>]*>"));
             inner = inner.trimmed();
             QStringList lines = inner.split('\n');
             QString quoted;
             for (const QString &l : lines) {
-                QString trimmed = l.trimmed();
-                if (!trimmed.isEmpty())
-                    quoted += "> " + trimmed + "\n";
+                QString t = l.trimmed();
+                if (!t.isEmpty())
+                    quoted += "> " + t + "\n";
             }
             quoted = quoted.trimmed();
-            QString ph = QString("\x03BQ%1\x03").arg(n++);
+            QString ph = QString("ZZBQ%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << quoted;
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+        // 裸 margin-left <p>（未被 <blockquote> 包裹的）
+        QRegularExpression bqRe(
+            R"(<p[^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*>(.*?)</p>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        offset = 0;
+        while (true) {
+            auto m = bqRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString text = m.captured(1);
+            // <br> → 换行，然后清除其余 HTML 标签
+            text.replace("<br>", "\n");
+            text.replace("<br/>", "\n");
+            text.replace("<br />", "\n");
+            text.remove(QRegularExpression("<[^>]*>"));
+            text = text.trimmed();
+            QStringList lines = text.split('\n');
+            QString quoted;
+            for (const QString &l : lines) {
+                QString t = l.trimmed();
+                if (!t.isEmpty())
+                    quoted += "> " + t + "\n";
+            }
+            quoted = quoted.trimmed();
+            QString ph = QString("ZZBQ%1ZZ").arg(n++);
             placeholders << ph;
             backups << quoted;
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
@@ -208,7 +219,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
         while (true) {
             auto m = re.match(processed, offset);
             if (!m.hasMatch()) break;
-            QString ph = QString("\x04MK%1\x04").arg(n++);
+            QString ph = QString("ZZMK%1ZZ").arg(n++);
             placeholders << ph;
             backups << "==" + m.captured(1) + "==";
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
@@ -227,7 +238,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
         while (true) {
             auto m = codeRe.match(processed, offset);
             if (!m.hasMatch()) break;
-            QString ph = QString("\x05CD%1\x05").arg(n++);
+            QString ph = QString("ZZCD%1ZZ").arg(n++);
             placeholders << ph;
             backups << "`" + m.captured(1) + "`";
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
@@ -242,7 +253,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
         while (true) {
             auto m = spanRe.match(processed, offset);
             if (!m.hasMatch()) break;
-            QString ph = QString("\x02IC%1\x02").arg(n++);
+            QString ph = QString("ZZIC%1ZZ").arg(n++);
             placeholders << ph;
             backups << "`" + m.captured(1) + "`";
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
@@ -254,8 +265,8 @@ QString MarkdownHandler::fromHtml(const QString &html)
     doc.setHtml(processed);
     QString md = doc.toMarkdown();
 
-    // 3) 还原占位符
-    for (int i = 0; i < placeholders.size(); ++i)
+    // 3) 还原占位符（逆序：后入先还原，防止嵌套占位符丢失）
+    for (int i = placeholders.size() - 1; i >= 0; --i)
         md.replace(placeholders[i], backups[i]);
 
     while (md.endsWith('\n'))
