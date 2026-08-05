@@ -170,7 +170,25 @@ window.editorApi = {
     insertImage: function(path) { if (this.editor) this.editor.commands.setImage({ src: path }); },
     insertHorizontalRule: function() { if (this.editor) this.editor.commands.setHorizontalRule(); },
     toggleSourceMode: function() {
-        if (this.editor) console.log('Source mode - content:', this.editor.getHTML());
+        if (!this.editor) return;
+        var editorDiv = document.getElementById('editor');
+        var sourceView = document.getElementById('source-view');
+        if (this.isSourceMode) {
+            // 切回 WYSIWYG
+            this._loading = true;
+            this._dirty = false;
+            this.editor.commands.setContent(sourceView.value);
+            this._loading = false;
+            sourceView.style.display = 'none';
+            editorDiv.style.display = '';
+            this.isSourceMode = false;
+        } else {
+            // 切到源码视图
+            sourceView.value = this.editor.getHTML();
+            editorDiv.style.display = 'none';
+            sourceView.style.display = '';
+            this.isSourceMode = true;
+        }
     },
     scrollToPos: function(pos) { if (this.editor) this.editor.commands.setTextSelection(pos); },
     undo: function() { if (this.editor) this.editor.commands.undo(); },
