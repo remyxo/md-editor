@@ -72,13 +72,6 @@ void ToolBar::setupUi()
         "删除线", ":/icons/strikethrough.svg");
     m_strikeAction->setCheckable(true);
 
-    m_codeAction = makeAction(this, "codeAction",
-        "行内代码", ":/icons/code.svg");
-    m_codeAction->setCheckable(true);
-
-    makeAction(this, "codeBlockAction",
-        "插入代码块", ":/icons/code-block.svg");
-
     m_underlineAction = makeAction(this, "underlineAction",
         "下划线", ":/icons/underline.svg");
     m_underlineAction->setCheckable(true);
@@ -115,6 +108,11 @@ void ToolBar::setupUi()
         "插入图片", ":/icons/image.svg");
     makeAction(this, "tableAction",
         "插入表格", ":/icons/table.svg");
+    m_codeAction = makeAction(this, "codeAction",
+        "行内代码", ":/icons/code.svg");
+    m_codeAction->setCheckable(true);
+    makeAction(this, "codeBlockAction",
+        "代码块", ":/icons/code-block.svg");
     makeAction(this, "hrAction",
         "分割线", ":/icons/horizontal-rule.svg");
 
