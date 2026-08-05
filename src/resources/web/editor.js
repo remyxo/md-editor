@@ -206,16 +206,12 @@ window.editorApi = {
             if (sv) sv.style.fontSize = size + 'px';
         }
     },
-    setWidth: function(width) {
+    setWidth: function(percent) {
         var ed = document.getElementById('editor');
         var sv = document.getElementById('source-view');
-        if (width === 0) {
-            if (ed) ed.style.maxWidth = 'none';
-            if (sv) sv.style.maxWidth = 'none';
-        } else {
-            if (ed) ed.style.maxWidth = width + 'px';
-            if (sv) sv.style.maxWidth = width + 'px';
-        }
+        var w = percent + '%';
+        if (ed) ed.style.maxWidth = w;
+        if (sv) sv.style.maxWidth = w;
     },
     markClean: function() {
         this._dirty = false;

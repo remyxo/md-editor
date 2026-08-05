@@ -20,7 +20,7 @@ body.dark {
 }
 
 #editor {
-    max-width: 860px;
+    max-width: 80%;
     margin: 0 auto;
     padding: 40px 60px;
     min-height: 100vh;

@@ -461,10 +461,10 @@ void MainWindow::applyEditorFont()
 void MainWindow::applyEditorWidth()
 {
     QSettings settings("md-editor", "md-editor");
-    int width = settings.value("editor/width", 860).toInt();
+    int percent = settings.value("editor/width", 80).toInt();
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);
-        if (tab) tab->setEditorWidth(width);
+        if (tab) tab->setEditorWidth(percent);
     }
 }
 
