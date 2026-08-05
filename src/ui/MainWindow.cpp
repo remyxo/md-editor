@@ -322,7 +322,8 @@ void MainWindow::onThemeSwitch(const QString &theme)
     QSettings settings("md-editor", "md-editor");
     settings.setValue("appearance/theme", theme);
     settings.sync();
-    // 同步到所有已打开的标签页
+    // 同步到所有已打开的标签页和工具栏
+    m_toolBar->refreshThemeIcons(theme);
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);
         if (tab) tab->setEditorTheme(theme);

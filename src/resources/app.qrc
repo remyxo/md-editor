@@ -17,6 +17,23 @@
         <file>icons/table.svg</file>
         <file>icons/code-block.svg</file>
         <file>icons/horizontal-rule.svg</file>
+        <file>icons/dark/bold.svg</file>
+        <file>icons/dark/italic.svg</file>
+        <file>icons/dark/strikethrough.svg</file>
+        <file>icons/dark/code.svg</file>
+        <file>icons/dark/underline.svg</file>
+        <file>icons/dark/highlight.svg</file>
+        <file>icons/dark/list-bullet.svg</file>
+        <file>icons/dark/list-ordered.svg</file>
+        <file>icons/dark/task-list.svg</file>
+        <file>icons/dark/blockquote.svg</file>
+        <file>icons/dark/link.svg</file>
+        <file>icons/dark/image.svg</file>
+        <file>icons/dark/table.svg</file>
+        <file>icons/dark/code-block.svg</file>
+        <file>icons/dark/horizontal-rule.svg</file>
+        <file>icons/dark/source-code.svg</file>
+        <file>icons/dark/pdf.svg</file>
         <file>icons/source-code.svg</file>
         <file>icons/pdf.svg</file>
         <file>icons/md-editor.svg</file>

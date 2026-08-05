@@ -10,6 +10,7 @@ public:
     explicit ToolBar(QWidget *parent = nullptr);
 
     void updateFormatState(const QJsonObject &format);
+    void refreshThemeIcons(const QString &theme);
 
 signals:
     void boldClicked();
@@ -45,6 +46,8 @@ private:
     QAction *m_orderedListAction;
     QAction *m_taskListAction;
     QAction *m_blockquoteAction;
+    QMap<QAction*, QString> m_iconPaths; // action → 亮色图标路径
+    void applyIconTheme(const QString &theme);
 };
 
 #endif // MD_EDITOR_TOOLBAR_H
