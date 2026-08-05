@@ -124,5 +124,10 @@ void TabWidget::onCurrentChanged(int index)
 
 QString TabWidget::generateUntitledName()
 {
-    return QString("未命名-%1").arg(m_nextTabId);
+    int n = 1;
+    for (int i = 0; i < count(); ++i) {
+        if (tabText(i).startsWith("未命名-"))
+            n++;
+    }
+    return QString("未命名-%1").arg(n);
 }
