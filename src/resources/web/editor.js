@@ -114,6 +114,7 @@ window.editorApi = {
         format.orderedList = !!ed.isActive('orderedList');
         format.taskList = !!ed.isActive('taskList');
         format.blockquote = !!ed.isActive('blockquote');
+        format.codeBlock = !!ed.isActive('codeBlock');
         // 链接和表格
         format.link = !!ed.isActive('link');
         format.table = !!ed.isActive('table');

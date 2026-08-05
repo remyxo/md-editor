@@ -11,6 +11,7 @@ ToolBar::ToolBar(QWidget *parent)
     , m_italicAction(nullptr)
     , m_strikeAction(nullptr)
     , m_codeAction(nullptr)
+    , m_codeBlockAction(nullptr)
     , m_underlineAction(nullptr)
     , m_highlightAction(nullptr)
     , m_bulletListAction(nullptr)
@@ -111,8 +112,9 @@ void ToolBar::setupUi()
     m_codeAction = makeAction(this, "codeAction",
         "行内代码", ":/icons/code.svg");
     m_codeAction->setCheckable(true);
-    makeAction(this, "codeBlockAction",
+    m_codeBlockAction = makeAction(this, "codeBlockAction",
         "代码块", ":/icons/code-block.svg");
+    m_codeBlockAction->setCheckable(true);
     makeAction(this, "hrAction",
         "分割线", ":/icons/horizontal-rule.svg");
 
@@ -176,5 +178,6 @@ void ToolBar::updateFormatState(const QJsonObject &f)
     TOGGLE_CHECK(m_orderedListAction, "orderedList");
     TOGGLE_CHECK(m_taskListAction, "taskList");
     TOGGLE_CHECK(m_blockquoteAction, "blockquote");
+    TOGGLE_CHECK(m_codeBlockAction, "codeBlock");
 #undef TOGGLE_CHECK
 }

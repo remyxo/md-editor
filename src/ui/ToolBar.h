@@ -38,6 +38,7 @@ private:
     QAction *m_italicAction;
     QAction *m_strikeAction;
     QAction *m_codeAction;
+    QAction *m_codeBlockAction;
     QAction *m_underlineAction;
     QAction *m_highlightAction;
     QAction *m_bulletListAction;
