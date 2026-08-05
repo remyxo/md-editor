@@ -210,8 +210,8 @@ window.editorApi = {
         var ed = document.getElementById('editor');
         var sv = document.getElementById('source-view');
         var w = percent + '%';
-        if (ed) ed.style.maxWidth = w;
-        if (sv) sv.style.maxWidth = w;
+        if (ed) { ed.style.maxWidth = w; ed.style.minWidth = '800px'; }
+        if (sv) { sv.style.maxWidth = w; sv.style.minWidth = '800px'; }
     },
     markClean: function() {
         this._dirty = false;

@@ -21,6 +21,7 @@ body.dark {
 
 #editor {
     max-width: 80%;
+    min-width: 800px;
     margin: 0 auto;
     padding: 40px 60px;
     min-height: 100vh;
@@ -217,8 +218,9 @@ body.dark .ProseMirror mark {
 
 /* 源码视图（默认隐藏由 HTML inline style 控制，JS 切换时修改） */
 #source-view {
-    width: 100%;
-    min-height: 100vh;
+    max-width: 80%;
+    min-width: 800px;
+    margin: 0 auto;
     border: none;
     outline: none;
     resize: none;
