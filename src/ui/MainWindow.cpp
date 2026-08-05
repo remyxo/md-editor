@@ -111,6 +111,10 @@ void MainWindow::setupUi()
 
 void MainWindow::connectSignals()
 {
+    // 主题变更统一刷新图标（覆盖所有切换路径）
+    connect(Application::instance()->themeManager(), &ThemeManager::themeChanged,
+            m_toolBar, &ToolBar::refreshThemeIcons);
+
     // === 菜单栏信号 ===
     connect(m_menuBar, &MenuBar::newFile, this, &MainWindow::onNewFile);
     connect(m_menuBar, &MenuBar::openFolder, this, &MainWindow::onOpenFolder);
@@ -319,15 +323,10 @@ void MainWindow::onExportPdf()
 void MainWindow::onThemeSwitch(const QString &theme)
 {
     Application::instance()->themeManager()->switchTheme(theme);
-    // 强制 QSS 生效
-    qApp->processEvents();
-    // 现在设置图标（QSS 已应用，图标直接用硬编码颜色 SVGs）
-    m_toolBar->refreshThemeIcons(theme);
-    // 保存主题偏好
+    // ThemeManager::switchTheme 触发 themeChanged 信号 → ToolBar 自动刷新图标
     QSettings settings("md-editor", "md-editor");
     settings.setValue("appearance/theme", theme);
     settings.sync();
-    // 同步到所有已打开的标签页
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);
         if (tab) tab->setEditorTheme(theme);
