@@ -240,7 +240,7 @@ void MainWindow::onTabChanged(int tabId)
     if (tab) {
         tab->setInTable(false);
         // 同步新标签页的格式状态到工具栏
-        tab->runJsCommand("window.editorApi.syncFormatState();");
+        tab->runJsCommand("if(window.editorApi && window.editorApi.syncFormatState) window.editorApi.syncFormatState();");
     }
 }
 
