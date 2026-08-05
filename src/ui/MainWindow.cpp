@@ -236,9 +236,12 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
 void MainWindow::onTabChanged(int tabId)
 {
     Q_UNUSED(tabId)
-    // 切换标签时重置表格状态
     EditorTab *tab = m_tabWidget->currentEditorTab();
-    if (tab) tab->setInTable(false);
+    if (tab) {
+        tab->setInTable(false);
+        // 同步新标签页的格式状态到工具栏
+        tab->runJsCommand("window.editorApi.syncFormatState();");
+    }
 }
 
 EditorBridge *MainWindow::currentBridge() const

@@ -218,9 +218,11 @@ body.dark .ProseMirror mark {
 
 /* 源码视图（默认隐藏由 HTML inline style 控制，JS 切换时修改） */
 #source-view {
+    width: 100%;
     max-width: 80%;
     min-width: 800px;
     margin: 0 auto;
+    display: block;
     border: none;
     outline: none;
     resize: none;

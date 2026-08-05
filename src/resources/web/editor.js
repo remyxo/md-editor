@@ -206,6 +206,12 @@ window.editorApi = {
             if (sv) sv.style.fontSize = size + 'px';
         }
     },
+    syncFormatState: function() {
+        if (!this.editor || !this.bridge) return;
+        this.notifyFormat();
+        this.notifyHeadings();
+    },
+
     setWidth: function(percent) {
         var ed = document.getElementById('editor');
         var sv = document.getElementById('source-view');
