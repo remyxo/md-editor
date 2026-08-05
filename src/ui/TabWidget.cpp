@@ -2,6 +2,7 @@
 #include "EditorTab.h"
 #include "../core/EditorBridge.h"
 #include <QTabBar>
+#include <QStyle>
 #include <QMessageBox>
 #include <QFileInfo>
 
@@ -11,6 +12,8 @@ TabWidget::TabWidget(QWidget *parent)
     setTabsClosable(true);
     setMovable(true);
     setDocumentMode(true);
+    tabBar()->setDrawBase(false);
+    tabBar()->setStyleSheet("border: none; background: transparent;");
     connect(this, &QTabWidget::tabCloseRequested, this, &TabWidget::onTabCloseRequested);
     connect(this, &QTabWidget::currentChanged, this, &TabWidget::onCurrentChanged);
 }
