@@ -1,6 +1,11 @@
 /* 暗色主题 — 现代化扁平风格 */
 QMainWindow {
     background-color: #1e1e1e;
+    border: none;
+}
+QMainWindow::separator {
+    width: 0;
+    height: 0;
 }
 
 QMenuBar {
@@ -47,7 +52,7 @@ QMenu::separator {
 
 QToolBar {
     background-color: #2d2d2d;
-    border-bottom: 1px solid #383838;
+    border-bottom: none;
     padding: 6px 10px;
     spacing: 6px;
 }
