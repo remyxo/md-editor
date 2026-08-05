@@ -29,14 +29,22 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList lines = markdown.split('\n');
     QString processed;
     bool inCodeBlock = false;
+    QStringList codeLangs; // 跟踪每个代码块的语言
 
     for (int i = 0; i < lines.size(); ++i) {
         const QString &line = lines[i];
         const QString &next = (i + 1 < lines.size()) ? lines[i + 1] : QString();
 
         if (line.startsWith("```")) {
+            if (!inCodeBlock) {
+                // 进入代码块，提取语言
+                QString lang = line.mid(3).trimmed();
+                codeLangs << (lang.isEmpty() ? QString() : lang);
+                processed += "```\n"; // 去掉语言标记避免干扰 setMarkdown
+            } else {
+                processed += line + '\n';
+            }
             inCodeBlock = !inCodeBlock;
-            processed += line + '\n';
         } else if (inCodeBlock) {
             processed += line + '\n';
         } else if (line.isEmpty()) {
@@ -54,7 +62,62 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     doc.setMarkdown(processed);
     QString html = doc.toHtml();
 
-    // 后处理 1: BRMARKER → <br>
+    // 后处理 1: 合并连续 <pre> 块（QTextDocument 每行一个 <pre>）
+    {
+        QRegularExpression preRe(
+            R"(<pre[^>]*>(.*?)</pre>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        int searchFrom = 0;
+        while (true) {
+            auto m = preRe.match(html, searchFrom);
+            if (!m.hasMatch()) break;
+            int blockStart = m.capturedStart();
+            int blockEnd = blockStart + m.capturedLength();
+            QStringList lines;
+            lines << m.captured(1);
+            searchFrom = blockEnd;
+            // 收集连续 <pre>
+            while (true) {
+                auto next = preRe.match(html, searchFrom);
+                if (!next.hasMatch()) break;
+                QString between = html.mid(blockEnd,
+                    next.capturedStart() - blockEnd);
+                if (between.trimmed().isEmpty()) {
+                    lines << next.captured(1);
+                    blockEnd = next.capturedStart() + next.capturedLength();
+                    searchFrom = blockEnd;
+                } else break;
+            }
+            if (lines.size() > 1) {
+                QString merged = lines.join('\n');
+                // 保留内部代码格式但合并为一个 <pre>
+                QString replacement = "<pre>" + merged + "</pre>";
+                html.replace(blockStart, blockEnd - blockStart, replacement);
+                searchFrom = blockStart + replacement.length();
+            }
+        }
+    }
+
+    // 后处理 1.5: 给合并后的 <pre> 添加语言类型
+    if (!codeLangs.isEmpty()) {
+        QRegularExpression preTagRe("<pre>");
+        int langIdx = 0;
+        int offset = 0;
+        while (langIdx < codeLangs.size()) {
+            auto m = preTagRe.match(html, offset);
+            if (!m.hasMatch()) break;
+            if (!codeLangs[langIdx].isEmpty()) {
+                QString replacement = "<pre data-lang=\"" + codeLangs[langIdx] + "\">";
+                html.replace(m.capturedStart(), m.capturedLength(), replacement);
+                offset = m.capturedStart() + replacement.length();
+            } else {
+                offset = m.capturedStart() + m.capturedLength();
+            }
+            langIdx++;
+        }
+    }
+
+    // 后处理 2: BRMARKER → <br>
     html.replace(MARKER + " ", "<br>");
     html.replace(MARKER, "<br>");
 

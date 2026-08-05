@@ -165,6 +165,9 @@ void MainWindow::connectSignals()
     connect(m_toolBar, &ToolBar::linkClicked, this, &MainWindow::onInsertLink);
     connect(m_toolBar, &ToolBar::imageClicked, this, &MainWindow::onInsertImage);
     connect(m_toolBar, &ToolBar::tableClicked, this, &MainWindow::onInsertTable);
+    connect(m_toolBar, &ToolBar::codeBlockClicked, this, [this]() {
+        runEditorCommand("window.editorApi.insertCodeBlock();");
+    });
     connect(m_toolBar, &ToolBar::horizontalRuleClicked, this, [this]() {
         runEditorCommand("window.editorApi.insertHorizontalRule();");
     });

@@ -26,6 +26,7 @@ signals:
     void linkClicked();
     void imageClicked();
     void tableClicked();
+    void codeBlockClicked();
     void horizontalRuleClicked();
     void sourceToggleClicked();
     void pdfExportClicked();

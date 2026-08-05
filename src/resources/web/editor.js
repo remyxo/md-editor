@@ -149,6 +149,9 @@ window.editorApi = {
     insertTable: function(rows, cols) {
         if (this.editor) this.editor.commands.insertTable({ rows: rows || 3, cols: cols || 3, withHeaderRow: true });
     },
+    insertCodeBlock: function() {
+        if (this.editor) this.editor.commands.toggleCodeBlock();
+    },
     addRowBefore: function() { if (this.editor) this.editor.commands.addRowBefore(); },
     addRowAfter: function() { if (this.editor) this.editor.commands.addRowAfter(); },
     deleteRow: function() { if (this.editor) this.editor.commands.deleteRow(); },

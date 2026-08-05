@@ -112,6 +112,8 @@ void ToolBar::setupUi()
         "插入图片", ":/icons/image.svg");
     makeAction(this, "tableAction",
         "插入表格", ":/icons/table.svg");
+    makeAction(this, "codeBlockAction",
+        "插入代码块", ":/icons/code-block.svg");
     makeAction(this, "hrAction",
         "分割线", ":/icons/horizontal-rule.svg");
 
@@ -144,6 +146,8 @@ void ToolBar::setupUi()
             connect(a, &QAction::triggered, this, &ToolBar::tableClicked);
         else if (a->objectName() == "hrAction")
             connect(a, &QAction::triggered, this, &ToolBar::horizontalRuleClicked);
+        else if (a->objectName() == "codeBlockAction")
+            connect(a, &QAction::triggered, this, &ToolBar::codeBlockClicked);
         else if (a->objectName() == "sourceAction")
             connect(a, &QAction::triggered, this, &ToolBar::sourceToggleClicked);
         else if (a->objectName() == "pdfAction")
