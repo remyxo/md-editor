@@ -89,8 +89,9 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                 } else break;
             }
             if (lines.size() > 1) {
+                // 合并为一个 <pre>，内部文本用 \n 分隔
                 QString merged = lines.join('\n');
-                // 保留内部代码格式但合并为一个 <pre>
+                merged.replace(QRegularExpression("<[^>]*>"), "");
                 QString replacement = "<pre>" + merged + "</pre>";
                 html.replace(blockStart, blockEnd - blockStart, replacement);
                 searchFrom = blockStart + replacement.length();
