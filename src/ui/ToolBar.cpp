@@ -3,7 +3,6 @@
 #include <QLabel>
 #include <QJsonObject>
 #include <QIcon>
-#include <QDebug>
 
 ToolBar::ToolBar(QWidget *parent)
     : QToolBar(parent)
