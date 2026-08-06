@@ -12,7 +12,7 @@ public:
 public slots:
     void updateCursorPosition(int line, int col, int /*tabId*/);
     void updateFilePath(const QString &path);
-    void updateWordCount(const QString &markdown);
+    void updateWordCount(int chars, int words, int /*tabId*/);
 
 private:
     QLabel *m_cursorLabel;

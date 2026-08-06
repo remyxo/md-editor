@@ -1,12 +1,11 @@
 #include "StatusBar.h"
-#include <QRegularExpression>
 
 StatusBar::StatusBar(QWidget *parent)
     : QStatusBar(parent)
 {
     m_cursorLabel = new QLabel("行 1, 列 1", this);
     m_fileLabel = new QLabel("", this);
-    m_wordLabel = new QLabel("字数: 0", this);
+    m_wordLabel = new QLabel("字数: 0 / 字符: 0", this);
 
     addWidget(m_cursorLabel, 1);
     addPermanentWidget(m_wordLabel);
@@ -23,8 +22,7 @@ void StatusBar::updateFilePath(const QString &path)
     m_fileLabel->setText(path.isEmpty() ? "" : path);
 }
 
-void StatusBar::updateWordCount(const QString &markdown)
+void StatusBar::updateWordCount(int chars, int words, int /*tabId*/)
 {
-    int count = markdown.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).count();
-    m_wordLabel->setText(QString("字数: %1").arg(count));
+    m_wordLabel->setText(QString("字符: %1 / 词: %2").arg(chars).arg(words));
 }

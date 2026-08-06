@@ -129,6 +129,13 @@ void MainWindow::connectSignals()
         m_sideBar->setCollapsed(!m_sideBar->isCollapsed());
     });
     connect(m_menuBar, &MenuBar::toggleSourceMode, this, &MainWindow::onToggleSourceMode);
+    connect(m_menuBar, &MenuBar::toggleReadMode, this, [this]() {
+        static bool readMode = false;
+        readMode = !readMode;
+        EditorTab *tab = m_tabWidget->currentEditorTab();
+        if (tab) tab->runJsCommand(QString("window.editorApi.setEditable(%1);").arg(readMode ? "false" : "true"));
+        m_statusBar->showMessage(readMode ? "阅读模式" : "编辑模式", 2000);
+    });
     connect(m_menuBar, &MenuBar::insertLink, this, &MainWindow::onInsertLink);
     connect(m_menuBar, &MenuBar::insertImage, this, &MainWindow::onInsertImage);
     connect(m_menuBar, &MenuBar::insertTable, this, &MainWindow::onInsertTable);
@@ -220,6 +227,10 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
             [this](const QJsonArray &headings, int /*tabId*/) {
                 m_sideBar->outlineTree()->updateHeadings(headings);
             });
+
+    // 连接字数统计 → 状态栏
+    connect(bridge, &EditorBridge::wordCountUpdated,
+            m_statusBar, &StatusBar::updateWordCount);
 
     // 连接格式状态同步 → 工具栏
     connect(bridge, &EditorBridge::formatStateChanged, this,

@@ -15,6 +15,7 @@ public slots:
     // JS → C++：状态同步
     void cursorChanged(int line, int col);
     void contentChanged(bool dirty);
+    void wordCountChanged(int chars, int words);
     void headingsChanged(const QString &json);
     void formatChanged(const QString &json);
 
@@ -24,6 +25,7 @@ signals:
     void dirtyStateChanged(bool dirty, int tabId);
     void headingsUpdated(const QJsonArray &headings, int tabId);
     void formatStateChanged(const QJsonObject &format, int tabId);
+    void wordCountUpdated(int chars, int words, int tabId);
 
 private:
     int m_tabId;

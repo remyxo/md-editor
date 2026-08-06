@@ -5,7 +5,7 @@ Application::Application(int &argc, char **argv)
 {
     setApplicationName("md-editor");
     setApplicationDisplayName("Markdown Editor");
-    setApplicationVersion("0.1.0");
+    setApplicationVersion(MD_EDITOR_VERSION);
     setOrganizationName("md-editor");
 
     m_themeManager = new ThemeManager(this);

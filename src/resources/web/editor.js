@@ -5,6 +5,7 @@ window.editorApi = {
     _dirty: false,
     _loading: false,
     isSourceMode: false,
+    _sourceValue: null,
     _notifyDirty: function() {
         if (this.bridge) this.bridge.contentChanged(!!this._dirty);
     },
@@ -51,12 +52,13 @@ window.editorApi = {
             element: document.querySelector('#editor'),
             extensions: extensions,
             onUpdate: function(args) {
-                if (this._loading) return;  // setContent 触发的更新忽略
+                if (this._loading) return;
                 if (!this._dirty) {
                     this._dirty = true;
                     if (this.bridge) this.bridge.contentChanged(true);
                 }
                 this.notifyHeadings();
+                this.notifyWordCount();
             }.bind(this),
             onSelectionUpdate: function(args) {
                 var editor = args.editor;
@@ -182,17 +184,24 @@ window.editorApi = {
         var editorDiv = document.getElementById('editor');
         var sourceView = document.getElementById('source-view');
         if (this.isSourceMode) {
+            // 比较源码视图是否相对进入时有改动，避免丢失脏状态
+            var changed = sourceView.value !== this._sourceValue;
             // 切回 WYSIWYG
             this._loading = true;
-            this._dirty = false;
             this.editor.commands.setContent(sourceView.value);
             this._loading = false;
             sourceView.style.display = 'none';
             editorDiv.style.display = '';
             this.isSourceMode = false;
+            // 源码视图有改动且当前未标记脏时，标记并通知
+            if (changed && !this._dirty) {
+                this._dirty = true;
+                if (this.bridge) this.bridge.contentChanged(true);
+            }
         } else {
-            // 切到源码视图
-            sourceView.value = this.editor.getHTML();
+            // 切到源码视图，记录进入时的内容以检测改动
+            this._sourceValue = this.editor.getHTML();
+            sourceView.value = this._sourceValue;
             editorDiv.style.display = 'none';
             sourceView.style.display = '';
             this.isSourceMode = true;
@@ -219,6 +228,28 @@ window.editorApi = {
         this.notifyHeadings();
     },
 
+    setEditable: function(editable) {
+        if (!this.editor) return;
+        this.editor.setEditable(!!editable);
+        if (!editable) {
+            // 阅读模式：链接点击 → 浏览器打开
+            var el = this.editor.view.dom;
+            el.addEventListener('click', this._linkClickHandler = function(e) {
+                var t = e.target;
+                while (t && t !== el) {
+                    if (t.tagName === 'A' && t.href) {
+                        e.preventDefault();
+                        window.open(t.href, '_blank');
+                        return;
+                    }
+                    t = t.parentElement;
+                }
+            });
+        } else if (this._linkClickHandler) {
+            this.editor.view.dom.removeEventListener('click', this._linkClickHandler);
+        }
+    },
+
     setWidth: function(percent) {
         var ed = document.getElementById('editor');
         var sv = document.getElementById('source-view');
@@ -226,6 +257,14 @@ window.editorApi = {
         if (ed) { ed.style.maxWidth = w; ed.style.minWidth = '800px'; }
         if (sv) { sv.style.maxWidth = w; sv.style.minWidth = '800px'; }
     },
+    notifyWordCount: function() {
+        if (!this.editor || !this.bridge) return;
+        var text = this.editor.state.doc.textContent;
+        var chars = text.replace(/\s/g, '').length;
+        var words = text.trim() ? text.trim().split(/\s+/).length : 0;
+        this.bridge.wordCountChanged(chars, words);
+    },
+
     markClean: function() {
         this._dirty = false;
         if (this.bridge) this.bridge.contentChanged(false);

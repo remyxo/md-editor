@@ -33,6 +33,11 @@ void EditorBridge::headingsChanged(const QString &json)
     }
 }
 
+void EditorBridge::wordCountChanged(int chars, int words)
+{
+    emit wordCountUpdated(chars, words, m_tabId);
+}
+
 void EditorBridge::formatChanged(const QString &json)
 {
     QJsonParseError error;

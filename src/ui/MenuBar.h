@@ -24,6 +24,7 @@ signals:
     void toggleSidebar();
     void toggleOutline();
     void toggleSourceMode();
+    void toggleReadMode();
     void toggleFullscreen();
 
     void insertLink();
