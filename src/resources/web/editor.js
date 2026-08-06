@@ -137,23 +137,58 @@ window.editorApi = {
     getContent: function() { return this.editor ? this.editor.getHTML() : ''; },
     setContent: function(html) {
         if (!this.editor) return;
-        this._loading = true;
-        this._dirty = false;
-        this.editor.commands.setContent(html);
-        // 重置加载内容产生的撤销历史
-        try {
-            var st = this.editor.view.state;
-            for (var k in st) {
-                if (k.charAt(0) === '_' || k.indexOf('$') < 0) continue;
-                if (st[k] && st[k].done && Array.isArray(st[k].done)) {
-                    // 找到 history plugin 的 state，清空
-                    var tr = st.tr.setMeta(k, {done: [], undone: [], prevTime: 0});
-                    this.editor.view.dispatch(tr);
-                    break;
+        // 销毁旧编辑器 → 用内容新建（清零撤销历史最可靠方式）
+        var oldEl = document.querySelector('#editor');
+        var parent = oldEl.parentNode;
+        var newEl = document.createElement('div');
+        newEl.id = 'editor';
+        parent.replaceChild(newEl, oldEl);
+
+        this.editor.destroy();
+        this.editor = null;
+
+        // 重新创建编辑器，content 作为初始态，不产生 undo
+        var TipTap = window.TipTap;
+        var StarterKit = window.TipTapStarterKit;
+        var TableKit = window.TipTapExtensionTableKit;
+        var TaskList = window.TipTapExtensionTaskList;
+        var TaskItem = window.TipTapExtensionTaskItem;
+        var Highlight = window.TipTapExtensionHighlight;
+        var Image = window.TipTapExtensionImage;
+        var Placeholder = window.TipTapExtensionPlaceholder;
+        var CodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
+
+        var extensions = [
+            StarterKit.configure({ codeBlock: false, heading: {levels:[1,2,3,4,5,6]} }),
+            TableKit.configure({ resizable: true }), TaskList, TaskItem.configure({nested:true}),
+            Highlight, Image.configure({allowBase64:true}), Placeholder.configure({placeholder:'开始编写 Markdown...'}),
+        ];
+        if (CodeBlockLowlight && window.lowlight)
+            extensions.push(CodeBlockLowlight.configure({lowlight:window.lowlight}));
+
+        var self = this;
+        this.editor = new TipTap.Editor({
+            element: newEl,
+            extensions: extensions,
+            content: html,
+            onUpdate: function(args) {
+                if (self._loading) return;
+                if (!self._dirty) { self._dirty = true; if (self.bridge) self.bridge.contentChanged(true); }
+                self.notifyHeadings(); self.notifyWordCount();
+            },
+            onSelectionUpdate: function(args) {
+                var ed = args.editor;
+                if (self.bridge) {
+                    var pos = ed.state.selection.head, line = 1, col = 1;
+                    ed.state.doc.nodesBetween(0, pos, function(node, start) {
+                        if (start+node.nodeSize<=pos) { var l=node.textContent.slice(0,pos-start).split('\n'); line+=l.length-1; col=l[l.length-1].length+1; }
+                    });
+                    self.bridge.cursorChanged(line, col); self.notifyFormat();
                 }
-            }
-        } catch(e) {}
-        this._loading = false;
+                self.notifyHeadings();
+            },
+        });
+        this._dirty = false;
         if (this.bridge) {
             this.bridge.contentChanged(false);
             this.notifyWordCount();
