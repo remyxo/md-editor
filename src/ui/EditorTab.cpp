@@ -8,17 +8,27 @@
 #include <QContextMenuEvent>
 #include <QAction>
 
-// ===== EditorWebView — 中文上下文菜单 =====
+// ===== EditorWebView — 中文上下文菜单 + 阅读模式链接拦截 =====
 
 EditorWebView::EditorWebView(QWidget *parent)
     : QWebEngineView(parent), m_contextMenu(nullptr),
-      m_inTable(false), m_hasSelection(false)
+      m_inTable(false), m_hasSelection(false), m_readOnly(false)
 {
+    // 拦截链接点击：阅读模式下在外部浏览器打开
+    connect(page(), &QWebEnginePage::acceptNavigationRequest,
+            this, [this](const QUrl &url, QWebEnginePage::NavigationType type, bool) {
+        if (type == QWebEnginePage::NavigationTypeLinkClicked && m_readOnly) {
+            QDesktopServices::openUrl(url);
+            return false;
+        }
+        return true;
+    });
 }
 
 void EditorWebView::setInTable(bool inTable) { m_inTable = inTable; }
 void EditorWebView::setHasSelection(bool has) { m_hasSelection = has; }
 void EditorWebView::setLinkUrl(const QString &url) { m_linkUrl = url; }
+void EditorWebView::setReadOnly(bool ro) { m_readOnly = ro; }
 
 void EditorWebView::setupContextMenu()
 {
@@ -110,8 +120,18 @@ void EditorWebView::setupContextMenu()
 
 void EditorWebView::contextMenuEvent(QContextMenuEvent *event)
 {
-    setupContextMenu();
-    m_contextMenu->popup(event->globalPos());
+    // 先查询当前链接，再构建菜单（避免上次残留状态）
+    page()->runJavaScript(
+        "var ed=window.editorApi&&window.editorApi.editor;"
+        "var u='';"
+        "if(ed&&ed.isActive('link')){"
+        "var a=ed.getAttributes('link');if(a&&a.href)u=a.href;}"
+        "u;",
+        [this, pos = event->globalPos()](const QVariant &result) {
+            m_linkUrl = result.toString();
+            setupContextMenu();
+            m_contextMenu->popup(pos);
+        });
 }
 
 // ===== EditorTab =====
@@ -201,6 +221,11 @@ void EditorTab::setInTable(bool inTable)
 void EditorTab::setHasSelection(bool has)
 {
     m_webView->setHasSelection(has);
+}
+
+void EditorTab::setReadOnly(bool ro)
+{
+    m_webView->setReadOnly(ro);
 }
 
 void EditorTab::setLinkUrl(const QString &url)

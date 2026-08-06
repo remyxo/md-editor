@@ -139,7 +139,10 @@ void MainWindow::connectSignals()
         readMode = !readMode;
         m_menuBar->findChild<QAction *>("readModeAction")->setChecked(readMode);
         EditorTab *tab = m_tabWidget->currentEditorTab();
-        if (tab) tab->runJsCommand(QString("window.editorApi.setEditable(%1);").arg(readMode ? "false" : "true"));
+        if (tab) {
+            tab->runJsCommand(QString("window.editorApi.setEditable(%1);").arg(readMode ? "false" : "true"));
+            tab->setReadOnly(readMode);
+        }
         m_statusBar->showMessage(readMode ? "阅读模式" : "编辑模式", 2000);
     });
     connect(m_menuBar, &MenuBar::insertLink, this, &MainWindow::onInsertLink);

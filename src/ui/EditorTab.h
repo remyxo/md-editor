@@ -15,6 +15,7 @@ public:
     void setInTable(bool inTable);
     void setHasSelection(bool has);
     void setLinkUrl(const QString &url);
+    void setReadOnly(bool ro);
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
@@ -23,6 +24,7 @@ private:
     QMenu *m_contextMenu;
     bool m_inTable;
     bool m_hasSelection;
+    bool m_readOnly;
     QString m_linkUrl;
     void setupContextMenu();
 };
@@ -42,6 +44,7 @@ public:
     void setInTable(bool inTable);
     void setHasSelection(bool has);
     void setLinkUrl(const QString &url);
+    void setReadOnly(bool ro);
     void runJsCommand(const QString &js);
 
 signals:
