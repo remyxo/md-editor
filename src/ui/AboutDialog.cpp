@@ -37,7 +37,7 @@ AboutDialog::AboutDialog(QWidget *parent)
     versionLabel->setStyleSheet("color: #666; font-size: 13px;");
     rightLayout->addWidget(versionLabel);
 
-    rightLayout->addSpacing(8);
+    rightLayout->addSpacing(20);
 
     QLabel *descLabel = new QLabel(
         "一款基于 Qt6 + TipTap 的 Markdown 所见即所得编辑器");
