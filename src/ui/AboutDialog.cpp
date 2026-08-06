@@ -19,8 +19,8 @@ AboutDialog::AboutDialog(QWidget *parent)
     QLabel *iconLabel = new QLabel();
     iconLabel->setPixmap(QPixmap(":/icons/md-editor.svg").scaled(80, 80, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     iconLabel->setFixedSize(80, 80);
-    iconLabel->setAlignment(Qt::AlignTop);
-    mainLayout->addWidget(iconLabel);
+    iconLabel->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
+    mainLayout->addWidget(iconLabel, 0, Qt::AlignTop);
 
     // 右侧：文字信息
     QVBoxLayout *rightLayout = new QVBoxLayout();
