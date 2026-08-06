@@ -9,8 +9,9 @@
 1. **所有文档和注释使用中文**，代码标识符（类名、方法名、变量名）使用英文
 2. **版本号全局唯一**：定义在 `CMakeLists.txt` 的 `project(md-editor VERSION x.y.z)`，C++ 侧通过 `MD_EDITOR_VERSION` 宏引用
 3. **提交规范**：`feat:` / `fix:` / `chore:` 前缀，中文描述
-4. **编辑区内部存储 HTML**：读文件时 MD→HTML，写文件时 HTML→MD，通过 `MarkdownHandler` 转换
-5. **先讨论设计再编码**：不确定的地方先和用户确认
+4. **版本推进**：每次默认 +0.0.1，除非明确指定目标版本。更新 `CMakeLists.txt` 中 `project(md-editor VERSION x.y.z)` 和 tag
+5. **编辑区内部存储 HTML**：读文件时 MD→HTML，写文件时 HTML→MD，通过 `MarkdownHandler` 转换
+6. **先讨论设计再编码**：不确定的地方先和用户确认
 
 ## 架构
 
