@@ -39,14 +39,15 @@ void EditorWebView::setupContextMenu()
 
     m_contextMenu->addSeparator();
 
+    bool hasSelection = page()->hasSelection();
     QAction *cutAct = m_contextMenu->addAction("剪切(&X)");
-    cutAct->setEnabled(m_hasSelection);
+    cutAct->setEnabled(hasSelection);
     connect(cutAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::Cut);
     });
 
     QAction *copyAct = m_contextMenu->addAction("复制(&C)");
-    copyAct->setEnabled(m_hasSelection);
+    copyAct->setEnabled(hasSelection);
     connect(copyAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::Copy);
     });
