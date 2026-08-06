@@ -9,22 +9,21 @@ AboutDialog::AboutDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle("关于 Markdown Editor");
-    setFixedSize(420, 240);
+    setFixedSize(400, 210);
 
     QHBoxLayout *mainLayout = new QHBoxLayout(this);
-    mainLayout->setContentsMargins(24, 24, 24, 24);
-    mainLayout->setSpacing(20);
+    mainLayout->setContentsMargins(16, 16, 20, 16);
+    mainLayout->setSpacing(16);
 
     // 左侧：图标
     QLabel *iconLabel = new QLabel();
-    iconLabel->setPixmap(QPixmap(":/icons/md-editor.svg").scaled(80, 80, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    iconLabel->setFixedSize(80, 80);
-    iconLabel->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
+    iconLabel->setPixmap(QPixmap(":/icons/md-editor.svg").scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    iconLabel->setFixedSize(64, 64);
     mainLayout->addWidget(iconLabel, 0, Qt::AlignTop);
 
     // 右侧：文字信息
     QVBoxLayout *rightLayout = new QVBoxLayout();
-    rightLayout->setSpacing(6);
+    rightLayout->setSpacing(4);
 
     QLabel *nameLabel = new QLabel("Markdown Editor");
     QFont nameFont = nameLabel->font();
@@ -37,6 +36,8 @@ AboutDialog::AboutDialog(QWidget *parent)
         QString("版本 %1").arg(MD_EDITOR_VERSION));
     versionLabel->setStyleSheet("color: #666; font-size: 13px;");
     rightLayout->addWidget(versionLabel);
+
+    rightLayout->addSpacing(8);
 
     QLabel *descLabel = new QLabel(
         "一款基于 Qt6 + TipTap 的 Markdown 所见即所得编辑器");
