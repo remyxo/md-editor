@@ -30,6 +30,8 @@ signals:
     void insertLink();
     void insertImage();
     void insertTable();
+    void insertCode();
+    void insertCodeBlock();
     void insertHorizontalRule();
 
     void switchTheme(const QString &name);

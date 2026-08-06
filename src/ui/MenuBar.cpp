@@ -112,6 +112,12 @@ void MenuBar::setupUi()
     QAction *tableAct = m_insertMenu->addAction("表格...");
     connect(tableAct, &QAction::triggered, this, &MenuBar::insertTable);
 
+    QAction *codeAct = m_insertMenu->addAction("行内代码");
+    connect(codeAct, &QAction::triggered, this, &MenuBar::insertCode);
+
+    QAction *codeBlockAct = m_insertMenu->addAction("代码块");
+    connect(codeBlockAct, &QAction::triggered, this, &MenuBar::insertCodeBlock);
+
     QAction *hrAct = m_insertMenu->addAction("分割线");
     connect(hrAct, &QAction::triggered, this, &MenuBar::insertHorizontalRule);
 

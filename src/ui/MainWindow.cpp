@@ -157,6 +157,12 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::insertLink, this, &MainWindow::onInsertLink);
     connect(m_menuBar, &MenuBar::insertImage, this, &MainWindow::onInsertImage);
     connect(m_menuBar, &MenuBar::insertTable, this, &MainWindow::onInsertTable);
+    connect(m_menuBar, &MenuBar::insertCode, this, [this]() {
+        runEditorCommand("window.editorApi.toggleCode();");
+    });
+    connect(m_menuBar, &MenuBar::insertCodeBlock, this, [this]() {
+        runEditorCommand("window.editorApi.insertCodeBlock();");
+    });
     connect(m_menuBar, &MenuBar::quit, this, &MainWindow::close);
     connect(m_menuBar, &MenuBar::saveFile, this, &MainWindow::onSaveFile);
     connect(m_menuBar, &MenuBar::saveFileAs, this, &MainWindow::onSaveFileAs);
