@@ -8,8 +8,8 @@ StatusBar::StatusBar(QWidget *parent)
     m_modeLabel = new QLabel("编辑模式", this);
 
     addWidget(m_cursorLabel, 1);
+    addWidget(m_modeLabel);
     addPermanentWidget(m_wordLabel);
-    addPermanentWidget(m_modeLabel);
 }
 
 void StatusBar::updateCursorPosition(int line, int col, int /*tabId*/)

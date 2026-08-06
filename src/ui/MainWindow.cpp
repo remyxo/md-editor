@@ -353,6 +353,8 @@ void MainWindow::onThemeSwitch(const QString &theme)
     QSettings settings("md-editor", "md-editor");
     settings.setValue("appearance/theme", theme);
     settings.sync();
+    // setStyleSheet 会重置所有 Widget 状态，重新应用阅读模式
+    m_toolBar->setReadMode(m_readMode);
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);
         if (tab) tab->setEditorTheme(theme);
