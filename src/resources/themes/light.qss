@@ -86,10 +86,6 @@ QToolButton:pressed, QToolButton:checked {
     background-color: #d0d0d0;
 }
 
-QToolButton:disabled {
-    color: #b0b0b0;
-    background-color: transparent;
-}
 
 /* 文本格式 — SVG 图标的彩色（stroke="currentColor"） */
 QToolButton#boldAction      { color: #1a73e8; }

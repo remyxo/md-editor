@@ -180,9 +180,9 @@ void ToolBar::setReadMode(bool readMode)
     }
     for (QAction *a : m_allActions) {
         if (a != m_readModeAction)
-            a->setVisible(!readMode);
+            a->setEnabled(!readMode);
     }
-    m_headingCombo->setVisible(!readMode);
+    m_headingCombo->setEnabled(!readMode);
 }
 
 void ToolBar::updateFormatState(const QJsonObject &f)
