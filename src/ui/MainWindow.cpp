@@ -112,9 +112,15 @@ void MainWindow::setupUi()
 
 void MainWindow::connectSignals()
 {
-    // 主题变更统一刷新图标（覆盖所有切换路径）
+    // 主题变更 → 刷新图标 + 保持阅读模式状态
     connect(Application::instance()->themeManager(), &ThemeManager::themeChanged,
-            m_toolBar, &ToolBar::refreshThemeIcons);
+            this, [this](const QString &theme) {
+        m_toolBar->refreshThemeIcons(theme);
+        QTimer::singleShot(0, this, [this]() {
+            m_toolBar->setReadMode(m_readMode);
+            m_statusBar->setReadMode(m_readMode);
+        });
+    });
 
     // === 菜单栏信号 ===
     connect(m_menuBar, &MenuBar::newFile, this, &MainWindow::onNewFile);
@@ -349,11 +355,6 @@ void MainWindow::onExportPdf()
 void MainWindow::onThemeSwitch(const QString &theme)
 {
     Application::instance()->themeManager()->switchTheme(theme);
-    // 延迟到 QSS 和图标更新完全生效后再恢复阅读模式状态
-    QTimer::singleShot(0, this, [this]() {
-        m_toolBar->setReadMode(m_readMode);
-        m_statusBar->setReadMode(m_readMode);
-    });
     // 保存主题偏好
     QSettings settings("md-editor", "md-editor");
     settings.setValue("appearance/theme", theme);
