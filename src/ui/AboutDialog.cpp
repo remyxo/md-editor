@@ -9,16 +9,17 @@ AboutDialog::AboutDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle("关于 Markdown Editor");
-    setFixedSize(400, 260);
+    setFixedSize(400, 320);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setSpacing(8);
-    layout->setContentsMargins(32, 20, 32, 20);
+    layout->setContentsMargins(32, 24, 32, 24);
 
-    // 图标
+    // 图标（正方形，64x64）
     QLabel *iconLabel = new QLabel();
-    iconLabel->setPixmap(QPixmap(":/icons/md-editor.svg").scaled(48, 48, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    iconLabel->setPixmap(QPixmap(":/icons/md-editor.svg").scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     iconLabel->setAlignment(Qt::AlignCenter);
+    iconLabel->setFixedSize(64, 64);
     layout->addWidget(iconLabel);
 
     // 应用名称
