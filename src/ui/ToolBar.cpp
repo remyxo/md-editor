@@ -18,6 +18,8 @@ ToolBar::ToolBar(QWidget *parent)
     , m_orderedListAction(nullptr)
     , m_taskListAction(nullptr)
     , m_blockquoteAction(nullptr)
+    , m_readModeAction(nullptr)
+    , m_isDark(false)
 {
     setObjectName("mainToolBar");
     setMovable(false);
@@ -126,6 +128,8 @@ void ToolBar::setupUi()
     // === 视图 / 导出 ===
     makeAction(this, &m_iconPaths, "sourceAction",
         "切换源码模式", ":/icons/light/source-code.svg");
+    m_readModeAction = makeAction(this, &m_iconPaths, "readModeAction",
+        "切换成阅读模式", ":/icons/light/edit-mode.svg");
     makeAction(this, &m_iconPaths, "pdfAction",
         "导出 PDF", ":/icons/light/pdf.svg");
 
@@ -156,7 +160,29 @@ void ToolBar::setupUi()
             connect(a, &QAction::triggered, this, &ToolBar::sourceToggleClicked);
         else if (a->objectName() == "pdfAction")
             connect(a, &QAction::triggered, this, &ToolBar::pdfExportClicked);
+        else if (a->objectName() == "readModeAction")
+            connect(a, &QAction::triggered, this, &ToolBar::toggleReadModeClicked);
     }
+
+    // 收集所有 action，用于阅读模式禁用
+    m_allActions = findChildren<QAction *>().toList();
+}
+
+void ToolBar::setReadMode(bool readMode)
+{
+    QString prefix = m_isDark ? ":/icons/dark/" : ":/icons/light/";
+    if (readMode) {
+        m_readModeAction->setToolTip("切换成编辑模式");
+        m_readModeAction->setIcon(QIcon(prefix + "read-mode.svg"));
+    } else {
+        m_readModeAction->setToolTip("切换成阅读模式");
+        m_readModeAction->setIcon(QIcon(prefix + "edit-mode.svg"));
+    }
+    for (QAction *a : m_allActions) {
+        if (a != m_readModeAction)
+            a->setEnabled(!readMode);
+    }
+    m_headingCombo->setEnabled(!readMode);
 }
 
 void ToolBar::updateFormatState(const QJsonObject &f)
@@ -192,11 +218,11 @@ void ToolBar::refreshThemeIcons(const QString &theme)
 
 void ToolBar::applyIconTheme(const QString &theme)
 {
-    bool isDark = (theme == "dark");
+    m_isDark = (theme == "dark");
     for (auto it = m_iconPaths.begin(); it != m_iconPaths.end(); ++it) {
         QAction *action = it.key();
         QString path = it.value();
-        if (isDark)
+        if (m_isDark)
             path.replace("/light/", "/dark/");
         action->setIcon(QIcon(path));
     }

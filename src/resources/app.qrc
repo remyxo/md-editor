@@ -20,6 +20,8 @@
         <file>icons/light/horizontal-rule.svg</file>
         <file>icons/light/source-code.svg</file>
         <file>icons/light/pdf.svg</file>
+        <file>icons/light/edit-mode.svg</file>
+        <file>icons/light/read-mode.svg</file>
         <file>icons/dark/bold.svg</file>
         <file>icons/dark/italic.svg</file>
         <file>icons/dark/strikethrough.svg</file>
@@ -37,6 +39,8 @@
         <file>icons/dark/horizontal-rule.svg</file>
         <file>icons/dark/source-code.svg</file>
         <file>icons/dark/pdf.svg</file>
+        <file>icons/dark/edit-mode.svg</file>
+        <file>icons/dark/read-mode.svg</file>
         <file>web/editor.html</file>
         <file>web/editor.css</file>
         <file>web/editor.js</file>

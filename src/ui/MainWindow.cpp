@@ -31,6 +31,7 @@
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
+    , m_readMode(false)
 {
     m_fileManager = new FileManager(this);
 
@@ -134,17 +135,19 @@ void MainWindow::connectSignals()
         m_menuBar->findChild<QAction *>("sourceModeAction")->setChecked(srcMode);
         onToggleSourceMode();
     });
-    connect(m_menuBar, &MenuBar::toggleReadMode, this, [this]() {
-        static bool readMode = false;
-        readMode = !readMode;
-        m_menuBar->findChild<QAction *>("readModeAction")->setChecked(readMode);
+    auto toggleReadMode = [this]() {
+        m_readMode = !m_readMode;
+        m_menuBar->findChild<QAction *>("readModeAction")->setChecked(m_readMode);
+        m_toolBar->setReadMode(m_readMode);
+        m_statusBar->setReadMode(m_readMode);
         EditorTab *tab = m_tabWidget->currentEditorTab();
         if (tab) {
-            tab->runJsCommand(QString("window.editorApi.setEditable(%1);").arg(readMode ? "false" : "true"));
-            tab->setReadOnly(readMode);
+            tab->runJsCommand(QString("window.editorApi.setEditable(%1);").arg(m_readMode ? "false" : "true"));
+            tab->setReadOnly(m_readMode);
         }
-        m_statusBar->showMessage(readMode ? "阅读模式" : "编辑模式", 2000);
-    });
+    };
+    connect(m_menuBar, &MenuBar::toggleReadMode, this, toggleReadMode);
+    connect(m_toolBar, &ToolBar::toggleReadModeClicked, this, toggleReadMode);
     connect(m_menuBar, &MenuBar::insertLink, this, &MainWindow::onInsertLink);
     connect(m_menuBar, &MenuBar::insertImage, this, &MainWindow::onInsertImage);
     connect(m_menuBar, &MenuBar::insertTable, this, &MainWindow::onInsertTable);

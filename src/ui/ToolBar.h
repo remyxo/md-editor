@@ -11,6 +11,7 @@ public:
 
     void updateFormatState(const QJsonObject &format);
     void refreshThemeIcons(const QString &theme);
+    void setReadMode(bool readMode);
 
 signals:
     void boldClicked();
@@ -31,6 +32,7 @@ signals:
     void horizontalRuleClicked();
     void sourceToggleClicked();
     void pdfExportClicked();
+    void toggleReadModeClicked();
 
 private:
     void setupUi();
@@ -46,6 +48,9 @@ private:
     QAction *m_orderedListAction;
     QAction *m_taskListAction;
     QAction *m_blockquoteAction;
+    QAction *m_readModeAction;
+    QList<QAction*> m_allActions;
+    bool m_isDark;
     QMap<QAction*, QString> m_iconPaths; // action → 亮色图标路径
     void applyIconTheme(const QString &theme);
 };

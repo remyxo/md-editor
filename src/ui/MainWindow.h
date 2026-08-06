@@ -71,6 +71,7 @@ private:
     SearchBar *m_searchBar;
     FileManager *m_fileManager;
     QSplitter *m_splitter;
+    bool m_readMode;
 };
 
 #endif // MD_EDITOR_MAINWINDOW_H
