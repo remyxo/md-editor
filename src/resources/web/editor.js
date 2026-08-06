@@ -236,34 +236,20 @@ window.editorApi = {
 
     setEditable: function(editable) {
         if (!this.editor) return;
-        this._loading = true;
-        this.editor.setEditable(!!editable);
-        this._loading = false;
-        this._readOnly = !editable;
+        var editorDiv = document.getElementById('editor');
+        var readView = document.getElementById('read-view');
         var sv = document.getElementById('source-view');
+        this._readOnly = !editable;
         if (!editable) {
             if (sv) sv.setAttribute('readonly', '');
-            // 阅读模式：直接在 DOM 元素上设 onclick 打开链接
-            var links = this.editor.view.dom.querySelectorAll('a');
-            for (var i = 0; i < links.length; i++) {
-                links[i].setAttribute('target', '_blank');
-                links[i].setAttribute('rel', 'noopener');
-                links[i].style.pointerEvents = 'auto';
-                links[i].onclick = function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    window.open(this.href, '_blank');
-                };
-            }
+            // 阅读模式：渲染静态 HTML 到 read-view，链接原生可点击
+            readView.innerHTML = this.editor.getHTML();
+            editorDiv.style.display = 'none';
+            readView.style.display = '';
         } else {
             if (sv) sv.removeAttribute('readonly');
-            var links = this.editor.view.dom.querySelectorAll('a');
-            for (var i = 0; i < links.length; i++) {
-                links[i].removeAttribute('target');
-                links[i].removeAttribute('rel');
-                links[i].style.pointerEvents = '';
-                links[i].onclick = null;
-            }
+            readView.style.display = 'none';
+            editorDiv.style.display = '';
         }
     },
 

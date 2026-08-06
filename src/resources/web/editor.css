@@ -216,11 +216,49 @@ body.dark .ProseMirror mark {
     height: 0;
 }
 
-/* 阅读模式下链接可点击 */
-.ProseMirror[contenteditable="false"] a {
-    pointer-events: auto;
+/* 阅读模式静态视图 */
+#read-view {
+    max-width: 80%;
+    min-width: 800px;
+    margin: 0 auto;
+    padding: 40px 60px;
+    min-height: 100vh;
+    font-size: 18px;
+    line-height: 1.7;
+    color: #333;
+}
+
+#read-view a {
+    color: #0078d4;
+    text-decoration: underline;
     cursor: pointer;
 }
+
+#read-view h1 { font-size: 2em; font-weight: 700; margin-top: 1.5em; margin-bottom: 0.5em; }
+#read-view h2 { font-size: 1.5em; font-weight: 700; margin-top: 1.4em; margin-bottom: 0.4em; }
+#read-view h3 { font-size: 1.25em; font-weight: 600; margin-top: 1.3em; margin-bottom: 0.3em; }
+
+#read-view code {
+    background-color: #f0f0f0;
+    border-radius: 3px;
+    padding: 2px 6px;
+}
+#read-view pre {
+    background-color: #f4f5f7;
+    border-radius: 8px;
+    padding: 14px 18px;
+    line-height: 1.45;
+}
+#read-view blockquote {
+    border-left: 4px solid #0078d4;
+    padding: 8px 20px;
+    background: #f8f9fb;
+}
+
+body.dark #read-view { color: #d4d4d4; }
+body.dark #read-view code { background: #2d2d2d; }
+body.dark #read-view pre { background: #1e2228; }
+body.dark #read-view blockquote { background: #1e2228; border-left-color: #5a8acc; }
 
 /* 源码视图（默认隐藏由 HTML inline style 控制，JS 切换时修改） */
 #source-view {
