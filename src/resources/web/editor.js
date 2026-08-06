@@ -207,6 +207,7 @@ window.editorApi = {
             sourceView.value = this._sourceValue;
             editorDiv.style.display = 'none';
             sourceView.style.display = '';
+            if (this._readOnly) sourceView.setAttribute('readonly', '');
             this.isSourceMode = true;
         }
     },
@@ -234,11 +235,14 @@ window.editorApi = {
 
     setEditable: function(editable) {
         if (!this.editor) return;
+        this._loading = true;
         this.editor.setEditable(!!editable);
+        this._loading = false;
+        this._readOnly = !editable;
         var el = this.editor.view.dom;
-        var self = this;
+        var sv = document.getElementById('source-view');
         if (!editable) {
-            // 阅读模式：捕获阶段拦截链接点击
+            if (sv) sv.setAttribute('readonly', '');
             this._linkHandler = function(e) {
                 var t = e.target;
                 while (t && t !== el) {
@@ -252,9 +256,12 @@ window.editorApi = {
                 }
             };
             el.addEventListener('click', this._linkHandler, true);
-        } else if (this._linkHandler) {
-            el.removeEventListener('click', this._linkHandler, true);
-            this._linkHandler = null;
+        } else {
+            if (sv) sv.removeAttribute('readonly');
+            if (this._linkHandler) {
+                el.removeEventListener('click', this._linkHandler, true);
+                this._linkHandler = null;
+            }
         }
     },
 
