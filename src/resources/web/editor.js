@@ -243,18 +243,26 @@ window.editorApi = {
         var sv = document.getElementById('source-view');
         if (!editable) {
             if (sv) sv.setAttribute('readonly', '');
-            // 阅读模式：给所有链接设置 target=_blank 和 pointer-events:auto
+            // 阅读模式：直接在 DOM 元素上设 onclick 打开链接
             var links = this.editor.view.dom.querySelectorAll('a');
             for (var i = 0; i < links.length; i++) {
                 links[i].setAttribute('target', '_blank');
+                links[i].setAttribute('rel', 'noopener');
                 links[i].style.pointerEvents = 'auto';
+                links[i].onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.open(this.href, '_blank');
+                };
             }
         } else {
             if (sv) sv.removeAttribute('readonly');
             var links = this.editor.view.dom.querySelectorAll('a');
             for (var i = 0; i < links.length; i++) {
                 links[i].removeAttribute('target');
+                links[i].removeAttribute('rel');
                 links[i].style.pointerEvents = '';
+                links[i].onclick = null;
             }
         }
     },
