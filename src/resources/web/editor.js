@@ -140,6 +140,17 @@ window.editorApi = {
         this._loading = true;
         this._dirty = false;
         this.editor.commands.setContent(html);
+        // 清除加载内容产生的撤销历史
+        if (this.editor.extensionManager && this.editor.extensionManager.extensions) {
+            for (var i = 0; i < this.editor.extensionManager.extensions.length; i++) {
+                var ext = this.editor.extensionManager.extensions[i];
+                if (ext.name === 'history' && ext.storage) {
+                    ext.storage.done = [];
+                    ext.storage.undone = [];
+                    break;
+                }
+            }
+        }
         this._loading = false;
         if (this.bridge) {
             this.bridge.contentChanged(false);
