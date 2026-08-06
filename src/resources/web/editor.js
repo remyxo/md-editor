@@ -236,34 +236,35 @@ window.editorApi = {
 
     setEditable: function(editable) {
         if (!this.editor) return;
-        var editorDiv = document.getElementById('editor');
-        var readView = document.getElementById('read-view');
-        var sv = document.getElementById('source-view');
+        this._loading = true;
+        this.editor.setEditable(!!editable);
+        this._loading = false;
         this._readOnly = !editable;
+        var el = this.editor.view.dom;
+        var sv = document.getElementById('source-view');
         if (!editable) {
             if (sv) sv.setAttribute('readonly', '');
-            // 阅读模式：渲染静态 HTML，通过 div 级点击事件打开链接
-            readView.innerHTML = this.editor.getHTML();
-            readView.onclick = function(e) {
+            // 阅读模式：mousedown 拦截链接点击，通知 C++ 打开
+            this._linkHandler = function(e) {
                 var t = e.target;
-                while (t && t !== this) {
+                while (t && t !== el) {
                     if (t.tagName === 'A' && t.href) {
                         e.preventDefault();
-                        // 通过 bridge 通知 C++ 打开 URL
-                        if (window.editorApi.bridge) {
+                        e.stopPropagation();
+                        if (window.editorApi.bridge)
                             window.editorApi.bridge.openUrl(t.href);
-                        }
-                        return false;
+                        return;
                     }
                     t = t.parentElement;
                 }
             };
-            editorDiv.style.display = 'none';
-            readView.style.display = '';
+            el.addEventListener('mousedown', this._linkHandler, true);
         } else {
             if (sv) sv.removeAttribute('readonly');
-            readView.style.display = 'none';
-            editorDiv.style.display = '';
+            if (this._linkHandler) {
+                el.removeEventListener('mousedown', this._linkHandler, true);
+                this._linkHandler = null;
+            }
         }
     },
 
