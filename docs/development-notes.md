@@ -64,3 +64,33 @@
 ### 教训
 
 Qt 的 QSS、QPalette、SVG `currentColor` 三者之间的优先级关系复杂且不可靠。对于需要精确控制颜色的 UI 元素，硬编码是最稳妥的方案。
+
+---
+
+## 加载文件后的撤销历史问题
+
+### 问题
+
+打开文档 → 编辑若干处 → Ctrl+Z 撤销所有编辑 → 再按一次 Ctrl+Z → 整个文档被删除（撤销回到了加载前的空状态）。
+
+### 失败的尝试
+
+1. **清空 `ext.storage.done/undone` 数组** — 修改了 JavaScript 对象但 ProseMirror 的 PluginState 是只读的，不会被应用。
+
+2. **`tr.setMeta(key, {done: [], undone: [], prevTime: 0})`** — 虽然成功创建并 dispatch 了一个替换 PluginState 的 transaction，但 `setContent()` 创建的历史条目仍然存在（属于前一个 transaction），该条目指向"空文档"状态，不被新的 meta 覆盖。
+
+3. **延迟 `setTimeout` + blur/focus** — 无法触及 ProseMirror 的历史存储。
+
+4. **DOM 级 DOMParser 手动解析 HTML** — 找不到从 TipTap bundle 中获取正确 schema 的 DOMParser API。
+
+### 最终方案
+
+**`setContent()` 改为销毁旧编辑器 → 重新 `new Editor({content: html})` 创建。**
+
+新编辑器的初始状态就是加载的内容，不存在"加载前为空"的历史起点。撤销历史从零开始，只记录用户编辑。
+
+### 教训
+
+ProseMirror 的 History 插件对通过 `setContent()`（等价于 `tr.replaceWith(0, doc.size, newContent)`）加载内容会产生一条指向"加载前状态"的 undo item。该条目插入时机早于任何 C++/JS 干预代码，无法通过 PluginState 清洗消除。
+
+**唯一可靠的清零方式：不以 `setContent` 加载内容，而是以 `content` 参数直接在构造函数中初始化。**
