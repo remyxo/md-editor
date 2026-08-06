@@ -39,7 +39,7 @@ void EditorWebView::setupContextMenu()
 
     m_contextMenu->addSeparator();
 
-    bool hasSelection = page()->hasSelection();
+    bool hasSelection = !page()->selectedText().isEmpty();
     QAction *cutAct = m_contextMenu->addAction("剪切(&X)");
     cutAct->setEnabled(hasSelection);
     connect(cutAct, &QAction::triggered, [this]() {
