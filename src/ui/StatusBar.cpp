@@ -7,8 +7,8 @@ StatusBar::StatusBar(QWidget *parent)
     m_wordLabel = new QLabel("字符: 0 / 词: 0", this);
     m_modeLabel = new QLabel("编辑模式", this);
 
-    addWidget(m_cursorLabel, 1);
-    addWidget(m_modeLabel);
+    addWidget(m_cursorLabel);
+    addWidget(m_modeLabel, 1);
     addPermanentWidget(m_wordLabel);
 }
 

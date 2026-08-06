@@ -349,12 +349,14 @@ void MainWindow::onExportPdf()
 void MainWindow::onThemeSwitch(const QString &theme)
 {
     Application::instance()->themeManager()->switchTheme(theme);
-    // ThemeManager::switchTheme 触发 themeChanged 信号 → ToolBar 自动刷新图标
+    qApp->processEvents();
+    // setStyleSheet 会重置 Widget 状态，处理完后重新应用阅读模式
+    m_toolBar->setReadMode(m_readMode);
+    m_statusBar->setReadMode(m_readMode);
+    // 保存主题偏好
     QSettings settings("md-editor", "md-editor");
     settings.setValue("appearance/theme", theme);
     settings.sync();
-    // setStyleSheet 会重置所有 Widget 状态，重新应用阅读模式
-    m_toolBar->setReadMode(m_readMode);
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);
         if (tab) tab->setEditorTheme(theme);
