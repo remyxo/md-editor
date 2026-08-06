@@ -140,17 +140,19 @@ window.editorApi = {
         this._loading = true;
         this._dirty = false;
         this.editor.commands.setContent(html);
-        // 清除加载内容产生的撤销历史
-        if (this.editor.extensionManager && this.editor.extensionManager.extensions) {
-            for (var i = 0; i < this.editor.extensionManager.extensions.length; i++) {
-                var ext = this.editor.extensionManager.extensions[i];
-                if (ext.name === 'history' && ext.storage) {
-                    ext.storage.done = [];
-                    ext.storage.undone = [];
+        // 重置加载内容产生的撤销历史
+        try {
+            var st = this.editor.view.state;
+            for (var k in st) {
+                if (k.charAt(0) === '_' || k.indexOf('$') < 0) continue;
+                if (st[k] && st[k].done && Array.isArray(st[k].done)) {
+                    // 找到 history plugin 的 state，清空
+                    var tr = st.tr.setMeta(k, {done: [], undone: [], prevTime: 0});
+                    this.editor.view.dispatch(tr);
                     break;
                 }
             }
-        }
+        } catch(e) {}
         this._loading = false;
         if (this.bridge) {
             this.bridge.contentChanged(false);
