@@ -120,6 +120,13 @@ window.editorApi = {
         format.link = !!ed.isActive('link');
         format.table = !!ed.isActive('table');
 
+        // 选中状态和链接 URL
+        format.hasSelection = !ed.state.selection.empty;
+        if (ed.isActive('link')) {
+            var attrs = ed.getAttributes('link');
+            if (attrs && attrs.href) format.linkUrl = attrs.href;
+        }
+
         this.bridge.formatChanged(JSON.stringify(format));
     },
 

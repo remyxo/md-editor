@@ -437,9 +437,12 @@ void MainWindow::onFormatChanged(const QJsonObject &format, int /*tabId*/)
     m_toolBar->updateFormatState(format);
     // 同步表格内状态到当前标签的右键菜单
     EditorTab *tab = m_tabWidget->currentEditorTab();
-    if (tab && format.contains("table")) {
+    if (tab && format.contains("table"))
         tab->setInTable(format["table"].toBool());
-    }
+    if (tab && format.contains("hasSelection"))
+        tab->setHasSelection(format["hasSelection"].toBool());
+    if (tab && format.contains("linkUrl"))
+        tab->setLinkUrl(format["linkUrl"].toString());
 }
 
 void MainWindow::onShowSettings()

@@ -4,20 +4,21 @@
 #include <QWebEngineSettings>
 #include <QWebEnginePage>
 #include <QUrl>
+#include <QDesktopServices>
 #include <QContextMenuEvent>
 #include <QAction>
 
 // ===== EditorWebView — 中文上下文菜单 =====
 
 EditorWebView::EditorWebView(QWidget *parent)
-    : QWebEngineView(parent), m_contextMenu(nullptr), m_inTable(false)
+    : QWebEngineView(parent), m_contextMenu(nullptr),
+      m_inTable(false), m_hasSelection(false)
 {
 }
 
-void EditorWebView::setInTable(bool inTable)
-{
-    m_inTable = inTable;
-}
+void EditorWebView::setInTable(bool inTable) { m_inTable = inTable; }
+void EditorWebView::setHasSelection(bool has) { m_hasSelection = has; }
+void EditorWebView::setLinkUrl(const QString &url) { m_linkUrl = url; }
 
 void EditorWebView::setupContextMenu()
 {
@@ -39,11 +40,13 @@ void EditorWebView::setupContextMenu()
     m_contextMenu->addSeparator();
 
     QAction *cutAct = m_contextMenu->addAction("剪切(&X)");
+    cutAct->setEnabled(m_hasSelection);
     connect(cutAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::Cut);
     });
 
     QAction *copyAct = m_contextMenu->addAction("复制(&C)");
+    copyAct->setEnabled(m_hasSelection);
     connect(copyAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::Copy);
     });
@@ -59,6 +62,16 @@ void EditorWebView::setupContextMenu()
     connect(selectAllAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::SelectAll);
     });
+
+    // 链接访问 — 仅光标在链接上时显示
+    if (!m_linkUrl.isEmpty()) {
+        m_contextMenu->addSeparator();
+        QAction *visitLink = m_contextMenu->addAction(
+            QString::fromUtf8("访问 %1").arg(m_linkUrl));
+        connect(visitLink, &QAction::triggered, [this]() {
+            QDesktopServices::openUrl(QUrl(m_linkUrl));
+        });
+    }
 
     // 表格操作子菜单 — 仅光标在表格内时显示
     if (m_inTable) {
@@ -185,6 +198,16 @@ void EditorTab::setEditorWidth(int width)
 void EditorTab::setInTable(bool inTable)
 {
     m_webView->setInTable(inTable);
+}
+
+void EditorTab::setHasSelection(bool has)
+{
+    m_webView->setHasSelection(has);
+}
+
+void EditorTab::setLinkUrl(const QString &url)
+{
+    m_webView->setLinkUrl(url);
 }
 
 void EditorTab::runJsCommand(const QString &js)

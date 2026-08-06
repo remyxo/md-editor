@@ -13,6 +13,8 @@ class EditorWebView : public QWebEngineView {
 public:
     explicit EditorWebView(QWidget *parent = nullptr);
     void setInTable(bool inTable);
+    void setHasSelection(bool has);
+    void setLinkUrl(const QString &url);
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
@@ -20,6 +22,8 @@ protected:
 private:
     QMenu *m_contextMenu;
     bool m_inTable;
+    bool m_hasSelection;
+    QString m_linkUrl;
     void setupContextMenu();
 };
 
@@ -36,6 +40,8 @@ public:
     void setEditorFont(const QString &family, int size);
     void setEditorWidth(int width);
     void setInTable(bool inTable);
+    void setHasSelection(bool has);
+    void setLinkUrl(const QString &url);
     void runJsCommand(const QString &js);
 
 signals:
