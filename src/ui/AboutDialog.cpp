@@ -12,7 +12,7 @@ AboutDialog::AboutDialog(QWidget *parent)
     setFixedSize(400, 210);
 
     QHBoxLayout *mainLayout = new QHBoxLayout(this);
-    mainLayout->setContentsMargins(12, 16, 20, 16);
+    mainLayout->setContentsMargins(0, 16, 20, 16);
     mainLayout->setSpacing(14);
 
     // 左侧：图标
@@ -37,7 +37,7 @@ AboutDialog::AboutDialog(QWidget *parent)
     versionLabel->setStyleSheet("color: #666; font-size: 13px;");
     rightLayout->addWidget(versionLabel);
 
-    rightLayout->addSpacing(16);
+    rightLayout->addSpacing(8);
 
     QLabel *descLabel = new QLabel(
         "一款基于 Qt6 + TipTap 的 Markdown 所见即所得编辑器");
