@@ -216,6 +216,12 @@ body.dark .ProseMirror mark {
     height: 0;
 }
 
+/* 阅读模式下链接可点击 */
+.ProseMirror[contenteditable="false"] a {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
 /* 源码视图（默认隐藏由 HTML inline style 控制，JS 切换时修改） */
 #source-view {
     width: 100%;
