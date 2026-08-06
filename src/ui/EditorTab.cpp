@@ -8,21 +8,31 @@
 #include <QContextMenuEvent>
 #include <QAction>
 
-// ===== EditorWebView — 中文上下文菜单 + 阅读模式链接拦截 =====
+// ===== EditorWebPage — 拦截链接点击（阅读模式） =====
+
+class EditorWebPage : public QWebEnginePage {
+public:
+    EditorWebPage(QObject *parent, bool *readOnlyFlag)
+        : QWebEnginePage(parent), m_readOnly(readOnlyFlag) {}
+protected:
+    bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool) override {
+        if (type == NavigationTypeLinkClicked && m_readOnly && *m_readOnly) {
+            QDesktopServices::openUrl(url);
+            return false;
+        }
+        return true;
+    }
+private:
+    bool *m_readOnly;
+};
+
+// ===== EditorWebView — 中文上下文菜单 =====
 
 EditorWebView::EditorWebView(QWidget *parent)
     : QWebEngineView(parent), m_contextMenu(nullptr),
       m_inTable(false), m_hasSelection(false), m_readOnly(false)
 {
-    // 拦截链接点击：阅读模式下在外部浏览器打开
-    connect(page(), &QWebEnginePage::acceptNavigationRequest,
-            this, [this](const QUrl &url, QWebEnginePage::NavigationType type, bool) {
-        if (type == QWebEnginePage::NavigationTypeLinkClicked && m_readOnly) {
-            QDesktopServices::openUrl(url);
-            return false;
-        }
-        return true;
-    });
+    setPage(new EditorWebPage(this, &m_readOnly));
 }
 
 void EditorWebView::setInTable(bool inTable) { m_inTable = inTable; }
