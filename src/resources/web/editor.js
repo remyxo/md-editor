@@ -124,6 +124,7 @@ window.editorApi = {
 
         // 选中状态和链接 URL
         format.hasSelection = !ed.state.selection.empty;
+        format.linkUrl = "";
         if (ed.isActive('link')) {
             var attrs = ed.getAttributes('link');
             if (attrs && attrs.href) format.linkUrl = attrs.href;
@@ -239,28 +240,21 @@ window.editorApi = {
         this.editor.setEditable(!!editable);
         this._loading = false;
         this._readOnly = !editable;
-        var el = this.editor.view.dom;
         var sv = document.getElementById('source-view');
         if (!editable) {
             if (sv) sv.setAttribute('readonly', '');
-            this._linkHandler = function(e) {
-                var t = e.target;
-                while (t && t !== el) {
-                    if (t.tagName === 'A' && t.href) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        window.open(t.href, '_blank');
-                        return;
-                    }
-                    t = t.parentElement;
-                }
-            };
-            el.addEventListener('click', this._linkHandler, true);
+            // 阅读模式：给所有链接设置 target=_blank 和 pointer-events:auto
+            var links = this.editor.view.dom.querySelectorAll('a');
+            for (var i = 0; i < links.length; i++) {
+                links[i].setAttribute('target', '_blank');
+                links[i].style.pointerEvents = 'auto';
+            }
         } else {
             if (sv) sv.removeAttribute('readonly');
-            if (this._linkHandler) {
-                el.removeEventListener('click', this._linkHandler, true);
-                this._linkHandler = null;
+            var links = this.editor.view.dom.querySelectorAll('a');
+            for (var i = 0; i < links.length; i++) {
+                links[i].removeAttribute('target');
+                links[i].style.pointerEvents = '';
             }
         }
     },
