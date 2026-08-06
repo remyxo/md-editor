@@ -140,7 +140,10 @@ window.editorApi = {
         this._dirty = false;
         this.editor.commands.setContent(html);
         this._loading = false;
-        if (this.bridge) this.bridge.contentChanged(false);
+        if (this.bridge) {
+            this.bridge.contentChanged(false);
+            this.notifyWordCount();
+        }
     },
     toggleBold: function() { if (this.editor) this.editor.commands.toggleBold(); },
     toggleItalic: function() { if (this.editor) this.editor.commands.toggleItalic(); },
@@ -226,6 +229,7 @@ window.editorApi = {
         if (!this.editor || !this.bridge) return;
         this.notifyFormat();
         this.notifyHeadings();
+        this.notifyWordCount();
     },
 
     setEditable: function(editable) {
