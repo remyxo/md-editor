@@ -349,10 +349,11 @@ void MainWindow::onExportPdf()
 void MainWindow::onThemeSwitch(const QString &theme)
 {
     Application::instance()->themeManager()->switchTheme(theme);
-    qApp->processEvents();
-    // setStyleSheet 会重置 Widget 状态，处理完后重新应用阅读模式
-    m_toolBar->setReadMode(m_readMode);
-    m_statusBar->setReadMode(m_readMode);
+    // 延迟到 QSS 和图标更新完全生效后再恢复阅读模式状态
+    QTimer::singleShot(0, this, [this]() {
+        m_toolBar->setReadMode(m_readMode);
+        m_statusBar->setReadMode(m_readMode);
+    });
     // 保存主题偏好
     QSettings settings("md-editor", "md-editor");
     settings.setValue("appearance/theme", theme);
