@@ -128,10 +128,16 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::toggleSidebar, this, [this]() {
         m_sideBar->setCollapsed(!m_sideBar->isCollapsed());
     });
-    connect(m_menuBar, &MenuBar::toggleSourceMode, this, &MainWindow::onToggleSourceMode);
+    connect(m_menuBar, &MenuBar::toggleSourceMode, this, [this]() {
+        static bool srcMode = false;
+        srcMode = !srcMode;
+        m_menuBar->findChild<QAction *>("sourceModeAction")->setChecked(srcMode);
+        onToggleSourceMode();
+    });
     connect(m_menuBar, &MenuBar::toggleReadMode, this, [this]() {
         static bool readMode = false;
         readMode = !readMode;
+        m_menuBar->findChild<QAction *>("readModeAction")->setChecked(readMode);
         EditorTab *tab = m_tabWidget->currentEditorTab();
         if (tab) tab->runJsCommand(QString("window.editorApi.setEditable(%1);").arg(readMode ? "false" : "true"));
         m_statusBar->showMessage(readMode ? "阅读模式" : "编辑模式", 2000);

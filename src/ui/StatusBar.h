@@ -16,7 +16,6 @@ public slots:
 
 private:
     QLabel *m_cursorLabel;
-    QLabel *m_fileLabel;
     QLabel *m_wordLabel;
 };
 

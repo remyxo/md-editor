@@ -4,12 +4,10 @@ StatusBar::StatusBar(QWidget *parent)
     : QStatusBar(parent)
 {
     m_cursorLabel = new QLabel("行 1, 列 1", this);
-    m_fileLabel = new QLabel("", this);
-    m_wordLabel = new QLabel("字数: 0 / 字符: 0", this);
+    m_wordLabel = new QLabel("字符: 0 / 词: 0", this);
 
     addWidget(m_cursorLabel, 1);
     addPermanentWidget(m_wordLabel);
-    addPermanentWidget(m_fileLabel);
 }
 
 void StatusBar::updateCursorPosition(int line, int col, int /*tabId*/)
@@ -17,10 +15,7 @@ void StatusBar::updateCursorPosition(int line, int col, int /*tabId*/)
     m_cursorLabel->setText(QString("行 %1, 列 %2").arg(line).arg(col));
 }
 
-void StatusBar::updateFilePath(const QString &path)
-{
-    m_fileLabel->setText(path.isEmpty() ? "" : path);
-}
+void StatusBar::updateFilePath(const QString &) {}
 
 void StatusBar::updateWordCount(int chars, int words, int /*tabId*/)
 {

@@ -235,22 +235,26 @@ window.editorApi = {
     setEditable: function(editable) {
         if (!this.editor) return;
         this.editor.setEditable(!!editable);
+        var el = this.editor.view.dom;
+        var self = this;
         if (!editable) {
-            // 阅读模式：链接点击 → 浏览器打开
-            var el = this.editor.view.dom;
-            el.addEventListener('click', this._linkClickHandler = function(e) {
+            // 阅读模式：捕获阶段拦截链接点击
+            this._linkHandler = function(e) {
                 var t = e.target;
                 while (t && t !== el) {
                     if (t.tagName === 'A' && t.href) {
                         e.preventDefault();
+                        e.stopPropagation();
                         window.open(t.href, '_blank');
                         return;
                     }
                     t = t.parentElement;
                 }
-            });
-        } else if (this._linkClickHandler) {
-            this.editor.view.dom.removeEventListener('click', this._linkClickHandler);
+            };
+            el.addEventListener('click', this._linkHandler, true);
+        } else if (this._linkHandler) {
+            el.removeEventListener('click', this._linkHandler, true);
+            this._linkHandler = null;
         }
     },
 
