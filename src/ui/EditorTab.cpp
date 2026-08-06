@@ -161,7 +161,7 @@ EditorTab::EditorTab(int tabId, QWidget *parent)
     // 允许加载本地资源
     QWebEngineSettings *settings = m_webView->page()->settings();
     settings->setAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls, true);
-    settings->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, false);
+    settings->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
 
     setupWebChannel();
 

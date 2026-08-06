@@ -242,8 +242,22 @@ window.editorApi = {
         this._readOnly = !editable;
         if (!editable) {
             if (sv) sv.setAttribute('readonly', '');
-            // 阅读模式：渲染静态 HTML 到 read-view，链接原生可点击
+            // 阅读模式：渲染静态 HTML，通过 div 级点击事件打开链接
             readView.innerHTML = this.editor.getHTML();
+            readView.onclick = function(e) {
+                var t = e.target;
+                while (t && t !== this) {
+                    if (t.tagName === 'A' && t.href) {
+                        e.preventDefault();
+                        // 通过 bridge 通知 C++ 打开 URL
+                        if (window.editorApi.bridge) {
+                            window.editorApi.bridge.openUrl(t.href);
+                        }
+                        return false;
+                    }
+                    t = t.parentElement;
+                }
+            };
             editorDiv.style.display = 'none';
             readView.style.display = '';
         } else {

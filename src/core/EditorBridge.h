@@ -16,6 +16,7 @@ public slots:
     void cursorChanged(int line, int col);
     void contentChanged(bool dirty);
     void wordCountChanged(int chars, int words);
+    void openUrl(const QString &url);
     void headingsChanged(const QString &json);
     void formatChanged(const QString &json);
 

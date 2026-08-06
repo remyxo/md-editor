@@ -2,6 +2,8 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QDesktopServices>
+#include <QUrl>
 
 EditorBridge::EditorBridge(int tabId, QObject *parent)
     : QObject(parent)
@@ -36,6 +38,11 @@ void EditorBridge::headingsChanged(const QString &json)
 void EditorBridge::wordCountChanged(int chars, int words)
 {
     emit wordCountUpdated(chars, words, m_tabId);
+}
+
+void EditorBridge::openUrl(const QString &url)
+{
+    QDesktopServices::openUrl(QUrl(url));
 }
 
 void EditorBridge::formatChanged(const QString &json)
