@@ -12,34 +12,32 @@ AboutDialog::AboutDialog(QWidget *parent)
     setFixedSize(400, 320);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setSpacing(8);
+    layout->setSpacing(12);
     layout->setContentsMargins(32, 24, 32, 24);
 
-    // 图标（正方形，64x64）
+    // 图标 + 名称版本同行
+    QHBoxLayout *headerLayout = new QHBoxLayout();
     QLabel *iconLabel = new QLabel();
-    iconLabel->setPixmap(QPixmap(":/icons/md-editor.svg").scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    iconLabel->setAlignment(Qt::AlignCenter);
-    iconLabel->setFixedSize(64, 64);
-    layout->addWidget(iconLabel);
+    iconLabel->setPixmap(QPixmap(":/icons/md-editor.svg").scaled(56, 56, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    iconLabel->setFixedSize(56, 56);
+    headerLayout->addWidget(iconLabel);
 
-    // 应用名称
+    QVBoxLayout *titleLayout = new QVBoxLayout();
     QLabel *nameLabel = new QLabel("Markdown Editor");
     QFont nameFont = nameLabel->font();
     nameFont.setPointSize(18);
     nameFont.setBold(true);
     nameLabel->setFont(nameFont);
-    nameLabel->setAlignment(Qt::AlignCenter);
-    layout->addWidget(nameLabel);
+    titleLayout->addWidget(nameLabel);
 
-    // 版本号
     QLabel *versionLabel = new QLabel(
         QString("版本 %1").arg(MD_EDITOR_VERSION));
-    QFont versionFont = versionLabel->font();
-    versionFont.setPointSize(11);
-    versionLabel->setFont(versionFont);
-    versionLabel->setAlignment(Qt::AlignCenter);
-    versionLabel->setStyleSheet("color: #666;");
-    layout->addWidget(versionLabel);
+    versionLabel->setStyleSheet("color: #666; font-size: 13px;");
+    titleLayout->addWidget(versionLabel);
+
+    headerLayout->addLayout(titleLayout);
+    headerLayout->addStretch();
+    layout->addLayout(headerLayout);
 
     // 描述
     QLabel *descLabel = new QLabel(
