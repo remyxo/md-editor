@@ -5,6 +5,7 @@
 #include <QCheckBox>
 #include <QSpinBox>
 #include <QComboBox>
+#include <QPushButton>
 #include <QFontComboBox>
 
 class FileManager;
@@ -40,7 +41,9 @@ private:
 
     // 导出
     QComboBox *m_paperSizeCombo;
-    QComboBox *m_orientationCombo;
+    QPushButton *m_portraitBtn;
+    QPushButton *m_landscapeBtn;
+    int m_selectedOrientation;
     QDoubleSpinBox *m_marginTop;
     QDoubleSpinBox *m_marginBottom;
     QDoubleSpinBox *m_marginLeft;

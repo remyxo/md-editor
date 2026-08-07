@@ -100,19 +100,13 @@ void SettingsDialog::setupUi()
     QWidget *exportTab = new QWidget();
     QVBoxLayout *exportLayout = new QVBoxLayout(exportTab);
 
-    // 纸张方向
-    QGroupBox *orientGroup = new QGroupBox("纸张与方向");
-    QFormLayout *orientForm = new QFormLayout();
+    // 纸张
+    QFormLayout *paperForm = new QFormLayout();
     m_paperSizeCombo = new QComboBox();
     m_paperSizeCombo->addItem("A4", QPageSize::A4);
     m_paperSizeCombo->addItem("Letter", QPageSize::Letter);
-    orientForm->addRow("纸张:", m_paperSizeCombo);
-    m_orientationCombo = new QComboBox();
-    m_orientationCombo->addItem("纵向", QPageLayout::Portrait);
-    m_orientationCombo->addItem("横向", QPageLayout::Landscape);
-    orientForm->addRow("方向:", m_orientationCombo);
-    orientGroup->setLayout(orientForm);
-    exportLayout->addWidget(orientGroup);
+    paperForm->addRow("纸张:", m_paperSizeCombo);
+    exportLayout->addLayout(paperForm);
 
     // 页边距
     QGroupBox *marginGroup = new QGroupBox("页边距");
@@ -124,7 +118,6 @@ void SettingsDialog::setupUi()
     };
     m_marginTop = makeMargin(); m_marginBottom = makeMargin();
     m_marginLeft = makeMargin(); m_marginRight = makeMargin();
-
     QGridLayout *marginGrid = new QGridLayout();
     marginGrid->setColumnStretch(4, 1);
     auto addPair = [&](int row, int startCol, const QString &label, QDoubleSpinBox *spin) {
@@ -140,6 +133,37 @@ void SettingsDialog::setupUi()
     addPair(1, 4, "右:", m_marginRight);
     marginGroup->setLayout(marginGrid);
     exportLayout->addWidget(marginGroup);
+
+    // 方向（图标选择）
+    QGroupBox *orientGroup = new QGroupBox("方向");
+    QHBoxLayout *orientLayout = new QHBoxLayout();
+    m_portraitBtn = new QPushButton();
+    m_portraitBtn->setIcon(QIcon(":/icons/light/portrait.svg"));
+    m_portraitBtn->setIconSize(QSize(32, 40));
+    m_portraitBtn->setToolTip("纵向");
+    m_portraitBtn->setCheckable(true);
+    m_portraitBtn->setFixedSize(60, 60);
+    m_landscapeBtn = new QPushButton();
+    m_landscapeBtn->setIcon(QIcon(":/icons/light/landscape.svg"));
+    m_landscapeBtn->setIconSize(QSize(40, 32));
+    m_landscapeBtn->setToolTip("横向");
+    m_landscapeBtn->setCheckable(true);
+    m_landscapeBtn->setFixedSize(60, 60);
+    connect(m_portraitBtn, &QPushButton::clicked, this, [this]() {
+        m_selectedOrientation = QPageLayout::Portrait;
+        m_portraitBtn->setChecked(true);
+        m_landscapeBtn->setChecked(false);
+    });
+    connect(m_landscapeBtn, &QPushButton::clicked, this, [this]() {
+        m_selectedOrientation = QPageLayout::Landscape;
+        m_landscapeBtn->setChecked(true);
+        m_portraitBtn->setChecked(false);
+    });
+    orientLayout->addWidget(m_portraitBtn);
+    orientLayout->addWidget(m_landscapeBtn);
+    orientLayout->addStretch();
+    orientGroup->setLayout(orientLayout);
+    exportLayout->addWidget(orientGroup);
 
     exportLayout->addStretch();
     tabs->addTab(exportTab, "导出");
@@ -177,9 +201,15 @@ void SettingsDialog::loadSettings()
     int paperIdx = m_paperSizeCombo->findData(
         settings.value("export/paperSize", QPageSize::A4).toInt());
     if (paperIdx >= 0) m_paperSizeCombo->setCurrentIndex(paperIdx);
-    int orientIdx = m_orientationCombo->findData(
-        settings.value("export/orientation", QPageLayout::Portrait).toInt());
-    if (orientIdx >= 0) m_orientationCombo->setCurrentIndex(orientIdx);
+    m_selectedOrientation = settings.value("export/orientation",
+        static_cast<int>(QPageLayout::Portrait)).toInt();
+    if (m_selectedOrientation == QPageLayout::Landscape) {
+        m_landscapeBtn->setChecked(true);
+        m_portraitBtn->setChecked(false);
+    } else {
+        m_portraitBtn->setChecked(true);
+        m_landscapeBtn->setChecked(false);
+    }
     m_marginTop->setValue(settings.value("export/marginTop", 1.8).toDouble());
     m_marginBottom->setValue(settings.value("export/marginBottom", 1.8).toDouble());
     m_marginLeft->setValue(settings.value("export/marginLeft", 1.8).toDouble());
@@ -211,7 +241,7 @@ void SettingsDialog::onAccepted()
     Application::instance()->themeManager()->switchTheme(theme);
     // 导出
     settings.setValue("export/paperSize", m_paperSizeCombo->currentData().toInt());
-    settings.setValue("export/orientation", m_orientationCombo->currentData().toInt());
+    settings.setValue("export/orientation", m_selectedOrientation);
     settings.setValue("export/marginTop", m_marginTop->value());
     settings.setValue("export/marginBottom", m_marginBottom->value());
     settings.setValue("export/marginLeft", m_marginLeft->value());

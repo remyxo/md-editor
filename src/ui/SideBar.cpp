@@ -29,7 +29,7 @@ void SideBar::setupUi()
     connect(m_openFolderBtn, &QPushButton::clicked, this, &SideBar::openFolderClicked);
     layout->addWidget(m_openFolderBtn);
 
-    setMinimumWidth(200);
+    setMinimumWidth(240);
 }
 
 FileTree *SideBar::fileTree() const { return m_fileTree; }
