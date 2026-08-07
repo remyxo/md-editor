@@ -25,6 +25,8 @@ ToolBar::ToolBar(QWidget *parent)
     setMovable(false);
     setIconSize(QSize(20, 20));
     setupUi();
+    // 默认编辑模式，图标应为阅读图标（提示可切换）
+    setReadMode(false);
 }
 
 // 注：m_iconPaths 在 setupUi 后由外部填充
