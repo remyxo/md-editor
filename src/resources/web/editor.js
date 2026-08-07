@@ -86,7 +86,13 @@ window.editorApi = {
         var self = this;
         setTimeout(function() {
             var m = window.TipTapMigrateMathStrings;
-            if (m && self.editor) m(self.editor);
+            if (m && self.editor) {
+                var before = self.editor.state.doc.textContent;
+                m(self.editor);
+                var after = self.editor.state.doc.textContent;
+                console.log('[math] before:', before.substring(0,150));
+                console.log('[math] after:', after.substring(0,150));
+            }
         }, 50);
     },
 
