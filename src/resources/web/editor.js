@@ -206,7 +206,13 @@ window.editorApi = {
             },
         });
         var migrate = window.TipTapMigrateMathStrings;
-        if (migrate) migrate(this.editor);
+        if (migrate) {
+            var b2 = this.editor.state.doc.textContent.substring(0, 200);
+            migrate(this.editor);
+            var a2 = this.editor.state.doc.textContent.substring(0, 200);
+            console.log('[math] setContent before:', b2);
+            console.log('[math] setContent after:', a2);
+        }
         this._dirty = false;
         if (this.bridge) {
             this.bridge.contentChanged(false);
