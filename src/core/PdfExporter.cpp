@@ -23,10 +23,10 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
                               QPageSize::PageSizeId paperSize)
 {
     QSettings settings("md-editor", "md-editor");
-    double mt = settings.value("export/marginTop", 2.0).toDouble();
-    double mb = settings.value("export/marginBottom", 2.0).toDouble();
-    double ml = settings.value("export/marginLeft", 2.0).toDouble();
-    double mr = settings.value("export/marginRight", 2.0).toDouble();
+    double mt = settings.value("export/marginTop", 1.8).toDouble();
+    double mb = settings.value("export/marginBottom", 1.8).toDouble();
+    double ml = settings.value("export/marginLeft", 1.8).toDouble();
+    double mr = settings.value("export/marginRight", 1.8).toDouble();
     int orient = settings.value("export/orientation",
         static_cast<int>(orientation)).toInt();
     int paper = settings.value("export/paperSize",
@@ -52,9 +52,10 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
     ).arg(html);
 
     m_pendingOutputPath = outputPath;
+    // 设置值为 cm，QPageLayout::Millimeter 需要 mm
     m_pendingLayout = QPageLayout(QPageSize(static_cast<QPageSize::PageSizeId>(paper)),
         static_cast<QPageLayout::Orientation>(orient),
-        QMarginsF(ml, mt, mr, mb), QPageLayout::Millimeter);
+        QMarginsF(ml * 10, mt * 10, mr * 10, mb * 10), QPageLayout::Millimeter);
 
     disconnect(m_renderView, &QWebEngineView::loadFinished, this, nullptr);
     disconnect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,

@@ -162,10 +162,10 @@ void SettingsDialog::loadSettings()
     int orientIdx = m_orientationCombo->findData(
         settings.value("export/orientation", QPageLayout::Portrait).toInt());
     if (orientIdx >= 0) m_orientationCombo->setCurrentIndex(orientIdx);
-    m_marginTop->setValue(settings.value("export/marginTop", 2.0).toDouble());
-    m_marginBottom->setValue(settings.value("export/marginBottom", 2.0).toDouble());
-    m_marginLeft->setValue(settings.value("export/marginLeft", 2.0).toDouble());
-    m_marginRight->setValue(settings.value("export/marginRight", 2.0).toDouble());
+    m_marginTop->setValue(settings.value("export/marginTop", 1.8).toDouble());
+    m_marginBottom->setValue(settings.value("export/marginBottom", 1.8).toDouble());
+    m_marginLeft->setValue(settings.value("export/marginLeft", 1.8).toDouble());
+    m_marginRight->setValue(settings.value("export/marginRight", 1.8).toDouble());
 
     QString theme = Application::instance()->themeManager()->currentTheme();
     m_themeCombo->setCurrentIndex(m_themeCombo->findData(theme));
