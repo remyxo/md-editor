@@ -30,6 +30,7 @@ signals:
     void tableClicked();
     void codeBlockClicked();
     void horizontalRuleClicked();
+    void mathClicked();
     void sourceToggleClicked();
     void pdfExportClicked();
     void toggleReadModeClicked();

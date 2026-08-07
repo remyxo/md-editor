@@ -3,6 +3,7 @@
 #include <QWebEngineSettings>
 #include <QUrl>
 #include <QSettings>
+#include <QFile>
 
 PdfExporter::PdfExporter(QObject *parent)
     : QObject(parent)
@@ -32,6 +33,16 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
     int paper = settings.value("export/paperSize",
         static_cast<int>(paperSize)).toInt();
 
+    // 读取 KaTeX CSS 并内联（字体 url() 通过 qrc: baseUrl 解析）
+    QString katexCss;
+    QFile cssFile(":/web/katex.min.css");
+    if (cssFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        katexCss = QString::fromUtf8(cssFile.readAll());
+        cssFile.close();
+    }
+
+    // 构建 PDF 渲染页面，内联 KaTeX CSS + JS + 渲染脚本
+    // 使用 qrc:/web/ 作为 baseUrl，确保字体文件 url(fonts/...) 可解析
     QString fullHtml = QString(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
         "@media print{"
@@ -51,9 +62,29 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
         "img{max-width:100%%;}"
         "blockquote{border-left:3px solid #0078d4;padding:4px 12px;"
         "color:#555;margin:0.5em 0;}"
+        // 块级公式居中（WYSIWYG 与编辑器一致）
+        "[data-type=\"block-math\"]{display:block;text-align:center;margin:1em 0;}"
         "}"
-        "</style></head><body>%1</body></html>"
-    ).arg(html);
+        "%2"
+        "</style>"
+        // KaTeX JS 通过 qrc: baseUrl 相对路径加载
+        "<script src=\"katex.min.js\"></script>"
+        "<script>"
+        // 在页面加载完成后、打印前渲染所有数学公式
+        "window.addEventListener('DOMContentLoaded',function(){"
+        "var els=document.querySelectorAll('[data-latex]');"
+        "for(var i=0;i<els.length;i++){"
+        "var el=els[i];"
+        "var latex=el.getAttribute('data-latex');"
+        "if(!latex)continue;"
+        "try{"
+        "katex.render(latex,el,{throwOnError:false,displayMode:el.dataset.type==='block-math'});"
+        "}catch(e){el.textContent=latex;}"
+        "}"
+        "});"
+        "</script>"
+        "</head><body>%1</body></html>"
+    ).arg(html, katexCss);
 
     m_pendingOutputPath = outputPath;
     // 设置值为 cm，QPageLayout::Millimeter 需要 mm
@@ -70,7 +101,7 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
     connect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
             this, &PdfExporter::onPdfPrintingFinished);
 
-    m_renderView->setHtml(fullHtml, QUrl("about:blank"));
+    m_renderView->setHtml(fullHtml, QUrl("qrc:/web/"));
 }
 
 void PdfExporter::onLoadFinished(bool ok)

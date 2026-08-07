@@ -12,6 +12,8 @@ static bool isParagraphLine(const QString &line)
             return true;
         return false;
     }
+    // 数学公式分隔符不是正文行（避免 BRMARKER 插入导致多余 <br>）
+    if (trimmed.startsWith("$$")) return false;
     // 引用行也是正文（需保留内部换行）
     if (c == '>') return true;
     return c != '#' && c != '-' && c != '|'
@@ -169,6 +171,32 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QRegularExpression re("==([^=\n]+?)==");
         html.replace(re, "<mark>\\1</mark>");
     }
+    // 行内公式 $...$ → <span data-type="inline-math">
+    // 需要保护 <code>/<pre> 内的 $ 不被匹配
+    {
+        QStringList codeBlocks;
+        // 保护 <pre> 和 <code>（含属性）
+        QRegularExpression codeRe(
+            R"(<(pre|code)[^>]*>.*?</\1>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        int n = 0;
+        int offset = 0;
+        while (true) {
+            auto m = codeRe.match(html, offset);
+            if (!m.hasMatch()) break;
+            codeBlocks << m.captured();
+            html.replace(m.capturedStart(), m.capturedLength(),
+                         QString("__CODE%1__").arg(n++));
+            offset = m.capturedStart();
+        }
+        // 行内公式 $...$ → inline-math（(?<!\$)\$ 确保不匹配 $$）
+        html.replace(QRegularExpression(
+            R"((?<!\$)\$(?!\$)([^$\n]+?)(?<!\$)\$(?!\$))"),
+            "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
+        // 恢复 <code>/<pre>
+        for (int i = 0; i < codeBlocks.size(); ++i)
+            html.replace(QString("__CODE%1__").arg(i), codeBlocks[i]);
+    }
     // 恢复数学公式占位符（前后可能有空 <p>，一并清除）
     for (int i = 0; i < mathBlocks.size(); ++i) {
         QString ph = QString("ZZMB%1ZZ").arg(i);
@@ -176,8 +204,11 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         html.replace(QRegularExpression("<p[^>]*>" + ph + "</p>"), mathBlocks[i]);
         html.replace(ph, mathBlocks[i]); // fallback
     }
-    // 清除紧邻 math div 的空 <p>（p 末尾有空 br 也会匹配）
-    html.replace(QRegularExpression("<p[^>]*>(<br[^>]*>)?</p>"), "");
+    // 清除紧邻 math div 的空 <p>（占位符产生的伪影，不误删正文空行）
+    html.replace(QRegularExpression(
+        "<p[^>]*>(<br[^>]*>)?</p>\\s*(<div data-type=\"block-math\")"), "\\3");
+    html.replace(QRegularExpression(
+        "(</div>)\\s*<p[^>]*>(<br[^>]*>)?</p>"), "\\1");
 
     return html;
 }
@@ -204,6 +235,54 @@ QString MarkdownHandler::fromHtml(const QString &html)
 
     QStringList placeholders, backups;
     QString processed = html;
+
+    // 0) 数学公式 → $$/$$ 或 $$...$$（在 setHtml 前保护，避免 data-latex 被丢弃）
+    //    注: 属性顺序不固定 — toHtml 输出 data-type 在前，TipTap 输出 data-latex 在前
+    {
+        int n = 0;
+        int offset = 0;
+        // 先匹配整个元素，再从中提取 data-latex（属性顺序无关）
+        QRegularExpression blockMathTagRe(
+            R"re(<div\b[^>]*\bdata-type\s*=\s*"block-math"[^>]*></div>)re");
+        QRegularExpression latexRe(R"re(data-latex\s*=\s*"([^"]*)")re");
+        while (true) {
+            auto m = blockMathTagRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString tag = m.captured();
+            auto lm = latexRe.match(tag);
+            if (!lm.hasMatch()) { offset = m.capturedStart() + 1; continue; }
+            QString latex = lm.captured(1);
+            latex.replace("\\begin{aligned}", "");
+            latex.replace("\\end{aligned}", "");
+            QStringList parts;
+            for (const QString &p : latex.split(" \\\\ "))
+                parts << p.trimmed();
+            QString md = "$$\n" + parts.join("\n") + "\n$$\n";
+            QString ph = QString("ZZBM%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << md;
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+        // 行内公式（同理：属性顺序无关）
+        QRegularExpression inlineMathTagRe(
+            R"re(<span\b[^>]*\bdata-type\s*=\s*"inline-math"[^>]*></span>)re");
+        offset = 0;
+        while (true) {
+            auto m = inlineMathTagRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString tag = m.captured();
+            auto lm = latexRe.match(tag);
+            if (!lm.hasMatch()) { offset = m.capturedStart() + 1; continue; }
+            QString latex = lm.captured(1);
+            QString md = "$" + latex + "$";
+            QString ph = QString("ZZIM%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << md;
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
 
     // 1) 代码块：多重 <pre>（每行一个，QTextDocument 特有）→ 合并
     {

@@ -14,6 +14,7 @@ public:
 
     EditorTab *openNewTab();
     EditorTab *openFileTab(const QString &path, const QString &content);
+    EditorTab *openHelpTab(const QString &title, const QString &mdContent);
     EditorTab *currentEditorTab() const;
     EditorTab *tabAt(int index) const;
 

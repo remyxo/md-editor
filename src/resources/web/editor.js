@@ -4,6 +4,7 @@ window.editorApi = {
     bridge: null,
     _dirty: false,
     _loading: false,
+    _mathEditing: false,
     isSourceMode: false,
     _sourceValue: null,
     _notifyDirty: function() {
@@ -54,7 +55,7 @@ window.editorApi = {
             element: document.querySelector('#editor'),
             extensions: extensions,
             onUpdate: function(args) {
-                if (this._loading) return;
+                if (this._loading || this._mathEditing) return;
                 if (!this._dirty) {
                     this._dirty = true;
                     if (this.bridge) this.bridge.contentChanged(true);
@@ -82,6 +83,29 @@ window.editorApi = {
         });
 
         this.notifyHeadings();
+
+        // 数学公式 — 完全拦截 mousedown，防止 ProseMirror 误触 onUpdate
+        var mathClickState = { count: 0, timer: null, target: null };
+        this.editor.view.dom.addEventListener('mousedown', function(e) {
+            var mathEl = e.target.closest('[data-type="block-math"], [data-type="inline-math"]');
+            if (!mathEl) { mathClickState.count = 0; return; }
+            // 阻止 ProseMirror 处理此事件，完全避免 dirty 污染
+            e.stopPropagation();
+            e.preventDefault();
+            var api = window.editorApi;
+            mathClickState.count++;
+            if (mathClickState.count === 1) {
+                api._mathClickDirtySave = api._dirty;
+                mathClickState.target = mathEl;
+                mathClickState.timer = setTimeout(function() {
+                    mathClickState.count = 0;
+                }, 400);
+            } else {
+                clearTimeout(mathClickState.timer);
+                mathClickState.count = 0;
+                api._mathEditor.open(mathEl, api._mathClickDirtySave);
+            }
+        }, true);
     },
 
     notifyHeadings: function() {
@@ -177,7 +201,7 @@ window.editorApi = {
             extensions: extensions,
             content: html,
             onUpdate: function(args) {
-                if (self._loading) return;
+                if (self._loading || self._mathEditing) return;
                 if (!self._dirty) { self._dirty = true; if (self.bridge) self.bridge.contentChanged(true); }
                 self.notifyHeadings(); self.notifyWordCount();
             },
@@ -198,6 +222,28 @@ window.editorApi = {
             this.bridge.contentChanged(false);
             this.notifyWordCount();
         }
+
+        // 数学公式 — 完全拦截 mousedown（setContent 后重新注册）
+        var mathClickState2 = { count: 0, timer: null, target: null };
+        this.editor.view.dom.addEventListener('mousedown', function(e) {
+            var mathEl = e.target.closest('[data-type="block-math"], [data-type="inline-math"]');
+            if (!mathEl) { mathClickState2.count = 0; return; }
+            e.stopPropagation();
+            e.preventDefault();
+            var api = window.editorApi;
+            mathClickState2.count++;
+            if (mathClickState2.count === 1) {
+                api._mathClickDirtySave = api._dirty;
+                mathClickState2.target = mathEl;
+                mathClickState2.timer = setTimeout(function() {
+                    mathClickState2.count = 0;
+                }, 400);
+            } else {
+                clearTimeout(mathClickState2.timer);
+                mathClickState2.count = 0;
+                api._mathEditor.open(mathEl, api._mathClickDirtySave);
+            }
+        }, true);
     },
     toggleBold: function() { if (this.editor) this.editor.commands.toggleBold(); },
     toggleItalic: function() { if (this.editor) this.editor.commands.toggleItalic(); },
@@ -346,6 +392,245 @@ window.editorApi = {
     markClean: function() {
         this._dirty = false;
         if (this.bridge) this.bridge.contentChanged(false);
+    },
+
+    // 插入数学公式（C++ 侧调用）
+    insertMath: function(type) {
+        window.editorApi._mathEditor.create(type || 'inline');
+    },
+
+    // 数学公式编辑面板
+    _mathEditor: {
+        overlay: null,
+        popover: null,
+        input: null,
+        preview: null,
+        okBtn: null,
+        cancelBtn: null,
+        mathEl: null,
+        pos: null,
+        mathType: 'inline',
+        mode: 'create',
+
+        // 双击打开（编辑模式）
+        // dirtyBefore: 来自 mousedown 捕获阶段的脏状态快照，早于 ProseMirror 处理
+        open: function(mathEl, dirtyBefore) {
+            var ed = window.editorApi.editor;
+            if (!ed) return;
+            this._dirtyBefore = (dirtyBefore !== undefined) ? dirtyBefore : window.editorApi._dirty;
+            this._confirmed = false;
+            window.editorApi._mathEditing = true;
+            this.mathEl = mathEl;
+            this.mathType = mathEl.getAttribute('data-type') === 'block-math' ? 'block' : 'inline';
+            this.mode = 'edit';
+            this.pos = ed.view.posAtDOM(mathEl);
+            var latex = mathEl.getAttribute('data-latex') || '';
+            this.buildDom(this.mathType);
+            this.show(latex);
+            ed.view.dom.blur();
+        },
+
+        // 新建（按钮/快捷键触发）
+        create: function(type) {
+            var ed = window.editorApi.editor;
+            if (!ed) return;
+            this._dirtyBefore = window.editorApi._dirty;
+            this._confirmed = false;
+            window.editorApi._mathEditing = true;
+            this.mathEl = null;
+            this.pos = ed.state.selection.from;
+            this.mathType = type || 'inline';
+            this.mode = 'create';
+            this.buildDom(this.mathType);
+            this.show('');
+            ed.view.dom.blur();
+        },
+
+        // 构建 popover DOM（块级 textarea，行内 input）
+        buildDom: function(type) {
+            this.cleanupDom();
+            var isBlock = type === 'block';
+
+            // 遮罩（不响应点击，仅作视觉遮挡）
+            this.overlay = document.createElement('div');
+            this.overlay.className = 'math-editor-overlay';
+
+            // 面板
+            this.popover = document.createElement('div');
+            this.popover.className = 'math-editor-popover';
+
+            // 标题栏（类型标签 + X 关闭按钮）
+            var titleBar = document.createElement('div');
+            titleBar.className = 'math-editor-titlebar';
+
+            var tag = document.createElement('span');
+            tag.className = 'math-editor-type-tag';
+            tag.textContent = isBlock ? '块级公式' : '行内公式';
+            titleBar.appendChild(tag);
+
+            var closeBtn = document.createElement('button');
+            closeBtn.className = 'math-editor-close-btn';
+            closeBtn.textContent = '×';
+            closeBtn.title = '关闭';
+            var self = this;
+            closeBtn.addEventListener('click', function(e) { e.stopPropagation(); self.close(); });
+            titleBar.appendChild(closeBtn);
+
+            this.popover.appendChild(titleBar);
+
+            // 编辑器标签
+            if (isBlock) {
+                this.input = document.createElement('textarea');
+                this.input.className = 'math-editor-input block';
+                this.input.rows = 4;
+                this.input.spellcheck = false;
+            } else {
+                this.input = document.createElement('input');
+                this.input.type = 'text';
+                this.input.className = 'math-editor-input inline';
+                this.input.spellcheck = false;
+            }
+            var label = document.createElement('div');
+            label.className = 'math-editor-label';
+            label.textContent = 'LaTeX 源码';
+            this.popover.appendChild(label);
+            this.popover.appendChild(this.input);
+
+            // 实时预览
+            var prevLabel = document.createElement('div');
+            prevLabel.className = 'math-editor-label';
+            prevLabel.textContent = '预览';
+            this.popover.appendChild(prevLabel);
+            this.preview = document.createElement('div');
+            this.preview.className = 'math-editor-preview';
+            this.popover.appendChild(this.preview);
+
+            // 按钮
+            var actions = document.createElement('div');
+            actions.className = 'math-editor-actions';
+
+            this.cancelBtn = document.createElement('button');
+            this.cancelBtn.textContent = '取消';
+            this.cancelBtn.addEventListener('click', function() { self.close(); });
+            actions.appendChild(this.cancelBtn);
+
+            this.okBtn = document.createElement('button');
+            this.okBtn.className = 'primary';
+            this.okBtn.textContent = '确定';
+            this.okBtn.addEventListener('click', function() { self.confirm(); });
+            actions.appendChild(this.okBtn);
+
+            this.popover.appendChild(actions);
+
+            // 键盘
+            var input = this.input;
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') { self.close(); return; }
+                if (e.key === 'Enter') {
+                    if (isBlock && !e.ctrlKey && !e.metaKey) return; // 块级 Enter 换行
+                    e.preventDefault();
+                    self.confirm();
+                }
+            });
+            input.addEventListener('input', function() { self.updatePreview(); });
+
+            // 阻止面板内点击冒泡到遮罩
+            this.popover.addEventListener('click', function(e) { e.stopPropagation(); });
+
+            document.body.appendChild(this.overlay);
+            document.body.appendChild(this.popover);
+        },
+
+        // 显示面板并填充初始值
+        show: function(latex) {
+            this.input.value = latex;
+            this.updatePreview();
+            var isBlock = this.mathType === 'block';
+            this.input.focus();
+            if (isBlock && latex) {
+                this.input.setSelectionRange(latex.length, latex.length);
+            } else if (!isBlock) {
+                this.input.select();
+            }
+        },
+
+        // 实时 KaTeX 预览
+        updatePreview: function() {
+            var latex = this.input.value;
+            if (!latex.trim()) {
+                this.preview.innerHTML = '<span style="color:#888;font-size:17px;">（输入 LaTeX 公式）</span>';
+                return;
+            }
+            try {
+                katex.render(latex, this.preview, {
+                    throwOnError: false,
+                    displayMode: this.mathType === 'block'
+                });
+            } catch (e) {
+                this.preview.textContent = latex;
+            }
+        },
+
+        // 确认：更新或插入
+        confirm: function() {
+            var latex = this.input.value.trim();
+            if (!latex) { this.close(); return; }
+            var ed = window.editorApi.editor;
+            if (!ed) { this.close(); return; }
+            this._confirmed = true;
+            // 手动标记脏（_mathEditing 抑制了 onUpdate 通知）
+            window.editorApi._dirty = true;
+            if (window.editorApi.bridge) window.editorApi.bridge.contentChanged(true);
+            if (this.mode === 'edit') {
+                var cmd = this.mathType === 'block' ? 'updateBlockMath' : 'updateInlineMath';
+                ed.commands[cmd]({ pos: this.pos, latex: latex });
+            } else {
+                var cmd = this.mathType === 'block' ? 'insertBlockMath' : 'insertInlineMath';
+                ed.commands[cmd]({ latex: latex });
+            }
+            this.close();
+        },
+
+        // 仅清理 DOM（不恢复焦点，供 buildDom 内部使用）
+        cleanupDom: function() {
+            if (this.overlay && this.overlay.parentNode) this.overlay.parentNode.removeChild(this.overlay);
+            if (this.popover && this.popover.parentNode) this.popover.parentNode.removeChild(this.popover);
+            this.overlay = null;
+            this.popover = null;
+            this.input = null;
+            this.preview = null;
+            this.okBtn = null;
+            this.cancelBtn = null;
+        },
+
+        // 关闭面板（取消或确认后调用）
+        close: function() {
+            this.cleanupDom();
+            this.mathEl = null;
+            // 取消时立即恢复脏状态
+            if (!this._confirmed) {
+                window.editorApi._dirty = this._dirtyBefore;
+                if (window.editorApi.bridge) {
+                    window.editorApi.bridge.contentChanged(!!this._dirtyBefore);
+                }
+            }
+            // 延迟恢复焦点；保持 _mathEditing 直到 focus 后续事件处理完毕
+            var self = this;
+            setTimeout(function() {
+                var ed = window.editorApi.editor;
+                if (ed) ed.view.focus();
+                setTimeout(function() {
+                    window.editorApi._mathEditing = false;
+                    // 兜底：若 focus 触发了 onUpdate，再次恢复
+                    if (!self._confirmed) {
+                        window.editorApi._dirty = self._dirtyBefore;
+                        if (window.editorApi.bridge) {
+                            window.editorApi.bridge.contentChanged(!!self._dirtyBefore);
+                        }
+                    }
+                }, 150);
+            }, 50);
+        }
     },
 };
 

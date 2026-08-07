@@ -20,9 +20,9 @@
 
 #include <QVBoxLayout>
 #include <QIcon>
+#include <QFile>
 #include <QFileDialog>
 #include <QMessageBox>
-#include <QFile>
 #include <QJsonObject>
 #include <QWebEnginePage>
 #include <QTextStream>
@@ -104,6 +104,17 @@ void MainWindow::setupUi()
         m_searchBar->setVisible(false);
     });
 
+    // Ctrl+M 插入行内公式
+    QShortcut *mathInlineShortcut = new QShortcut(QKeySequence("Ctrl+M"), this);
+    connect(mathInlineShortcut, &QShortcut::activated, this, [this]() {
+        runEditorCommand("window.editorApi.insertMath('inline');");
+    });
+    // Ctrl+Shift+M 插入块级公式
+    QShortcut *mathBlockShortcut = new QShortcut(QKeySequence("Ctrl+Shift+M"), this);
+    connect(mathBlockShortcut, &QShortcut::activated, this, [this]() {
+        runEditorCommand("window.editorApi.insertMath('block');");
+    });
+
     // 初始化亮色主题
     QSettings settings("md-editor", "md-editor");
     QString savedTheme = settings.value("appearance/theme", "light").toString();
@@ -144,11 +155,12 @@ void MainWindow::connectSignals()
         onToggleSourceMode();
     });
     auto toggleReadMode = [this]() {
+        EditorTab *tab = m_tabWidget->currentEditorTab();
+        if (tab && tab->isPermanentReadOnly()) return;
         m_readMode = !m_readMode;
         m_menuBar->findChild<QAction *>("readModeAction")->setChecked(m_readMode);
         m_toolBar->setReadMode(m_readMode);
         m_statusBar->setReadMode(m_readMode);
-        EditorTab *tab = m_tabWidget->currentEditorTab();
         if (tab) {
             tab->runJsCommand(QString("window.editorApi.setEditable(%1);").arg(m_readMode ? "false" : "true"));
             tab->setReadOnly(m_readMode);
@@ -159,6 +171,9 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::insertLink, this, &MainWindow::onInsertLink);
     connect(m_menuBar, &MenuBar::insertImage, this, &MainWindow::onInsertImage);
     connect(m_menuBar, &MenuBar::insertTable, this, &MainWindow::onInsertTable);
+    connect(m_menuBar, &MenuBar::insertMath, this, [this]() {
+        runEditorCommand("window.editorApi.insertMath('inline');");
+    });
     connect(m_menuBar, &MenuBar::insertCode, this, [this]() {
         runEditorCommand("window.editorApi.toggleCode();");
     });
@@ -170,6 +185,7 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::saveFileAs, this, &MainWindow::onSaveFileAs);
     connect(m_menuBar, &MenuBar::undo, this, [this]() { runEditorCommand("window.editorApi.undo();"); });
     connect(m_menuBar, &MenuBar::redo, this, [this]() { runEditorCommand("window.editorApi.redo();"); });
+    connect(m_menuBar, &MenuBar::showMarkdownGuide, this, &MainWindow::onShowMarkdownGuide);
     connect(m_menuBar, &MenuBar::showSettings, this, &MainWindow::onShowSettings);
     connect(m_menuBar, &MenuBar::showAbout, this, [this]() {
         AboutDialog dlg(this);
@@ -212,6 +228,9 @@ void MainWindow::connectSignals()
     });
     connect(m_toolBar, &ToolBar::horizontalRuleClicked, this, [this]() {
         runEditorCommand("window.editorApi.insertHorizontalRule();");
+    });
+    connect(m_toolBar, &ToolBar::mathClicked, this, [this]() {
+        runEditorCommand("window.editorApi.insertMath('inline');");
     });
     connect(m_toolBar, &ToolBar::sourceToggleClicked, this, &MainWindow::onToggleSourceMode);
     connect(m_toolBar, &ToolBar::pdfExportClicked, this, &MainWindow::onExportPdf);
@@ -554,6 +573,22 @@ void MainWindow::onShowSettings()
     dialog.exec();
     applyEditorFont();
     applyEditorWidth();
+}
+
+void MainWindow::onShowMarkdownGuide()
+{
+    QFile f(":/web/markdown-guide.md");
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+    QString md = QString::fromUtf8(f.readAll());
+    f.close();
+
+    EditorTab *tab = m_tabWidget->openHelpTab("Markdown 语法", md);
+    tab->setPermanentReadOnly(true);
+    // 页面加载后锁为只读
+    connect(tab, &EditorTab::pageLoadFinished, this, [tab](bool ok) {
+        if (!ok) return;
+        tab->runJsCommand("window.editorApi.setEditable(false);");
+    });
 }
 
 void MainWindow::applyEditorFont()

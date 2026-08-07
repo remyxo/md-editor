@@ -24,6 +24,7 @@
         <file>icons/light/landscape.svg</file>
         <file>icons/light/edit-mode.svg</file>
         <file>icons/light/read-mode.svg</file>
+        <file>icons/light/math.svg</file>
         <file>icons/dark/bold.svg</file>
         <file>icons/dark/italic.svg</file>
         <file>icons/dark/strikethrough.svg</file>
@@ -45,6 +46,7 @@
         <file>icons/dark/landscape.svg</file>
         <file>icons/dark/edit-mode.svg</file>
         <file>icons/dark/read-mode.svg</file>
+        <file>icons/dark/math.svg</file>
         <file>web/fonts/KaTeX_AMS-Regular.ttf</file>
         <file>web/fonts/KaTeX_AMS-Regular.woff</file>
         <file>web/fonts/KaTeX_AMS-Regular.woff2</file>
@@ -107,9 +109,11 @@
         <file>web/fonts/KaTeX_Typewriter-Regular.woff2</file>
         <file>web/editor.html</file>
         <file>web/katex.min.css</file>
+        <file>web/katex.min.js</file>
         <file>web/editor.css</file>
         <file>web/editor.js</file>
         <file>web/qwebchannel.js</file>
+        <file>web/markdown-guide.md</file>
         <file>web/tiptap-all.js</file>
     </qresource>
 </RCC>

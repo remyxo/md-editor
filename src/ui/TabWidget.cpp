@@ -56,6 +56,21 @@ EditorTab *TabWidget::openFileTab(const QString &path, const QString &content)
     return tab;
 }
 
+EditorTab *TabWidget::openHelpTab(const QString &title, const QString &mdContent)
+{
+    int tabId = m_nextTabId++;
+    EditorTab *tab = new EditorTab(tabId, this);
+    m_tabs.insert(tabId, tab);
+    int index = addTab(tab, title);
+    setCurrentIndex(index);
+    // 不设 tooltip（非文件）
+    connect(tab, &EditorTab::pageLoadFinished, this,
+            [tab, mdContent](bool ok) { if (ok) tab->loadFile("", mdContent); });
+    // 不连接 dirtyStateChanged（帮助页始终只读）
+    emit editorBridgeCreated(tab->bridge());
+    return tab;
+}
+
 EditorTab *TabWidget::currentEditorTab() const
 {
     return qobject_cast<EditorTab *>(currentWidget());

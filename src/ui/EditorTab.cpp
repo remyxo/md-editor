@@ -241,7 +241,19 @@ void EditorTab::setHasSelection(bool has)
 
 void EditorTab::setReadOnly(bool ro)
 {
-    m_webView->setReadOnly(ro);
+    m_webView->setReadOnly(m_permanentReadOnly ? true : ro);
+}
+
+void EditorTab::setPermanentReadOnly(bool permanent)
+{
+    m_permanentReadOnly = permanent;
+    if (permanent)
+        m_webView->setReadOnly(true);
+}
+
+bool EditorTab::isPermanentReadOnly() const
+{
+    return m_permanentReadOnly;
 }
 
 void EditorTab::setLinkUrl(const QString &url)

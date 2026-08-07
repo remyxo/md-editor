@@ -124,6 +124,8 @@ void ToolBar::setupUi()
     m_codeBlockAction->setCheckable(true);
     makeAction(this, &m_iconPaths, "hrAction",
         "分割线", ":/icons/light/horizontal-rule.svg");
+    makeAction(this, &m_iconPaths, "mathAction",
+        "插入公式 (Ctrl+M)", ":/icons/light/math.svg");
 
     addSeparator();
 
@@ -162,6 +164,8 @@ void ToolBar::setupUi()
             connect(a, &QAction::triggered, this, &ToolBar::sourceToggleClicked);
         else if (a->objectName() == "pdfAction")
             connect(a, &QAction::triggered, this, &ToolBar::pdfExportClicked);
+        else if (a->objectName() == "mathAction")
+            connect(a, &QAction::triggered, this, &ToolBar::mathClicked);
         else if (a->objectName() == "readModeAction")
             connect(a, &QAction::triggered, this, &ToolBar::toggleReadModeClicked);
     }

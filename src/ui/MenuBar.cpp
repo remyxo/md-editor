@@ -112,6 +112,10 @@ void MenuBar::setupUi()
     QAction *tableAct = m_insertMenu->addAction("表格...");
     connect(tableAct, &QAction::triggered, this, &MenuBar::insertTable);
 
+    QAction *mathAct = m_insertMenu->addAction("插入公式(&M)");
+    mathAct->setShortcut(QKeySequence("Ctrl+M"));
+    connect(mathAct, &QAction::triggered, this, &MenuBar::insertMath);
+
     QAction *codeAct = m_insertMenu->addAction("行内代码");
     connect(codeAct, &QAction::triggered, this, &MenuBar::insertCode);
 
@@ -123,6 +127,9 @@ void MenuBar::setupUi()
 
     // === 帮助菜单 ===
     m_helpMenu = addMenu("帮助(&H)");
+
+    QAction *guideAct = m_helpMenu->addAction("Markdown 语法参考(&G)");
+    connect(guideAct, &QAction::triggered, this, &MenuBar::showMarkdownGuide);
 
     QAction *settingsAct = m_helpMenu->addAction("设置...");
     connect(settingsAct, &QAction::triggered, this, &MenuBar::showSettings);

@@ -45,6 +45,8 @@ public:
     void setHasSelection(bool has);
     void setLinkUrl(const QString &url);
     void setReadOnly(bool ro);
+    void setPermanentReadOnly(bool permanent);
+    bool isPermanentReadOnly() const;
     void runJsCommand(const QString &js);
 
 signals:
@@ -60,6 +62,7 @@ private:
     QWebChannel *m_webChannel;
     EditorBridge *m_bridge;
     bool m_pageLoaded;
+    bool m_permanentReadOnly = false;
 };
 
 #endif // MD_EDITOR_EDITORTAB_H

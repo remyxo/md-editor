@@ -303,6 +303,12 @@ QPushButton:pressed {
     background-color: #d0d0d0;
 }
 
+QPushButton:checked {
+    background-color: #cce5ff;
+    border: 2px solid #0078d4;
+    color: #004080;
+}
+
 QLineEdit {
     background-color: #ffffff;
     border: 1px solid #d0d0d0;

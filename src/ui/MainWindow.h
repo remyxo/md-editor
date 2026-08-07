@@ -47,6 +47,7 @@ private slots:
 
     // 设置
     void onShowSettings();
+    void onShowMarkdownGuide();
     void applyEditorFont();
     void applyEditorWidth();
 

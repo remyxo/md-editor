@@ -30,6 +30,7 @@ signals:
     void insertLink();
     void insertImage();
     void insertTable();
+    void insertMath();
     void insertCode();
     void insertCodeBlock();
     void insertHorizontalRule();
@@ -38,6 +39,7 @@ signals:
 
     void showAbout();
     void showSettings();
+    void showMarkdownGuide();
 
 private:
     void setupUi();

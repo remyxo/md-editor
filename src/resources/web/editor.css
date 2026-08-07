@@ -179,6 +179,20 @@ body.dark .ProseMirror th {
     margin-top: 3px;
 }
 
+/* 块级公式居中 — WYSIWYG 与 PDF 导出一致 */
+.ProseMirror [data-type="block-math"],
+.tiptap-mathematics-render[data-type="block-math"] {
+    display: block;
+    text-align: center;
+    margin: 1em 0;
+}
+
+/* 块级公式错误态 */
+.ProseMirror .block-math-error {
+    color: #c7254e;
+    font-family: monospace;
+}
+
 /* 分割线 */
 .ProseMirror hr {
     border: none;
@@ -283,4 +297,182 @@ body.dark #read-view blockquote { background: #1e2228; border-left-color: #5a8ac
 body.dark #source-view {
     color: #d4d4d4;
     background: #1e1e1e;
+}
+
+/* ===== 数学公式编辑面板 ===== */
+.math-editor-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 1000;
+}
+.math-editor-popover {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #ffffff;
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    padding: 24px 28px;
+    min-width: 460px;
+    max-width: 600px;
+    width: calc(100vw - 60px);
+    z-index: 1001;
+}
+.math-editor-titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+.math-editor-type-tag {
+    display: inline-block;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 4px 14px;
+    border-radius: 10px;
+    background: #e8f0fe;
+    color: #1967d2;
+}
+body.dark .math-editor-type-tag {
+    background: #2a3f5f;
+    color: #8ab4f8;
+}
+.math-editor-close-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    font-size: 22px;
+    line-height: 1;
+    color: #888;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+.math-editor-close-btn:hover {
+    background: #e8e8e8;
+    color: #333;
+}
+body.dark .math-editor-close-btn {
+    color: #999;
+}
+body.dark .math-editor-close-btn:hover {
+    background: #3d3d3d;
+    color: #ddd;
+}
+.math-editor-label {
+    font-size: 16px;
+    color: #111;
+    margin: 12px 0 6px;
+    font-weight: 600;
+}
+.math-editor-input {
+    width: 100%;
+    font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+    font-size: 17px;
+    padding: 12px 14px;
+    border: 1px solid #c0c0c0;
+    border-radius: 6px;
+    outline: none;
+    color: #111;
+    background: #fdfdfd;
+    box-sizing: border-box;
+    transition: border-color 0.15s;
+}
+.math-editor-input:focus {
+    border-color: #0078d4;
+    background: #fff;
+    box-shadow: 0 0 0 2px rgba(0,120,212,0.15);
+}
+.math-editor-input.inline {
+    height: 44px;
+    min-height: 44px;
+    resize: none;
+    white-space: nowrap;
+    overflow-x: auto;
+}
+.math-editor-input.block {
+    min-height: 100px;
+    resize: vertical;
+}
+.math-editor-preview {
+    min-height: 60px;
+    margin: 10px 0;
+    padding: 14px 16px;
+    background: #f4f5f7;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 17px;
+    color: #222;
+}
+.math-editor-preview .katex-display {
+    margin: 0.3em 0;
+}
+.math-editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+}
+.math-editor-actions button {
+    padding: 8px 24px;
+    border-radius: 5px;
+    border: 1px solid #c0c0c0;
+    font-size: 15px;
+    cursor: pointer;
+    background: #f0f0f0;
+    color: #333;
+}
+.math-editor-actions button:hover {
+    background: #e0e0e0;
+}
+.math-editor-actions button.primary {
+    background: #0078d4;
+    border-color: #0078d4;
+    color: #fff;
+}
+.math-editor-actions button.primary:hover {
+    background: #005a9e;
+}
+
+/* 暗色模式 */
+body.dark .math-editor-popover {
+    background: #2d2d2d;
+    color: #e0e0e0;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+body.dark .math-editor-label {
+    color: #ccc;
+}
+body.dark .math-editor-input {
+    background: #1a1a1a;
+    color: #e0e0e0;
+    border-color: #555;
+}
+body.dark .math-editor-input:focus {
+    border-color: #8ab4f8;
+    background: #1e1e1e;
+    box-shadow: 0 0 0 2px rgba(138,180,248,0.2);
+}
+body.dark .math-editor-preview {
+    background: #1e2228;
+    color: #e0e0e0;
+}
+body.dark .math-editor-actions button {
+    background: #3d3d3d;
+    border-color: #555;
+    color: #ddd;
+}
+body.dark .math-editor-actions button:hover {
+    background: #505050;
+}
+body.dark .math-editor-actions button.primary {
+    background: #0078d4;
+    border-color: #0078d4;
+    color: #fff;
 }
