@@ -141,17 +141,6 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QRegularExpression re("==([^=\n]+?)==");
         html.replace(re, "<mark>\\1</mark>");
     }
-    //    $$...$$ 块级数学公式
-    {
-        QRegularExpression re("\\$\\$(.+?)\\$\\$");
-        html.replace(re, "<p data-type=\"mathDisplay\" data-latex=\"\\1\">$$\\1$$</p>");
-    }
-    //    $...$ 行内数学公式
-    {
-        QRegularExpression re("\\$(.+?)\\$");
-        html.replace(re, "<span data-type=\"inlineMath\" data-latex=\"\\1\">$\\1$</span>");
-    }
-
     return html;
 }
 
