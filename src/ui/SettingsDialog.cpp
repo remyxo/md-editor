@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QTabWidget>
+#include <QGridLayout>
 #include <QDialogButtonBox>
 #include <QGroupBox>
 #include <QLabel>
@@ -107,32 +108,26 @@ void SettingsDialog::setupUi()
     m_orientationCombo->addItem("横向", QPageLayout::Landscape);
     exportForm->addRow("默认方向:", m_orientationCombo);
 
+    auto makeMargin = [](const QString &label) {
+        auto *s = new QDoubleSpinBox();
+        s->setRange(0.5, 5.0); s->setSingleStep(0.1);
+        s->setSuffix(" cm"); s->setDecimals(1);
+        return s;
+    };
     exportForm->addRow("", new QLabel("页边距 (厘米):"));
-    m_marginTop = new QDoubleSpinBox();
-    m_marginTop->setRange(0.5, 5.0); m_marginTop->setSingleStep(0.1);
-    m_marginTop->setSuffix(" cm");
-    m_marginBottom = new QDoubleSpinBox();
-    m_marginBottom->setRange(0.5, 5.0); m_marginBottom->setSingleStep(0.1);
-    m_marginBottom->setSuffix(" cm");
-    QHBoxLayout *topBottom = new QHBoxLayout();
-    topBottom->addWidget(new QLabel("上下:"));
-    topBottom->addWidget(m_marginTop);
-    topBottom->addWidget(m_marginBottom);
-    topBottom->addStretch();
-    exportForm->addRow(topBottom);
+    m_marginTop = makeMargin("上"); m_marginBottom = makeMargin("下");
+    m_marginLeft = makeMargin("左"); m_marginRight = makeMargin("右");
 
-    m_marginLeft = new QDoubleSpinBox();
-    m_marginLeft->setRange(0.5, 5.0); m_marginLeft->setSingleStep(0.1);
-    m_marginLeft->setSuffix(" cm");
-    m_marginRight = new QDoubleSpinBox();
-    m_marginRight->setRange(0.5, 5.0); m_marginRight->setSingleStep(0.1);
-    m_marginRight->setSuffix(" cm");
-    QHBoxLayout *leftRight = new QHBoxLayout();
-    leftRight->addWidget(new QLabel("左右:"));
-    leftRight->addWidget(m_marginLeft);
-    leftRight->addWidget(m_marginRight);
-    leftRight->addStretch();
-    exportForm->addRow(leftRight);
+    QGridLayout *marginGrid = new QGridLayout();
+    marginGrid->addWidget(new QLabel("上:"), 0, 0);
+    marginGrid->addWidget(m_marginTop, 0, 1);
+    marginGrid->addWidget(new QLabel("下:"), 0, 2);
+    marginGrid->addWidget(m_marginBottom, 0, 3);
+    marginGrid->addWidget(new QLabel("左:"), 1, 0);
+    marginGrid->addWidget(m_marginLeft, 1, 1);
+    marginGrid->addWidget(new QLabel("右:"), 1, 2);
+    marginGrid->addWidget(m_marginRight, 1, 3);
+    exportForm->addRow(marginGrid);
     tabs->addTab(exportTab, "导出");
 
     mainLayout->addWidget(tabs);
