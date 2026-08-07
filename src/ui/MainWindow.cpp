@@ -255,6 +255,7 @@ void MainWindow::connectSignals()
             r.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
             tab->webView()->findText(find);
             tab->runJsCommand(QStringLiteral(
+                "(function(){"
                 "var ed=window.editorApi;if(!ed||!ed.editor)return;"
                 "var f='%1',r='%2',done=false;"
                 "ed.editor.state.doc.descendants(function(n,pos){"
@@ -263,6 +264,7 @@ void MainWindow::connectSignals()
                 ".setTextSelection({from:s,to:s+f.length})"
                 ".insertContent(r).run();done=true;}"
                 "});"
+                "})();"
             ).arg(f, r));
         }
     });
@@ -274,6 +276,7 @@ void MainWindow::connectSignals()
             f.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
             r.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
             tab->runJsCommand(QStringLiteral(
+                "(function(){"
                 "var ed=window.editorApi;if(!ed||!ed.editor)return;"
                 "var f='%1',r='%2',c=0,tr=ed.editor.state.tr;"
                 "ed.editor.state.doc.descendants(function(n,pos){"
@@ -281,6 +284,7 @@ void MainWindow::connectSignals()
                 "while(i>=0){tr.replaceWith(pos+i,pos+i+f.length,"
                 "ed.editor.schema.text(r));c++;i=t.indexOf(f,i+1);}"
                 "});if(c>0)ed.editor.view.dispatch(tr);"
+                "})();"
             ).arg(f, r));
         }
     });
