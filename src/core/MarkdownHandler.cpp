@@ -163,11 +163,11 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         // $$...$$ 块级公式
         {
             QRegularExpression re("\\$\\$(.+?)\\$\\$");
-            html.replace(re, "<div data-type=\"mathDisplay\" data-latex=\"\\1\"></div>");
+            html.replace(re, "<div data-type=\"block-math\" data-latex=\"\\1\"></div>");
         }
         // $...$ 行内公式
         html.replace(QRegularExpression("\\$(.+?)\\$"),
-                     "<span data-type=\"inlineMath\" data-latex=\"\\1\"></span>");
+                     "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
         // 恢复 <pre> 代码块
         for (int i = 0; i < preBlocks.size(); ++i)
             html.replace(QString("__PRE%1__").arg(i), preBlocks[i]);
