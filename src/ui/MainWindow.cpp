@@ -109,6 +109,7 @@ void MainWindow::setupUi()
     QString savedTheme = settings.value("appearance/theme", "light").toString();
     Application::instance()->themeManager()->switchTheme(savedTheme);
     m_toolBar->refreshThemeIcons(savedTheme);
+    m_toolBar->setReadMode(false);
 }
 
 void MainWindow::connectSignals()
