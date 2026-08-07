@@ -43721,7 +43721,42 @@ ${prefix}
   });
 
   // node_modules/@tiptap/extension-mathematics/dist/index.js
-  var BlockMath, InlineMath, Mathematics;
+  function createMathMigrateTransaction(editor, tr2, regex = mathMigrationRegex) {
+    tr2.doc.descendants((node, pos) => {
+      if (!node.isText || !node.text || !node.text.includes("$")) {
+        return;
+      }
+      const { text: text2 } = node;
+      const match = node.text.match(regex);
+      if (!match) {
+        return;
+      }
+      match.forEach((mathMatch) => {
+        const start = text2.indexOf(mathMatch);
+        const end = start + mathMatch.length;
+        const from2 = tr2.mapping.map(pos + start);
+        const $from = tr2.doc.resolve(from2);
+        const parent = $from.parent;
+        const index = $from.index();
+        const { inlineMath } = editor.schema.nodes;
+        if (!parent.canReplaceWith(index, index + 1, inlineMath)) {
+          return;
+        }
+        tr2.replaceWith(
+          tr2.mapping.map(pos + start),
+          tr2.mapping.map(pos + end),
+          inlineMath.create({ latex: mathMatch.slice(1, -1) })
+        );
+      });
+    });
+    tr2.setMeta("addToHistory", false);
+    return tr2;
+  }
+  function migrateMathStrings(editor, regex = mathMigrationRegex) {
+    const tr2 = createMathMigrateTransaction(editor, editor.state.tr, regex);
+    editor.view.dispatch(tr2);
+  }
+  var BlockMath, InlineMath, Mathematics, mathMigrationRegex;
   var init_dist39 = __esm({
     "node_modules/@tiptap/extension-mathematics/dist/index.js"() {
       init_dist9();
@@ -44076,6 +44111,7 @@ ${prefix}
           ];
         }
       });
+      mathMigrationRegex = /\$(?!\d+\$)(.+?)\$(?!\d)/g;
     }
   });
 
@@ -57838,6 +57874,7 @@ ${prefix}
       window.TipTapExtensionPlaceholder = index_default6;
       window.TipTapExtensionCodeBlockLowlight = index_default7;
       window.TipTapExtensionMathematics = Mathematics;
+      window.TipTapMigrateMathStrings = migrateMathStrings;
       window.lowlight = createLowlight(grammars);
     }
   });
