@@ -98,43 +98,50 @@ void SettingsDialog::setupUi()
 
     // === 导出 ===
     QWidget *exportTab = new QWidget();
-    QFormLayout *exportForm = new QFormLayout(exportTab);
+    QVBoxLayout *exportLayout = new QVBoxLayout(exportTab);
+
+    // 纸张方向
+    QGroupBox *orientGroup = new QGroupBox("纸张与方向");
+    QFormLayout *orientForm = new QFormLayout();
     m_paperSizeCombo = new QComboBox();
     m_paperSizeCombo->addItem("A4", QPageSize::A4);
     m_paperSizeCombo->addItem("Letter", QPageSize::Letter);
-    exportForm->addRow("默认纸张:", m_paperSizeCombo);
+    orientForm->addRow("纸张:", m_paperSizeCombo);
     m_orientationCombo = new QComboBox();
     m_orientationCombo->addItem("纵向", QPageLayout::Portrait);
     m_orientationCombo->addItem("横向", QPageLayout::Landscape);
-    exportForm->addRow("默认方向:", m_orientationCombo);
+    orientForm->addRow("方向:", m_orientationCombo);
+    orientGroup->setLayout(orientForm);
+    exportLayout->addWidget(orientGroup);
 
+    // 页边距
+    QGroupBox *marginGroup = new QGroupBox("页边距");
     auto makeMargin = []() {
         auto *s = new QDoubleSpinBox();
         s->setRange(0.5, 5.0); s->setSingleStep(0.1);
         s->setDecimals(1); s->setFixedWidth(70);
         return s;
     };
-    QLabel *marginTitle = new QLabel("页边距 (厘米):");
-    exportForm->addRow(marginTitle);
     m_marginTop = makeMargin(); m_marginBottom = makeMargin();
     m_marginLeft = makeMargin(); m_marginRight = makeMargin();
 
     QGridLayout *marginGrid = new QGridLayout();
-    marginGrid->setColumnStretch(5, 1); // 左右列之间拉开
-    QLabel *cmLabel = new QLabel("厘米");
+    marginGrid->setColumnStretch(4, 1);
     auto addPair = [&](int row, int startCol, const QString &label, QDoubleSpinBox *spin) {
         QLabel *lbl = new QLabel(label);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         marginGrid->addWidget(lbl, row, startCol);
         marginGrid->addWidget(spin, row, startCol + 1);
-        QLabel *unit = new QLabel("厘米");
-        marginGrid->addWidget(unit, row, startCol + 2);
+        marginGrid->addWidget(new QLabel("厘米"), row, startCol + 2);
     };
     addPair(0, 0, "上:", m_marginTop);
     addPair(0, 4, "下:", m_marginBottom);
     addPair(1, 0, "左:", m_marginLeft);
     addPair(1, 4, "右:", m_marginRight);
-    exportForm->addRow(marginGrid);
+    marginGroup->setLayout(marginGrid);
+    exportLayout->addWidget(marginGroup);
+
+    exportLayout->addStretch();
     tabs->addTab(exportTab, "导出");
 
     mainLayout->addWidget(tabs);

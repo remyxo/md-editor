@@ -173,10 +173,10 @@ void ToolBar::setReadMode(bool readMode)
     QString prefix = m_isDark ? ":/icons/dark/" : ":/icons/light/";
     if (readMode) {
         m_readModeAction->setToolTip("切换成编辑模式");
-        m_readModeAction->setIcon(QIcon(prefix + "read-mode.svg"));
+        m_readModeAction->setIcon(QIcon(prefix + "edit-mode.svg"));
     } else {
         m_readModeAction->setToolTip("切换成阅读模式");
-        m_readModeAction->setIcon(QIcon(prefix + "edit-mode.svg"));
+        m_readModeAction->setIcon(QIcon(prefix + "read-mode.svg"));
     }
     for (QAction *a : m_allActions) {
         if (a != m_readModeAction)

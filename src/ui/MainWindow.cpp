@@ -80,7 +80,7 @@ void MainWindow::setupUi()
 
     m_splitter->setStretchFactor(0, 0); // 侧边栏固定
     m_splitter->setStretchFactor(1, 1); // 编辑器伸展
-    m_splitter->setSizes({260, 1020});
+    m_splitter->setSizes({320, 960});
 
     centralLayout->addWidget(m_splitter, 1);
     setCentralWidget(central);
@@ -230,6 +230,12 @@ void MainWindow::connectSignals()
     // === 侧边栏「打开文件夹」按钮 ===
     connect(m_sideBar, &SideBar::openFolderClicked,
             this, &MainWindow::onOpenFolder);
+
+    // === 大纲点击 → 跳转到对应位置 ===
+    connect(m_sideBar->outlineTree(), &OutlineTree::headingClicked,
+            this, [this](int pos) {
+        runEditorCommand(QString("window.editorApi.scrollToPos(%1);").arg(pos));
+    });
 
     // === 搜索栏 ===
     connect(m_searchBar, &SearchBar::closeRequested, this, [this]() {
