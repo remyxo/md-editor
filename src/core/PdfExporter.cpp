@@ -2,12 +2,12 @@
 #include <QWebEnginePage>
 #include <QWebEngineSettings>
 #include <QUrl>
+#include <QSettings>
 
 PdfExporter::PdfExporter(QObject *parent)
     : QObject(parent)
     , m_renderView(new QWebEngineView())
 {
-    // 隐藏渲染视图，仅用于离屏打印
     m_renderView->setVisible(false);
     m_renderView->settings()->setAttribute(
         QWebEngineSettings::LocalContentCanAccessFileUrls, true);
@@ -22,42 +22,41 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
                               QPageLayout::Orientation orientation,
                               QPageSize::PageSizeId paperSize)
 {
-    // 构建完整的 HTML 文档（含打印样式）
-    QString fullHtml = R"(<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-  @media print {
-    @page { margin: 25mm; }
-    body { font-family: "Noto Sans SC", "DejaVu Sans", sans-serif;
-           font-size: 12pt; line-height: 1.6; color: #333; }
-    h1 { font-size: 1.8em; }
-    h2 { font-size: 1.4em; }
-    h3 { font-size: 1.2em; }
-    pre { background: #f5f5f5; padding: 12px; border-radius: 4px;
-          font-family: monospace; font-size: 10pt; overflow-x: auto; }
-    code { background: #f5f5f5; padding: 1px 4px; border-radius: 2px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ddd; padding: 6px 10px; }
-    img { max-width: 100%; }
-    blockquote { border-left: 3px solid #0078d4; padding-left: 12px;
-                 color: #666; margin: 1em 0; }
-  }
-</style>
-</head>
-<body>)" + html + R"(</body>
-</html>)";
+    QSettings settings("md-editor", "md-editor");
+    double mt = settings.value("export/marginTop", 2.0).toDouble();
+    double mb = settings.value("export/marginBottom", 2.0).toDouble();
+    double ml = settings.value("export/marginLeft", 2.0).toDouble();
+    double mr = settings.value("export/marginRight", 2.0).toDouble();
+    int orient = settings.value("export/orientation",
+        static_cast<int>(orientation)).toInt();
+    int paper = settings.value("export/paperSize",
+        static_cast<int>(paperSize)).toInt();
+
+    QString fullHtml = QString(
+        "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
+        "@media print{"
+        "@page{margin:0;}"
+        "body{font-family:\"Noto Sans SC\",\"DejaVu Sans\",sans-serif;"
+        "font-size:12pt;line-height:1.6;color:#333;}"
+        "h1{font-size:1.8em;}h2{font-size:1.4em;}h3{font-size:1.2em;}"
+        "pre{background:#f5f5f5;padding:12px;border-radius:4px;"
+        "font-family:monospace;font-size:10pt;overflow-x:auto;}"
+        "code{background:#f5f5f5;padding:1px 4px;border-radius:2px;}"
+        "table{border-collapse:collapse;width:100%%;}"
+        "th,td{border:1px solid #ddd;padding:6px 10px;}"
+        "img{max-width:100%%;}"
+        "blockquote{border-left:3px solid #0078d4;padding-left:12px;"
+        "color:#666;margin:1em 0;}"
+        "}"
+        "</style></head><body>%1</body></html>"
+    ).arg(html);
 
     m_pendingOutputPath = outputPath;
-    // 上下左右各 25mm (单位: mm，Qt 自动换算为 points)
-    m_pendingLayout = QPageLayout(QPageSize(paperSize), orientation,
-                                  QMarginsF(20, 20, 20, 20),
-                                  QPageLayout::Millimeter);
+    m_pendingLayout = QPageLayout(QPageSize(static_cast<QPageSize::PageSizeId>(paper)),
+        static_cast<QPageLayout::Orientation>(orient),
+        QMarginsF(ml, mt, mr, mb), QPageLayout::Millimeter);
 
-    // 清除上一次导出遗留的连接，避免重复触发
-    disconnect(m_renderView, &QWebEngineView::loadFinished,
-               this, nullptr);
+    disconnect(m_renderView, &QWebEngineView::loadFinished, this, nullptr);
     disconnect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
                this, nullptr);
 
@@ -75,15 +74,13 @@ void PdfExporter::onLoadFinished(bool ok)
         emit exportError("HTML 渲染失败");
         return;
     }
-
     m_renderView->page()->printToPdf(m_pendingOutputPath, m_pendingLayout);
 }
 
 void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
 {
-    if (success) {
+    if (success)
         emit exportFinished(true, filePath);
-    } else {
+    else
         emit exportError("PDF 生成失败");
-    }
 }

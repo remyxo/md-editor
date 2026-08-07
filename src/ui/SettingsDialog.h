@@ -41,6 +41,10 @@ private:
     // 导出
     QComboBox *m_paperSizeCombo;
     QComboBox *m_orientationCombo;
+    QDoubleSpinBox *m_marginTop;
+    QDoubleSpinBox *m_marginBottom;
+    QDoubleSpinBox *m_marginLeft;
+    QDoubleSpinBox *m_marginRight;
 
     FileManager *m_fileManager;
 };

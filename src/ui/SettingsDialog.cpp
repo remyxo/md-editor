@@ -12,6 +12,7 @@
 #include <QSettings>
 #include <QPageSize>
 #include <QPageLayout>
+#include <QDoubleSpinBox>
 
 SettingsDialog::SettingsDialog(FileManager *fileManager, QWidget *parent)
     : QDialog(parent)
@@ -105,6 +106,24 @@ void SettingsDialog::setupUi()
     m_orientationCombo->addItem("纵向", QPageLayout::Portrait);
     m_orientationCombo->addItem("横向", QPageLayout::Landscape);
     exportForm->addRow("默认方向:", m_orientationCombo);
+
+    exportForm->addRow("", new QLabel("页边距 (厘米):"));
+    m_marginTop = new QDoubleSpinBox();
+    m_marginTop->setRange(0.5, 5.0); m_marginTop->setSingleStep(0.1);
+    m_marginTop->setSuffix(" cm");
+    exportForm->addRow("上边距:", m_marginTop);
+    m_marginBottom = new QDoubleSpinBox();
+    m_marginBottom->setRange(0.5, 5.0); m_marginBottom->setSingleStep(0.1);
+    m_marginBottom->setSuffix(" cm");
+    exportForm->addRow("下边距:", m_marginBottom);
+    m_marginLeft = new QDoubleSpinBox();
+    m_marginLeft->setRange(0.5, 5.0); m_marginLeft->setSingleStep(0.1);
+    m_marginLeft->setSuffix(" cm");
+    exportForm->addRow("左边距:", m_marginLeft);
+    m_marginRight = new QDoubleSpinBox();
+    m_marginRight->setRange(0.5, 5.0); m_marginRight->setSingleStep(0.1);
+    m_marginRight->setSuffix(" cm");
+    exportForm->addRow("右边距:", m_marginRight);
     tabs->addTab(exportTab, "导出");
 
     mainLayout->addWidget(tabs);
@@ -136,6 +155,18 @@ void SettingsDialog::loadSettings()
     m_tabSizeSpin->setValue(settings.value("editor/tabSize", 4).toInt());
     m_widthSpin->setValue(settings.value("editor/width", 80).toInt());
 
+    // 导出
+    int paperIdx = m_paperSizeCombo->findData(
+        settings.value("export/paperSize", QPageSize::A4).toInt());
+    if (paperIdx >= 0) m_paperSizeCombo->setCurrentIndex(paperIdx);
+    int orientIdx = m_orientationCombo->findData(
+        settings.value("export/orientation", QPageLayout::Portrait).toInt());
+    if (orientIdx >= 0) m_orientationCombo->setCurrentIndex(orientIdx);
+    m_marginTop->setValue(settings.value("export/marginTop", 2.0).toDouble());
+    m_marginBottom->setValue(settings.value("export/marginBottom", 2.0).toDouble());
+    m_marginLeft->setValue(settings.value("export/marginLeft", 2.0).toDouble());
+    m_marginRight->setValue(settings.value("export/marginRight", 2.0).toDouble());
+
     QString theme = Application::instance()->themeManager()->currentTheme();
     m_themeCombo->setCurrentIndex(m_themeCombo->findData(theme));
 }
@@ -160,6 +191,14 @@ void SettingsDialog::onAccepted()
     // 应用主题并持久化
     QString theme = m_themeCombo->currentData().toString();
     Application::instance()->themeManager()->switchTheme(theme);
+    // 导出
+    settings.setValue("export/paperSize", m_paperSizeCombo->currentData().toInt());
+    settings.setValue("export/orientation", m_orientationCombo->currentData().toInt());
+    settings.setValue("export/marginTop", m_marginTop->value());
+    settings.setValue("export/marginBottom", m_marginBottom->value());
+    settings.setValue("export/marginLeft", m_marginLeft->value());
+    settings.setValue("export/marginRight", m_marginRight->value());
+
     settings.setValue("appearance/theme", theme);
 
     accept();
