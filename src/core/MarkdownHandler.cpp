@@ -160,14 +160,27 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                 offset = m.capturedStart();
             }
         }
-        // $$...$$ 块级公式
+        // $$...$$ 块级公式：去掉内部 HTML 标签，用 <div> 包裹
         {
-            QRegularExpression re("\\$\\$(.+?)\\$\\$");
-            html.replace(re, "<div data-type=\"block-math\" data-latex=\"\\1\"></div>");
+            QRegularExpression re("\\$\\$(.+?)\\$\\$",
+                QRegularExpression::DotMatchesEverythingOption);
+            int offset = 0;
+            while (true) {
+                auto m = re.match(html, offset);
+                if (!m.hasMatch()) break;
+                QString latex = m.captured(1);
+                latex.remove(QRegularExpression("<[^>]*>"));
+                latex = latex.trimmed();
+                QString repl = QString("<div data-type=\"block-math\" data-latex=\"%1\"></div>").arg(latex);
+                html.replace(m.capturedStart(), m.capturedLength(), repl);
+                offset = m.capturedStart() + repl.length();
+            }
         }
         // $...$ 行内公式
-        html.replace(QRegularExpression("\\$(.+?)\\$"),
-                     "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
+        {
+            QRegularExpression re("\\$(.+?)\\$");
+            html.replace(re, "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
+        }
         // 恢复 <pre> 代码块
         for (int i = 0; i < preBlocks.size(); ++i)
             html.replace(QString("__PRE%1__").arg(i), preBlocks[i]);
