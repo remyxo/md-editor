@@ -111,8 +111,7 @@ void SettingsDialog::setupUi()
     auto makeMargin = []() {
         auto *s = new QDoubleSpinBox();
         s->setRange(0.5, 5.0); s->setSingleStep(0.1);
-        s->setSuffix(" 厘米"); s->setDecimals(1);
-        s->setFixedWidth(100);
+        s->setDecimals(1); s->setFixedWidth(70);
         return s;
     };
     QLabel *marginTitle = new QLabel("页边距 (厘米):");
@@ -121,17 +120,20 @@ void SettingsDialog::setupUi()
     m_marginLeft = makeMargin(); m_marginRight = makeMargin();
 
     QGridLayout *marginGrid = new QGridLayout();
-    marginGrid->setColumnStretch(2, 1); // 左右列之间拉开
+    marginGrid->setColumnStretch(5, 1); // 左右列之间拉开
+    QLabel *cmLabel = new QLabel("厘米");
     auto addPair = [&](int row, int startCol, const QString &label, QDoubleSpinBox *spin) {
         QLabel *lbl = new QLabel(label);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         marginGrid->addWidget(lbl, row, startCol);
         marginGrid->addWidget(spin, row, startCol + 1);
+        QLabel *unit = new QLabel("厘米");
+        marginGrid->addWidget(unit, row, startCol + 2);
     };
     addPair(0, 0, "上:", m_marginTop);
-    addPair(0, 3, "下:", m_marginBottom);
+    addPair(0, 4, "下:", m_marginBottom);
     addPair(1, 0, "左:", m_marginLeft);
-    addPair(1, 3, "右:", m_marginRight);
+    addPair(1, 4, "右:", m_marginRight);
     exportForm->addRow(marginGrid);
     tabs->addTab(exportTab, "导出");
 
