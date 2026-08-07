@@ -82,12 +82,6 @@ window.editorApi = {
         });
 
         this.notifyHeadings();
-        // 延迟迁移数学公式（ProseMirror 文档完全初始化后执行）
-        var self = this;
-        setTimeout(function() {
-            var m = window.TipTapMigrateMathStrings;
-            if (m && self.editor) m(self.editor);
-        }, 50);
     },
 
     notifyHeadings: function() {
@@ -199,11 +193,7 @@ window.editorApi = {
                 self.notifyHeadings();
             },
         });
-        var migrate = window.TipTapMigrateMathStrings;
-        if (migrate) {
-            var b2 = this.editor.state.doc.textContent.substring(0, 200);
-            migrate(this.editor);
-        }
+        console.log('math nodes:', this.editor.state.doc.textContent.substring(0,120));
         this._dirty = false;
         if (this.bridge) {
             this.bridge.contentChanged(false);

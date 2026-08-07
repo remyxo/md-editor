@@ -5,6 +5,7 @@
 #include <QWebEnginePage>
 #include <QUrl>
 #include <QDesktopServices>
+#include <QDebug>
 #include <QContextMenuEvent>
 #include <QAction>
 
@@ -164,6 +165,14 @@ EditorTab::EditorTab(int tabId, QWidget *parent)
     settings->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
 
     setupWebChannel();
+
+    // 捕获 JS console.log 输出到终端
+    connect(m_webView->page(), &QWebEnginePage::javaScriptConsoleMessage,
+            this, [](QWebEnginePage::JavaScriptConsoleMessageLevel level,
+                     const QString &msg, int line, const QString &src) {
+        Q_UNUSED(level); Q_UNUSED(line); Q_UNUSED(src);
+        qDebug() << "[JS]" << msg;
+    });
 
     connect(m_webView, &QWebEngineView::loadFinished,
             this, &EditorTab::onPageLoadFinished);
