@@ -163,10 +163,25 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                 off = m.capturedStart();
             }
         }
-        // $$...$$ 块级
-        html.replace(QRegularExpression("\\$\\$(.+?)\\$\\$",
-            QRegularExpression::DotMatchesEverythingOption),
-            "<div data-type=\"block-math\" data-latex=\"\\1\"></div>");
+        // $$...$$ 块级：内部换行替换为 LaTeX 换行符 \\
+        {
+            QRegularExpression re("\\$\\$(.+?)\\$\\$",
+                QRegularExpression::DotMatchesEverythingOption);
+            int offset = 0;
+            while (true) {
+                auto m = re.match(html, offset);
+                if (!m.hasMatch()) break;
+                QString latex = m.captured(1);
+                // 移除可能混入的 <br> 标签
+                latex.remove(QRegularExpression("<[^>]*>"));
+                // 换行 → LaTeX 换行符 \\
+                latex.replace('\n', "\\\\");
+                latex = latex.trimmed();
+                QString repl = QString("<div data-type=\"block-math\" data-latex=\"%1\"></div>").arg(latex);
+                html.replace(m.capturedStart(), m.capturedLength(), repl);
+                offset = m.capturedStart() + repl.length();
+            }
+        }
         // $...$ 行内
         html.replace(QRegularExpression("\\$(.+?)\\$"),
             "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
