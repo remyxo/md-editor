@@ -37,7 +37,7 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
         "@media print{"
         "@page{margin:0;}"
         "body{font-family:\"Noto Sans SC\",\"DejaVu Sans\",sans-serif;"
-        "font-size:11pt;line-height:1.5;color:#333;}"
+        "font-size:11pt;line-height:1.6;color:#333;}"
         "h1{font-size:1.7em;margin-top:1em;margin-bottom:0.3em;}"
         "h2{font-size:1.3em;margin-top:0.8em;margin-bottom:0.2em;}"
         "h3{font-size:1.1em;margin-top:0.6em;margin-bottom:0.2em;}"

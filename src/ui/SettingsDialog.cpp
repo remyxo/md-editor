@@ -111,19 +111,28 @@ void SettingsDialog::setupUi()
     m_marginTop = new QDoubleSpinBox();
     m_marginTop->setRange(0.5, 5.0); m_marginTop->setSingleStep(0.1);
     m_marginTop->setSuffix(" cm");
-    exportForm->addRow("上边距:", m_marginTop);
     m_marginBottom = new QDoubleSpinBox();
     m_marginBottom->setRange(0.5, 5.0); m_marginBottom->setSingleStep(0.1);
     m_marginBottom->setSuffix(" cm");
-    exportForm->addRow("下边距:", m_marginBottom);
+    QHBoxLayout *topBottom = new QHBoxLayout();
+    topBottom->addWidget(new QLabel("上下:"));
+    topBottom->addWidget(m_marginTop);
+    topBottom->addWidget(m_marginBottom);
+    topBottom->addStretch();
+    exportForm->addRow(topBottom);
+
     m_marginLeft = new QDoubleSpinBox();
     m_marginLeft->setRange(0.5, 5.0); m_marginLeft->setSingleStep(0.1);
     m_marginLeft->setSuffix(" cm");
-    exportForm->addRow("左边距:", m_marginLeft);
     m_marginRight = new QDoubleSpinBox();
     m_marginRight->setRange(0.5, 5.0); m_marginRight->setSingleStep(0.1);
     m_marginRight->setSuffix(" cm");
-    exportForm->addRow("右边距:", m_marginRight);
+    QHBoxLayout *leftRight = new QHBoxLayout();
+    leftRight->addWidget(new QLabel("左右:"));
+    leftRight->addWidget(m_marginLeft);
+    leftRight->addWidget(m_marginRight);
+    leftRight->addStretch();
+    exportForm->addRow(leftRight);
     tabs->addTab(exportTab, "导出");
 
     mainLayout->addWidget(tabs);
