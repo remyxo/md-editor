@@ -50,8 +50,10 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
 </html>)";
 
     m_pendingOutputPath = outputPath;
+    // 上下左右各 25mm (单位: mm，Qt 自动换算为 points)
     m_pendingLayout = QPageLayout(QPageSize(paperSize), orientation,
-                                  QMarginsF(0, 0, 0, 0));
+                                  QMarginsF(25, 25, 25, 25),
+                                  QPageLayout::Millimeter);
 
     // 清除上一次导出遗留的连接，避免重复触发
     disconnect(m_renderView, &QWebEngineView::loadFinished,
