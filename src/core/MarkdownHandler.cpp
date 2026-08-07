@@ -32,15 +32,37 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     bool inMathBlock = false;
     QStringList codeLangs; // 跟踪每个代码块的语言
 
+    QStringList mathBlocks;  // 收集 $$ 块的内容
+    QStringList mathLines;    // 当前 $$ 块的行
+
     for (int i = 0; i < lines.size(); ++i) {
         const QString &line = lines[i];
         const QString &next = (i + 1 < lines.size()) ? lines[i + 1] : QString();
 
         if (line.startsWith("$$")) {
-            inMathBlock = !inMathBlock;
-            processed += line + '\n';
+            if (!inMathBlock) {
+                mathLines.clear();
+                inMathBlock = true;
+                // 占位符
+                processed += "ZZMB" + QString::number(mathBlocks.size()) + "ZZ\n";
+            } else {
+                // 构建 LaTeX，加入备份，后处理时替换占位符
+                QString latex;
+                for (const QString &l : mathLines)
+                    latex += l + '\n';
+                latex = latex.trimmed();
+                if (latex.contains('\n')) {
+                    QString joined;
+                    for (const QString &l : latex.split('\n'))
+                        if (!l.trimmed().isEmpty())
+                            joined += l.trimmed() + " \\\\ ";
+                    latex = "\\begin{aligned}" + joined + "\\end{aligned}";
+                }
+                mathBlocks << ("<div data-type=\"block-math\" data-latex=\"" + latex + "\"></div>");
+                inMathBlock = false;
+            }
         } else if (inMathBlock) {
-            processed += line + '\n';
+            mathLines << line;
         } else if (line.startsWith("```")) {
             if (!inCodeBlock) {
                 // 进入代码块，提取语言
@@ -147,48 +169,9 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QRegularExpression re("==([^=\n]+?)==");
         html.replace(re, "<mark>\\1</mark>");
     }
-    // 数学公式 → TipTap 节点
-    // 保护 <pre> 块
-    QStringList mdPreData;
-    QRegularExpression mdPreRe("<pre[^>]*>.*?</pre>",
-        QRegularExpression::DotMatchesEverythingOption);
-    int mdPn = 0, mdPo = 0;
-    while (true) {
-        auto mm = mdPreRe.match(html, mdPo);
-        if (!mm.hasMatch()) break;
-        mdPreData << mm.captured();
-        html.replace(mm.capturedStart(), mm.capturedLength(), QString("__MPR%1__").arg(mdPn++));
-        mdPo = mm.capturedStart();
-    }
-    // $$...$$ 块级 — 内部分行
-    QRegularExpression mdBlockRe("\\$\\$(.+?)\\$\\$",
-        QRegularExpression::DotMatchesEverythingOption);
-    int mdOff = 0;
-    while (true) {
-        auto mm2 = mdBlockRe.match(html, mdOff);
-        if (!mm2.hasMatch()) break;
-        QString mdLtx = mm2.captured(1);
-        mdLtx.remove(QRegularExpression("<[^>]*>"));
-        if (mdLtx.contains('\n')) {
-            // 用 aligned 环境 + \\ 分行（去掉物理换行，压缩为一行）
-            QStringList mdLines = mdLtx.split('\n');
-            QString mdJoined;
-            for (const QString &l : mdLines)
-                if (!l.trimmed().isEmpty())
-                    mdJoined += l.trimmed() + " \\\\ ";
-            mdLtx = "\\begin{aligned}" + mdJoined + "\\end{aligned}";
-        }
-        mdLtx = mdLtx.trimmed();
-        html.replace(mm2.capturedStart(), mm2.capturedLength(),
-            QString("<div data-type=\"block-math\" data-latex=\"%1\"></div>").arg(mdLtx));
-        mdOff = mm2.capturedStart();
-    }
-    // $...$ 行内
-    html.replace(QRegularExpression("\\$(.+?)\\$"),
-        "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
-    // 恢复 <pre> 块
-    for (int i = 0; i < mdPreData.size(); ++i)
-        html.replace(QString("__MPR%1__").arg(i), mdPreData[i]);
+    // 恢复数学公式占位符
+    for (int i = 0; i < mathBlocks.size(); ++i)
+        html.replace(QString("ZZMB%1ZZ").arg(i), mathBlocks[i]);
 
     return html;
 }
