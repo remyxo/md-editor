@@ -120,9 +120,8 @@ void SettingsDialog::setupUi()
     m_marginTop = makeMargin(); m_marginBottom = makeMargin();
     m_marginLeft = makeMargin(); m_marginRight = makeMargin();
     QGridLayout *marginGrid = new QGridLayout();
-    marginGrid->setHorizontalSpacing(12);
-    marginGrid->setColumnStretch(2, 0);
-    marginGrid->setColumnStretch(6, 1);
+    marginGrid->setHorizontalSpacing(8);
+    marginGrid->setColumnStretch(3, 1); // 左组和右组之间留空
     auto addPair = [&](int row, int startCol, const QString &label, QDoubleSpinBox *spin) {
         QLabel *lbl = new QLabel(label);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
