@@ -147,48 +147,40 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QRegularExpression re("==([^=\n]+?)==");
         html.replace(re, "<mark>\\1</mark>");
     }
-    // 数学公式：$...$ → <span data-type="inline-math">, $$...$$ → <div data-type="block-math">
-    {
-        // 保护 <pre> 代码块内容
-        QStringList preBlocks;
-        {
-            QRegularExpression preRe("<pre[^>]*>.*?</pre>",
-                QRegularExpression::DotMatchesEverythingOption);
-            int n = 0; int off = 0;
-            while (true) {
-                auto m = preRe.match(html, off);
-                if (!m.hasMatch()) break;
-                preBlocks << m.captured();
-                html.replace(m.capturedStart(), m.capturedLength(), QString("__PRE%1__").arg(n++));
-                off = m.capturedStart();
-            }
-        }
-        // $$...$$ 块级：内部换行替换为 LaTeX 换行符 \\
-        {
-            QRegularExpression re("\\$\\$(.+?)\\$\\$",
-                QRegularExpression::DotMatchesEverythingOption);
-            int offset = 0;
-            while (true) {
-                auto m = re.match(html, offset);
-                if (!m.hasMatch()) break;
-                QString latex = m.captured(1);
-                // 移除可能混入的 <br> 标签
-                latex.remove(QRegularExpression("<[^>]*>"));
-                // 换行 → LaTeX 换行符 \\
-                latex.replace('\n', "\\\\");
-                latex = latex.trimmed();
-                QString repl = QString("<div data-type=\"block-math\" data-latex=\"%1\"></div>").arg(latex);
-                html.replace(m.capturedStart(), m.capturedLength(), repl);
-                offset = m.capturedStart() + repl.length();
-            }
-        }
-        // $...$ 行内
-        html.replace(QRegularExpression("\\$(.+?)\\$"),
-            "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
-        // 恢复 <pre>
-        for (int i = 0; i < preBlocks.size(); ++i)
-            html.replace(QString("__PRE%1__").arg(i), preBlocks[i]);
+    // 数学公式 → TipTap 节点
+    // 保护 <pre> 块
+    QStringList mdPreData;
+    QRegularExpression mdPreRe("<pre[^>]*>.*?</pre>",
+        QRegularExpression::DotMatchesEverythingOption);
+    int mdPn = 0, mdPo = 0;
+    while (true) {
+        auto mm = mdPreRe.match(html, mdPo);
+        if (!mm.hasMatch()) break;
+        mdPreData << mm.captured();
+        html.replace(mm.capturedStart(), mm.capturedLength(), QString("__MPR%1__").arg(mdPn++));
+        mdPo = mm.capturedStart();
     }
+    // $$...$$ 块级 — 内部分行
+    QRegularExpression mdBlockRe("\\$\\$(.+?)\\$\\$",
+        QRegularExpression::DotMatchesEverythingOption);
+    int mdOff = 0;
+    while (true) {
+        auto mm2 = mdBlockRe.match(html, mdOff);
+        if (!mm2.hasMatch()) break;
+        QString mdLtx = mm2.captured(1);
+        mdLtx.remove(QRegularExpression("<[^>]*>"));
+        mdLtx.replace('\n', "\\\\");
+        mdLtx = mdLtx.trimmed();
+        html.replace(mm2.capturedStart(), mm2.capturedLength(),
+            QString("<div data-type=\"block-math\" data-latex=\"%1\"></div>").arg(mdLtx));
+        mdOff = mm2.capturedStart();
+    }
+    // $...$ 行内
+    html.replace(QRegularExpression("\\$(.+?)\\$"),
+        "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
+    // 恢复 <pre> 块
+    for (int i = 0; i < mdPreData.size(); ++i)
+        html.replace(QString("__MPR%1__").arg(i), mdPreData[i]);
 
     return html;
 }
