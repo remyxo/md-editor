@@ -250,23 +250,29 @@ void MainWindow::connectSignals()
             const QString &find, const QString &replace) {
         EditorTab *tab = m_tabWidget->currentEditorTab();
         if (tab && !find.isEmpty()) {
+            QString f(find), r(replace);
+            f.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
+            r.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
             tab->webView()->findText(find);
             tab->runJsCommand(QStringLiteral(
                 "var ed=window.editorApi;if(!ed||!ed.editor)return;"
-                "var f='%1',r='%2',found=false;"
+                "var f='%1',r='%2',done=false;"
                 "ed.editor.state.doc.descendants(function(n,pos){"
-                "if(found||!n.isText)return;var i=n.text.indexOf(f);"
+                "if(done||!n.isText)return;var i=n.text.indexOf(f);"
                 "if(i>=0){var s=pos+i;ed.editor.chain()"
                 ".setTextSelection({from:s,to:s+f.length})"
-                ".insertContent(r).run();found=true;}"
+                ".insertContent(r).run();done=true;}"
                 "});"
-            ).arg(find, replace));
+            ).arg(f, r));
         }
     });
     connect(m_searchBar, &SearchBar::replaceAllRequested, this, [this](
             const QString &find, const QString &replace) {
         EditorTab *tab = m_tabWidget->currentEditorTab();
         if (tab && !find.isEmpty()) {
+            QString f(find), r(replace);
+            f.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
+            r.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
             tab->runJsCommand(QStringLiteral(
                 "var ed=window.editorApi;if(!ed||!ed.editor)return;"
                 "var f='%1',r='%2',c=0,tr=ed.editor.state.tr;"
@@ -275,7 +281,7 @@ void MainWindow::connectSignals()
                 "while(i>=0){tr.replaceWith(pos+i,pos+i+f.length,"
                 "ed.editor.schema.text(r));c++;i=t.indexOf(f,i+1);}"
                 "});if(c>0)ed.editor.view.dispatch(tr);"
-            ).arg(find, replace));
+            ).arg(f, r));
         }
     });
 }
