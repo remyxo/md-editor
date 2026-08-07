@@ -169,9 +169,15 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QRegularExpression re("==([^=\n]+?)==");
         html.replace(re, "<mark>\\1</mark>");
     }
-    // 恢复数学公式占位符
-    for (int i = 0; i < mathBlocks.size(); ++i)
-        html.replace(QString("ZZMB%1ZZ").arg(i), mathBlocks[i]);
+    // 恢复数学公式占位符（前后可能有空 <p>，一并清除）
+    for (int i = 0; i < mathBlocks.size(); ++i) {
+        QString ph = QString("ZZMB%1ZZ").arg(i);
+        // 占位符在 <p>ZZMB0ZZ</p> 中，替换时连 <p> 一起换掉
+        html.replace(QRegularExpression("<p[^>]*>" + ph + "</p>"), mathBlocks[i]);
+        html.replace(ph, mathBlocks[i]); // fallback
+    }
+    // 清除紧邻 math div 的空 <p>（p 末尾有空 br 也会匹配）
+    html.replace(QRegularExpression("<p[^>]*>(<br[^>]*>)?</p>"), "");
 
     return html;
 }
