@@ -251,26 +251,31 @@ void MainWindow::connectSignals()
         EditorTab *tab = m_tabWidget->currentEditorTab();
         if (tab && !find.isEmpty()) {
             tab->webView()->findText(find);
-            // 替换通过 JS 实现
-            tab->runJsCommand(QString(
-                "document.execCommand('insertText', false, '%1');").arg(replace));
+            tab->runJsCommand(QStringLiteral(
+                "var ed=window.editorApi;if(!ed||!ed.editor)return;"
+                "var f='%1',r='%2',found=false;"
+                "ed.editor.state.doc.descendants(function(n,pos){"
+                "if(found||!n.isText)return;var i=n.text.indexOf(f);"
+                "if(i>=0){var s=pos+i;ed.editor.chain()"
+                ".setTextSelection({from:s,to:s+f.length})"
+                ".insertContent(r).run();found=true;}"
+                "});"
+            ).arg(find, replace));
         }
     });
     connect(m_searchBar, &SearchBar::replaceAllRequested, this, [this](
             const QString &find, const QString &replace) {
         EditorTab *tab = m_tabWidget->currentEditorTab();
         if (tab && !find.isEmpty()) {
-            QString escapedFind = find;
-            escapedFind.replace("\\", "\\\\").replace("'", "\\'");
-            QString escapedReplace = replace;
-            escapedReplace.replace("\\", "\\\\").replace("'", "\\'");
-            // 全替换：用 JS 遍历 DOM 文本节点
-            tab->runJsCommand(QString(
-                "var r=document.createRange();"
-                "var t=document.createTreeWalker(document.querySelector('#editor'),4);"
-                "var n,re=new RegExp('%1','g');"
-                "while(n=t.nextNode()){n.nodeValue=n.nodeValue.replace(re,'%2');}"
-            ).arg(escapedFind, escapedReplace));
+            tab->runJsCommand(QStringLiteral(
+                "var ed=window.editorApi;if(!ed||!ed.editor)return;"
+                "var f='%1',r='%2',c=0,tr=ed.editor.state.tr;"
+                "ed.editor.state.doc.descendants(function(n,pos){"
+                "if(!n.isText)return;var t=n.text,i=t.indexOf(f);"
+                "while(i>=0){tr.replaceWith(pos+i,pos+i+f.length,"
+                "ed.editor.schema.text(r));c++;i=t.indexOf(f,i+1);}"
+                "});if(c>0)ed.editor.view.dispatch(tr);"
+            ).arg(find, replace));
         }
     });
 }
