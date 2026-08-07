@@ -170,8 +170,13 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QString mdLtx = mm2.captured(1);
         mdLtx.remove(QRegularExpression("<[^>]*>"));
         if (mdLtx.contains('\n')) {
-            mdLtx.replace('\n', "\\\\\n");
-            mdLtx = "\\begin{aligned}\n" + mdLtx.trimmed() + "\n\\end{aligned}";
+            // 用 aligned 环境 + \\ 分行（去掉物理换行，压缩为一行）
+            QStringList mdLines = mdLtx.split('\n');
+            QString mdJoined;
+            for (const QString &l : mdLines)
+                if (!l.trimmed().isEmpty())
+                    mdJoined += l.trimmed() + " \\\\ ";
+            mdLtx = "\\begin{aligned}" + mdJoined + "\\end{aligned}";
         }
         mdLtx = mdLtx.trimmed();
         html.replace(mm2.capturedStart(), mm2.capturedLength(),
