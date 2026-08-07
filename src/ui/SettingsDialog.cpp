@@ -108,25 +108,29 @@ void SettingsDialog::setupUi()
     m_orientationCombo->addItem("横向", QPageLayout::Landscape);
     exportForm->addRow("默认方向:", m_orientationCombo);
 
-    auto makeMargin = [](const QString &label) {
+    auto makeMargin = []() {
         auto *s = new QDoubleSpinBox();
         s->setRange(0.5, 5.0); s->setSingleStep(0.1);
-        s->setSuffix(" cm"); s->setDecimals(1);
+        s->setSuffix(" 厘米"); s->setDecimals(1);
         return s;
     };
-    exportForm->addRow("", new QLabel("页边距 (厘米):"));
-    m_marginTop = makeMargin("上"); m_marginBottom = makeMargin("下");
-    m_marginLeft = makeMargin("左"); m_marginRight = makeMargin("右");
+    QLabel *marginTitle = new QLabel("页边距 (厘米):");
+    exportForm->addRow(marginTitle);
+    m_marginTop = makeMargin(); m_marginBottom = makeMargin();
+    m_marginLeft = makeMargin(); m_marginRight = makeMargin();
 
     QGridLayout *marginGrid = new QGridLayout();
-    marginGrid->addWidget(new QLabel("上:"), 0, 0);
-    marginGrid->addWidget(m_marginTop, 0, 1);
-    marginGrid->addWidget(new QLabel("下:"), 0, 2);
-    marginGrid->addWidget(m_marginBottom, 0, 3);
-    marginGrid->addWidget(new QLabel("左:"), 1, 0);
-    marginGrid->addWidget(m_marginLeft, 1, 1);
-    marginGrid->addWidget(new QLabel("右:"), 1, 2);
-    marginGrid->addWidget(m_marginRight, 1, 3);
+    marginGrid->setColumnStretch(2, 1); // 左右列之间拉开
+    auto addPair = [&](int row, int startCol, const QString &label, QDoubleSpinBox *spin) {
+        QLabel *lbl = new QLabel(label);
+        lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        marginGrid->addWidget(lbl, row, startCol);
+        marginGrid->addWidget(spin, row, startCol + 1);
+    };
+    addPair(0, 0, "上:", m_marginTop);
+    addPair(0, 3, "下:", m_marginBottom);
+    addPair(1, 0, "左:", m_marginLeft);
+    addPair(1, 3, "右:", m_marginRight);
     exportForm->addRow(marginGrid);
     tabs->addTab(exportTab, "导出");
 
