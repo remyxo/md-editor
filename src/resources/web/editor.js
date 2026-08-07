@@ -81,12 +81,6 @@ window.editorApi = {
             }.bind(this),
         });
 
-        // 将文本 $...$ 转换为数学节点
-        var migrate = window.TipTapMigrateMathStrings;
-        if (migrate) {
-            migrate(this.editor);
-            console.log('[editor] migrateMathStrings called, doc text:', this.editor.state.doc.textContent.substring(0, 200));
-        }
         this.notifyHeadings();
     },
 
