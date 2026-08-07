@@ -14,6 +14,7 @@
 #include "../core/EditorBridge.h"
 #include "../core/FileManager.h"
 #include "../core/MarkdownHandler.h"
+#include "../core/PdfExporter.h"
 #include "../app/Application.h"
 #include "../app/ThemeManager.h"
 
@@ -233,10 +234,44 @@ void MainWindow::connectSignals()
     // === 搜索栏 ===
     connect(m_searchBar, &SearchBar::closeRequested, this, [this]() {
         m_searchBar->setVisible(false);
+        EditorTab *tab = m_tabWidget->currentEditorTab();
+        if (tab) tab->webView()->findText("");
     });
     connect(m_searchBar, &SearchBar::findRequested, this, [this](
-            const QString &, bool) {
-        m_statusBar->showMessage("查找功能将在后续版本中完善", 3000);
+            const QString &text, bool caseSensitive) {
+        EditorTab *tab = m_tabWidget->currentEditorTab();
+        if (tab && !text.isEmpty()) {
+            QWebEnginePage::FindFlags flags;
+            if (caseSensitive) flags |= QWebEnginePage::FindCaseSensitively;
+            tab->webView()->findText(text, flags);
+        }
+    });
+    connect(m_searchBar, &SearchBar::replaceRequested, this, [this](
+            const QString &find, const QString &replace) {
+        EditorTab *tab = m_tabWidget->currentEditorTab();
+        if (tab && !find.isEmpty()) {
+            tab->webView()->findText(find);
+            // 替换通过 JS 实现
+            tab->runJsCommand(QString(
+                "document.execCommand('insertText', false, '%1');").arg(replace));
+        }
+    });
+    connect(m_searchBar, &SearchBar::replaceAllRequested, this, [this](
+            const QString &find, const QString &replace) {
+        EditorTab *tab = m_tabWidget->currentEditorTab();
+        if (tab && !find.isEmpty()) {
+            QString escapedFind = find;
+            escapedFind.replace("\\", "\\\\").replace("'", "\\'");
+            QString escapedReplace = replace;
+            escapedReplace.replace("\\", "\\\\").replace("'", "\\'");
+            // 全替换：用 JS 遍历 DOM 文本节点
+            tab->runJsCommand(QString(
+                "var r=document.createRange();"
+                "var t=document.createTreeWalker(document.querySelector('#editor'),4);"
+                "var n,re=new RegExp('%1','g');"
+                "while(n=t.nextNode()){n.nodeValue=n.nodeValue.replace(re,'%2');}"
+            ).arg(escapedFind, escapedReplace));
+        }
     });
 }
 
@@ -349,13 +384,24 @@ void MainWindow::onExportPdf()
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (!tab) return;
 
+    // 先弹出保存对话框
     QString path = QFileDialog::getSaveFileName(this, "导出 PDF", "document.pdf",
                                                  "PDF 文件 (*.pdf)");
     if (path.isEmpty()) return;
 
-    // 获取编辑器 HTML 内容，通过隐藏 WebView 导出（后续任务完善）
-    tab->runJsCommand("window.editorApi.getContent();");
-    m_statusBar->showMessage("PDF 导出功能将在后续版本中完善", 3000);
+    // 异步获取编辑器 HTML 内容
+    tab->webView()->page()->runJavaScript(
+        "window.editorApi.getContent();",
+        [this, path](const QVariant &result) {
+            QString html = result.toString();
+            auto *exporter = new PdfExporter(this);
+            connect(exporter, &PdfExporter::exportFinished, this,
+                    [this, exporter](bool ok, const QString &out) {
+                m_statusBar->showMessage(ok ? QString("已导出: %1").arg(out) : "导出失败", 3000);
+                exporter->deleteLater();
+            });
+            exporter->exportToPdf(html, path);
+        });
 }
 
 void MainWindow::onThemeSwitch(const QString &theme)
