@@ -17,6 +17,7 @@
     "@tiptap/extension-highlight": "^3.29.2",
     "@tiptap/extension-image": "^3.29.2",
     "@tiptap/extension-link": "^3.29.2",
+    "@tiptap/extension-mathematics": "^3.29.2",
     "@tiptap/extension-placeholder": "^3.29.2",
     "@tiptap/extension-table": "^3.29.2",
     "@tiptap/extension-task-item": "^3.29.2",
@@ -25,6 +26,7 @@
     "@tiptap/pm": "^3.29.2",
     "@tiptap/starter-kit": "^3.29.2",
     "esbuild": "^0.28.1",
+    "katex": "^0.18.1",
     "lowlight": "^3.3.0"
   }
 }

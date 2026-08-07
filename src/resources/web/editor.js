@@ -28,6 +28,7 @@ window.editorApi = {
         var Image = window.TipTapExtensionImage;
         var Placeholder = window.TipTapExtensionPlaceholder;
         var CodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
+        var Mathematics = window.TipTapExtensionMathematics;
         // v3 StarterKit includes Link and Underline
 
         var extensions = [
@@ -44,9 +45,10 @@ window.editorApi = {
         ];
 
         // 语法高亮代码块（StarterKit 中已禁用默认 codeBlock，这里使用 lowlight 版本）
-        if (CodeBlockLowlight && window.lowlight) {
+        if (CodeBlockLowlight && window.lowlight)
             extensions.push(CodeBlockLowlight.configure({ lowlight: window.lowlight }));
-        }
+        if (Mathematics)
+            extensions.push(Mathematics);
 
         this.editor = new Editor({
             element: document.querySelector('#editor'),
@@ -157,6 +159,7 @@ window.editorApi = {
         var Image = window.TipTapExtensionImage;
         var Placeholder = window.TipTapExtensionPlaceholder;
         var CodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
+        var Mathematics = window.TipTapExtensionMathematics;
 
         var extensions = [
             StarterKit.configure({ codeBlock: false, heading: {levels:[1,2,3,4,5,6]} }),
@@ -165,6 +168,8 @@ window.editorApi = {
         ];
         if (CodeBlockLowlight && window.lowlight)
             extensions.push(CodeBlockLowlight.configure({lowlight:window.lowlight}));
+        if (Mathematics)
+            extensions.push(Mathematics);
 
         var self = this;
         this.editor = new TipTap.Editor({
