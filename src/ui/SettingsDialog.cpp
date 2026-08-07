@@ -110,16 +110,19 @@ void SettingsDialog::setupUi()
 
     // 页边距
     QGroupBox *marginGroup = new QGroupBox("页边距");
+    marginGroup->setStyleSheet("QGroupBox{padding:8px 16px;}");
     auto makeMargin = []() {
         auto *s = new QDoubleSpinBox();
         s->setRange(0.5, 5.0); s->setSingleStep(0.1);
-        s->setDecimals(1); s->setFixedWidth(70);
+        s->setDecimals(1); s->setFixedWidth(80);
         return s;
     };
     m_marginTop = makeMargin(); m_marginBottom = makeMargin();
     m_marginLeft = makeMargin(); m_marginRight = makeMargin();
     QGridLayout *marginGrid = new QGridLayout();
-    marginGrid->setColumnStretch(4, 1);
+    marginGrid->setHorizontalSpacing(12);
+    marginGrid->setColumnStretch(2, 0);
+    marginGrid->setColumnStretch(6, 1);
     auto addPair = [&](int row, int startCol, const QString &label, QDoubleSpinBox *spin) {
         QLabel *lbl = new QLabel(label);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
