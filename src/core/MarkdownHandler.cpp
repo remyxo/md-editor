@@ -169,7 +169,10 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         if (!mm2.hasMatch()) break;
         QString mdLtx = mm2.captured(1);
         mdLtx.remove(QRegularExpression("<[^>]*>"));
-        mdLtx.replace('\n', "\\\\");
+        if (mdLtx.contains('\n')) {
+            mdLtx.replace('\n', "\\\\\n");
+            mdLtx = "\\begin{aligned}\n" + mdLtx.trimmed() + "\n\\end{aligned}";
+        }
         mdLtx = mdLtx.trimmed();
         html.replace(mm2.capturedStart(), mm2.capturedLength(),
             QString("<div data-type=\"block-math\" data-latex=\"%1\"></div>").arg(mdLtx));
