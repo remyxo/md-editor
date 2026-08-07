@@ -193,13 +193,11 @@ window.editorApi = {
                 self.notifyHeadings();
             },
         });
-        try {
-            var k = window.katex || (typeof katex !== 'undefined' ? katex : null);
-            console.log('katex available:', !!k, 'math nodes count:',
-                this.editor.state.doc.descendants(function(n) {
-                    return n.type.name === 'inlineMath' || n.type.name === 'blockMath';
-                }).length || 0);
-        } catch(e) { console.log('check error:', e.message); }
+        var mathCount = 0;
+        this.editor.state.doc.descendants(function(n) {
+            if (n.type.name === 'inlineMath' || n.type.name === 'blockMath') mathCount++;
+        });
+        console.log('math nodes:', mathCount, 'katex global:', !!window.katex);
         this._dirty = false;
         if (this.bridge) {
             this.bridge.contentChanged(false);
