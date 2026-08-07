@@ -136,17 +136,16 @@ void SettingsDialog::setupUi()
 
     // 方向（图标选择）
     QGroupBox *orientGroup = new QGroupBox("方向");
+    QVBoxLayout *orientOuter = new QVBoxLayout();
     QHBoxLayout *orientLayout = new QHBoxLayout();
     m_portraitBtn = new QPushButton();
     m_portraitBtn->setIcon(QIcon(":/icons/light/portrait.svg"));
     m_portraitBtn->setIconSize(QSize(32, 40));
-    m_portraitBtn->setToolTip("纵向");
     m_portraitBtn->setCheckable(true);
     m_portraitBtn->setFixedSize(60, 60);
     m_landscapeBtn = new QPushButton();
     m_landscapeBtn->setIcon(QIcon(":/icons/light/landscape.svg"));
     m_landscapeBtn->setIconSize(QSize(40, 32));
-    m_landscapeBtn->setToolTip("横向");
     m_landscapeBtn->setCheckable(true);
     m_landscapeBtn->setFixedSize(60, 60);
     connect(m_portraitBtn, &QPushButton::clicked, this, [this]() {
@@ -162,7 +161,20 @@ void SettingsDialog::setupUi()
     orientLayout->addWidget(m_portraitBtn);
     orientLayout->addWidget(m_landscapeBtn);
     orientLayout->addStretch();
-    orientGroup->setLayout(orientLayout);
+    // 文字标签
+    QHBoxLayout *labelLayout = new QHBoxLayout();
+    QLabel *portraitLabel = new QLabel("纵向(P)");
+    portraitLabel->setAlignment(Qt::AlignCenter);
+    portraitLabel->setFixedWidth(60);
+    QLabel *landscapeLabel = new QLabel("横向(L)");
+    landscapeLabel->setAlignment(Qt::AlignCenter);
+    landscapeLabel->setFixedWidth(60);
+    labelLayout->addWidget(portraitLabel);
+    labelLayout->addWidget(landscapeLabel);
+    labelLayout->addStretch();
+    orientOuter->addLayout(orientLayout);
+    orientOuter->addLayout(labelLayout);
+    orientGroup->setLayout(orientOuter);
     exportLayout->addWidget(orientGroup);
 
     exportLayout->addStretch();
