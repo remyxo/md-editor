@@ -29,7 +29,7 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
 <meta charset="UTF-8">
 <style>
   @media print {
-    @page { margin: 20mm; }
+    @page { margin: 25mm; }
     body { font-family: "Noto Sans SC", "DejaVu Sans", sans-serif;
            font-size: 12pt; line-height: 1.6; color: #333; }
     h1 { font-size: 1.8em; }
