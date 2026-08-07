@@ -112,6 +112,7 @@ void SettingsDialog::setupUi()
         auto *s = new QDoubleSpinBox();
         s->setRange(0.5, 5.0); s->setSingleStep(0.1);
         s->setSuffix(" 厘米"); s->setDecimals(1);
+        s->setFixedWidth(100);
         return s;
     };
     QLabel *marginTitle = new QLabel("页边距 (厘米):");
