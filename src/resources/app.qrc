@@ -46,6 +46,7 @@
         <file>icons/dark/edit-mode.svg</file>
         <file>icons/dark/read-mode.svg</file>
         <file>web/editor.html</file>
+        <file>web/katex.min.css</file>
         <file>web/editor.css</file>
         <file>web/editor.js</file>
         <file>web/qwebchannel.js</file>
