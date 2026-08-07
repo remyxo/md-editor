@@ -260,7 +260,14 @@ window.editorApi = {
             this.isSourceMode = true;
         }
     },
-    scrollToPos: function(pos) { if (this.editor) this.editor.commands.setTextSelection(pos); },
+    scrollToPos: function(pos) {
+        if (!this.editor) return;
+        var dom = this.editor.view.domAtPos(Math.min(pos + 1, this.editor.state.doc.content.size));
+        if (dom && dom.node) {
+            var el = dom.node.nodeType === 3 ? dom.node.parentElement : dom.node;
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    },
     undo: function() { if (this.editor) this.editor.commands.undo(); },
     redo: function() { if (this.editor) this.editor.commands.redo(); },
     setTheme: function(theme) {
