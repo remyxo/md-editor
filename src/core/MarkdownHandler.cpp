@@ -29,13 +29,19 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList lines = markdown.split('\n');
     QString processed;
     bool inCodeBlock = false;
+    bool inMathBlock = false;
     QStringList codeLangs; // 跟踪每个代码块的语言
 
     for (int i = 0; i < lines.size(); ++i) {
         const QString &line = lines[i];
         const QString &next = (i + 1 < lines.size()) ? lines[i + 1] : QString();
 
-        if (line.startsWith("```")) {
+        if (line.startsWith("$$")) {
+            inMathBlock = !inMathBlock;
+            processed += line + '\n';
+        } else if (inMathBlock) {
+            processed += line + '\n';
+        } else if (line.startsWith("```")) {
             if (!inCodeBlock) {
                 // 进入代码块，提取语言
                 QString lang = line.mid(3).trimmed();
@@ -141,6 +147,34 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QRegularExpression re("==([^=\n]+?)==");
         html.replace(re, "<mark>\\1</mark>");
     }
+    // 数学公式：$...$ → <span data-type="inline-math">, $$...$$ → <div data-type="block-math">
+    {
+        // 保护 <pre> 代码块内容
+        QStringList preBlocks;
+        {
+            QRegularExpression preRe("<pre[^>]*>.*?</pre>",
+                QRegularExpression::DotMatchesEverythingOption);
+            int n = 0; int off = 0;
+            while (true) {
+                auto m = preRe.match(html, off);
+                if (!m.hasMatch()) break;
+                preBlocks << m.captured();
+                html.replace(m.capturedStart(), m.capturedLength(), QString("__PRE%1__").arg(n++));
+                off = m.capturedStart();
+            }
+        }
+        // $$...$$ 块级
+        html.replace(QRegularExpression("\\$\\$(.+?)\\$\\$",
+            QRegularExpression::DotMatchesEverythingOption),
+            "<div data-type=\"block-math\" data-latex=\"\\1\"></div>");
+        // $...$ 行内
+        html.replace(QRegularExpression("\\$(.+?)\\$"),
+            "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
+        // 恢复 <pre>
+        for (int i = 0; i < preBlocks.size(); ++i)
+            html.replace(QString("__PRE%1__").arg(i), preBlocks[i]);
+    }
+
     return html;
 }
 

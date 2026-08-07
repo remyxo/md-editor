@@ -82,17 +82,11 @@ window.editorApi = {
         });
 
         this.notifyHeadings();
-        // 延迟迁移数学公式（确保 ProseMirror 文档已完全初始化）
+        // 延迟迁移数学公式（ProseMirror 文档完全初始化后执行）
         var self = this;
         setTimeout(function() {
             var m = window.TipTapMigrateMathStrings;
-            if (m && self.editor) {
-                var before = self.editor.state.doc.textContent;
-                m(self.editor);
-                var after = self.editor.state.doc.textContent;
-                console.log('[math] before:', before.substring(0,150));
-                console.log('[math] after:', after.substring(0,150));
-            }
+            if (m && self.editor) m(self.editor);
         }, 50);
     },
 
@@ -209,9 +203,6 @@ window.editorApi = {
         if (migrate) {
             var b2 = this.editor.state.doc.textContent.substring(0, 200);
             migrate(this.editor);
-            var a2 = this.editor.state.doc.textContent.substring(0, 200);
-            console.log('[math] setContent before:', b2);
-            console.log('[math] setContent after:', a2);
         }
         this._dirty = false;
         if (this.bridge) {
