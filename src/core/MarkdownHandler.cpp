@@ -141,51 +141,6 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QRegularExpression re("==([^=\n]+?)==");
         html.replace(re, "<mark>\\1</mark>");
     }
-    // 数学公式：跳过 <pre> 代码块，将 $...$ → <span data-type="inlineMath" data-latex="...">
-    //           $$...$$ → <div data-type="mathDisplay" data-latex="...">
-    {
-        // 先用占位符保护 <pre> 代码块
-        QStringList preBlocks;
-        {
-            QRegularExpression preRe("<pre[^>]*>.*?</pre>",
-                QRegularExpression::DotMatchesEverythingOption);
-            int n = 0;
-            int offset = 0;
-            while (true) {
-                auto m = preRe.match(html, offset);
-                if (!m.hasMatch()) break;
-                preBlocks << m.captured();
-                html.replace(m.capturedStart(), m.capturedLength(),
-                             QString("__PRE%1__").arg(n++));
-                offset = m.capturedStart();
-            }
-        }
-        // $$...$$ 块级公式：去掉内部 HTML 标签，用 <div> 包裹
-        {
-            QRegularExpression re("\\$\\$(.+?)\\$\\$",
-                QRegularExpression::DotMatchesEverythingOption);
-            int offset = 0;
-            while (true) {
-                auto m = re.match(html, offset);
-                if (!m.hasMatch()) break;
-                QString latex = m.captured(1);
-                latex.remove(QRegularExpression("<[^>]*>"));
-                latex = latex.trimmed();
-                QString repl = QString("<div data-type=\"block-math\" data-latex=\"%1\"></div>").arg(latex);
-                html.replace(m.capturedStart(), m.capturedLength(), repl);
-                offset = m.capturedStart() + repl.length();
-            }
-        }
-        // $...$ 行内公式
-        {
-            QRegularExpression re("\\$(.+?)\\$");
-            html.replace(re, "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
-        }
-        // 恢复 <pre> 代码块
-        for (int i = 0; i < preBlocks.size(); ++i)
-            html.replace(QString("__PRE%1__").arg(i), preBlocks[i]);
-    }
-
     return html;
 }
 

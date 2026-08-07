@@ -82,6 +82,12 @@ window.editorApi = {
         });
 
         this.notifyHeadings();
+        // 延迟迁移数学公式（确保 ProseMirror 文档已完全初始化）
+        var self = this;
+        setTimeout(function() {
+            var m = window.TipTapMigrateMathStrings;
+            if (m && self.editor) m(self.editor);
+        }, 50);
     },
 
     notifyHeadings: function() {
