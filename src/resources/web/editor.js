@@ -193,11 +193,6 @@ window.editorApi = {
                 self.notifyHeadings();
             },
         });
-        var mathCount = 0;
-        this.editor.state.doc.descendants(function(n) {
-            if (n.type.name === 'inlineMath' || n.type.name === 'blockMath') mathCount++;
-        });
-        console.log('math nodes:', mathCount, 'katex global:', !!window.katex);
         this._dirty = false;
         if (this.bridge) {
             this.bridge.contentChanged(false);
