@@ -52,11 +52,11 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                     latex += l + '\n';
                 latex = latex.trimmed();
                 if (latex.contains('\n')) {
-                    QString joined;
+                    QStringList parts;
                     for (const QString &l : latex.split('\n'))
                         if (!l.trimmed().isEmpty())
-                            joined += l.trimmed() + " \\\\ ";
-                    latex = "\\begin{aligned}" + joined + "\\end{aligned}";
+                            parts << l.trimmed();
+                    latex = "\\begin{aligned}" + parts.join(" \\\\ ") + "\\end{aligned}";
                 }
                 mathBlocks << ("<div data-type=\"block-math\" data-latex=\"" + latex + "\"></div>");
                 inMathBlock = false;
