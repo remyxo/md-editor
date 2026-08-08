@@ -13,6 +13,78 @@ var TipTapMathematics = window.TipTapExtensionMathematics;
 var TipTapSubscript = window.TipTapExtensionSubscript;
 var TipTapSuperscript = window.TipTapExtensionSuperscript;
 var TipTapTextAlign = window.TipTapExtensionTextAlign;
+var TipTapExtension = window.TipTapExtension;
+var TipTapInputRule = window.TipTapInputRule;
+
+// Emoji 短代码 → Unicode 映射（输入 :shortcode: 自动替换为对应 emoji 字符）
+var EMOJI_SHORTCODES = {
+    // 笑脸 / 情绪
+    'smile': '😄', 'laughing': '😆', 'joy': '😂', 'grin': '😁', 'wink': '😉',
+    'blush': '😊', 'heart_eyes': '😍', 'kissing_heart': '😘', 'stuck_out_tongue': '😝',
+    'relaxed': '☺️', 'thinking': '🤔', 'neutral_face': '😐', 'expressionless': '😑',
+    'unamused': '😒', 'sweat_smile': '😅', 'sweat': '😓', 'disappointed': '😞',
+    'confused': '😕', 'pensive': '😔', 'persevere': '😣', 'weary': '😩',
+    'cry': '😢', 'sob': '😭', 'angry': '😠', 'rage': '😡', 'sleepy': '😴',
+    'mask': '😷', 'nerd_face': '🤓', 'cold_sweat': '😰', 'scream': '😱',
+    'flushed': '😳', 'dizzy_face': '😵', 'astonished': '😲', 'open_mouth': '😮',
+    // 心形 / 符号
+    'heart': '❤️', 'orange_heart': '🧡', 'yellow_heart': '💛', 'green_heart': '💚',
+    'blue_heart': '💙', 'purple_heart': '💜', 'black_heart': '🖤', 'broken_heart': '💔',
+    'heartpulse': '💗', 'sparkles': '✨', 'star': '⭐', 'stars': '🌟', 'boom': '💥',
+    '100': '💯', 'anger': '💢', 'zzz': '💤',
+    // 手势
+    '+1': '👍', 'thumbsup': '👍', '-1': '👎', 'thumbsdown': '👎', 'ok_hand': '👌',
+    'v': '✌️', 'wave': '👋', 'clap': '👏', 'pray': '🙏', 'muscle': '💪',
+    'point_up': '👆', 'point_down': '👇', 'point_left': '👈', 'point_right': '👉',
+    'raised_hands': '🙌', 'fist': '✊', 'hand': '✋', 'writing_hand': '✍️',
+    // 自然 / 天气
+    'sun_with_face': '🌞', 'sunny': '☀️', 'moon': '🌙', 'full_moon': '🌕',
+    'cloud': '☁️', 'umbrella': '☂️', 'snowflake': '❄️', 'fire': '🔥', 'zap': '⚡',
+    'rainbow': '🌈', 'ocean': '🌊', 'tada': '🎉', 'balloon': '🎈', 'gift': '🎁',
+    'cherry_blossom': '🌸', 'rose': '🌹', 'four_leaf_clover': '🍀', 'tree': '🌳',
+    // 食物 / 物品
+    'coffee': '☕', 'tea': '🍵', 'beer': '🍺', 'wine': '🍷', 'pizza': '🍕',
+    'burger': '🍔', 'cake': '🍰', 'apple': '🍎', 'banana': '🍌', 'icecream': '🍦',
+    'book': '📖', 'books': '📚', 'memo': '📝', 'pencil2': '✏️', 'paperclip': '📎',
+    'pushpin': '📌', 'bell': '🔔', 'bookmark': '🔖', 'rocket': '🚀', 'bomb': '💣',
+    'art': '🎨', 'musical_note': '🎵', 'dart': '🎯', 'video_game': '🎮',
+    // 动物
+    'dog': '🐶', 'cat': '🐱', 'mouse': '🐭', 'hamster': '🐹', 'rabbit': '🐰',
+    'fox': '🦊', 'bear': '🐻', 'panda': '🐼', 'koala': '🐨', 'tiger': '🐯',
+    'lion': '🦁', 'cow': '🐮', 'pig': '🐷', 'frog': '🐸', 'monkey': '🐵',
+    'unicorn': '🦄', 'bug': '🐛', 'bee': '🐝', 'turtle': '🐢', 'whale': '🐳',
+    // 杂项
+    'eyes': '👀', 'eye': '👁️', 'ghost': '👻', 'skull': '💀', 'poop': '💩',
+    'robot': '🤖', 'alien': '👽', 'mega': '📢', 'loudspeaker': '📣',
+    'white_check_mark': '✅', 'x': '❌', 'warning': '⚠️', 'question': '❓',
+    'exclamation': '❗', 'information_source': 'ℹ️', 'no_entry': '⛔',
+    'heavy_plus_sign': '➕', 'heavy_minus_sign': '➖', 'heavy_multiplication_x': '✖️',
+    'heavy_division_sign': '➗', 'copyright': '©️', 'registered': '®️', 'tm': '™️',
+    'recycle': '♻️', 'beginner': '🔰', 'clock': '⏰', 'hourglass': '⌛',
+    'red_circle': '🔴', 'large_blue_circle': '🔵', 'white_circle': '⚪', 'black_circle': '⚫'
+};
+
+// 构造 Emoji 扩展：输入 :shortcode: 后替换为对应 Unicode 字符
+// （TipTap InputRule 在代码块/行内代码中自动跳过，无需特殊处理）
+function buildEmojiExtension() {
+    return TipTapExtension.create({
+        name: 'emoji',
+        addInputRules: function() {
+            return [new TipTapInputRule({
+                find: function(text) {
+                    var m = text.match(/:([a-z0-9_+-]+):$/);
+                    if (!m || !EMOJI_SHORTCODES[m[1]]) return null;
+                    return { text: m[0], index: m.index };
+                },
+                handler: function(ref) {
+                    var state = ref.state, range = ref.range, match = ref.match;
+                    var code = match[0].slice(1, -1);
+                    state.tr.insertText(EMOJI_SHORTCODES[code], range.from, range.to);
+                }
+            })];
+        }
+    });
+}
 
 // 全局编辑器 API 对象（C++ 侧通过 QWebChannel 调用其中的命令方法）
 window.editorApi = {
@@ -72,6 +144,9 @@ window.editorApi = {
         // 文字对齐：作用于段落与标题（对齐信息不在 .md 中保存，往返有损）
         if (TipTapTextAlign)
             exts.push(TipTapTextAlign.configure({ types: ['heading', 'paragraph'] }));
+        // Emoji 短代码 InputRule（:shortcode: → Unicode 字符）
+        if (TipTapExtension && TipTapInputRule)
+            exts.push(buildEmojiExtension());
         return exts;
     },
 
