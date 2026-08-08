@@ -54,7 +54,7 @@ function _ensureMermaidInited() {
         securityLevel: 'loose',
         theme: dark ? 'dark' : 'default',
         // 图表字号：编辑区正文为 18px，图表文字略小
-        themeVariables: { fontSize: '16px' }
+        themeVariables: { fontSize: '14px' }
     });
     window.__mermaidInited = true;
 }
@@ -979,6 +979,9 @@ window.editorApi = {
             var self = this;
             this.overlay = document.createElement('div');
             this.overlay.className = 'math-editor-overlay';
+            // 点击遮罩关闭（标准模态行为：半透明遮罩覆盖全屏，
+            // 点击遮罩外区域 = 取消操作；点击对话框内由 stopPropagation 阻止）
+            this.overlay.addEventListener('click', function() { self.close(); });
 
             this.popover = document.createElement('div');
             this.popover.className = 'math-editor-popover mermaid-popover';
