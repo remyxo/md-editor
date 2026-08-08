@@ -35,6 +35,7 @@ signals:
     void codeBlockClicked();
     void horizontalRuleClicked();
     void mathClicked();
+    void mermaidClicked();
     void sourceToggleClicked();
     void pdfExportClicked();
     void toggleReadModeClicked();

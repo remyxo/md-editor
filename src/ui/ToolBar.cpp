@@ -178,6 +178,8 @@ void ToolBar::setupUi()
         "分割线", ":/icons/light/horizontal-rule.svg");
     makeAction(this, &m_iconPaths, "mathAction",
         "插入公式 (Ctrl+M)", ":/icons/light/math.svg");
+    makeAction(this, &m_iconPaths, "diagramAction",
+        "插入 Mermaid 图表", ":/icons/light/diagram.svg");
 
     addSeparator();
 
@@ -224,6 +226,8 @@ void ToolBar::setupUi()
             connect(a, &QAction::triggered, this, &ToolBar::pdfExportClicked);
         else if (a->objectName() == "mathAction")
             connect(a, &QAction::triggered, this, &ToolBar::mathClicked);
+        else if (a->objectName() == "diagramAction")
+            connect(a, &QAction::triggered, this, &ToolBar::mermaidClicked);
         else if (a->objectName() == "readModeAction")
             connect(a, &QAction::triggered, this, &ToolBar::toggleReadModeClicked);
     }

@@ -184,6 +184,54 @@ private slots:
         QVERIFY(md2.contains("```js"));
     }
 
+    void testMermaidRoundTrip() {
+        // Mermaid 图表往返：```mermaid 围栏 ↔ <pre><code class="language-mermaid">
+        // （editor.js 的 Mermaid 节点 renderHTML/parseHTML 依赖此契约）
+        QString md1 = "```mermaid\ngraph TD; A-->B\n```";
+        QString html = MarkdownHandler::toHtml(md1);
+        QVERIFY2(html.contains("class=\"language-mermaid\""),
+                 qPrintable("toHtml 应输出 language-mermaid，实际: " + html));
+        QVERIFY2(html.contains("<pre><code"),
+                 qPrintable("toHtml 应输出 <pre><code>，实际: " + html));
+        // 源码中的 > 在 HTML 中会被转义为 &gt;（正确行为）
+        QVERIFY(html.contains("graph TD"));
+        QVERIFY(html.contains("A--"));
+        // 完整往返：MD → HTML → MD，源码应原样恢复（含 --> 箭头）
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("```mermaid"),
+                 qPrintable("fromHtml 应还原 ```mermaid 围栏，实际: " + md2));
+        QVERIFY2(md2.contains("A-->B"),
+                 qPrintable("往返后源码 A-->B 应原样保留，实际: " + md2));
+        // 反向：TipTap 产出的 HTML（含已转义源码）→ 还原 ```mermaid 围栏
+        QString md3 = MarkdownHandler::fromHtml(
+            "<pre><code class=\"language-mermaid\">sequenceDiagram\nAlice-&gt;&gt;Bob: Hi</code></pre>");
+        QVERIFY2(md3.contains("```mermaid"),
+                 qPrintable("fromHtml 应还原 ```mermaid 围栏，实际: " + md3));
+        QVERIFY(md3.contains("sequenceDiagram"));
+    }
+
+    void testCodeBlockEntityRoundTrip() {
+        // 代码块含 < > & 的往返：不应在 .md 中残留 HTML 实体
+        QString md1 = "```cpp\nif (a < b && c > d) {}\n```";
+        QString html = MarkdownHandler::toHtml(md1);
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("a < b && c > d"),
+                 qPrintable("代码块中 < > & 应原样保留，实际: " + md2));
+        QVERIFY(!md2.contains("&lt;"));
+        QVERIFY(!md2.contains("&gt;"));
+        QVERIFY(!md2.contains("&amp;"));
+    }
+
+    void testInlineCodeEntityRoundTrip() {
+        // 行内代码含 < > & 的往返：TipTap 输出的 <code> 实体应还原
+        QString md = MarkdownHandler::fromHtml(
+            "<p>比较 <code>a &lt; b &amp;&amp; c &gt; d</code> 完成</p>");
+        QVERIFY2(md.contains("`a < b && c > d`"),
+                 qPrintable("行内代码实体应还原，实际: " + md));
+        QVERIFY(!md.contains("&lt;"));
+        QVERIFY(!md.contains("&amp;"));
+    }
+
     void testSubscriptRoundTrip() {
         // 下标 Pandoc 语法 ~x~ 往返：MD → HTML → MD
         QString md1 = "H~2~O 是水\n";

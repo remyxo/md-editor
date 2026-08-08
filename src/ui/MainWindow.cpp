@@ -254,6 +254,9 @@ void MainWindow::connectSignals()
     connect(m_toolBar, &ToolBar::mathClicked, this, [this]() {
         runEditorCommand("window.editorApi.insertMath('inline');");
     });
+    connect(m_toolBar, &ToolBar::mermaidClicked, this, [this]() {
+        runEditorCommand("window.editorApi.insertMermaid();");
+    });
     connect(m_toolBar, &ToolBar::sourceToggleClicked, this, &MainWindow::onToggleSourceMode);
     connect(m_toolBar, &ToolBar::pdfExportClicked, this, &MainWindow::onExportPdf);
 

@@ -512,3 +512,100 @@ body.dark .math-editor-actions button.primary {
     border-color: #0078d4;
     color: #fff;
 }
+
+/* ============ Mermaid 图表 ============ */
+/* 渲染容器：居中、可选中边框 */
+.ProseMirror .mermaid-block {
+    display: block;
+    text-align: center;
+    margin: 1em 0;
+    padding: 8px;
+    border-radius: 6px;
+    cursor: default;
+    user-select: none;
+}
+.ProseMirror .mermaid-block.ProseMirror-selectednode {
+    outline: 2px solid #0078d4;
+    background: rgba(0, 120, 212, 0.06);
+}
+/* SVG 自适应宽度 */
+.ProseMirror .mermaid-block svg {
+    max-width: 100%;
+    height: auto;
+}
+/* 空图表占位 */
+.ProseMirror .mermaid-block .mermaid-empty {
+    color: #aaa;
+    font-size: 14px;
+    font-style: italic;
+    padding: 24px 0;
+}
+/* 库缺失/渲染失败：回退显示源码 */
+.ProseMirror .mermaid-block .mermaid-fallback {
+    display: inline-block;
+    text-align: left;
+    margin: 0 auto;
+    padding: 10px 14px;
+    background: #f4f5f7;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+    font-size: 14px;
+    color: #444;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre-wrap;
+}
+.ProseMirror .mermaid-block .mermaid-fallback.mermaid-error {
+    border-color: #e0b4b4;
+    background: #fff0f0;
+    color: #c7254e;
+}
+body.dark .ProseMirror .mermaid-block .mermaid-fallback {
+    background: #1e2228;
+    border-color: #3d3d3d;
+    color: #ccc;
+}
+body.dark .ProseMirror .mermaid-block .mermaid-fallback.mermaid-error {
+    background: #3a1e1e;
+    border-color: #6b2e2e;
+    color: #e0a0a0;
+}
+
+/* 阅读模式同样居中渲染 */
+#read-view .mermaid-block {
+    display: block;
+    text-align: center;
+    margin: 1em 0;
+}
+#read-view .mermaid-block svg {
+    max-width: 100%;
+    height: auto;
+}
+
+/* ============ Mermaid 编辑面板 ============ */
+.mermaid-popover {
+    max-width: 720px;
+}
+.mermaid-source {
+    font-size: 14px;
+    min-height: 120px;
+}
+.mermaid-preview {
+    min-height: 120px;
+    text-align: center;
+    overflow: auto;
+}
+.mermaid-preview svg {
+    max-width: 100%;
+    height: auto;
+}
+.mermaid-hint {
+    font-size: 12px;
+    color: #888;
+    margin-top: 8px;
+    line-height: 1.5;
+}
+body.dark .mermaid-hint {
+    color: #888;
+}

@@ -21,6 +21,22 @@ static bool isParagraphLine(const QString &line)
                 && trimmed[1] == '.');
 }
 
+// 反转义代码块 / 行内代码内容中的 HTML 实体。
+// 代码内容以占位符形式绕过了 QTextDocument::setHtml 的实体解码，需手动还原，
+// 否则保存到 .md 时会残留 &gt; / &lt; / &amp;（影响 Mermaid 源码 A-->B 等）。
+// 顺序：先解码其余命名实体，最后解码 &amp;，避免把 &amp;lt; 错误还原成 <。
+static QString unescapeHtmlEntities(const QString &s)
+{
+    QString r = s;
+    r.replace("&lt;", "<");
+    r.replace("&gt;", ">");
+    r.replace("&quot;", "\"");
+    r.replace("&#39;", "'");
+    r.replace("&apos;", "'");
+    r.replace("&amp;", "&");
+    return r;
+}
+
 // 提取下标 ~x~（Pandoc 语法）为占位符。
 // Qt 的 markdown 解析器把单个 ~x~ 当作删除线（text-decoration:line-through），
 // 必须在 setMarkdown 前替换为占位符，后处理时再还原为 <sub>。
@@ -359,6 +375,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             auto lm = langRe.match(code);
             if (lm.hasMatch()) lang = lm.captured(1);
             code.remove(QRegularExpression("<[^>]*>"));
+            code = unescapeHtmlEntities(code);
             code = code.trimmed();
             QString ph = QString("ZZCB%1ZZ").arg(n++);
             placeholders << ph;
@@ -499,7 +516,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (!m.hasMatch()) break;
             QString ph = QString("ZZCD%1ZZ").arg(n++);
             placeholders << ph;
-            backups << "`" + m.captured(1) + "`";
+            backups << "`" + unescapeHtmlEntities(m.captured(1)) + "`";
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }
@@ -514,7 +531,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (!m.hasMatch()) break;
             QString ph = QString("ZZIC%1ZZ").arg(n++);
             placeholders << ph;
-            backups << "`" + m.captured(1) + "`";
+            backups << "`" + unescapeHtmlEntities(m.captured(1)) + "`";
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }

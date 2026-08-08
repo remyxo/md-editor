@@ -6,7 +6,7 @@
  *
  * 通过运行同目录下的 build-tiptap.sh 重新生成 tiptap-all.js。
  */
-import { Editor, Extension, InputRule } from '@tiptap/core';
+import { Editor, Extension, InputRule, Node } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { TableKit } from '@tiptap/extension-table';
 import TaskList from '@tiptap/extension-task-list';
@@ -28,6 +28,8 @@ window.TipTap = { Editor };
 // 自定义扩展构建用（Emoji 短代码 InputRule）
 window.TipTapExtension = Extension;
 window.TipTapInputRule = InputRule;
+// 自定义节点构建用（Mermaid 块节点）
+window.TipTapNode = Node;
 window.TipTapStarterKit = StarterKit;
 window.TipTapExtensionTableKit = TableKit;
 window.TipTapExtensionTaskList = TaskList;

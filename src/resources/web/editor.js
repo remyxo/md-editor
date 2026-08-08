@@ -15,6 +15,32 @@ var TipTapSuperscript = window.TipTapExtensionSuperscript;
 var TipTapTextAlign = window.TipTapExtensionTextAlign;
 var TipTapExtension = window.TipTapExtension;
 var TipTapInputRule = window.TipTapInputRule;
+var TipTapNode = window.TipTapNode;
+
+// Mermaid 渲染实例的 id 序列（每次 render 需唯一 id）
+var _mermaidIdSeq = 0;
+// 活动中的 Mermaid NodeView 画笔集合，用于主题切换后重绘
+var _mermaidViews = [];
+
+// HTML 文本转义（渲染失败回退 / 错误信息展示用）
+function _escapeText(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+// 懒初始化 mermaid（按当前明暗主题），保证只初始化一次
+function _ensureMermaidInited() {
+    if (!window.mermaid || window.__mermaidInited) return;
+    var dark = document.body.classList.contains('dark');
+    window.mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'loose',
+        theme: dark ? 'dark' : 'default'
+    });
+    window.__mermaidInited = true;
+}
 
 // Emoji 短代码 → Unicode 映射（输入 :shortcode: 自动替换为对应 emoji 字符）
 var EMOJI_SHORTCODES = {
@@ -86,6 +112,132 @@ function buildEmojiExtension() {
     });
 }
 
+// 构造 Mermaid 块节点（原子节点，源码存于 source 属性）
+// - parseHTML 抢先匹配 <pre><code class="language-mermaid">（priority 1000，优先于 codeBlock）
+// - renderHTML 输出相同的 <pre><code class="language-mermaid">，与 MarkdownHandler 往返一致
+// - NodeView 负责把 source 渲染为 SVG；双击唤起编辑面板
+function buildMermaidNode() {
+    return TipTapNode.create({
+        name: 'mermaid',
+        group: 'block',
+        atom: true,              // 整体选中，内部不可直接编辑（双击弹层编辑）
+        selectable: true,
+        defining: true,
+        priority: 1000,          // 高于 codeBlock，使 language-mermaid 代码块解析为本节点
+        addAttributes: function() {
+            return {
+                source: { default: '' }
+            };
+        },
+        parseHTML: function() {
+            return [{
+                tag: 'pre',
+                getAttrs: function(el) {
+                    var code = el.querySelector('code');
+                    if (code && /\blanguage-mermaid\b/.test(code.className || '')) {
+                        return { source: code.textContent || '' };
+                    }
+                    return false; // 交给后续 codeBlock 规则
+                }
+            }];
+        },
+        renderHTML: function(ref) {
+            var node = ref.node;
+            return ['pre', ['code', { class: 'language-mermaid' }, node.attrs.source || '']];
+        },
+        addNodeView: function() {
+            return mermaidNodeView;
+        }
+    });
+}
+
+// Mermaid NodeView：把 source 渲染为 SVG，库缺失/渲染失败则回退显示源码
+function mermaidNodeView(ref) {
+    var node = ref.node;
+    var getPos = ref.getPos;
+    var dom = document.createElement('div');
+    dom.className = 'mermaid-block';
+    dom.setAttribute('data-mermaid', '');
+    dom.setAttribute('title', '双击编辑图表源码');
+
+    function paint(source) {
+        dom.innerHTML = '';
+        if (!(source && source.trim())) {
+            dom.innerHTML = '<div class="mermaid-empty">（空图表，双击编辑）</div>';
+            return;
+        }
+        if (!window.mermaid) {
+            // 库未加载：降级显示源码，保证可读可保存
+            var pre = document.createElement('pre');
+            pre.className = 'mermaid-fallback';
+            var code = document.createElement('code');
+            code.textContent = source;
+            pre.appendChild(code);
+            dom.appendChild(pre);
+            return;
+        }
+        _ensureMermaidInited();
+        var id = 'mermaid-render-' + (++_mermaidIdSeq);
+        window.mermaid.render(id, source).then(function(res) {
+            dom.innerHTML = res.svg || '';
+            var svg = dom.querySelector('svg');
+            if (svg) {
+                svg.style.maxWidth = '100%';
+                svg.style.height = 'auto';
+            }
+        }).catch(function(err) {
+            dom.innerHTML = '<pre class="mermaid-fallback mermaid-error"><code>'
+                + _escapeText(source)
+                + '</code></pre>';
+            console.warn('Mermaid 渲染失败:', err);
+        });
+    }
+
+    paint(node.attrs.source);
+
+    // 注册画笔，供主题切换后重绘
+    var entry = {
+        getSource: function() { return node.attrs.source; },
+        paint: paint
+    };
+    _mermaidViews.push(entry);
+
+    // 双击唤起编辑面板
+    dom.addEventListener('dblclick', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (window.editorApi && window.editorApi._mermaidEditor) {
+            window.editorApi._mermaidEditor.open(getPos, node.attrs.source);
+        }
+    });
+
+    return {
+        dom: dom,
+        update: function(newNode) {
+            if (newNode.type !== node.type) return false;
+            node = newNode;
+            paint(newNode.attrs.source);
+            return true;
+        },
+        selectNode: function() { dom.classList.add('ProseMirror-selectednode'); },
+        deselectNode: function() { dom.classList.remove('ProseMirror-selectednode'); },
+        ignoreMutation: function() { return true; }, // SVG 内部变更不触发重渲染
+        destroy: function() {
+            var i = _mermaidViews.indexOf(entry);
+            if (i >= 0) _mermaidViews.splice(i, 1);
+        }
+    };
+}
+
+// 主题切换后重绘所有活动的 Mermaid 图表（单图失败静默，不影响主题切换）
+function _repaintMermaidViews() {
+    if (!window.mermaid) return;
+    _ensureMermaidInited();
+    _mermaidViews.forEach(function(entry) {
+        try { entry.paint(entry.getSource()); } catch (e) { /* 忽略 */ }
+    });
+}
+
 // 全局编辑器 API 对象（C++ 侧通过 QWebChannel 调用其中的命令方法）
 window.editorApi = {
     editor: null,
@@ -147,6 +299,9 @@ window.editorApi = {
         // Emoji 短代码 InputRule（:shortcode: → Unicode 字符）
         if (TipTapExtension && TipTapInputRule)
             exts.push(buildEmojiExtension());
+        // Mermaid 块节点（自定义 NodeView，priority 高于 codeBlock）
+        if (TipTapNode)
+            exts.push(buildMermaidNode());
         return exts;
     },
 
@@ -434,6 +589,9 @@ window.editorApi = {
     setTheme: function(theme) {
         if (theme === 'dark') document.body.classList.add('dark');
         else document.body.classList.remove('dark');
+        // 重置 mermaid 初始化标记，使后续渲染采用新主题；并重绘已存在的图表
+        window.__mermaidInited = false;
+        try { _repaintMermaidViews(); } catch (e) { /* 主题切换不应被图表渲染阻断 */ }
     },
     setFont: function(family, size) {
         if (family) document.body.style.fontFamily = family;
@@ -515,6 +673,11 @@ window.editorApi = {
     // 插入数学公式（C++ 侧调用）
     insertMath: function(type) {
         window.editorApi._mathEditor.create(type || 'inline');
+    },
+
+    // 插入 Mermaid 图表（C++ 侧调用）
+    insertMermaid: function() {
+        window.editorApi._mermaidEditor.create();
     },
 
     // 数学公式编辑面板
@@ -739,6 +902,209 @@ window.editorApi = {
                 setTimeout(function() {
                     window.editorApi._mathEditing = false;
                     // 兜底：若 focus 触发了 onUpdate，再次恢复
+                    if (!self._confirmed) {
+                        window.editorApi._dirty = self._dirtyBefore;
+                        if (window.editorApi.bridge) {
+                            window.editorApi.bridge.contentChanged(!!self._dirtyBefore);
+                        }
+                    }
+                }, 150);
+            }, 50);
+        }
+    },
+
+    // Mermaid 编辑面板（结构同 _mathEditor，预览用 mermaid.render；复用 _mathEditing 抑制标志）
+    _mermaidEditor: {
+        overlay: null,
+        popover: null,
+        input: null,
+        preview: null,
+        okBtn: null,
+        cancelBtn: null,
+        getPos: null,         // 编辑模式：NodeView 的 getPos 函数
+        pos: null,            // 编辑模式：位置快照
+        mode: 'create',
+        _dirtyBefore: false,
+        _confirmed: false,
+
+        // 双击打开（编辑模式）
+        open: function(getPos, source) {
+            var ed = window.editorApi.editor;
+            if (!ed) return;
+            this._dirtyBefore = window.editorApi._dirty;
+            this._confirmed = false;
+            window.editorApi._mathEditing = true; // 复用弹层编辑抑制标志
+            this.getPos = getPos;
+            this.pos = (typeof getPos === 'function') ? getPos() : null;
+            this.mode = 'edit';
+            this.buildDom();
+            this.show(source || '');
+            ed.view.dom.blur();
+        },
+
+        // 新建（工具栏按钮触发）
+        create: function() {
+            var ed = window.editorApi.editor;
+            if (!ed) return;
+            this._dirtyBefore = window.editorApi._dirty;
+            this._confirmed = false;
+            window.editorApi._mathEditing = true;
+            this.getPos = null;
+            this.mode = 'create';
+            this.buildDom();
+            this.show('');
+            ed.view.dom.blur();
+        },
+
+        buildDom: function() {
+            this.cleanupDom();
+            var self = this;
+            this.overlay = document.createElement('div');
+            this.overlay.className = 'math-editor-overlay';
+
+            this.popover = document.createElement('div');
+            this.popover.className = 'math-editor-popover mermaid-popover';
+
+            // 标题栏
+            var titleBar = document.createElement('div');
+            titleBar.className = 'math-editor-titlebar';
+            var tag = document.createElement('span');
+            tag.className = 'math-editor-type-tag';
+            tag.textContent = this.mode === 'edit' ? '编辑 Mermaid 图表' : '插入 Mermaid 图表';
+            titleBar.appendChild(tag);
+            var closeBtn = document.createElement('button');
+            closeBtn.className = 'math-editor-close-btn';
+            closeBtn.textContent = '×';
+            closeBtn.title = '关闭';
+            closeBtn.addEventListener('click', function(e) { e.stopPropagation(); self.close(); });
+            titleBar.appendChild(closeBtn);
+            this.popover.appendChild(titleBar);
+
+            // 源码输入
+            var label = document.createElement('div');
+            label.className = 'math-editor-label';
+            label.textContent = 'Mermaid 源码（如 graph TD; A-->B）';
+            this.popover.appendChild(label);
+            this.input = document.createElement('textarea');
+            this.input.className = 'math-editor-input block mermaid-source';
+            this.input.rows = 8;
+            this.input.spellcheck = false;
+            this.popover.appendChild(this.input);
+
+            // 实时预览
+            var prevLabel = document.createElement('div');
+            prevLabel.className = 'math-editor-label';
+            prevLabel.textContent = '预览';
+            this.popover.appendChild(prevLabel);
+            this.preview = document.createElement('div');
+            this.preview.className = 'math-editor-preview mermaid-preview';
+            this.popover.appendChild(this.preview);
+
+            // 语法提示
+            var hint = document.createElement('div');
+            hint.className = 'mermaid-hint';
+            hint.textContent = '支持 flowchart / sequence / class / state / pie / gantt 等，详见 mermaid.js.org';
+            this.popover.appendChild(hint);
+
+            // 按钮
+            var actions = document.createElement('div');
+            actions.className = 'math-editor-actions';
+            this.cancelBtn = document.createElement('button');
+            this.cancelBtn.textContent = '取消';
+            this.cancelBtn.addEventListener('click', function() { self.close(); });
+            actions.appendChild(this.cancelBtn);
+            this.okBtn = document.createElement('button');
+            this.okBtn.className = 'primary';
+            this.okBtn.textContent = '确定';
+            this.okBtn.addEventListener('click', function() { self.confirm(); });
+            actions.appendChild(this.okBtn);
+            this.popover.appendChild(actions);
+
+            // 键盘：Ctrl/Cmd+Enter 确定，Esc 关闭（裸 Enter 换行）
+            this.input.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') { e.preventDefault(); self.close(); return; }
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); self.confirm(); }
+            });
+            this.input.addEventListener('input', function() { self.updatePreview(); });
+            this.popover.addEventListener('click', function(e) { e.stopPropagation(); });
+
+            document.body.appendChild(this.overlay);
+            document.body.appendChild(this.popover);
+        },
+
+        show: function(source) {
+            this.input.value = source;
+            this.updatePreview();
+            this.input.focus();
+            var len = source.length;
+            this.input.setSelectionRange(len, len);
+        },
+
+        // 实时 Mermaid 预览
+        updatePreview: function() {
+            var src = this.input.value;
+            var p = this.preview;
+            if (!src.trim()) {
+                p.innerHTML = '<span style="color:#888;font-size:14px;">（输入 Mermaid 源码预览图表）</span>';
+                return;
+            }
+            if (!window.mermaid) { p.textContent = src; return; }
+            _ensureMermaidInited();
+            var id = 'mermaid-prev-' + (++_mermaidIdSeq);
+            window.mermaid.render(id, src).then(function(res) {
+                p.innerHTML = res.svg || '';
+                var svg = p.querySelector('svg');
+                if (svg) { svg.style.maxWidth = '100%'; svg.style.height = 'auto'; }
+            }).catch(function(err) {
+                p.innerHTML = '<span style="color:#c00;font-size:13px;">渲染失败：'
+                    + _escapeText(err && err.message || String(err)) + '</span>';
+            });
+        },
+
+        // 确认：更新或插入
+        confirm: function() {
+            var src = this.input.value.trim();
+            if (!src) { this.close(); return; }
+            var ed = window.editorApi.editor;
+            if (!ed) { this.close(); return; }
+            this._confirmed = true;
+            window.editorApi._forceDirty();
+            if (this.mode === 'edit') {
+                var p = (typeof this.getPos === 'function') ? this.getPos() : this.pos;
+                if (p === null || p === false) { this.close(); return; }
+                ed.view.dispatch(ed.state.tr.setNodeMarkup(p, undefined, { source: src }));
+            } else {
+                ed.commands.insertContent({ type: 'mermaid', attrs: { source: src } });
+            }
+            this.close();
+        },
+
+        cleanupDom: function() {
+            if (this.overlay && this.overlay.parentNode) this.overlay.parentNode.removeChild(this.overlay);
+            if (this.popover && this.popover.parentNode) this.popover.parentNode.removeChild(this.popover);
+            this.overlay = null;
+            this.popover = null;
+            this.input = null;
+            this.preview = null;
+            this.okBtn = null;
+            this.cancelBtn = null;
+        },
+
+        close: function() {
+            this.cleanupDom();
+            this.getPos = null;
+            if (!this._confirmed) {
+                window.editorApi._dirty = this._dirtyBefore;
+                if (window.editorApi.bridge) {
+                    window.editorApi.bridge.contentChanged(!!this._dirtyBefore);
+                }
+            }
+            var self = this;
+            setTimeout(function() {
+                var ed = window.editorApi.editor;
+                if (ed) ed.view.focus();
+                setTimeout(function() {
+                    window.editorApi._mathEditing = false;
                     if (!self._confirmed) {
                         window.editorApi._dirty = self._dirtyBefore;
                         if (window.editorApi.bridge) {
