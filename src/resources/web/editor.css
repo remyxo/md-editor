@@ -586,15 +586,28 @@ body.dark .ProseMirror .mermaid-block .mermaid-fallback.mermaid-error {
 /* ============ Mermaid 编辑面板 ============ */
 .mermaid-popover {
     max-width: 720px;
+    /* 对话框整体不超出视口：纵向 flex 布局 + 限高，
+       大图由预览区内部滚动消化，避免撑出屏幕底部 */
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
 }
 .mermaid-source {
     font-size: 14px;
     min-height: 120px;
+    /* 源码区高度受限，内容过长时 textarea 内部滚动 */
+    flex: 0 0 auto;
+    max-height: 200px;
 }
 .mermaid-preview {
     min-height: 120px;
     text-align: center;
     overflow: auto;
+    /* 预览区限高：大图在区内滚动，不撑高对话框 */
+    flex: 0 1 auto;
+    max-height: 44vh;
 }
 .mermaid-preview svg {
     max-width: 100%;
