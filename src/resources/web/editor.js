@@ -54,7 +54,8 @@ function _ensureMermaidInited() {
         securityLevel: 'loose',
         theme: dark ? 'dark' : 'default',
         // 图表字号：编辑区正文为 18px，图表文字略小
-        themeVariables: { fontSize: '14px' }
+        // 图表字号：编辑区正文为 18px，图表文字明显略小一档
+        themeVariables: { fontSize: 13 }
     });
     window.__mermaidInited = true;
 }
@@ -979,9 +980,10 @@ window.editorApi = {
             var self = this;
             this.overlay = document.createElement('div');
             this.overlay.className = 'math-editor-overlay';
-            // 点击遮罩关闭（标准模态行为：半透明遮罩覆盖全屏，
-            // 点击遮罩外区域 = 取消操作；点击对话框内由 stopPropagation 阻止）
+            // 点击遮罩关闭
             this.overlay.addEventListener('click', function() { self.close(); });
+            // 遮罩拦截滚轮事件，阻止穿透到下层编辑区滚动（模态核心行为）
+            this.overlay.addEventListener('wheel', function(e) { e.preventDefault(); }, { passive: false });
 
             this.popover = document.createElement('div');
             this.popover.className = 'math-editor-popover mermaid-popover';
@@ -1048,6 +1050,8 @@ window.editorApi = {
             });
             this.input.addEventListener('input', function() { self.updatePreview(); });
             this.popover.addEventListener('click', function(e) { e.stopPropagation(); });
+            // 对话框内部滚轮不冒泡到遮罩（否则遮罩 preventDefault 会阻止对话框滚动）
+            this.popover.addEventListener('wheel', function(e) { e.stopPropagation(); });
 
             document.body.appendChild(this.overlay);
             document.body.appendChild(this.popover);
