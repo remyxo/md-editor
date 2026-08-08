@@ -139,6 +139,89 @@ private slots:
         QVERIFY(md.contains("$E=mc^2$"));
     }
 
+    void testCodeBlockLanguageRoundTrip() {
+        // 代码块语言标记往返：MD → HTML → MD，语言应保留
+        // TipTap codeBlock 契约：<pre><code class="language-xxx">
+        QString md1 = "```cpp\nint main() {}\n```";
+        QString html = MarkdownHandler::toHtml(md1);
+        QVERIFY2(html.contains("class=\"language-cpp\""),
+                 qPrintable("toHtml 应输出 language class，实际: " + html));
+        QVERIFY2(html.contains("<pre><code"),
+                 qPrintable("toHtml 应输出 <pre><code>，实际: " + html));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("```cpp"),
+                 qPrintable("fromHtml 应还原 ```cpp 围栏，实际: " + md2));
+        QVERIFY(md2.contains("int main() {}"));
+    }
+
+    void testCodeBlockTipTapOutputRoundTrip() {
+        // TipTap renderHTML 输出 <pre><code class="language-py"> → fromHtml 还原围栏
+        QString html = "<pre><code class=\"language-py\">print(1)</code></pre>";
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains("```py"),
+                 qPrintable("应还原 ```py 围栏，实际: " + md));
+        QVERIFY(md.contains("print(1)"));
+    }
+
+    void testCodeBlockNoLanguageRoundTrip() {
+        // 无语言代码块：往返不应产生多余语言标记
+        QString md1 = "```\nplain code\n```";
+        QString html = MarkdownHandler::toHtml(md1);
+        QVERIFY(!html.contains("class=\"language-"));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY(md2.contains("plain code"));
+    }
+
+    void testCodeBlockMultiLineLanguageRoundTrip() {
+        // 多行代码块 + 语言：合并 <pre> 后语言仍保留
+        QString md1 = "```js\nconst a = 1;\nconst b = 2;\n```";
+        QString html = MarkdownHandler::toHtml(md1);
+        QVERIFY2(html.contains("class=\"language-js\""),
+                 qPrintable("多行代码块应保留 language-js，实际: " + html));
+        QVERIFY(html.contains("const a = 1;"));
+        QVERIFY(html.contains("const b = 2;"));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY(md2.contains("```js"));
+    }
+
+    void testSubscriptRoundTrip() {
+        // 下标 Pandoc 语法 ~x~ 往返：MD → HTML → MD
+        QString md1 = "H~2~O 是水\n";
+        QString html = MarkdownHandler::toHtml(md1);
+        QVERIFY2(html.contains("<sub>2</sub>"),
+                 qPrintable("toHtml 应转换 ~2~ → <sub>2</sub>，实际: " + html));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("~2~"),
+                 qPrintable("fromHtml 应还原 ~2~，实际: " + md2));
+    }
+
+    void testSuperscriptRoundTrip() {
+        // 上标 Pandoc 语法 ^x^ 往返：MD → HTML → MD
+        QString md1 = "2^10^ = 1024\n";
+        QString html = MarkdownHandler::toHtml(md1);
+        QVERIFY2(html.contains("<sup>10</sup>"),
+                 qPrintable("toHtml 应转换 ^10^ → <sup>10</sup>，实际: " + html));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("^10^"),
+                 qPrintable("fromHtml 应还原 ^10^，实际: " + md2));
+    }
+
+    void testStrikeNotSubscript() {
+        // 删除线 ~~x~~ 不应被误判为下标 ~x~
+        QString md1 = "~~删除线~~ 正文\n";
+        QString html = MarkdownHandler::toHtml(md1);
+        QVERIFY2(!html.contains("<sub>"),
+                 qPrintable("删除线不应产生 <sub>，实际: " + html));
+    }
+
+    void testSubSupTipTapOutputRoundTrip() {
+        // TipTap subscript/superscript 输出 <sub>/<sup> → fromHtml 还原 Pandoc 语法
+        QString html = "<p>H<sub>2</sub>O 与 2<sup>10</sup></p>";
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains("~2~"), qPrintable("应还原下标 ~2~，实际: " + md));
+        QVERIFY2(md.contains("^10^"), qPrintable("应还原上标 ^10^，实际: " + md));
+    }
+
     void testExtractTitle() {
         QString md = "# 我的文档标题\n\n内容。";
         QString title = MarkdownHandler::extractTitle(md);

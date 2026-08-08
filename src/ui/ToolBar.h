@@ -21,6 +21,8 @@ signals:
     void codeClicked();
     void underlineClicked();
     void highlightClicked();
+    void subscriptClicked();
+    void superscriptClicked();
     void headingSelected(int level);
     void bulletListClicked();
     void orderedListClicked();
@@ -48,6 +50,8 @@ private:
     QAction *m_codeBlockAction;
     QAction *m_underlineAction;
     QAction *m_highlightAction;
+    QAction *m_subscriptAction;
+    QAction *m_superscriptAction;
     QAction *m_bulletListAction;
     QAction *m_orderedListAction;
     QAction *m_taskListAction;

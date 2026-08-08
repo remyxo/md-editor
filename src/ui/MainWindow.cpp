@@ -220,6 +220,12 @@ void MainWindow::connectSignals()
     connect(m_toolBar, &ToolBar::highlightClicked, this, [this]() {
         runEditorCommand("window.editorApi.toggleHighlight();");
     });
+    connect(m_toolBar, &ToolBar::subscriptClicked, this, [this]() {
+        runEditorCommand("window.editorApi.toggleSubscript();");
+    });
+    connect(m_toolBar, &ToolBar::superscriptClicked, this, [this]() {
+        runEditorCommand("window.editorApi.toggleSuperscript();");
+    });
     connect(m_toolBar, &ToolBar::headingSelected, this, &MainWindow::onHeadingSelected);
     connect(m_toolBar, &ToolBar::bulletListClicked, this, [this]() {
         runEditorCommand("window.editorApi.toggleBulletList();");

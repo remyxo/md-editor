@@ -16,6 +16,8 @@ ToolBar::ToolBar(QWidget *parent)
     , m_codeBlockAction(nullptr)
     , m_underlineAction(nullptr)
     , m_highlightAction(nullptr)
+    , m_subscriptAction(nullptr)
+    , m_superscriptAction(nullptr)
     , m_bulletListAction(nullptr)
     , m_orderedListAction(nullptr)
     , m_taskListAction(nullptr)
@@ -101,6 +103,14 @@ void ToolBar::setupUi()
         "高亮", ":/icons/light/highlight.svg");
     m_highlightAction->setCheckable(true);
 
+    m_subscriptAction = makeAction(this, &m_iconPaths, "subscriptAction",
+        "下标", ":/icons/light/subscript.svg");
+    m_subscriptAction->setCheckable(true);
+
+    m_superscriptAction = makeAction(this, &m_iconPaths, "superscriptAction",
+        "上标", ":/icons/light/superscript.svg");
+    m_superscriptAction->setCheckable(true);
+
     addSeparator();
 
     // === 结构按钮 ===
@@ -157,6 +167,8 @@ void ToolBar::setupUi()
     connect(m_codeAction, &QAction::triggered, this, &ToolBar::codeClicked);
     connect(m_underlineAction, &QAction::triggered, this, &ToolBar::underlineClicked);
     connect(m_highlightAction, &QAction::triggered, this, &ToolBar::highlightClicked);
+    connect(m_subscriptAction, &QAction::triggered, this, &ToolBar::subscriptClicked);
+    connect(m_superscriptAction, &QAction::triggered, this, &ToolBar::superscriptClicked);
     connect(m_bulletListAction, &QAction::triggered, this, &ToolBar::bulletListClicked);
     connect(m_orderedListAction, &QAction::triggered, this, &ToolBar::orderedListClicked);
     connect(m_taskListAction, &QAction::triggered, this, &ToolBar::taskListClicked);
@@ -222,6 +234,8 @@ void ToolBar::updateFormatState(const QJsonObject &f)
     TOGGLE_CHECK(m_codeAction, "code");
     TOGGLE_CHECK(m_underlineAction, "underline");
     TOGGLE_CHECK(m_highlightAction, "highlight");
+    TOGGLE_CHECK(m_subscriptAction, "subscript");
+    TOGGLE_CHECK(m_superscriptAction, "superscript");
     TOGGLE_CHECK(m_bulletListAction, "bulletList");
     TOGGLE_CHECK(m_orderedListAction, "orderedList");
     TOGGLE_CHECK(m_taskListAction, "taskList");

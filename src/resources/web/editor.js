@@ -10,6 +10,8 @@ var TipTapImage = window.TipTapExtensionImage;
 var TipTapPlaceholder = window.TipTapExtensionPlaceholder;
 var TipTapCodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
 var TipTapMathematics = window.TipTapExtensionMathematics;
+var TipTapSubscript = window.TipTapExtensionSubscript;
+var TipTapSuperscript = window.TipTapExtensionSuperscript;
 
 // 全局编辑器 API 对象（C++ 侧通过 QWebChannel 调用其中的命令方法）
 window.editorApi = {
@@ -62,6 +64,10 @@ window.editorApi = {
             exts.push(TipTapCodeBlockLowlight.configure({ lowlight: window.lowlight }));
         if (TipTapMathematics)
             exts.push(TipTapMathematics);
+        if (TipTapSubscript)
+            exts.push(TipTapSubscript);
+        if (TipTapSuperscript)
+            exts.push(TipTapSuperscript);
         return exts;
     },
 
@@ -183,6 +189,8 @@ window.editorApi = {
         format.code = !!ed.isActive('code');
         format.underline = !!ed.isActive('underline');
         format.highlight = !!ed.isActive('highlight');
+        format.subscript = !!ed.isActive('subscript');
+        format.superscript = !!ed.isActive('superscript');
         // 结构
         format.bulletList = !!ed.isActive('bulletList');
         format.orderedList = !!ed.isActive('orderedList');
@@ -268,6 +276,8 @@ window.editorApi = {
     toggleCode: function() { if (this.editor) this.editor.commands.toggleCode(); },
     toggleUnderline: function() { if (this.editor) this.editor.commands.toggleUnderline(); },
     toggleHighlight: function() { if (this.editor) this.editor.commands.toggleHighlight(); },
+    toggleSubscript: function() { if (this.editor) this.editor.commands.toggleSubscript(); },
+    toggleSuperscript: function() { if (this.editor) this.editor.commands.toggleSuperscript(); },
     setHeading: function(level) {
         if (!this.editor) return;
         if (level === 0) this.editor.commands.setParagraph();

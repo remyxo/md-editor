@@ -21,6 +21,25 @@ static bool isParagraphLine(const QString &line)
                 && trimmed[1] == '.');
 }
 
+// 提取下标 ~x~（Pandoc 语法）为占位符。
+// Qt 的 markdown 解析器把单个 ~x~ 当作删除线（text-decoration:line-through），
+// 必须在 setMarkdown 前替换为占位符，后处理时再还原为 <sub>。
+// 负向断言 (?<!~)~(?!~) 排除删除线 ~~x~~；内容存入 out，后处理时 HTML 转义还原。
+static QString extractSubscripts(QString line, QStringList &out)
+{
+    QRegularExpression re("(?<!~)~(?!~)([^~\\n]+?)(?<!~)~(?!~)");
+    int offset = 0;
+    while (true) {
+        auto m = re.match(line, offset);
+        if (!m.hasMatch()) break;
+        out << m.captured(1);
+        QString ph = "ZZSB" + QString::number(out.size() - 1) + "ZZ";
+        line.replace(m.capturedStart(), m.capturedLength(), ph);
+        offset = m.capturedStart() + ph.length();
+    }
+    return line;
+}
+
 QString MarkdownHandler::toHtml(const QString &markdown)
 {
     // 预处理：两行正文间单 \n → 行末嵌入 BRMARKER
@@ -33,6 +52,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     bool inCodeBlock = false;
     bool inMathBlock = false;
     QStringList codeLangs; // 跟踪每个代码块的语言
+    QStringList subContents; // 下标内容（~x~），后处理还原为 <sub>
 
     QStringList mathBlocks;  // 收集 $$ 块的内容
     QStringList mathLines;    // 当前 $$ 块的行
@@ -82,9 +102,9 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         } else if (isParagraphLine(line) && !next.isEmpty()
                    && isParagraphLine(next)) {
             // 两行正文 → 第一行末尾嵌入标记，setMarkdown 保留该标记
-            processed += line + " " + MARKER + "\n";
+            processed += extractSubscripts(line, subContents) + " " + MARKER + "\n";
         } else {
-            processed += line + '\n';
+            processed += extractSubscripts(line, subContents) + '\n';
         }
     }
 
@@ -129,21 +149,26 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         }
     }
 
-    // 后处理 1.5: 给合并后的 <pre> 添加语言类型
+    // 后处理 1.5: 统一代码块为 TipTap codeBlock 契约 <pre><code class="language-L">
+    //   TipTap 从 <pre> 的 firstElementChild(<code>) 的 language- class 读取语言；
+    //   合并后的 <pre> 为纯文本，单行 <pre> 可能带 style 属性与 <code> 子节点，统一重建。
     if (!codeLangs.isEmpty()) {
-        QRegularExpression preTagRe("<pre>");
+        QRegularExpression preBlockRe("<pre[^>]*>(.*?)</pre>",
+            QRegularExpression::DotMatchesEverythingOption);
         int langIdx = 0;
         int offset = 0;
         while (langIdx < codeLangs.size()) {
-            auto m = preTagRe.match(html, offset);
+            auto m = preBlockRe.match(html, offset);
             if (!m.hasMatch()) break;
-            if (!codeLangs[langIdx].isEmpty()) {
-                QString replacement = "<pre data-lang=\"" + codeLangs[langIdx] + "\">";
-                html.replace(m.capturedStart(), m.capturedLength(), replacement);
-                offset = m.capturedStart() + replacement.length();
-            } else {
-                offset = m.capturedStart() + m.capturedLength();
-            }
+            QString inner = m.captured(1);
+            inner.remove(QRegularExpression("<[^>]*>")); // 去掉 <code> 等内部标签，保留实体
+            const QString &lang = codeLangs[langIdx];
+            QString codeOpen = lang.isEmpty()
+                ? QStringLiteral("<code>")
+                : QStringLiteral("<code class=\"language-") + lang + "\">";
+            QString replacement = "<pre>" + codeOpen + inner + "</code></pre>";
+            html.replace(m.capturedStart(), m.capturedLength(), replacement);
+            offset = m.capturedStart() + replacement.length();
             langIdx++;
         }
     }
@@ -171,8 +196,8 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QRegularExpression re("==([^=\n]+?)==");
         html.replace(re, "<mark>\\1</mark>");
     }
-    // 行内公式 $...$ → <span data-type="inline-math">
-    // 需要保护 <code>/<pre> 内的 $ 不被匹配
+    // 行内公式 $...$ → <span data-type="inline-math">；上下标 Pandoc → <sub>/<sup>
+    // 此块统一保护 <code>/<pre>：$、~、^ 在代码内均不应被转换
     {
         QStringList codeBlocks;
         // 保护 <pre> 和 <code>（含属性）
@@ -189,6 +214,12 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                          QString("__CODE%1__").arg(n++));
             offset = m.capturedStart();
         }
+        // 上标（Pandoc 语法）：^x^ → <sup>
+        //   下标 ~x~ 已在 setMarkdown 前替换为占位符（Qt 会把 ~x~ 当作删除线）。
+        //   此时行内公式 $...$ 仍为字面文本（单个 ^ 的公式需成对才匹配，安全），
+        //   块级公式已是 ZZMB 占位符（无 ^），安全。
+        html.replace(QRegularExpression("\\^([^\\^\\n]+?)\\^"),
+                     "<sup>\\1</sup>");
         // 行内公式 $...$ → inline-math（(?<!\$)\$ 确保不匹配 $$）
         html.replace(QRegularExpression(
             R"((?<!\$)\$(?!\$)([^$\n]+?)(?<!\$)\$(?!\$))"),
@@ -196,6 +227,12 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         // 恢复 <code>/<pre>
         for (int i = 0; i < codeBlocks.size(); ++i)
             html.replace(QString("__CODE%1__").arg(i), codeBlocks[i]);
+    }
+    // 恢复下标占位符 ZZSB → <sub>（内容来自原始 markdown，需 HTML 转义）
+    for (int i = 0; i < subContents.size(); ++i) {
+        QString c = subContents[i];
+        c.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        html.replace("ZZSB" + QString::number(i) + "ZZ", "<sub>" + c + "</sub>");
     }
     // 恢复数学公式占位符（前后可能有空 <p>，一并清除）
     for (int i = 0; i < mathBlocks.size(); ++i) {
@@ -316,11 +353,17 @@ QString MarkdownHandler::fromHtml(const QString &html)
             }
 
             QString code = lines.join('\n');
+            // 提取语言（TipTap codeBlock 输出 <code class="language-xxx">）
+            QString lang;
+            QRegularExpression langRe("class=\"language-([^\"]+)\"");
+            auto lm = langRe.match(code);
+            if (lm.hasMatch()) lang = lm.captured(1);
             code.remove(QRegularExpression("<[^>]*>"));
             code = code.trimmed();
             QString ph = QString("ZZCB%1ZZ").arg(n++);
             placeholders << ph;
-            backups << "```\n" + code + "\n```";
+            QString fence = lang.isEmpty() ? QStringLiteral("```") : ("```" + lang);
+            backups << fence + "\n" + code + "\n```";
             processed.replace(blockStart, blockEnd - blockStart, ph);
             searchFrom = blockStart + ph.length();
         }
@@ -404,6 +447,40 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString ph = QString("ZZMK%1ZZ").arg(n++);
             placeholders << ph;
             backups << "==" + m.captured(1) + "==";
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
+
+    // 上下标 <sub>/<sup> → Pandoc ~x~/^x^（toMarkdown 会丢弃 sub/sup 标签）
+    //   Pandoc 上下标内容为纯文本，剥离内部富文本标签
+    {
+        int n = 0;
+        int offset = 0;
+        QRegularExpression subRe(R"(<sub[^>]*>(.*?)</sub>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = subRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString text = m.captured(1);
+            text.remove(QRegularExpression("<[^>]*>"));
+            QString ph = QString("ZZSB%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << "~" + text + "~";
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+        offset = 0;
+        QRegularExpression supRe(R"(<sup[^>]*>(.*?)</sup>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = supRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString text = m.captured(1);
+            text.remove(QRegularExpression("<[^>]*>"));
+            QString ph = QString("ZZSP%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << "^" + text + "^";
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }

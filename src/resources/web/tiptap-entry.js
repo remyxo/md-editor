@@ -16,6 +16,8 @@ import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { Mathematics, migrateMathStrings } from '@tiptap/extension-mathematics';
+import Subscript from '@tiptap/extension-subscript';
+import Superscript from '@tiptap/extension-superscript';
 import { createLowlight, common } from 'lowlight';
 
 // v3 StarterKit 已包含 Link 和 Underline，不需要单独导入
@@ -31,5 +33,7 @@ window.TipTapExtensionImage = Image;
 window.TipTapExtensionPlaceholder = Placeholder;
 window.TipTapExtensionCodeBlockLowlight = CodeBlockLowlight;
 window.TipTapExtensionMathematics = Mathematics;
+window.TipTapExtensionSubscript = Subscript;
+window.TipTapExtensionSuperscript = Superscript;
 window.TipTapMigrateMathStrings = migrateMathStrings;
 window.lowlight = createLowlight(common);
