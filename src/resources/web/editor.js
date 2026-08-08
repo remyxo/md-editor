@@ -208,8 +208,17 @@ window.editorApi = {
     notifyWordCount: function() {
         if (!this.editor || !this.bridge) return;
         var text = this.editor.state.doc.textContent;
+        // 字符数：排除空白
         var chars = text.replace(/\s/g, '').length;
-        var words = text.trim() ? text.trim().split(/\s+/).length : 0;
+        // 词数：CJK 逐字计 + 拉丁按空白分词
+        var words = 0;
+        if (text.trim()) {
+            var cjkRe = /[一-鿿㐀-䶿豈-﫿぀-ゟ゠-ヿ가-힯]/g;
+            var cjkCount = (text.match(cjkRe) || []).length;
+            var nonCjk = text.replace(cjkRe, ' ').trim();
+            var latinCount = nonCjk ? nonCjk.split(/\s+/).length : 0;
+            words = cjkCount + latinCount;
+        }
         this.bridge.wordCountChanged(chars, words);
     },
 
@@ -231,8 +240,10 @@ window.editorApi = {
         }
 
         // 重新创建编辑器，content 作为初始态，不产生 undo
-        var self = this;
+        // _loading 抑制初始化期 onUpdate（Focus 等插件会在构造期派发事务触发 onUpdate）
+        this._loading = true;
         this.editor = this._createEditor(newEl, html);
+        this._loading = false;
         if (!this.editor) return;
 
         this._dirty = false;

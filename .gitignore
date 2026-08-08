@@ -9,3 +9,4 @@ moc_*.cpp
 qrc_*.cpp
 node_modules/
 session.txt
+Testing/

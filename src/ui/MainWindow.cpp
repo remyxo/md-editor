@@ -325,9 +325,13 @@ void MainWindow::connectSignals()
 
 void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
 {
-    // 连接光标位置更新
-    connect(bridge, &EditorBridge::cursorPositionChanged,
-            m_statusBar, &StatusBar::updateCursorPosition);
+    // 连接光标位置更新（仅当前标签页）
+    connect(bridge, &EditorBridge::cursorPositionChanged, this,
+            [this, bridge](int line, int col, int /*tabId*/) {
+                EditorTab *cur = m_tabWidget->currentEditorTab();
+                if (cur && cur->bridge() == bridge)
+                    m_statusBar->updateCursorPosition(line, col, 0);
+            });
 
     // 连接大纲更新
     connect(bridge, &EditorBridge::headingsUpdated, this,
@@ -335,9 +339,13 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
                 m_sideBar->outlineTree()->updateHeadings(headings);
             });
 
-    // 连接字数统计 → 状态栏
-    connect(bridge, &EditorBridge::wordCountUpdated,
-            m_statusBar, &StatusBar::updateWordCount);
+    // 连接字数统计 → 状态栏（仅当前标签页）
+    connect(bridge, &EditorBridge::wordCountUpdated, this,
+            [this, bridge](int chars, int words, int /*tabId*/) {
+                EditorTab *cur = m_tabWidget->currentEditorTab();
+                if (cur && cur->bridge() == bridge)
+                    m_statusBar->updateWordCount(chars, words, 0);
+            });
 
     // 连接格式状态同步 → 工具栏
     connect(bridge, &EditorBridge::formatStateChanged, this,
