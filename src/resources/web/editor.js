@@ -30,6 +30,33 @@ function _escapeText(s) {
         .replace(/>/g, '&gt;');
 }
 
+// 修复 Mermaid 生成的 SVG 中负宽（高）的 <rect> 元素。
+// Mermaid v11 对 CJK 字符宽度计算存在偏差（issue #4950），
+// mindmap 等图的文本测量结果偏小 → 节点背景矩形 width 可能为负
+// → 浏览器报 "A negative value is not valid"。
+// 此处将负值 clamp 为 0（矩形不可见，但文本标签正常，不破坏布局）。
+function _sanitizeMermaidSvg(svgString) {
+    if (!svgString) return svgString;
+    // 快速路径：无负值时不走 DOM 解析
+    if (svgString.indexOf('width="-') === -1 && svgString.indexOf('height="-') === -1)
+        return svgString;
+    try {
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(svgString, 'image/svg+xml');
+        if (doc.querySelector('parsererror')) return svgString;
+        var fixed = false;
+        doc.querySelectorAll('rect').forEach(function(r) {
+            var w = parseFloat(r.getAttribute('width'));
+            if (w < 0) { r.setAttribute('width', '0'); fixed = true; }
+            var h = parseFloat(r.getAttribute('height'));
+            if (h < 0) { r.setAttribute('height', '0'); fixed = true; }
+        });
+        return fixed ? new XMLSerializer().serializeToString(doc.documentElement) : svgString;
+    } catch (_) {
+        return svgString;
+    }
+}
+
 // 懒初始化 mermaid（按当前明暗主题），保证只初始化一次
 function _ensureMermaidInited() {
     if (!window.mermaid || window.__mermaidInited) return;
@@ -181,7 +208,7 @@ function mermaidNodeView(ref) {
         _ensureMermaidInited();
         var id = 'mermaid-render-' + (++_mermaidIdSeq);
         window.mermaid.render(id, source).then(function(res) {
-            dom.innerHTML = res.svg || '';
+            dom.innerHTML = _sanitizeMermaidSvg(res.svg || '');
             var svg = dom.querySelector('svg');
             if (svg) {
                 svg.style.maxWidth = '100%';
@@ -1048,7 +1075,7 @@ window.editorApi = {
             _ensureMermaidInited();
             var id = 'mermaid-prev-' + (++_mermaidIdSeq);
             window.mermaid.render(id, src).then(function(res) {
-                p.innerHTML = res.svg || '';
+                p.innerHTML = _sanitizeMermaidSvg(res.svg || '');
                 var svg = p.querySelector('svg');
                 if (svg) {
                     // 预览图按自然尺寸显示（不缩放）；超出预览区部分由
