@@ -1,4 +1,5 @@
 #include <QTest>
+#include <QRegularExpression>
 #include "../src/core/MarkdownHandler.h"
 
 class TestMarkdownHandler : public QObject {
@@ -278,6 +279,129 @@ private slots:
 
     void testExtractTitleNoH1() {
         QCOMPARE(MarkdownHandler::extractTitle("## 二级标题\n\n内容"), QString());
+    }
+
+    // ===== 任务列表（GFM task list ↔ TipTap taskList/taskItem 契约）=====
+
+    void testTaskListFromHtml() {
+        // Bug1 保存方向：TipTap getHTML() 产出的任务列表 → GFM - [ ] / - [x]
+        QString html =
+            "<ul data-type=\"taskList\">"
+            "<li data-type=\"taskItem\" data-checked=\"false\">"
+            "<label><input type=\"checkbox\"><span></span></label>"
+            "<div><p>任务A</p></div></li>"
+            "<li data-type=\"taskItem\" data-checked=\"true\">"
+            "<label><input type=\"checkbox\" checked=\"checked\"><span></span></label>"
+            "<div><p>任务B，已完成</p></div></li>"
+            "</ul>";
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains("- [ ] 任务A"),
+                 qPrintable("未勾选任务应保存为 - [ ]，实际: " + md));
+        QVERIFY2(md.contains("- [x] 任务B，已完成"),
+                 qPrintable("已勾选任务应保存为 - [x]，实际: " + md));
+    }
+
+    void testTaskListToHtml() {
+        // Bug1 加载方向：- [ ] / - [x] → TipTap taskList 契约 HTML
+        // （TipTap parseHTML 只认 ul[data-type=taskList] / li[data-type=taskItem]）
+        QString html = MarkdownHandler::toHtml("- [ ] 任务A\n- [x] 任务B");
+        QVERIFY2(html.contains("<ul data-type=\"taskList\">"),
+                 qPrintable("应输出 TipTap taskList 契约，实际: " + html));
+        QVERIFY2(html.contains("data-type=\"taskItem\""),
+                 qPrintable("应输出 taskItem，实际: " + html));
+        QVERIFY2(html.contains("data-checked=\"false\""),
+                 qPrintable("任务A 应为未勾选，实际: " + html));
+        QVERIFY2(html.contains("data-checked=\"true\""),
+                 qPrintable("任务B 应为已勾选，实际: " + html));
+        // 不应残留 Qt 自家的 class=unchecked/checked 格式
+        QVERIFY2(!html.contains("class=\"unchecked\""),
+                 qPrintable("不应使用 Qt 自有任务列表格式，实际: " + html));
+    }
+
+    void testTaskListMdRoundTrip() {
+        // MD → HTML → MD 全等往返
+        QString md1 = "- [ ] 任务A\n- [x] 任务B";
+        QString html = MarkdownHandler::toHtml(md1);
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QCOMPARE(md2, md1);
+    }
+
+    void testTaskListHtmlRoundTrip() {
+        // HTML → MD → HTML：契约结构保持
+        QString html1 =
+            "<ul data-type=\"taskList\">"
+            "<li data-type=\"taskItem\" data-checked=\"false\">"
+            "<label><input type=\"checkbox\"><span></span></label>"
+            "<div><p>任务A</p></div></li>"
+            "<li data-type=\"taskItem\" data-checked=\"true\">"
+            "<label><input type=\"checkbox\" checked=\"checked\"><span></span></label>"
+            "<div><p>任务B</p></div></li>"
+            "</ul>";
+        QString html2 = MarkdownHandler::toHtml(MarkdownHandler::fromHtml(html1));
+        QVERIFY2(html2.contains("<ul data-type=\"taskList\">"),
+                 qPrintable("往返后应保留 taskList 契约，实际: " + html2));
+        QVERIFY(html2.contains("data-checked=\"false\""));
+        QVERIFY(html2.contains("data-checked=\"true\""));
+        QVERIFY(html2.contains("任务A"));
+        QVERIFY(html2.contains("任务B"));
+    }
+
+    void testTaskListNestedRoundTrip() {
+        // 嵌套任务列表：2 空格缩进 ↔ 嵌套 ul
+        QString md1 = "- [ ] 父任务\n  - [x] 子任务";
+        QString html = MarkdownHandler::toHtml(md1);
+        QCOMPARE(html.count("data-type=\"taskList\""), 2);
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QCOMPARE(md2, md1);
+    }
+
+    void testTaskListInlineCodeRoundTrip() {
+        // 任务条目内的行内代码往返不丢失
+        QString md1 = "- [ ] 使用 `code` 的任务";
+        QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QCOMPARE(md2, md1);
+    }
+
+    // ===== 列表后段落隔离 =====
+
+    void testListParagraphIsolation() {
+        // Bug2：列表项后紧跟正文行（无空行），正文应隔离为独立段落，
+        // 而非被吞入列表项；其后的列表也应独立
+        QString html = MarkdownHandler::toHtml(
+            "- 任务A\n- 任务C\n如何隔离？\n- 无序列表1\n- 无序列表2");
+        QCOMPARE(html.count("<ul"), 2);
+        QVERIFY2(QRegularExpression("<p[^>]*>如何隔离？</p>").match(html).hasMatch(),
+                 qPrintable("段落应独立存在，实际: " + html));
+        QVERIFY2(!html.contains("任务C 如何隔离？"),
+                 qPrintable("段落不应被吞入列表项，实际: " + html));
+    }
+
+    void testTaskListParagraphIsolation() {
+        // Bug2 任务列表版本：- [ ] 列表 + 段落 + 无序列表
+        QString html = MarkdownHandler::toHtml(
+            "- [ ] 任务A\n- [ ] 任务C\n如何隔离？\n- 无序列表1\n- 无序列表2");
+        QCOMPARE(html.count("data-type=\"taskList\""), 1);
+        QCOMPARE(html.count("<ul"), 2);
+        QVERIFY2(QRegularExpression("<p[^>]*>如何隔离？</p>").match(html).hasMatch(),
+                 qPrintable("段落应独立存在，实际: " + html));
+        QVERIFY2(!html.contains("任务C 如何隔离？"),
+                 qPrintable("段落不应被吞入任务列表项，实际: " + html));
+    }
+
+    void testOrderedListParagraphIsolation() {
+        // 有序列表后紧跟正文同样隔离
+        QString html = MarkdownHandler::toHtml("1. 第一项\n正文段落\n2. 第二项");
+        QVERIFY2(QRegularExpression("<p[^>]*>正文段落</p>").match(html).hasMatch(),
+                 qPrintable("段落应独立存在，实际: " + html));
+        QVERIFY2(!html.contains("第一项 正文段落"),
+                 qPrintable("段落不应被吞入有序列表项，实际: " + html));
+    }
+
+    void testListBlankLineSeparationUnchanged() {
+        // 已有空行分隔的内容不受隔离规则影响
+        QString html = MarkdownHandler::toHtml("- 任务A\n\n如何隔离？\n\n- 无序列表1");
+        QCOMPARE(html.count("<ul"), 2);
+        QVERIFY(QRegularExpression("<p[^>]*>如何隔离？</p>").match(html).hasMatch());
     }
 };
 
