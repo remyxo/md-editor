@@ -226,6 +226,9 @@ void MainWindow::connectSignals()
     connect(m_toolBar, &ToolBar::superscriptClicked, this, [this]() {
         runEditorCommand("window.editorApi.toggleSuperscript();");
     });
+    connect(m_toolBar, &ToolBar::alignSelected, this, [this](const QString &alignment) {
+        runEditorCommand(QString("window.editorApi.setTextAlign('%1');").arg(alignment));
+    });
     connect(m_toolBar, &ToolBar::headingSelected, this, &MainWindow::onHeadingSelected);
     connect(m_toolBar, &ToolBar::bulletListClicked, this, [this]() {
         runEditorCommand("window.editorApi.toggleBulletList();");

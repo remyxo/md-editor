@@ -23,6 +23,7 @@ signals:
     void highlightClicked();
     void subscriptClicked();
     void superscriptClicked();
+    void alignSelected(const QString &alignment);
     void headingSelected(int level);
     void bulletListClicked();
     void orderedListClicked();
@@ -52,6 +53,11 @@ private:
     QAction *m_highlightAction;
     QAction *m_subscriptAction;
     QAction *m_superscriptAction;
+    QAction *m_alignLeftAction;
+    QAction *m_alignCenterAction;
+    QAction *m_alignRightAction;
+    QAction *m_alignJustifyAction;
+    QActionGroup *m_alignGroup;
     QAction *m_bulletListAction;
     QAction *m_orderedListAction;
     QAction *m_taskListAction;

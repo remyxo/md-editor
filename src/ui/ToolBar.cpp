@@ -1,5 +1,6 @@
 #include "ToolBar.h"
 #include <QAction>
+#include <QActionGroup>
 #include <QLabel>
 #include <QJsonObject>
 #include <QIcon>
@@ -18,6 +19,11 @@ ToolBar::ToolBar(QWidget *parent)
     , m_highlightAction(nullptr)
     , m_subscriptAction(nullptr)
     , m_superscriptAction(nullptr)
+    , m_alignLeftAction(nullptr)
+    , m_alignCenterAction(nullptr)
+    , m_alignRightAction(nullptr)
+    , m_alignJustifyAction(nullptr)
+    , m_alignGroup(nullptr)
     , m_bulletListAction(nullptr)
     , m_orderedListAction(nullptr)
     , m_taskListAction(nullptr)
@@ -113,6 +119,29 @@ void ToolBar::setupUi()
 
     addSeparator();
 
+    // === 文字对齐（互斥按钮组） ===
+    m_alignGroup = new QActionGroup(this);
+    m_alignGroup->setExclusive(true);
+    m_alignLeftAction = makeAction(this, &m_iconPaths, "alignLeftAction",
+        "左对齐 (Ctrl+Shift+L)", ":/icons/light/align-left.svg");
+    m_alignLeftAction->setCheckable(true);
+    m_alignCenterAction = makeAction(this, &m_iconPaths, "alignCenterAction",
+        "居中对齐 (Ctrl+Shift+E)", ":/icons/light/align-center.svg");
+    m_alignCenterAction->setCheckable(true);
+    m_alignRightAction = makeAction(this, &m_iconPaths, "alignRightAction",
+        "右对齐 (Ctrl+Shift+R)", ":/icons/light/align-right.svg");
+    m_alignRightAction->setCheckable(true);
+    m_alignJustifyAction = makeAction(this, &m_iconPaths, "alignJustifyAction",
+        "两端对齐 (Ctrl+Shift+J)", ":/icons/light/align-justify.svg");
+    m_alignJustifyAction->setCheckable(true);
+    m_alignGroup->addAction(m_alignLeftAction);
+    m_alignGroup->addAction(m_alignCenterAction);
+    m_alignGroup->addAction(m_alignRightAction);
+    m_alignGroup->addAction(m_alignJustifyAction);
+    m_alignLeftAction->setChecked(true);
+
+    addSeparator();
+
     // === 结构按钮 ===
     m_bulletListAction = makeAction(this, &m_iconPaths, "bulletListAction",
         "无序列表", ":/icons/light/list-bullet.svg");
@@ -169,6 +198,10 @@ void ToolBar::setupUi()
     connect(m_highlightAction, &QAction::triggered, this, &ToolBar::highlightClicked);
     connect(m_subscriptAction, &QAction::triggered, this, &ToolBar::subscriptClicked);
     connect(m_superscriptAction, &QAction::triggered, this, &ToolBar::superscriptClicked);
+    connect(m_alignLeftAction, &QAction::triggered, this, [this]{ emit alignSelected("left"); });
+    connect(m_alignCenterAction, &QAction::triggered, this, [this]{ emit alignSelected("center"); });
+    connect(m_alignRightAction, &QAction::triggered, this, [this]{ emit alignSelected("right"); });
+    connect(m_alignJustifyAction, &QAction::triggered, this, [this]{ emit alignSelected("justify"); });
     connect(m_bulletListAction, &QAction::triggered, this, &ToolBar::bulletListClicked);
     connect(m_orderedListAction, &QAction::triggered, this, &ToolBar::orderedListClicked);
     connect(m_taskListAction, &QAction::triggered, this, &ToolBar::taskListClicked);
@@ -242,6 +275,22 @@ void ToolBar::updateFormatState(const QJsonObject &f)
     TOGGLE_CHECK(m_blockquoteAction, "blockquote");
     TOGGLE_CHECK(m_codeBlockAction, "codeBlock");
 #undef TOGGLE_CHECK
+    // 文字对齐互斥同步（无对应属性时默认左对齐）
+    if (f.contains("textAlign")) {
+        QString a = f["textAlign"].toString();
+        m_alignLeftAction->blockSignals(true);
+        m_alignCenterAction->blockSignals(true);
+        m_alignRightAction->blockSignals(true);
+        m_alignJustifyAction->blockSignals(true);
+        m_alignLeftAction->setChecked(a == "left");
+        m_alignCenterAction->setChecked(a == "center");
+        m_alignRightAction->setChecked(a == "right");
+        m_alignJustifyAction->setChecked(a == "justify");
+        m_alignLeftAction->blockSignals(false);
+        m_alignCenterAction->blockSignals(false);
+        m_alignRightAction->blockSignals(false);
+        m_alignJustifyAction->blockSignals(false);
+    }
 }
 
 void ToolBar::updateHistoryState(bool canUndo, bool canRedo)

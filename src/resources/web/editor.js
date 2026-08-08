@@ -12,6 +12,7 @@ var TipTapCodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
 var TipTapMathematics = window.TipTapExtensionMathematics;
 var TipTapSubscript = window.TipTapExtensionSubscript;
 var TipTapSuperscript = window.TipTapExtensionSuperscript;
+var TipTapTextAlign = window.TipTapExtensionTextAlign;
 
 // 全局编辑器 API 对象（C++ 侧通过 QWebChannel 调用其中的命令方法）
 window.editorApi = {
@@ -68,6 +69,9 @@ window.editorApi = {
             exts.push(TipTapSubscript);
         if (TipTapSuperscript)
             exts.push(TipTapSuperscript);
+        // 文字对齐：作用于段落与标题（对齐信息不在 .md 中保存，往返有损）
+        if (TipTapTextAlign)
+            exts.push(TipTapTextAlign.configure({ types: ['heading', 'paragraph'] }));
         return exts;
     },
 
@@ -191,6 +195,10 @@ window.editorApi = {
         format.highlight = !!ed.isActive('highlight');
         format.subscript = !!ed.isActive('subscript');
         format.superscript = !!ed.isActive('superscript');
+        // 文字对齐（未显式设置时属性为 null，工具栏按左对齐高亮）
+        format.textAlign = ed.getAttributes('paragraph').textAlign
+            || ed.getAttributes('heading').textAlign
+            || 'left';
         // 结构
         format.bulletList = !!ed.isActive('bulletList');
         format.orderedList = !!ed.isActive('orderedList');
@@ -278,6 +286,9 @@ window.editorApi = {
     toggleHighlight: function() { if (this.editor) this.editor.commands.toggleHighlight(); },
     toggleSubscript: function() { if (this.editor) this.editor.commands.toggleSubscript(); },
     toggleSuperscript: function() { if (this.editor) this.editor.commands.toggleSuperscript(); },
+    setTextAlign: function(alignment) {
+        if (this.editor) this.editor.commands.setTextAlign(alignment);
+    },
     setHeading: function(level) {
         if (!this.editor) return;
         if (level === 0) this.editor.commands.setParagraph();
