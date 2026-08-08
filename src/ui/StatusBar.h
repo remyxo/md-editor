@@ -17,6 +17,7 @@ public slots:
 
 private:
     QLabel *m_cursorLabel;
+    QLabel *m_filePathLabel;
     QLabel *m_wordLabel;
     QLabel *m_modeLabel;
 };

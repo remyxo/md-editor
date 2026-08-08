@@ -47,7 +47,6 @@ private:
     QMenu *m_editMenu;
     QMenu *m_viewMenu;
     QMenu *m_insertMenu;
-    QMenu *m_formatMenu;
     QMenu *m_helpMenu;
 };
 
