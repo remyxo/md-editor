@@ -133,6 +133,48 @@ private slots:
         QVERIFY2(spy.wait(3000),
                  "替换式修改后监控丢失：后续外部修改无法感知（需重新加入监控）");
     }
+
+    void testSaveBurstCoalesced() {
+        // 一次外部保存会在毫秒级内产生多个文件系统事件
+        // （如 vim：rename 覆盖 + 新文件继续写入/恢复权限 mtime）。
+        // 监控恢复后这些事件都会送达，应合并为一次信号，避免重复弹窗。
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+
+        QString path = dir.path() + "/test.md";
+        QVERIFY(fm.writeFile(path, "# v1"));
+
+        QSignalSpy spy(&fm, &FileManager::fileExternallyModified);
+        fm.watchFile(path);
+
+        // 替换式保存：原子 rename 覆盖
+        QString tmpPath = path + ".swx";
+        {
+            QFile f(tmpPath);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("# v2");
+            f.close();
+        }
+        QCOMPARE(std::rename(tmpPath.toLocal8Bit().constData(),
+                             path.toLocal8Bit().constData()), 0);
+
+        // 先让事件循环处理首个事件（监控恢复到新 inode），
+        // 再模拟同一次保存的后续写入 → 第二个事件
+        QTest::qWait(100);
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Append));
+            f.write("\nmore");
+            f.close();
+        }
+
+        // 等待越过去抖窗口：一次保存只应产生一次信号
+        QTest::qWait(800);
+        QVERIFY2(spy.count() == 1,
+                 qPrintable(QString("一次外部保存的多个事件应合并为一次信号，实际 %1 次")
+                                .arg(spy.count())));
+    }
 };
 
 QTEST_MAIN(TestFileManager)

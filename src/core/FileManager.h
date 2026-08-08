@@ -3,6 +3,9 @@
 
 #include <QObject>
 #include <QFileSystemWatcher>
+#include <QHash>
+
+class QTimer;
 
 class FileManager : public QObject {
     Q_OBJECT
@@ -28,6 +31,8 @@ private:
     void retryWatch(const QString &path, int attemptsLeft);
 
     QFileSystemWatcher *m_watcher;
+    // 按路径的去抖定时器：一次外部保存产生的事件突发合并为一次信号
+    QHash<QString, QTimer *> m_changeTimers;
 };
 
 #endif // MD_EDITOR_FILEMANAGER_H

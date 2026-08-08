@@ -6,6 +6,9 @@
 #include <QDir>
 #include <QTimer>
 
+// 外部变更事件去抖窗口：一次保存产生的多个事件在此窗口内合并为一次信号
+static const int kExternalChangeDebounceMs = 300;
+
 FileManager::FileManager(QObject *parent)
     : QObject(parent)
     , m_watcher(new QFileSystemWatcher(this))
@@ -73,6 +76,12 @@ void FileManager::watchFile(const QString &path)
 void FileManager::unwatchFile(const QString &path)
 {
     m_watcher->removePath(path);
+    // 取消该路径待发出去的外部变更通知
+    // （关闭标签页 / 自身 writeFile 前后不应再产生提示）
+    if (QTimer *timer = m_changeTimers.take(path)) {
+        timer->stop();
+        timer->deleteLater();
+    }
 }
 
 void FileManager::onFileChanged(const QString &path)
@@ -91,7 +100,24 @@ void FileManager::onFileChanged(const QString &path)
         retryWatch(path, 25); // 25 × 200ms ≈ 5 秒
     }
 
-    emit fileExternallyModified(path);
+    // 去抖合并：一次外部保存（vim 备份 rename、新文件续写、权限/mtime
+    // 恢复等）会在毫秒级内产生多个文件系统事件，只应提示一次。
+    // 每个事件重启定时器，窗口内无新事件后才发出信号。
+    QTimer *timer = m_changeTimers.value(path);
+    if (!timer) {
+        timer = new QTimer(this);
+        timer->setSingleShot(true);
+        timer->setInterval(kExternalChangeDebounceMs);
+        connect(timer, &QTimer::timeout, this, [this, path]() {
+            QTimer *t = m_changeTimers.take(path);
+            emit fileExternallyModified(path);
+            if (t) {
+                t->deleteLater();
+            }
+        });
+        m_changeTimers.insert(path, timer);
+    }
+    timer->start();
 }
 
 void FileManager::retryWatch(const QString &path, int attemptsLeft)
