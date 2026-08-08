@@ -583,15 +583,21 @@ body.dark .ProseMirror .mermaid-block .mermaid-fallback.mermaid-error {
     height: auto;
 }
 
-/* ============ Mermaid 编辑面板 ============ */
+/* ============ Mermaid 编辑面板（非模态） ============ */
 .mermaid-popover {
-    max-width: 720px;
-    /* 对话框整体不超出视口：纵向 flex 布局 + 限高，
-       大图由预览区内部滚动消化，避免撑出屏幕底部 */
+    /* 非模态对话框：固定在视口右侧，不遮挡编辑区。
+       覆盖基类的居中定位（top/left/transform）与宽度；
+       整体限高在视口内，大图由预览区滚动条消化，不会撑出屏幕 */
+    top: 48px;
+    right: 24px;
+    left: auto;
+    transform: none;
+    width: 680px;
+    max-width: calc(100vw - 48px);
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
-    max-height: calc(100vh - 48px);
+    max-height: calc(100vh - 72px);
     overflow-y: auto;
 }
 .mermaid-source {
@@ -605,12 +611,13 @@ body.dark .ProseMirror .mermaid-block .mermaid-fallback.mermaid-error {
     min-height: 120px;
     text-align: center;
     overflow: auto;
-    /* 预览区限高：大图在区内滚动，不撑高对话框 */
+    /* 预览区限高：大图在区内滚动（横竖双向），不撑高对话框 */
     flex: 0 1 auto;
     max-height: 44vh;
 }
 .mermaid-preview svg {
-    max-width: 100%;
+    /* 预览图不缩放，按自然尺寸显示；小图由 text-align 居中 */
+    max-width: none;
     height: auto;
 }
 .mermaid-hint {
