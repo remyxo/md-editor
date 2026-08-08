@@ -2,6 +2,20 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] — 2026-08-08
+
+### 新增
+
+- **Mermaid 图表** — 在编辑器内嵌 Mermaid 流程图/时序图等，双击弹出源码编辑器（实时预览、Ctrl+Enter 确认），vendored `mermaid.min.js`（同 KaTeX 模式），主题切换自动重绘
+- **上下标** — Pandoc 语法 `~x~`（下标）/ `^x^`（上标）输入与往返（如 `H~2~O`、`2^10^`），工具栏新增下标/上标按钮
+- **文字对齐** — 左/居中/右/两端对齐四按钮互斥，快捷键 Ctrl+Shift+L/E/R/J（注：对齐信息在保存为 .md 时丢失，标准 Markdown 无对应语法）
+- **Emoji 短代码** — 输入 `:shortcode:` 自动替换为 Unicode 字符（如 `:smile:` → 😄），内建常用短代码映射，无需额外依赖
+
+### 修复
+
+- **代码块语言标记往返** — `fromHtml` 现正确保留 `language-xxx` 类，围栏代码块语言标记不再丢失（同时锁定 Mermaid 源码往返契约）
+- **代码实体反转义** — 修复代码块/行内代码中 `<`、`>`、`&` 被 HTML 实体化后无法还原的潜在 bug（原绕过 QTextDocument 实体解码）
+
 ## [0.2.1] — 2026-08-08
 
 ### 新增
