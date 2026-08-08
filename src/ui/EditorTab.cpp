@@ -8,6 +8,8 @@
 #include <QDebug>
 #include <QContextMenuEvent>
 #include <QAction>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 // ===== EditorWebPage — 拦截链接点击（阅读模式） =====
 
@@ -226,6 +228,15 @@ void EditorTab::setEditorWidth(int width)
 {
     if (m_pageLoaded) {
         runJsCommand(QString("window.editorApi.setWidth(%1);").arg(width));
+    }
+}
+
+void EditorTab::setEditorSettings(const QJsonObject &settings)
+{
+    if (m_pageLoaded) {
+        QJsonDocument doc(settings);
+        QString json = doc.toJson(QJsonDocument::Compact);
+        runJsCommand(QString("window.editorApi.applySettings(%1);").arg(json));
     }
 }
 

@@ -299,6 +299,42 @@ body.dark #source-view {
     background: #1e1e1e;
 }
 
+/* === 行号 === */
+body.line-numbers .ProseMirror {
+    counter-reset: line;
+    padding-left: 3em;
+}
+body.line-numbers .ProseMirror > * {
+    counter-increment: line;
+    position: relative;
+}
+body.line-numbers .ProseMirror > *:not(table):not(pre):not(ul):not(ol)::before {
+    content: counter(line);
+    position: absolute;
+    left: -3em;
+    width: 2.5em;
+    text-align: right;
+    color: #b0b0b0;
+    font-size: 0.85em;
+    font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+    pointer-events: none;
+    line-height: inherit;
+}
+body.dark.line-numbers .ProseMirror > *:not(table):not(pre):not(ul):not(ol)::before {
+    color: #606060;
+}
+
+/* === 自动换行关闭 === */
+body.nowrap .ProseMirror {
+    white-space: pre;
+    overflow-x: auto;
+}
+body.nowrap .ProseMirror p {
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+}
+
 /* ===== 数学公式编辑面板 ===== */
 .math-editor-overlay {
     position: fixed;

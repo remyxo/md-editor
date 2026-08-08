@@ -379,6 +379,21 @@ window.editorApi = {
         if (sv) { sv.style.maxWidth = w; sv.style.minWidth = '800px'; }
     },
 
+    applySettings: function(settings) {
+        if (settings.lineNumbers !== undefined) {
+            document.body.classList.toggle('line-numbers', !!settings.lineNumbers);
+        }
+        if (settings.wordWrap !== undefined) {
+            document.body.classList.toggle('nowrap', !settings.wordWrap);
+        }
+        if (settings.tabSize !== undefined) {
+            var ts = settings.tabSize;
+            document.documentElement.style.setProperty('--tab-size', ts);
+            var sv = document.getElementById('source-view');
+            if (sv) sv.style.tabSize = ts;
+        }
+    },
+
     markClean: function() {
         this._dirty = false;
         if (this.bridge) this.bridge.contentChanged(false);

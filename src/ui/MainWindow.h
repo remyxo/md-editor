@@ -50,6 +50,7 @@ private slots:
     void onShowMarkdownGuide();
     void applyEditorFont();
     void applyEditorWidth();
+    void applyEditorSettings();
 
 protected:
     void closeEvent(QCloseEvent *event) override;

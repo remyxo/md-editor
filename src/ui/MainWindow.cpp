@@ -353,7 +353,7 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (tab) {
         connect(tab, &EditorTab::pageLoadFinished, this,
-                [this](bool ok) { if (ok) { applyEditorFont(); applyEditorWidth(); } });
+                [this](bool ok) { if (ok) { applyEditorFont(); applyEditorWidth(); applyEditorSettings(); } });
     }
 }
 
@@ -586,6 +586,7 @@ void MainWindow::onShowSettings()
     dialog.exec();
     applyEditorFont();
     applyEditorWidth();
+    applyEditorSettings();
 }
 
 void MainWindow::onShowMarkdownGuide()
@@ -626,6 +627,19 @@ void MainWindow::applyEditorWidth()
 }
 
 // === 会话保存与恢复 ===
+
+void MainWindow::applyEditorSettings()
+{
+    QSettings settings("md-editor", "md-editor");
+    QJsonObject s;
+    s["lineNumbers"] = settings.value("editor/lineNumbers", true).toBool();
+    s["wordWrap"] = settings.value("editor/wordWrap", true).toBool();
+    s["tabSize"] = settings.value("editor/tabSize", 4).toInt();
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        EditorTab *tab = m_tabWidget->tabAt(i);
+        if (tab) tab->setEditorSettings(s);
+    }
+}
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
