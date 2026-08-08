@@ -34,27 +34,15 @@ function _escapeText(s) {
 // Mermaid v11 对 CJK 字符宽度计算存在偏差（issue #4950），
 // mindmap 等图的文本测量结果偏小 → 节点背景矩形 width 可能为负
 // → 浏览器报 "A negative value is not valid"。
-// 此处将负值 clamp 为 0（矩形不可见，但文本标签正常，不破坏布局）。
+// 此处用纯字符串替换将负值 clamp 为 0（不依赖 DOMParser，避免
+// Chromium 中 parseFromString 处理 SVG 命名空间的行为差异）。
 function _sanitizeMermaidSvg(svgString) {
     if (!svgString) return svgString;
-    // 快速路径：无负值时不走 DOM 解析
     if (svgString.indexOf('width="-') === -1 && svgString.indexOf('height="-') === -1)
         return svgString;
-    try {
-        var parser = new DOMParser();
-        var doc = parser.parseFromString(svgString, 'image/svg+xml');
-        if (doc.querySelector('parsererror')) return svgString;
-        var fixed = false;
-        doc.querySelectorAll('rect').forEach(function(r) {
-            var w = parseFloat(r.getAttribute('width'));
-            if (w < 0) { r.setAttribute('width', '0'); fixed = true; }
-            var h = parseFloat(r.getAttribute('height'));
-            if (h < 0) { r.setAttribute('height', '0'); fixed = true; }
-        });
-        return fixed ? new XMLSerializer().serializeToString(doc.documentElement) : svgString;
-    } catch (_) {
-        return svgString;
-    }
+    return svgString
+        .replace(/width="-[\d.]+"/g, 'width="0"')
+        .replace(/height="-[\d.]+"/g, 'height="0"');
 }
 
 // 懒初始化 mermaid（按当前明暗主题），保证只初始化一次
@@ -1078,9 +1066,9 @@ window.editorApi = {
                 p.innerHTML = _sanitizeMermaidSvg(res.svg || '');
                 var svg = p.querySelector('svg');
                 if (svg) {
-                    // 预览图按自然尺寸显示（不缩放）；超出预览区部分由
-                    // 预览区滚动条承接，避免撑高对话框（见 editor.css 限高）
-                    svg.style.maxWidth = 'none';
+                    // 约束到预览区宽度（避免 CJK 节点因布局偏差而整体过大）；
+                    // 超出高度部分由预览区滚动条承接（见 editor.css max-height:44vh）
+                    svg.style.maxWidth = '100%';
                     svg.style.height = 'auto';
                 }
             }).catch(function(err) {

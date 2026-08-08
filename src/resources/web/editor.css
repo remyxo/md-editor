@@ -616,8 +616,8 @@ body.dark .ProseMirror .mermaid-block .mermaid-fallback.mermaid-error {
     max-height: 44vh;
 }
 .mermaid-preview svg {
-    /* 预览图不缩放，按自然尺寸显示；小图由 text-align 居中 */
-    max-width: none;
+    /* 约束宽度避免 CJK 布局偏差导致整图过大，超高部分由预览区滚动 */
+    max-width: 100%;
     height: auto;
 }
 .mermaid-hint {
