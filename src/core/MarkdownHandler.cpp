@@ -476,16 +476,34 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                          QString("__CODE%1__").arg(n++));
             offset = m.capturedStart();
         }
-        // 上标（Pandoc 语法）：^x^ → <sup>
-        //   下标 ~x~ 已在 setMarkdown 前替换为占位符（Qt 会把 ~x~ 当作删除线）。
-        //   此时行内公式 $...$ 仍为字面文本（单个 ^ 的公式需成对才匹配，安全），
-        //   块级公式已是 ZZMB 占位符（无 ^），安全。
-        html.replace(QRegularExpression("\\^([^\\^\\n]+?)\\^"),
-                     "<sup>\\1</sup>");
-        // 行内公式 $...$ → inline-math（(?<!\$)\$ 确保不匹配 $$）
+        // 行内公式 $...$ → inline-math 必须先于上标 ^x^ 处理：
+        //   先移除 $...$ 内的 ^ 字符（移入 data-latex 属性），否则上标正则
+        //   \^[^\^\n]+?\^ 会跨区域误匹配——从 ^{n} 的 ^ 一直吃到 ^{2} 的 ^，
+        //   把 \sum_{i=1}^{n} i^{2} 破坏为 \sum_{i=1}<sup>{n} i</sup>{2}。
         html.replace(QRegularExpression(
             R"((?<!\$)\$(?!\$)([^$\n]+?)(?<!\$)\$(?!\$))"),
             "<span data-type=\"inline-math\" data-latex=\"\\1\"></span>");
+        // 保护 math span（上标正则会误匹配 data-latex 属性值内的 ^）
+        QStringList mathSpans;
+        QRegularExpression mathSpanRe(
+            R"(<span\b[^>]*\bdata-type\s*=\s*"inline-math"[^>]*></span>)");
+        offset = 0;
+        while (true) {
+            auto m = mathSpanRe.match(html, offset);
+            if (!m.hasMatch()) break;
+            mathSpans << m.captured();
+            html.replace(m.capturedStart(), m.capturedLength(),
+                         QString("__IMATH%1__").arg(mathSpans.size() - 1));
+            offset = m.capturedStart();
+        }
+        // 上标（Pandoc 语法）：^x^ → <sup>
+        //   下标 ~x~ 已在 setMarkdown 前替换为占位符（Qt 会把 ~x~ 当作删除线）。
+        //   此时行内公式已被 __IMATH 占位符保护、块级公式已是 ZZMB 占位符，安全。
+        html.replace(QRegularExpression("\\^([^\\^\\n]+?)\\^"),
+                     "<sup>\\1</sup>");
+        // 恢复 math span
+        for (int i = 0; i < mathSpans.size(); ++i)
+            html.replace(QString("__IMATH%1__").arg(i), mathSpans[i]);
         // 恢复 <code>/<pre>
         for (int i = 0; i < codeBlocks.size(); ++i)
             html.replace(QString("__CODE%1__").arg(i), codeBlocks[i]);

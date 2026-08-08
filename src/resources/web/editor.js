@@ -36,13 +36,46 @@ function _escapeText(s) {
 // → 浏览器报 "A negative value is not valid"。
 // 此处用纯字符串替换将负值 clamp 为 0（不依赖 DOMParser，避免
 // Chromium 中 parseFromString 处理 SVG 命名空间的行为差异）。
+// 正则容忍 = 周围可选空白、双引号/单引号，覆盖 Mermaid 各版本输出格式差异。
 function _sanitizeMermaidSvg(svgString) {
     if (!svgString) return svgString;
-    if (svgString.indexOf('width="-') === -1 && svgString.indexOf('height="-') === -1)
-        return svgString;
-    return svgString
-        .replace(/width="-[\d.]+"/g, 'width="0"')
-        .replace(/height="-[\d.]+"/g, 'height="0"');
+    // 修复负宽（高）的 <rect> / <foreignObject> 等元素（CJK 字符宽度偏差）
+    // 同时匹配 width/height，双引号/单引号，= 周围可选空白
+    // clamp 为 1 而非 0：Gantt 甘特图等 task bar 需要可见（0 宽完全不可见）
+    svgString = svgString
+        .replace(/\b(width|height)\s*=\s*"-\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"/g, '$1="1"')
+        .replace(/\b(width|height)\s*=\s*'-(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)'/g, "$1='1'");
+    // 后置 DOM 修正兜底：innerHTML 解析后若仍有漏网负值 rect，
+    // 在 _fixNegativeRects 中 clamp 为 1（regex 漏网 + mermaid 动态 SVG 均能兜住）
+    svgString = svgString.replace(/<svg\b/, '<svg data-sanitized="1"');
+    // mermaid 输出 width="100%"，在宽容器中填满导致等比放大（字体远超正文）。
+    // 提取 <svg> 元素自身的 viewBox 宽度替换之，使 SVG 按 1:1 像素映射渲染（自然尺寸）。
+    // 必须锚定在 <svg 开标签内：Gantt 等图表的 <defs>/<pattern> 也可能有 viewBox，
+    // 错误匹配子元素的 viewBox 会导致 width 被设为一个极小值（如图表缩成一小块）。
+    var vb = svgString.match(/<svg\b[^>]*\bviewBox\s*=\s*"([\d.\s-]+)"/);
+    if (vb) {
+        var vbNums = vb[1].match(/[\d.]+/g);
+        if (vbNums && vbNums.length >= 4) {
+            // 只替换 <svg> 元素自身的 width 属性，不动子元素
+            svgString = svgString.replace(/(<svg\b[^>]*?)\swidth\s*=\s*"[^"]*"/, '$1 width="' + vbNums[2] + '"');
+        }
+    }
+    return svgString;
+}
+
+// DOM 后置修正：将 <rect> 的负 width/height 归零（regex 漏网与动态修改场景兜底）。
+// 在 innerHTML 解析后调用，不再触发浏览器 "A negative value is not valid" 控制台错误
+// （因为已经是 DOM 属性赋值，而非标记解析）。
+function _fixNegativeRects(svgEl) {
+    if (!svgEl) return;
+    var rects = svgEl.querySelectorAll('rect');
+    for (var i = 0; i < rects.length; i++) {
+        var r = rects[i];
+        var w = r.getAttribute('width');
+        var h = r.getAttribute('height');
+        if (w !== null && parseFloat(w) < 0) r.setAttribute('width', '1');
+        if (h !== null && parseFloat(h) < 0) r.setAttribute('height', '1');
+    }
 }
 
 // 懒初始化 mermaid（按当前明暗主题），保证只初始化一次
@@ -54,8 +87,8 @@ function _ensureMermaidInited() {
         securityLevel: 'loose',
         theme: dark ? 'dark' : 'default',
         // 图表字号：编辑区正文为 18px，图表文字略小
-        // 图表字号：编辑区正文为 18px，图表文字明显略小一档
-        themeVariables: { fontSize: '13px' }
+        // SVG 按 viewBox 真实尺寸显示（非 100% 等比放大），16px 比例协调
+        themeVariables: { fontSize: '16px' }
     });
     window.__mermaidInited = true;
 }
@@ -200,13 +233,11 @@ function mermaidNodeView(ref) {
             dom.innerHTML = _sanitizeMermaidSvg(res.svg || '');
             var svg = dom.querySelector('svg');
             if (svg) {
-                // 编辑区渲染不缩放——该多大就多大。
-                // mermaid SVG 带 width="100%" 属性，max-width:none
-                // 时填满容器（min-width:800px），viewBox 远小于容器时
-                // 等比放大导致字体超过正文 18px。
-                // width:auto 强制按 viewBox 尺寸渲染，1:1 像素映射。
-                svg.style.width = 'auto';
-                svg.style.maxWidth = 'none';
+                _fixNegativeRects(svg);
+                // _sanitizeMermaidSvg 已将 width="100%" 替换为
+                // viewBox 宽度 → 窄图按自然尺寸显示；
+                // max-width:100% 保证宽图（甘特图等）不超出编辑区宽度
+                svg.style.maxWidth = '100%';
                 svg.style.height = 'auto';
             }
         }).catch(function(err) {
@@ -725,6 +756,7 @@ window.editorApi = {
             this._dirtyBefore = (dirtyBefore !== undefined) ? dirtyBefore : window.editorApi._dirty;
             this._confirmed = false;
             window.editorApi._mathEditing = true;
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
             this.mathEl = mathEl;
             this.mathType = mathEl.getAttribute('data-type') === 'block-math' ? 'block' : 'inline';
             this.mode = 'edit';
@@ -742,6 +774,7 @@ window.editorApi = {
             this._dirtyBefore = window.editorApi._dirty;
             this._confirmed = false;
             window.editorApi._mathEditing = true;
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
             this.mathEl = null;
             this.pos = ed.state.selection.from;
             this.mathType = type || 'inline';
@@ -756,7 +789,7 @@ window.editorApi = {
             this.cleanupDom();
             var isBlock = type === 'block';
 
-            // 遮罩（不响应点击，仅作视觉遮挡）
+            // 遮罩（仅视觉遮挡，阻止与底层编辑区交互，不响应点击关闭）
             this.overlay = document.createElement('div');
             this.overlay.className = 'math-editor-overlay';
 
@@ -842,6 +875,11 @@ window.editorApi = {
             // 阻止面板内点击冒泡到遮罩
             this.popover.addEventListener('click', function(e) { e.stopPropagation(); });
 
+            // Escape 关闭对话框（popover 层兜底，input/textarea 失焦时仍生效）
+            this.popover.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') { e.preventDefault(); self.close(); }
+            });
+
             document.body.appendChild(this.overlay);
             document.body.appendChild(this.popover);
         },
@@ -909,6 +947,7 @@ window.editorApi = {
 
         // 关闭面板（取消或确认后调用）
         close: function() {
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(false);
             this.cleanupDom();
             this.mathEl = null;
             // 取消时立即恢复脏状态
@@ -950,6 +989,9 @@ window.editorApi = {
         mode: 'create',
         _dirtyBefore: false,
         _confirmed: false,
+        _bodyScrollTop: 0,
+        _bodyOverflow: '',
+        _escHandler: null,     // document 级 Escape 捕获监听引用
 
         // 双击打开（编辑模式）
         open: function(getPos, source) {
@@ -958,6 +1000,13 @@ window.editorApi = {
             this._dirtyBefore = window.editorApi._dirty;
             this._confirmed = false;
             window.editorApi._mathEditing = true;
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
+            // 模态：锁定 body 滚动（记录位置，恢复时还原）
+            this._bodyScrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+            this._bodyOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+            // 注册 document 级 Escape 捕获（capture phase，最优先，不受焦点影响）
+            this._registerEsc();
             this.getPos = getPos;
             this.pos = (typeof getPos === 'function') ? getPos() : null;
             this.mode = 'edit';
@@ -973,6 +1022,11 @@ window.editorApi = {
             this._dirtyBefore = window.editorApi._dirty;
             this._confirmed = false;
             window.editorApi._mathEditing = true;
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
+            this._bodyScrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+            this._bodyOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+            this._registerEsc();
             this.getPos = null;
             this.mode = 'create';
             this.buildDom();
@@ -980,15 +1034,33 @@ window.editorApi = {
             ed.view.dom.blur();
         },
 
+        // 注册 document 级 Escape 捕获监听（capture phase 最先收到，无视焦点）
+        _registerEsc: function() {
+            if (this._escHandler) return; // 防止重复注册
+            var self = this;
+            this._escHandler = function(e) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    self.close();
+                }
+            };
+            document.addEventListener('keydown', this._escHandler, true);
+        },
+
+        // 注销 document 级 Escape 监听
+        _unregisterEsc: function() {
+            if (this._escHandler) {
+                document.removeEventListener('keydown', this._escHandler, true);
+                this._escHandler = null;
+            }
+        },
+
         buildDom: function() {
             this.cleanupDom();
             var self = this;
             this.overlay = document.createElement('div');
             this.overlay.className = 'math-editor-overlay';
-            // 点击遮罩关闭
-            this.overlay.addEventListener('click', function() { self.close(); });
-            // 遮罩拦截滚轮事件，阻止穿透到下层编辑区滚动（模态核心行为）
-            this.overlay.addEventListener('wheel', function(e) { e.preventDefault(); }, { passive: false });
 
             this.popover = document.createElement('div');
             this.popover.className = 'math-editor-popover mermaid-popover';
@@ -1055,8 +1127,11 @@ window.editorApi = {
             });
             this.input.addEventListener('input', function() { self.updatePreview(); });
             this.popover.addEventListener('click', function(e) { e.stopPropagation(); });
-            // 对话框内部滚轮不冒泡到遮罩（否则遮罩 preventDefault 会阻止对话框滚动）
-            this.popover.addEventListener('wheel', function(e) { e.stopPropagation(); });
+
+            // Escape 关闭对话框（popover 层兜底，textarea 失焦时仍生效）
+            this.popover.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') { e.preventDefault(); self.close(); }
+            });
 
             document.body.appendChild(this.overlay);
             document.body.appendChild(this.popover);
@@ -1084,7 +1159,7 @@ window.editorApi = {
             window.mermaid.render(id, src).then(function(res) {
                 p.innerHTML = _sanitizeMermaidSvg(res.svg || '');
                 var svg = p.querySelector('svg');
-                if (svg) { svg.style.maxWidth = '100%'; svg.style.height = 'auto'; }
+                if (svg) { _fixNegativeRects(svg); svg.style.maxWidth = '100%'; svg.style.height = 'auto'; }
             }).catch(function(err) {
                 p.innerHTML = '<span style="color:#c00;font-size:13px;">渲染失败：'
                     + _escapeText(err && err.message || String(err)) + '</span>';
@@ -1121,8 +1196,16 @@ window.editorApi = {
         },
 
         close: function() {
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(false);
+            this._unregisterEsc();
             this.cleanupDom();
             this.getPos = null;
+            // 恢复 body 滚动（模态锁定期间设为 hidden）
+            document.body.style.overflow = this._bodyOverflow || '';
+            if (this._bodyScrollTop !== undefined) {
+                document.documentElement.scrollTop = this._bodyScrollTop;
+                document.body.scrollTop = this._bodyScrollTop;
+            }
             if (!this._confirmed) {
                 window.editorApi._dirty = this._dirtyBefore;
                 if (window.editorApi.bridge) {

@@ -72,6 +72,21 @@ private slots:
         QVERIFY(html.contains("E=mc^2"));
     }
 
+    void testInlineMathSumSquare() {
+        // 回归测试：$...$ 内含多个 ^ 时，上标正则不应跨区域误匹配
+        // Bug：\sum_{i=1}^{n} i^{2} 中 ^{n} 的 ^ 和 ^{2} 的 ^ 被上标正则
+        //      跨区域匹配为 ^{n} i^，导致 data-latex 被破坏为
+        //      \sum_{i=1}<sup>{n} i</sup>{2}
+        QString md = "求和: $\\sum_{i=1}^{n} i^{2}$\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY(html.contains("inline-math"));
+        // 关键断言：data-latex 不应被注入 <sup> 标签
+        QVERIFY2(!html.contains("<sup>"),
+                 qPrintable("上标正则不应破坏行内公式，实际: " + html));
+        QVERIFY2(html.contains("\\sum_{i=1}^{n} i^{2}"),
+                 qPrintable("data-latex 应保留完整 LaTeX，实际: " + html));
+    }
+
     void testInlineCodeUnaffected() {
         // 行内代码 `...` 不受影响
         QString md = "使用 `printf(\"hello\")` 函数\n";

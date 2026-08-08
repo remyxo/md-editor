@@ -528,10 +528,9 @@ body.dark .math-editor-actions button.primary {
     outline: 2px solid #0078d4;
     background: rgba(0, 120, 212, 0.06);
 }
-/* SVG 不缩放——按 viewBox 自然尺寸显示，width:auto 覆盖 mermaid 的 width="100%" */
+/* 窄图自然尺寸，宽图不超出编辑区 */
 .ProseMirror .mermaid-block svg {
-    width: auto;
-    max-width: none;
+    max-width: 100%;
     height: auto;
 }
 /* 空图表占位 */
@@ -580,16 +579,14 @@ body.dark .ProseMirror .mermaid-block .mermaid-fallback.mermaid-error {
     margin: 1em 0;
 }
 #read-view .mermaid-block svg {
-    width: auto;
-    max-width: none;
+    max-width: 100%;
     height: auto;
 }
 
 /* ============ Mermaid 编辑面板（模态） ============ */
 .mermaid-popover {
-    max-width: 720px;
-    /* 对话框整体不超出视口：纵向 flex 布局 + 限高，
-       居中定位由基类 .math-editor-popover 提供 */
+    max-width: 960px;
+    /* 对话框整体不超出视口：纵向 flex 布局 + 限高 */
     display: flex;
     flex-direction: column;
     box-sizing: border-box;

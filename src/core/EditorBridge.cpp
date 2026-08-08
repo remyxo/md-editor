@@ -45,6 +45,11 @@ void EditorBridge::historyChanged(bool canUndo, bool canRedo)
     emit historyStateChanged(canUndo, canRedo, m_tabId);
 }
 
+void EditorBridge::modalDialogChanged(bool open)
+{
+    emit modalDialogStateChanged(open, m_tabId);
+}
+
 void EditorBridge::openUrl(const QString &url)
 {
     QDesktopServices::openUrl(QUrl(url));

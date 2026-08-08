@@ -102,10 +102,16 @@ void MainWindow::setupUi()
         }
     });
 
-    // Esc 隐藏搜索栏
+    // Esc：优先关闭模态编辑面板，否则隐藏搜索栏
     QShortcut *escShortcut = new QShortcut(QKeySequence("Esc"), this);
     connect(escShortcut, &QShortcut::activated, this, [this]() {
-        m_searchBar->setVisible(false);
+        if (m_modalDialogOpen) {
+            // 关闭 JS 侧的模态面板（Mermaid 或数学公式编辑器）
+            runEditorCommand("window.editorApi._mermaidEditor.close();"
+                             "window.editorApi._mathEditor.close();");
+        } else {
+            m_searchBar->setVisible(false);
+        }
     });
 
     // Ctrl+M 插入行内公式
@@ -401,6 +407,12 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
     connect(bridge, &EditorBridge::historyStateChanged, this,
             [this](bool canUndo, bool canRedo, int /*tabId*/) {
                 m_toolBar->updateHistoryState(canUndo, canRedo);
+            });
+
+    // 跟踪模态编辑面板（Mermaid/数学公式）打开/关闭状态 → Esc 快捷键优先级
+    connect(bridge, &EditorBridge::modalDialogStateChanged, this,
+            [this](bool open, int /*tabId*/) {
+                m_modalDialogOpen = open;
             });
 
     // 页面加载完成后应用字体设置

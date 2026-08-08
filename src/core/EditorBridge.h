@@ -20,6 +20,8 @@ public slots:
     void headingsChanged(const QString &json);
     void formatChanged(const QString &json);
     void historyChanged(bool canUndo, bool canRedo);
+    // 模态编辑面板（Mermaid/数学公式）打开/关闭通知，供 MainWindow Esc 快捷键判断优先级
+    void modalDialogChanged(bool open);
 
 signals:
     // 通知 C++ UI 组件
@@ -29,6 +31,7 @@ signals:
     void formatStateChanged(const QJsonObject &format, int tabId);
     void wordCountUpdated(int chars, int words, int tabId);
     void historyStateChanged(bool canUndo, bool canRedo, int tabId);
+    void modalDialogStateChanged(bool open, int tabId);
 
 private:
     int m_tabId;

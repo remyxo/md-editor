@@ -76,6 +76,7 @@ private:
     FileManager *m_fileManager;
     QSplitter *m_splitter;
     bool m_readMode;
+    bool m_modalDialogOpen = false;  // 当前标签页是否有模态编辑面板打开（Esc 优先级判断）
 };
 
 #endif // MD_EDITOR_MAINWINDOW_H
