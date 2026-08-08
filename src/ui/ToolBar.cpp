@@ -7,6 +7,8 @@
 ToolBar::ToolBar(QWidget *parent)
     : QToolBar(parent)
     , m_headingCombo(nullptr)
+    , m_undoAction(nullptr)
+    , m_redoAction(nullptr)
     , m_boldAction(nullptr)
     , m_italicAction(nullptr)
     , m_strikeAction(nullptr)
@@ -44,6 +46,17 @@ static QAction *makeAction(QToolBar *bar, QMap<QAction*, QString> *reg,
 
 void ToolBar::setupUi()
 {
+    // === 撤销/重做 ===
+    m_undoAction = makeAction(this, &m_iconPaths, "undoAction",
+        "撤销 (Ctrl+Z)", ":/icons/light/undo.svg");
+    m_undoAction->setEnabled(false);
+
+    m_redoAction = makeAction(this, &m_iconPaths, "redoAction",
+        "重做 (Ctrl+Y)", ":/icons/light/redo.svg");
+    m_redoAction->setEnabled(false);
+
+    addSeparator();
+
     // 标题下拉选择器
     QLabel *headingLabel = new QLabel(" 标题 ");
     headingLabel->setObjectName("headingLabel");
@@ -215,6 +228,12 @@ void ToolBar::updateFormatState(const QJsonObject &f)
     TOGGLE_CHECK(m_blockquoteAction, "blockquote");
     TOGGLE_CHECK(m_codeBlockAction, "codeBlock");
 #undef TOGGLE_CHECK
+}
+
+void ToolBar::updateHistoryState(bool canUndo, bool canRedo)
+{
+    if (m_undoAction) m_undoAction->setEnabled(canUndo);
+    if (m_redoAction) m_redoAction->setEnabled(canRedo);
 }
 
 void ToolBar::refreshThemeIcons(const QString &theme)

@@ -10,6 +10,7 @@ public:
     explicit ToolBar(QWidget *parent = nullptr);
 
     void updateFormatState(const QJsonObject &format);
+    void updateHistoryState(bool canUndo, bool canRedo);
     void refreshThemeIcons(const QString &theme);
     void setReadMode(bool readMode);
 
@@ -38,6 +39,8 @@ signals:
 private:
     void setupUi();
     QComboBox *m_headingCombo;
+    QAction *m_undoAction;
+    QAction *m_redoAction;
     QAction *m_boldAction;
     QAction *m_italicAction;
     QAction *m_strikeAction;

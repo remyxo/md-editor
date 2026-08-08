@@ -185,6 +185,13 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::saveFileAs, this, &MainWindow::onSaveFileAs);
     connect(m_menuBar, &MenuBar::undo, this, [this]() { runEditorCommand("window.editorApi.undo();"); });
     connect(m_menuBar, &MenuBar::redo, this, [this]() { runEditorCommand("window.editorApi.redo();"); });
+    // 工具栏撤销/重做按钮
+    QAction *toolUndo = m_toolBar->findChild<QAction *>("undoAction");
+    if (toolUndo)
+        connect(toolUndo, &QAction::triggered, this, [this]() { runEditorCommand("window.editorApi.undo();"); });
+    QAction *toolRedo = m_toolBar->findChild<QAction *>("redoAction");
+    if (toolRedo)
+        connect(toolRedo, &QAction::triggered, this, [this]() { runEditorCommand("window.editorApi.redo();"); });
     connect(m_menuBar, &MenuBar::showMarkdownGuide, this, &MainWindow::onShowMarkdownGuide);
     connect(m_menuBar, &MenuBar::showSettings, this, &MainWindow::onShowSettings);
     connect(m_menuBar, &MenuBar::showAbout, this, [this]() {
@@ -335,6 +342,12 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
     // 连接格式状态同步 → 工具栏
     connect(bridge, &EditorBridge::formatStateChanged, this,
             &MainWindow::onFormatChanged);
+
+    // 连接撤销/重做状态 → 工具栏
+    connect(bridge, &EditorBridge::historyStateChanged, this,
+            [this](bool canUndo, bool canRedo, int /*tabId*/) {
+                m_toolBar->updateHistoryState(canUndo, canRedo);
+            });
 
     // 页面加载完成后应用字体设置
     EditorTab *tab = m_tabWidget->currentEditorTab();
