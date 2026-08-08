@@ -19,6 +19,7 @@ public slots:
     void openUrl(const QString &url);
     void headingsChanged(const QString &json);
     void formatChanged(const QString &json);
+    void historyChanged(bool canUndo, bool canRedo);
 
 signals:
     // 通知 C++ UI 组件
@@ -27,6 +28,7 @@ signals:
     void headingsUpdated(const QJsonArray &headings, int tabId);
     void formatStateChanged(const QJsonObject &format, int tabId);
     void wordCountUpdated(int chars, int words, int tabId);
+    void historyStateChanged(bool canUndo, bool canRedo, int tabId);
 
 private:
     int m_tabId;

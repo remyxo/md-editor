@@ -1,3 +1,16 @@
+// TipTap 全局引用（由 tiptap-all.js 设置，模块级别持有避免 init/setContent 重复声明）
+var TipTapGlobal = window.TipTap;
+var TipTapEditor = TipTapGlobal && TipTapGlobal.Editor;
+var TipTapStarterKit = window.TipTapStarterKit;
+var TipTapTableKit = window.TipTapExtensionTableKit;
+var TipTapTaskList = window.TipTapExtensionTaskList;
+var TipTapTaskItem = window.TipTapExtensionTaskItem;
+var TipTapHighlight = window.TipTapExtensionHighlight;
+var TipTapImage = window.TipTapExtensionImage;
+var TipTapPlaceholder = window.TipTapExtensionPlaceholder;
+var TipTapCodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
+var TipTapMathematics = window.TipTapExtensionMathematics;
+
 // 全局编辑器 API 对象（C++ 侧通过 QWebChannel 调用其中的命令方法）
 window.editorApi = {
     editor: null,
@@ -7,106 +20,132 @@ window.editorApi = {
     _mathEditing: false,
     isSourceMode: false,
     _sourceValue: null,
+    _readOnly: false,
+
+    // === 内部辅助方法 ===
+
+    _shouldIgnoreUpdate: function() {
+        return this._loading || this._mathEditing;
+    },
+
+    _markDirty: function() {
+        if (!this._dirty) {
+            this._dirty = true;
+            if (this.bridge) this.bridge.contentChanged(true);
+        }
+    },
+
+    _forceDirty: function() {
+        this._dirty = true;
+        if (this.bridge) this.bridge.contentChanged(true);
+    },
+
     _notifyDirty: function() {
         if (this.bridge) this.bridge.contentChanged(!!this._dirty);
     },
 
+    _buildExtensions: function() {
+        if (!TipTapStarterKit) return [];
+        var exts = [
+            TipTapStarterKit.configure({
+                codeBlock: false,
+                heading: { levels: [1, 2, 3, 4, 5, 6] }
+            }),
+            TipTapTableKit.configure({ resizable: true }),
+            TipTapTaskList,
+            TipTapTaskItem.configure({ nested: true }),
+            TipTapHighlight,
+            TipTapImage.configure({ allowBase64: true }),
+            TipTapPlaceholder.configure({ placeholder: '开始编写 Markdown...' }),
+        ];
+        if (TipTapCodeBlockLowlight && window.lowlight)
+            exts.push(TipTapCodeBlockLowlight.configure({ lowlight: window.lowlight }));
+        if (TipTapMathematics)
+            exts.push(TipTapMathematics);
+        return exts;
+    },
+
+    _createEditor: function(container, content) {
+        if (!TipTapEditor) {
+            console.error('TipTap bundle 未加载，请确认 tiptap-all.js 已正确引入。');
+            container.textContent = '编辑器内核加载失败：未找到 window.TipTap。请检查 tiptap-all.js。';
+            return null;
+        }
+        var self = this;
+        var config = {
+            element: container,
+            extensions: this._buildExtensions(),
+            onUpdate: function(args) {
+                if (self._shouldIgnoreUpdate()) return;
+                self._markDirty();
+                self.notifyHeadings();
+                self.notifyWordCount();
+                self.notifyHistory();
+            },
+            onSelectionUpdate: function(args) {
+                var ed = args.editor;
+                if (self.bridge) {
+                    var pos = ed.state.selection.head, line = 1, col = 1;
+                    ed.state.doc.nodesBetween(0, pos, function(node, start) {
+                        if (start + node.nodeSize <= pos) {
+                            var l = node.textContent.slice(0, pos - start).split('\n');
+                            line += l.length - 1;
+                            col = l[l.length - 1].length + 1;
+                        }
+                    });
+                    self.bridge.cursorChanged(line, col);
+                    self.notifyFormat();
+                }
+                self.notifyHeadings();
+                self.notifyHistory();
+            },
+        };
+        if (content !== undefined) config.content = content;
+        return new TipTapEditor(config);
+    },
+
+    _attachMathClickHandler: function(dom) {
+        var state = { count: 0, timer: null };
+        dom.addEventListener('mousedown', function(e) {
+            var mathEl = e.target.closest('[data-type="block-math"], [data-type="inline-math"]');
+            if (!mathEl) { state.count = 0; return; }
+            // 阻止 ProseMirror 处理此事件，完全避免 dirty 污染
+            e.stopPropagation();
+            e.preventDefault();
+            var api = window.editorApi;
+            state.count++;
+            if (state.count === 1) {
+                api._mathClickDirtySave = api._dirty;
+                state.timer = setTimeout(function() {
+                    state.count = 0;
+                }, 400);
+            } else {
+                clearTimeout(state.timer);
+                state.count = 0;
+                api._mathEditor.open(mathEl, api._mathClickDirtySave);
+            }
+        }, true);
+        return dom;
+    },
+
+    // === 初始化 ===
+
     init: function() {
-        var TipTap = window.TipTap;
-        if (!TipTap || !TipTap.Editor) {
+        if (!TipTapEditor) {
             console.error('TipTap bundle 未加载，请确认 tiptap-all.js 已正确引入。');
             document.querySelector('#editor').textContent =
                 '编辑器内核加载失败：未找到 window.TipTap。请检查 tiptap-all.js。';
             return;
         }
-
-        var Editor = TipTap.Editor;
-        var StarterKit = window.TipTapStarterKit;
-        var TableKit = window.TipTapExtensionTableKit;
-        var TaskList = window.TipTapExtensionTaskList;
-        var TaskItem = window.TipTapExtensionTaskItem;
-        var Highlight = window.TipTapExtensionHighlight;
-        var Image = window.TipTapExtensionImage;
-        var Placeholder = window.TipTapExtensionPlaceholder;
-        var CodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
-        var Mathematics = window.TipTapExtensionMathematics;
-        // v3 StarterKit includes Link and Underline
-
-        var extensions = [
-            StarterKit.configure({
-                codeBlock: false,
-                heading: { levels: [1, 2, 3, 4, 5, 6] }
-            }),
-            TableKit.configure({ resizable: true }),
-            TaskList,
-            TaskItem.configure({ nested: true }),
-            Highlight,
-            Image.configure({ allowBase64: true }),
-            Placeholder.configure({ placeholder: '开始编写 Markdown...' }),
-        ];
-
-        // 语法高亮代码块（StarterKit 中已禁用默认 codeBlock，这里使用 lowlight 版本）
-        if (CodeBlockLowlight && window.lowlight)
-            extensions.push(CodeBlockLowlight.configure({ lowlight: window.lowlight }));
-        if (Mathematics)
-            extensions.push(Mathematics);
-
-        this.editor = new Editor({
-            element: document.querySelector('#editor'),
-            extensions: extensions,
-            onUpdate: function(args) {
-                if (this._loading || this._mathEditing) return;
-                if (!this._dirty) {
-                    this._dirty = true;
-                    if (this.bridge) this.bridge.contentChanged(true);
-                }
-                this.notifyHeadings();
-                this.notifyWordCount();
-            }.bind(this),
-            onSelectionUpdate: function(args) {
-                var editor = args.editor;
-                if (this.bridge) {
-                    var pos = editor.state.selection.head;
-                    var line = 1, col = 1;
-                    editor.state.doc.nodesBetween(0, pos, function(node, start) {
-                        if (start + node.nodeSize <= pos) {
-                            var lines = node.textContent.slice(0, pos - start).split('\n');
-                            line += lines.length - 1;
-                            col = lines[lines.length - 1].length + 1;
-                        }
-                    });
-                    this.bridge.cursorChanged(line, col);
-                    this.notifyFormat();
-                }
-                this.notifyHeadings();
-            }.bind(this),
-        });
-
-        this.notifyHeadings();
-
-        // 数学公式 — 完全拦截 mousedown，防止 ProseMirror 误触 onUpdate
-        var mathClickState = { count: 0, timer: null, target: null };
-        this.editor.view.dom.addEventListener('mousedown', function(e) {
-            var mathEl = e.target.closest('[data-type="block-math"], [data-type="inline-math"]');
-            if (!mathEl) { mathClickState.count = 0; return; }
-            // 阻止 ProseMirror 处理此事件，完全避免 dirty 污染
-            e.stopPropagation();
-            e.preventDefault();
-            var api = window.editorApi;
-            mathClickState.count++;
-            if (mathClickState.count === 1) {
-                api._mathClickDirtySave = api._dirty;
-                mathClickState.target = mathEl;
-                mathClickState.timer = setTimeout(function() {
-                    mathClickState.count = 0;
-                }, 400);
-            } else {
-                clearTimeout(mathClickState.timer);
-                mathClickState.count = 0;
-                api._mathEditor.open(mathEl, api._mathClickDirtySave);
-            }
-        }, true);
+        var el = document.querySelector('#editor');
+        this.editor = this._createEditor(el);
+        if (this.editor) {
+            this.notifyHeadings();
+            this._attachMathClickHandler(this.editor.view.dom);
+        }
     },
+
+    // === 通知方法 ===
 
     notifyHeadings: function() {
         if (!this.editor || !this.bridge) return;
@@ -159,10 +198,26 @@ window.editorApi = {
         this.bridge.formatChanged(JSON.stringify(format));
     },
 
+    notifyHistory: function() {
+        if (!this.editor || !this.bridge) return;
+        var canUndo = this.editor.can().undo();
+        var canRedo = this.editor.can().redo();
+        this.bridge.historyChanged(canUndo, canRedo);
+    },
+
+    notifyWordCount: function() {
+        if (!this.editor || !this.bridge) return;
+        var text = this.editor.state.doc.textContent;
+        var chars = text.replace(/\s/g, '').length;
+        var words = text.trim() ? text.trim().split(/\s+/).length : 0;
+        this.bridge.wordCountChanged(chars, words);
+    },
+
     // C++ 侧调用的命令
     getContent: function() { return this.editor ? this.editor.getHTML() : ''; },
+
     setContent: function(html) {
-        if (!this.editor) return;
+        if (!TipTapEditor) return;
         // 销毁旧编辑器 → 用内容新建（清零撤销历史最可靠方式）
         var oldEl = document.querySelector('#editor');
         var parent = oldEl.parentNode;
@@ -170,81 +225,26 @@ window.editorApi = {
         newEl.id = 'editor';
         parent.replaceChild(newEl, oldEl);
 
-        this.editor.destroy();
-        this.editor = null;
+        if (this.editor) {
+            this.editor.destroy();
+            this.editor = null;
+        }
 
         // 重新创建编辑器，content 作为初始态，不产生 undo
-        var TipTap = window.TipTap;
-        var StarterKit = window.TipTapStarterKit;
-        var TableKit = window.TipTapExtensionTableKit;
-        var TaskList = window.TipTapExtensionTaskList;
-        var TaskItem = window.TipTapExtensionTaskItem;
-        var Highlight = window.TipTapExtensionHighlight;
-        var Image = window.TipTapExtensionImage;
-        var Placeholder = window.TipTapExtensionPlaceholder;
-        var CodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
-        var Mathematics = window.TipTapExtensionMathematics;
-
-        var extensions = [
-            StarterKit.configure({ codeBlock: false, heading: {levels:[1,2,3,4,5,6]} }),
-            TableKit.configure({ resizable: true }), TaskList, TaskItem.configure({nested:true}),
-            Highlight, Image.configure({allowBase64:true}), Placeholder.configure({placeholder:'开始编写 Markdown...'}),
-        ];
-        if (CodeBlockLowlight && window.lowlight)
-            extensions.push(CodeBlockLowlight.configure({lowlight:window.lowlight}));
-        if (Mathematics)
-            extensions.push(Mathematics);
-
         var self = this;
-        this.editor = new TipTap.Editor({
-            element: newEl,
-            extensions: extensions,
-            content: html,
-            onUpdate: function(args) {
-                if (self._loading || self._mathEditing) return;
-                if (!self._dirty) { self._dirty = true; if (self.bridge) self.bridge.contentChanged(true); }
-                self.notifyHeadings(); self.notifyWordCount();
-            },
-            onSelectionUpdate: function(args) {
-                var ed = args.editor;
-                if (self.bridge) {
-                    var pos = ed.state.selection.head, line = 1, col = 1;
-                    ed.state.doc.nodesBetween(0, pos, function(node, start) {
-                        if (start+node.nodeSize<=pos) { var l=node.textContent.slice(0,pos-start).split('\n'); line+=l.length-1; col=l[l.length-1].length+1; }
-                    });
-                    self.bridge.cursorChanged(line, col); self.notifyFormat();
-                }
-                self.notifyHeadings();
-            },
-        });
+        this.editor = this._createEditor(newEl, html);
+        if (!this.editor) return;
+
         this._dirty = false;
         if (this.bridge) {
             this.bridge.contentChanged(false);
             this.notifyWordCount();
         }
-
-        // 数学公式 — 完全拦截 mousedown（setContent 后重新注册）
-        var mathClickState2 = { count: 0, timer: null, target: null };
-        this.editor.view.dom.addEventListener('mousedown', function(e) {
-            var mathEl = e.target.closest('[data-type="block-math"], [data-type="inline-math"]');
-            if (!mathEl) { mathClickState2.count = 0; return; }
-            e.stopPropagation();
-            e.preventDefault();
-            var api = window.editorApi;
-            mathClickState2.count++;
-            if (mathClickState2.count === 1) {
-                api._mathClickDirtySave = api._dirty;
-                mathClickState2.target = mathEl;
-                mathClickState2.timer = setTimeout(function() {
-                    mathClickState2.count = 0;
-                }, 400);
-            } else {
-                clearTimeout(mathClickState2.timer);
-                mathClickState2.count = 0;
-                api._mathEditor.open(mathEl, api._mathClickDirtySave);
-            }
-        }, true);
+        this._attachMathClickHandler(this.editor.view.dom);
     },
+
+    // === 格式命令 ===
+
     toggleBold: function() { if (this.editor) this.editor.commands.toggleBold(); },
     toggleItalic: function() { if (this.editor) this.editor.commands.toggleItalic(); },
     toggleStrike: function() { if (this.editor) this.editor.commands.toggleStrike(); },
@@ -297,10 +297,7 @@ window.editorApi = {
             editorDiv.style.display = '';
             this.isSourceMode = false;
             // 源码视图有改动且当前未标记脏时，标记并通知
-            if (changed && !this._dirty) {
-                this._dirty = true;
-                if (this.bridge) this.bridge.contentChanged(true);
-            }
+            if (changed && !this._dirty) this._markDirty();
         } else {
             // 切到源码视图，记录进入时的内容以检测改动
             this._sourceValue = this.editor.getHTML();
@@ -380,13 +377,6 @@ window.editorApi = {
         var w = percent + '%';
         if (ed) { ed.style.maxWidth = w; ed.style.minWidth = '800px'; }
         if (sv) { sv.style.maxWidth = w; sv.style.minWidth = '800px'; }
-    },
-    notifyWordCount: function() {
-        if (!this.editor || !this.bridge) return;
-        var text = this.editor.state.doc.textContent;
-        var chars = text.replace(/\s/g, '').length;
-        var words = text.trim() ? text.trim().split(/\s+/).length : 0;
-        this.bridge.wordCountChanged(chars, words);
     },
 
     markClean: function() {
@@ -579,8 +569,7 @@ window.editorApi = {
             if (!ed) { this.close(); return; }
             this._confirmed = true;
             // 手动标记脏（_mathEditing 抑制了 onUpdate 通知）
-            window.editorApi._dirty = true;
-            if (window.editorApi.bridge) window.editorApi.bridge.contentChanged(true);
+            window.editorApi._forceDirty();
             if (this.mode === 'edit') {
                 var cmd = this.mathType === 'block' ? 'updateBlockMath' : 'updateInlineMath';
                 ed.commands[cmd]({ pos: this.pos, latex: latex });

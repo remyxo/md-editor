@@ -40,6 +40,11 @@ void EditorBridge::wordCountChanged(int chars, int words)
     emit wordCountUpdated(chars, words, m_tabId);
 }
 
+void EditorBridge::historyChanged(bool canUndo, bool canRedo)
+{
+    emit historyStateChanged(canUndo, canRedo, m_tabId);
+}
+
 void EditorBridge::openUrl(const QString &url)
 {
     QDesktopServices::openUrl(QUrl(url));
