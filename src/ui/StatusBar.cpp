@@ -7,10 +7,11 @@ StatusBar::StatusBar(QWidget *parent)
     m_filePathLabel = new QLabel("", this);
     m_wordLabel = new QLabel("字符: 0 / 词: 0", this);
     m_modeLabel = new QLabel("编辑模式", this);
+    m_modeLabel->setContentsMargins(8, 0, 0, 0);
 
     addWidget(m_cursorLabel);
-    addWidget(m_filePathLabel, 1);
     addWidget(m_modeLabel);
+    addWidget(m_filePathLabel, 1);
     addPermanentWidget(m_wordLabel);
 }
 

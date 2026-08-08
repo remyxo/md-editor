@@ -27,7 +27,11 @@
 #include <QWebEnginePage>
 #include <QTextStream>
 #include <QSettings>
+#include <QTimer>
 #include <QShortcut>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QKeySequence>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -143,6 +147,8 @@ void MainWindow::connectSignals()
                                                      "Markdown 文件 (*.md *.markdown);;所有文件 (*)");
         if (!path.isEmpty()) onFileDoubleClicked(path);
     });
+    connect(m_menuBar, &MenuBar::openRecentFile, this,
+            &MainWindow::onFileDoubleClicked);
     connect(m_menuBar, &MenuBar::exportPdf, this, &MainWindow::onExportPdf);
     connect(m_menuBar, &MenuBar::switchTheme, this, &MainWindow::onThemeSwitch);
     connect(m_menuBar, &MenuBar::toggleSidebar, this, [this]() {
@@ -249,6 +255,34 @@ void MainWindow::connectSignals()
             this, &MainWindow::onTabChanged);
     connect(m_tabWidget, &TabWidget::tabSaveRequested,
             this, [this](int) { onSaveFile(); });
+    connect(m_tabWidget, &TabWidget::tabClosed, this,
+            [this](int index) {
+                EditorTab *tab = m_tabWidget->tabAt(index);
+                if (tab) {
+                    QString path = tab->webView()->property("filePath").toString();
+                    if (!path.isEmpty()) m_fileManager->unwatchFile(path);
+                }
+            });
+
+    // === 文件外部变更 ===
+    connect(m_fileManager, &FileManager::fileExternallyModified, this,
+            [this](const QString &path) {
+                // 查找打开此文件的标签页
+                for (int i = 0; i < m_tabWidget->count(); ++i) {
+                    EditorTab *tab = m_tabWidget->tabAt(i);
+                    if (tab && tab->webView()->property("filePath").toString() == path) {
+                        auto r = QMessageBox::question(this, "文件已变更",
+                            QString("文件 %1 已被外部程序修改。\n是否重新加载？").arg(path),
+                            QMessageBox::Yes | QMessageBox::No);
+                        if (r == QMessageBox::Yes) {
+                            QString content = m_fileManager->readFile(path);
+                            if (!content.isNull())
+                                tab->loadFile(path, content);
+                        }
+                        break;
+                    }
+                }
+            });
 
     // === 文件树 ===
     connect(m_sideBar->fileTree(), &FileTree::fileDoubleClicked,
@@ -506,6 +540,8 @@ void MainWindow::onFileDoubleClicked(const QString &path)
 
     EditorTab *tab = m_tabWidget->openFileTab(path, content);
     tab->webView()->setProperty("filePath", path);
+    m_fileManager->watchFile(path);
+    m_menuBar->addRecentFile(path);
     m_statusBar->updateFilePath(path);
 }
 
@@ -640,7 +676,7 @@ void MainWindow::applyEditorSettings()
 {
     QSettings settings("md-editor", "md-editor");
     QJsonObject s;
-    s["lineNumbers"] = settings.value("editor/lineNumbers", true).toBool();
+    s["lineNumbers"] = settings.value("editor/lineNumbers", false).toBool();
     s["wordWrap"] = settings.value("editor/wordWrap", true).toBool();
     s["tabSize"] = settings.value("editor/tabSize", 4).toInt();
     for (int i = 0; i < m_tabWidget->count(); ++i) {
@@ -670,6 +706,35 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
     saveSession();
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (event->mimeData()->hasUrls()) {
+        for (const QUrl &url : event->mimeData()->urls()) {
+            if (url.isLocalFile() && url.toLocalFile().endsWith(".md", Qt::CaseInsensitive)) {
+                event->acceptProposedAction();
+                return;
+            }
+        }
+    }
+    // 非 .md 文件交给基类/QWebEngineView 处理
+    QMainWindow::dragEnterEvent(event);
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    if (event->mimeData()->hasUrls()) {
+        for (const QUrl &url : event->mimeData()->urls()) {
+            QString path = url.toLocalFile();
+            if (url.isLocalFile() && path.endsWith(".md", Qt::CaseInsensitive)) {
+                onFileDoubleClicked(path);
+                event->acceptProposedAction();
+                return;
+            }
+        }
+    }
+    QMainWindow::dropEvent(event);
 }
 
 void MainWindow::saveSession()
@@ -716,6 +781,8 @@ void MainWindow::restoreSession()
             QString content = m_fileManager->readFile(path);
             EditorTab *tab = m_tabWidget->openFileTab(path, content);
             tab->webView()->setProperty("filePath", path);
+            m_fileManager->watchFile(path);
+            m_menuBar->addRecentFile(path);
         }
     }
 

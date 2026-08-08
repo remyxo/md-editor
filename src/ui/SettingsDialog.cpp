@@ -34,17 +34,6 @@ void SettingsDialog::setupUi()
     QWidget *generalTab = new QWidget();
     QVBoxLayout *generalLayout = new QVBoxLayout(generalTab);
 
-    QGroupBox *autoSaveGroup = new QGroupBox("自动保存");
-    QFormLayout *autoSaveForm = new QFormLayout();
-    m_autoSaveCheck = new QCheckBox("启用自动保存");
-    autoSaveForm->addRow(m_autoSaveCheck);
-    m_autoSaveIntervalSpin = new QSpinBox();
-    m_autoSaveIntervalSpin->setRange(10, 300);
-    m_autoSaveIntervalSpin->setSuffix(" 秒");
-    autoSaveForm->addRow("保存间隔:", m_autoSaveIntervalSpin);
-    autoSaveGroup->setLayout(autoSaveForm);
-    generalLayout->addWidget(autoSaveGroup);
-
     QGroupBox *startupGroup = new QGroupBox("启动");
     QVBoxLayout *startupLayout = new QVBoxLayout();
     m_restoreSessionCheck = new QCheckBox("启动时恢复上次会话");
@@ -65,7 +54,6 @@ void SettingsDialog::setupUi()
     m_fontSizeSpin->setSuffix(" px");
     editorForm->addRow("字号:", m_fontSizeSpin);
     m_lineNumbersCheck = new QCheckBox();
-    m_lineNumbersCheck->setChecked(true);
     editorForm->addRow("显示行号:", m_lineNumbersCheck);
     m_wordWrapCheck = new QCheckBox();
     m_wordWrapCheck->setChecked(true);
@@ -194,10 +182,6 @@ void SettingsDialog::setupUi()
 
 void SettingsDialog::loadSettings()
 {
-    // 从 FileManager 和 QSettings 加载
-    m_autoSaveCheck->setChecked(m_fileManager->isAutoSaveEnabled());
-    m_autoSaveIntervalSpin->setValue(m_fileManager->autoSaveInterval());
-
     QSettings settings("md-editor", "md-editor");
     m_restoreSessionCheck->setChecked(
         settings.value("session/restore", true).toBool());
@@ -205,7 +189,7 @@ void SettingsDialog::loadSettings()
         settings.value("editor/font", "Sans Serif").toString());
     m_fontSizeSpin->setValue(settings.value("editor/fontSize", 18).toInt());
     m_lineNumbersCheck->setChecked(
-        settings.value("editor/lineNumbers", true).toBool());
+        settings.value("editor/lineNumbers", false).toBool());
     m_wordWrapCheck->setChecked(
         settings.value("editor/wordWrap", true).toBool());
     m_tabSizeSpin->setValue(settings.value("editor/tabSize", 4).toInt());
@@ -235,11 +219,6 @@ void SettingsDialog::loadSettings()
 
 void SettingsDialog::onAccepted()
 {
-    // 保存设置
-    m_fileManager->setAutoSaveEnabled(m_autoSaveCheck->isChecked());
-    m_fileManager->setAutoSaveInterval(m_autoSaveIntervalSpin->value());
-    m_fileManager->saveSettings();
-
     QSettings settings("md-editor", "md-editor");
     settings.setValue("session/restore", m_restoreSessionCheck->isChecked());
     settings.setValue("editor/font", m_fontCombo->currentText());

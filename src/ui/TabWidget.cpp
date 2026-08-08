@@ -115,6 +115,7 @@ void TabWidget::onTabCloseRequested(int index)
             return; // 保存由 MainWindow 异步处理，完成后调用 completePendingTabClose()
         }
     }
+    emit tabClosed(index);
     m_tabs.remove(tab->bridge()->tabId());
     removeTab(index);
     tab->deleteLater();
@@ -128,6 +129,7 @@ void TabWidget::completePendingTabClose()
     m_pendingCloseIndex = -1;
     EditorTab *tab = tabAt(idx);
     if (tab) {
+        emit tabClosed(idx);
         m_tabs.remove(tab->bridge()->tabId());
         removeTab(idx);
         tab->deleteLater();

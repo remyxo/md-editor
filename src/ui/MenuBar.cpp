@@ -1,6 +1,8 @@
 #include "MenuBar.h"
 #include <QAction>
 #include <QKeySequence>
+#include <QSettings>
+#include <QFileInfo>
 
 MenuBar::MenuBar(QWidget *parent)
     : QMenuBar(parent)
@@ -25,6 +27,7 @@ void MenuBar::setupUi()
     openFolderAct->setShortcut(QKeySequence("Ctrl+Shift+O"));
     connect(openFolderAct, &QAction::triggered, this, &MenuBar::openFolder);
 
+    m_recentFilesMenu = m_fileMenu->addMenu("最近文件");
     m_fileMenu->addSeparator();
 
     QAction *saveAct = m_fileMenu->addAction("保存(&S)");
@@ -138,4 +141,70 @@ void MenuBar::setupUi()
 
     QAction *aboutAct = m_helpMenu->addAction("关于...");
     connect(aboutAct, &QAction::triggered, this, &MenuBar::showAbout);
+
+    loadRecentFiles();
+}
+
+void MenuBar::addRecentFile(const QString &path)
+{
+    QSettings settings("md-editor", "md-editor");
+    QStringList files = settings.value("recentFiles").toStringList();
+
+    // 去重：移除已存在的相同路径
+    files.removeAll(path);
+    // 插入到最前面
+    files.prepend(path);
+    // 最多保留 10 条
+    while (files.size() > 10) files.removeLast();
+
+    settings.setValue("recentFiles", files);
+    settings.sync();
+
+    updateRecentFilesMenu();
+}
+
+void MenuBar::loadRecentFiles()
+{
+    updateRecentFilesMenu();
+}
+
+void MenuBar::updateRecentFilesMenu()
+{
+    m_recentFilesMenu->clear();
+
+    QSettings settings("md-editor", "md-editor");
+    QStringList files = settings.value("recentFiles").toStringList();
+
+    // 剔除已不存在的文件
+    QStringList valid;
+    for (const QString &f : files) {
+        if (QFileInfo::exists(f))
+            valid.append(f);
+    }
+
+    if (valid.isEmpty()) {
+        QAction *empty = m_recentFilesMenu->addAction("(无)");
+        empty->setEnabled(false);
+    } else {
+        for (const QString &f : valid) {
+            QAction *act = m_recentFilesMenu->addAction(f);
+            connect(act, &QAction::triggered, this, [this, f]() {
+                emit openRecentFile(f);
+            });
+        }
+        m_recentFilesMenu->addSeparator();
+        QAction *clearAct = m_recentFilesMenu->addAction("清除最近文件列表");
+        connect(clearAct, &QAction::triggered, this, [this]() {
+            QSettings s("md-editor", "md-editor");
+            s.remove("recentFiles");
+            s.sync();
+            updateRecentFilesMenu();
+        });
+    }
+
+    // 更新已保存的有效路径（剔除失效的）
+    if (valid.size() != files.size()) {
+        settings.setValue("recentFiles", valid);
+        settings.sync();
+    }
 }

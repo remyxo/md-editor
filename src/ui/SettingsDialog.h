@@ -23,8 +23,6 @@ private:
     void loadSettings();
 
     // 通用
-    QCheckBox *m_autoSaveCheck;
-    QSpinBox *m_autoSaveIntervalSpin;
     QCheckBox *m_restoreSessionCheck;
 
     // 编辑器

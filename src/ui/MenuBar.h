@@ -8,10 +8,14 @@ class MenuBar : public QMenuBar {
 public:
     explicit MenuBar(QWidget *parent = nullptr);
 
+    void addRecentFile(const QString &path);
+    void loadRecentFiles();
+
 signals:
     void newFile();
     void openFile();
     void openFolder();
+    void openRecentFile(const QString &path);
     void saveFile();
     void saveFileAs();
     void closeTab();
@@ -43,7 +47,10 @@ signals:
 
 private:
     void setupUi();
+    void updateRecentFilesMenu();
+
     QMenu *m_fileMenu;
+    QMenu *m_recentFilesMenu;
     QMenu *m_editMenu;
     QMenu *m_viewMenu;
     QMenu *m_insertMenu;

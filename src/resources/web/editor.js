@@ -77,7 +77,10 @@ window.editorApi = {
             extensions: this._buildExtensions(),
             onUpdate: function(args) {
                 if (self._shouldIgnoreUpdate()) return;
-                self._markDirty();
+                // 仅内容变更事务标记脏状态（Focus 等插件会派发 meta-only 事务）
+                if (args.transaction.docChanged) {
+                    self._markDirty();
+                }
                 self.notifyHeadings();
                 self.notifyWordCount();
                 self.notifyHistory();
@@ -138,7 +141,10 @@ window.editorApi = {
             return;
         }
         var el = document.querySelector('#editor');
+        // 抑制构造期 onUpdate（Focus 等插件会在加载后异步派发事务）
+        this._loading = true;
         this.editor = this._createEditor(el);
+        this._loading = false;
         if (this.editor) {
             this.notifyHeadings();
             this._attachMathClickHandler(this.editor.view.dom);

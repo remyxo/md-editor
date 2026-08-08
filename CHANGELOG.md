@@ -2,6 +2,26 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] — 2026-08-08
+
+### 新增
+
+- **撤销/重做工具栏** — Undo/Redo 按钮，TipTap 状态实时同步启停
+- **文件可靠性** — 外部变更检测弹窗、最近文件列表（最多 10 条）、拖拽 .md 到窗口打开
+- **自写入抑制** — `FileManager::writeFile` 临时取消文件监控，防止自身写入误报外部修改
+
+### 修复
+
+- **脏状态误报** — 修复点击空白区域即标脏的问题（`init()` 加 `_loading` 包裹 + `onUpdate` 加 `transaction.docChanged` 守卫）
+- **行号默认开启** — 修正 `lineNumbers` 默认值为 `false`
+
+### 优化
+
+- **重构 editor.js** — 消除 `init()`/`setContent()` 重复代码，提取 6 个辅助方法
+- **删除自动保存** — 移除未完整接线的自动保存功能及相关设置 UI
+- **状态栏布局** — 编辑模式标签移至行列右侧
+- **代码清理** — 删除 `MenuBar::m_formatMenu` 死成员，补充 FileManager 测试 3 个用例
+
 ## [0.2.0] — 2026-08-07
 
 ### 新增
