@@ -528,8 +528,9 @@ body.dark .math-editor-actions button.primary {
     outline: 2px solid #0078d4;
     background: rgba(0, 120, 212, 0.06);
 }
-/* SVG 不缩放，该多大就多大——超出编辑区宽度由视口滚动消化 */
+/* SVG 不缩放——按 viewBox 自然尺寸显示，width:auto 覆盖 mermaid 的 width="100%" */
 .ProseMirror .mermaid-block svg {
+    width: auto;
     max-width: none;
     height: auto;
 }
@@ -579,6 +580,7 @@ body.dark .ProseMirror .mermaid-block .mermaid-fallback.mermaid-error {
     margin: 1em 0;
 }
 #read-view .mermaid-block svg {
+    width: auto;
     max-width: none;
     height: auto;
 }

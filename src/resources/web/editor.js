@@ -55,7 +55,7 @@ function _ensureMermaidInited() {
         theme: dark ? 'dark' : 'default',
         // 图表字号：编辑区正文为 18px，图表文字略小
         // 图表字号：编辑区正文为 18px，图表文字明显略小一档
-        themeVariables: { fontSize: 13 }
+        themeVariables: { fontSize: '13px' }
     });
     window.__mermaidInited = true;
 }
@@ -200,7 +200,12 @@ function mermaidNodeView(ref) {
             dom.innerHTML = _sanitizeMermaidSvg(res.svg || '');
             var svg = dom.querySelector('svg');
             if (svg) {
-                // 编辑区渲染不缩放——该多大就多大
+                // 编辑区渲染不缩放——该多大就多大。
+                // mermaid SVG 带 width="100%" 属性，max-width:none
+                // 时填满容器（min-width:800px），viewBox 远小于容器时
+                // 等比放大导致字体超过正文 18px。
+                // width:auto 强制按 viewBox 尺寸渲染，1:1 像素映射。
+                svg.style.width = 'auto';
                 svg.style.maxWidth = 'none';
                 svg.style.height = 'auto';
             }
