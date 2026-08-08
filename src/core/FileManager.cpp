@@ -4,6 +4,7 @@
 #include <QStringConverter>
 #include <QFileInfo>
 #include <QDir>
+#include <QTimer>
 
 FileManager::FileManager(QObject *parent)
     : QObject(parent)
@@ -76,5 +77,35 @@ void FileManager::unwatchFile(const QString &path)
 
 void FileManager::onFileChanged(const QString &path)
 {
+    // 替换式外部保存（vim/sed -i/git checkout 等：写临时文件 + rename 覆盖）
+    // 会使被监控文件的 inode 消失，QFileSystemWatcher 随之自动把该路径移出
+    // 监控列表。此处必须重新加入监控，否则后续修改将永久无法感知。
+    if (QFile::exists(path)) {
+        // 守卫：就地修改（inode 不变）时路径仍在监控列表中，
+        // 重复 addPath 会触发 qWarning
+        if (!m_watcher->files().contains(path)) {
+            m_watcher->addPath(path);
+        }
+    } else {
+        // 文件暂不存在（被删除/移走、外部工具重建中）：有限次重试
+        retryWatch(path, 25); // 25 × 200ms ≈ 5 秒
+    }
+
     emit fileExternallyModified(path);
+}
+
+void FileManager::retryWatch(const QString &path, int attemptsLeft)
+{
+    if (attemptsLeft <= 0) {
+        return; // 超时放弃，不做无限轮询
+    }
+    QTimer::singleShot(200, this, [this, path, attemptsLeft]() {
+        if (QFile::exists(path)) {
+            if (!m_watcher->files().contains(path)) {
+                m_watcher->addPath(path);
+            }
+        } else {
+            retryWatch(path, attemptsLeft - 1);
+        }
+    });
 }

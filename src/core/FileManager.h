@@ -24,6 +24,9 @@ private slots:
     void onFileChanged(const QString &path);
 
 private:
+    // 文件暂不存在时的有限次重试监控（删除后重建等场景）
+    void retryWatch(const QString &path, int attemptsLeft);
+
     QFileSystemWatcher *m_watcher;
 };
 
