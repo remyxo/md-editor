@@ -528,9 +528,9 @@ body.dark .math-editor-actions button.primary {
     outline: 2px solid #0078d4;
     background: rgba(0, 120, 212, 0.06);
 }
-/* SVG 自适应宽度 */
+/* SVG 不缩放，该多大就多大——超出编辑区宽度由视口滚动消化 */
 .ProseMirror .mermaid-block svg {
-    max-width: 100%;
+    max-width: none;
     height: auto;
 }
 /* 空图表占位 */
@@ -579,25 +579,19 @@ body.dark .ProseMirror .mermaid-block .mermaid-fallback.mermaid-error {
     margin: 1em 0;
 }
 #read-view .mermaid-block svg {
-    max-width: 100%;
+    max-width: none;
     height: auto;
 }
 
-/* ============ Mermaid 编辑面板（非模态） ============ */
+/* ============ Mermaid 编辑面板（模态） ============ */
 .mermaid-popover {
-    /* 非模态对话框：固定在视口右侧，不遮挡编辑区。
-       覆盖基类的居中定位（top/left/transform）与宽度；
-       整体限高在视口内，大图由预览区滚动条消化，不会撑出屏幕 */
-    top: 48px;
-    right: 24px;
-    left: auto;
-    transform: none;
-    width: 680px;
-    max-width: calc(100vw - 48px);
+    max-width: 720px;
+    /* 对话框整体不超出视口：纵向 flex 布局 + 限高，
+       居中定位由基类 .math-editor-popover 提供 */
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
-    max-height: calc(100vh - 72px);
+    max-height: calc(100vh - 48px);
     overflow-y: auto;
 }
 .mermaid-source {

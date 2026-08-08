@@ -199,7 +199,8 @@ function mermaidNodeView(ref) {
             dom.innerHTML = _sanitizeMermaidSvg(res.svg || '');
             var svg = dom.querySelector('svg');
             if (svg) {
-                svg.style.maxWidth = '100%';
+                // 编辑区渲染不缩放——该多大就多大
+                svg.style.maxWidth = 'none';
                 svg.style.height = 'auto';
             }
         }).catch(function(err) {
@@ -930,44 +931,54 @@ window.editorApi = {
         }
     },
 
-    // Mermaid 编辑面板（非模态：无遮罩、不阻塞编辑区，打开期间可继续编辑正文；
-    // 因此不设置 _mathEditing 抑制标志，正文修改的脏状态照常上报）
+    // Mermaid 编辑面板（模态：遮罩覆盖编辑区，复用 _mathEditing 抑制标志）
     _mermaidEditor: {
+        overlay: null,
         popover: null,
         input: null,
         preview: null,
         okBtn: null,
         cancelBtn: null,
-        _escHandler: null,    // document 级 ESC 监听（无论焦点在哪都能关闭）
         getPos: null,         // 编辑模式：NodeView 的 getPos 函数
         pos: null,            // 编辑模式：位置快照
         mode: 'create',
+        _dirtyBefore: false,
+        _confirmed: false,
 
         // 双击打开（编辑模式）
         open: function(getPos, source) {
             var ed = window.editorApi.editor;
             if (!ed) return;
+            this._dirtyBefore = window.editorApi._dirty;
+            this._confirmed = false;
+            window.editorApi._mathEditing = true;
             this.getPos = getPos;
             this.pos = (typeof getPos === 'function') ? getPos() : null;
             this.mode = 'edit';
             this.buildDom();
             this.show(source || '');
+            ed.view.dom.blur();
         },
 
         // 新建（工具栏按钮触发）
         create: function() {
             var ed = window.editorApi.editor;
             if (!ed) return;
+            this._dirtyBefore = window.editorApi._dirty;
+            this._confirmed = false;
+            window.editorApi._mathEditing = true;
             this.getPos = null;
             this.mode = 'create';
             this.buildDom();
             this.show('');
+            ed.view.dom.blur();
         },
 
         buildDom: function() {
             this.cleanupDom();
             var self = this;
-            // 非模态：不创建遮罩层，编辑区保持可交互
+            this.overlay = document.createElement('div');
+            this.overlay.className = 'math-editor-overlay';
 
             this.popover = document.createElement('div');
             this.popover.className = 'math-editor-popover mermaid-popover';
@@ -1027,19 +1038,15 @@ window.editorApi = {
             actions.appendChild(this.okBtn);
             this.popover.appendChild(actions);
 
-            // 键盘：Ctrl/Cmd+Enter 确定（裸 Enter 换行）
+            // 键盘：Ctrl/Cmd+Enter 确定，Esc 关闭（裸 Enter 换行）
             this.input.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') { e.preventDefault(); self.close(); return; }
                 if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); self.confirm(); }
             });
-            // ESC 关闭：绑在 document 捕获阶段——非模态下焦点可能在编辑区等
-            // 任意位置，都应能关闭对话框；中文输入法组词期间（isComposing）不拦截
-            this._escHandler = function(e) {
-                if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); self.close(); }
-            };
-            document.addEventListener('keydown', this._escHandler, true);
             this.input.addEventListener('input', function() { self.updatePreview(); });
             this.popover.addEventListener('click', function(e) { e.stopPropagation(); });
 
+            document.body.appendChild(this.overlay);
             document.body.appendChild(this.popover);
         },
 
@@ -1065,12 +1072,7 @@ window.editorApi = {
             window.mermaid.render(id, src).then(function(res) {
                 p.innerHTML = _sanitizeMermaidSvg(res.svg || '');
                 var svg = p.querySelector('svg');
-                if (svg) {
-                    // 约束到预览区宽度（避免 CJK 节点因布局偏差而整体过大）；
-                    // 超出高度部分由预览区滚动条承接（见 editor.css max-height:44vh）
-                    svg.style.maxWidth = '100%';
-                    svg.style.height = 'auto';
-                }
+                if (svg) { svg.style.maxWidth = '100%'; svg.style.height = 'auto'; }
             }).catch(function(err) {
                 p.innerHTML = '<span style="color:#c00;font-size:13px;">渲染失败：'
                     + _escapeText(err && err.message || String(err)) + '</span>';
@@ -1083,12 +1085,11 @@ window.editorApi = {
             if (!src) { this.close(); return; }
             var ed = window.editorApi.editor;
             if (!ed) { this.close(); return; }
+            this._confirmed = true;
             window.editorApi._forceDirty();
             if (this.mode === 'edit') {
-                // 非模态下对话框打开期间节点可能已被删除/移动：
-                // getPos() 动态返回当前位置，节点已不存在时返回 undefined
                 var p = (typeof this.getPos === 'function') ? this.getPos() : this.pos;
-                if (typeof p !== 'number') { this.close(); return; }
+                if (p === null || p === false) { this.close(); return; }
                 ed.view.dispatch(ed.state.tr.setNodeMarkup(p, undefined, { source: src }));
             } else {
                 ed.commands.insertContent({ type: 'mermaid', attrs: { source: src } });
@@ -1097,11 +1098,9 @@ window.editorApi = {
         },
 
         cleanupDom: function() {
-            if (this._escHandler) {
-                document.removeEventListener('keydown', this._escHandler, true);
-                this._escHandler = null;
-            }
+            if (this.overlay && this.overlay.parentNode) this.overlay.parentNode.removeChild(this.overlay);
             if (this.popover && this.popover.parentNode) this.popover.parentNode.removeChild(this.popover);
+            this.overlay = null;
             this.popover = null;
             this.input = null;
             this.preview = null;
@@ -1112,11 +1111,25 @@ window.editorApi = {
         close: function() {
             this.cleanupDom();
             this.getPos = null;
-            // 非模态：不回滚脏状态——对话框打开期间编辑正文属于正常操作，
-            // 其产生的脏标记必须保留，否则关闭未保存文档时会漏掉保存提示
+            if (!this._confirmed) {
+                window.editorApi._dirty = this._dirtyBefore;
+                if (window.editorApi.bridge) {
+                    window.editorApi.bridge.contentChanged(!!this._dirtyBefore);
+                }
+            }
+            var self = this;
             setTimeout(function() {
                 var ed = window.editorApi.editor;
                 if (ed) ed.view.focus();
+                setTimeout(function() {
+                    window.editorApi._mathEditing = false;
+                    if (!self._confirmed) {
+                        window.editorApi._dirty = self._dirtyBefore;
+                        if (window.editorApi.bridge) {
+                            window.editorApi.bridge.contentChanged(!!self._dirtyBefore);
+                        }
+                    }
+                }, 150);
             }, 50);
         }
     },
