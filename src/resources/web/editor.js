@@ -1006,6 +1006,64 @@ window.editorApi = {
         window.editorApi._mermaidEditor.create();
     },
 
+    // 插入脚注（C++ 侧调用）：光标处插引用，文末容器追加空定义，焦点留正文
+    insertFootnote: function() {
+        var ed = this.editor;
+        if (!ed) return;
+        var schema = ed.state.schema;
+        // 1) 扫描最大数字 id +1；无数字则从 1 起
+        var maxNum = 0;
+        ed.state.doc.descendants(function(node) {
+            if (node.type.name === 'footnoteReference' || node.type.name === 'footnoteDef') {
+                if (/^\d+$/.test(node.attrs.id)) {
+                    var n = parseInt(node.attrs.id, 10);
+                    if (n > maxNum) maxNum = n;
+                }
+            }
+        });
+        var newId = String(maxNum + 1);
+        // 2) 光标处插入引用（insertContentAt 友好处理选区）
+        ed.chain().focus().insertContentAt(
+            ed.state.selection.from,
+            [{ type: 'footnoteReference', attrs: { id: newId } }]
+        ).run();
+        // 3) 确保 footerContainer 存在并追加空定义
+        ed.chain().command(function(ref) {
+            var tr = ref.tr, state = ref.state, dispatch = ref.dispatch;
+            var doc = state.doc;
+            var last = doc.lastChild;
+            var def = schema.nodes.footnoteDef.create({ id: newId });
+            if (last && last.type.name === 'footnoteContainer') {
+                // 容器内末尾（闭合标签前）插入 def
+                tr.insert(doc.content.size - 1, def);
+            } else {
+                var container = schema.nodes.footnoteContainer.create(null, def);
+                tr.insert(doc.content.size, container);
+            }
+            tr.scrollIntoView();
+            dispatch(tr);
+            return true;
+        }).run();
+    },
+
+    // 改名（NodeView 双击触发）：遍历文档同步所有同 id 的 reference 与 def
+    renameFootnote: function(fromId, toId) {
+        var ed = this.editor;
+        if (!ed) return;
+        ed.chain().command(function(ref) {
+            var tr = ref.tr, state = ref.state, dispatch = ref.dispatch;
+            state.doc.descendants(function(node, pos) {
+                if ((node.type.name === 'footnoteReference'
+                     || node.type.name === 'footnoteDef')
+                    && node.attrs.id === fromId) {
+                    tr.setNodeMarkup(pos, null, { id: toId });
+                }
+            });
+            dispatch(tr);
+            return true;
+        }).run();
+    },
+
     // 打开 emoji 选择器浮层（C++ 侧传入定位坐标）
     openEmojiPicker: function(x, y) {
         window.editorApi._emojiPicker.open(x, y);
