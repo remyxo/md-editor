@@ -1132,6 +1132,24 @@ QString MarkdownHandler::fromHtml(const QString &html)
     doc.setHtml(processed);
     QString md = doc.toMarkdown();
 
+    // 去除 ATX 标题行首"块级列表标记"的多余反斜杠转义。
+    // QTextDocument::toMarkdown()（md4c）为防止有序/无序列表误解析，
+    // 会给标题内联内容开头的列表标记加反斜杠（如 "## 1\. xxx"、"## \- xxx"）。
+    // 但 ATX 标题的内联内容按内联规则解析，不触发块级列表语法，这些转义多余
+    // 且影响源码可读性。仅处理绝对安全的纯列表标记：
+    //   数字点/数字括号（1\. / 1\)）与列表符 - / +（\- / \+）；
+    // * 与 # 涉及强调/ATX 闭合序列，保留原转义以免改变语义。
+    // 正文行首的转义必须保留（否则 "1. xxx" 会被解析为有序列表）——
+    // 正则锚定 #{1,6}，只作用于标题行。
+    md.replace(
+        QRegularExpression("^(#{1,6}\\s+)(\\d{1,9})\\\\([.)])",
+                           QRegularExpression::MultilineOption),
+        "\\1\\2\\3");
+    md.replace(
+        QRegularExpression("^(#{1,6}\\s+)\\\\([-+])",
+                           QRegularExpression::MultilineOption),
+        "\\1\\2");
+
     // 3) 还原占位符（逆序：后入先还原，防止嵌套占位符丢失）
     for (int i = placeholders.size() - 1; i >= 0; --i)
         md.replace(placeholders[i], backups[i]);

@@ -645,6 +645,57 @@ private slots:
         QVERIFY2(!html.contains("ZZFR") && !html.contains("ZZHI"),
                  qPrintable("残留占位符，实际: " + html));
     }
+
+    // ===== 标题行首列表标记不应被过度转义（md4c 转义修复）=====
+
+    void testHeadingNumberDotNotEscaped()
+    {
+        // Bug: <h2>1. 这是标题2</h2> 切换源码后多出 "\"，变成 "## 1\. 这是标题2"
+        // ATX 标题内联内容不触发块级列表语法，数字点转义是多余的
+        QString md = MarkdownHandler::fromHtml(
+            "<h2>1. 这是标题2,一般表示章节</h2>");
+        QVERIFY2(md.contains("## 1. 这是标题2"),
+                 qPrintable("标题行首数字点不应被转义，实际: " + md));
+        QVERIFY2(!md.contains("1\\."),
+                 qPrintable("不应残留 1\\. 转义，实际: " + md));
+        // 往返一致：去转义后 toHtml 仍是标题、文本不变
+        QString html2 = MarkdownHandler::toHtml(md);
+        QVERIFY2(html2.contains("1. 这是标题2"),
+                 qPrintable("往返后标题文本丢失，实际: " + html2));
+    }
+
+    void testHeadingListMarkersNotEscaped()
+    {
+        // 多位数字.、数字)、-、+ 开头的标题行首转义都应去除
+        QVERIFY2(!MarkdownHandler::fromHtml("<h2>2024. 年度报告</h2>").contains("\\."),
+                 qPrintable("多位数字点不应转义，实际: " +
+                            MarkdownHandler::fromHtml("<h2>2024. 年度报告</h2>")));
+        QVERIFY2(!MarkdownHandler::fromHtml("<h2>1) 括号标题</h2>").contains("\\)"),
+                 qPrintable("数字括号不应转义，实际: " +
+                            MarkdownHandler::fromHtml("<h2>1) 括号标题</h2>")));
+        QVERIFY2(!MarkdownHandler::fromHtml("<h2>- 减号标题</h2>").contains("\\-"),
+                 qPrintable("减号不应转义，实际: " +
+                            MarkdownHandler::fromHtml("<h2>- 减号标题</h2>")));
+        QVERIFY2(!MarkdownHandler::fromHtml("<h2>+ 加号标题</h2>").contains("\\+"),
+                 qPrintable("加号不应转义，实际: " +
+                            MarkdownHandler::fromHtml("<h2>+ 加号标题</h2>")));
+    }
+
+    void testHeadingAsteriskEscapePreserved()
+    {
+        // * 涉及强调语义（如 *A* 会变强调），其转义必须保留，不能误去除
+        QString md = MarkdownHandler::fromHtml("<h2>*A* 包裹</h2>");
+        QVERIFY2(md.contains("\\*"),
+                 qPrintable("* 转义应保留以防强调误解析，实际: " + md));
+    }
+
+    void testBodyListEscapePreserved()
+    {
+        // 正文里的有序列表标记转义必须保留 —— 去掉会变成 <ol> 有序列表，破坏语义
+        QString md = MarkdownHandler::fromHtml("<p>1. 这是正文</p>");
+        QVERIFY2(md.contains("1\\."),
+                 qPrintable("正文数字点转义必须保留，实际: " + md));
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)
