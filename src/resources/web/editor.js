@@ -876,31 +876,44 @@ window.editorApi = {
     },
     insertImage: function(path) { if (this.editor) this.editor.commands.setImage({ src: path }); },
     insertHorizontalRule: function() { if (this.editor) this.editor.commands.setHorizontalRule(); },
-    toggleSourceMode: function() {
+
+    // 进入源码模式（C++ 侧传入已转换好的 Markdown）
+    enterSourceMode: function(md) {
         if (!this.editor) return;
-        var editorDiv = document.getElementById('editor');
+        this._sourceValue = md;
         var sourceView = document.getElementById('source-view');
-        if (this.isSourceMode) {
-            // 比较源码视图是否相对进入时有改动，避免丢失脏状态
-            var changed = sourceView.value !== this._sourceValue;
-            // 切回 WYSIWYG
-            this._loading = true;
-            this.editor.commands.setContent(sourceView.value);
-            this._loading = false;
-            sourceView.style.display = 'none';
-            editorDiv.style.display = '';
-            this.isSourceMode = false;
-            // 源码视图有改动且当前未标记脏时，标记并通知
-            if (changed && !this._dirty) this._markDirty();
-        } else {
-            // 切到源码视图，记录进入时的内容以检测改动
-            this._sourceValue = this.editor.getHTML();
-            sourceView.value = this._sourceValue;
-            editorDiv.style.display = 'none';
-            sourceView.style.display = '';
-            if (this._readOnly) sourceView.setAttribute('readonly', '');
-            this.isSourceMode = true;
-        }
+        var editorDiv = document.getElementById('editor');
+        sourceView.value = md;
+        editorDiv.style.display = 'none';
+        sourceView.style.display = '';
+        if (this._readOnly) sourceView.setAttribute('readonly', '');
+        else sourceView.removeAttribute('readonly');
+        this.isSourceMode = true;
+    },
+
+    // 退出源码模式（C++ 侧传入已转换好的 HTML）
+    exitSourceMode: function(html) {
+        if (!this.editor) return;
+        var sourceView = document.getElementById('source-view');
+        var editorDiv = document.getElementById('editor');
+        var changed = sourceView.value !== this._sourceValue;
+        this._loading = true;
+        this.editor.commands.setContent(html);
+        this._loading = false;
+        sourceView.style.display = 'none';
+        editorDiv.style.display = '';
+        this.isSourceMode = false;
+        if (changed && !this._dirty) this._markDirty();
+        this.notifyFormat();
+        this.notifyHeadings();
+        this.notifyWordCount();
+        this.notifyHistory();
+    },
+
+    // 获取源码区当前内容（C++ 侧用于 MD→HTML 转换）
+    getSourceContent: function() {
+        var sv = document.getElementById('source-view');
+        return sv ? sv.value : '';
     },
     scrollToPos: function(pos) {
         if (!this.editor) return;
