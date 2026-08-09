@@ -122,6 +122,38 @@ private slots:
         QVERIFY(md2.contains("E = mc^2"));
     }
 
+    void testMathTableBlankLinesRT() {
+        // 块级公式 + 表格：往返后两者之间应恰好 1 空行（曾因 backup 末尾
+        // 冗余 \n 与 md4c 块边界 \n\n\n 叠加而膨胀为 3 空行）
+        QString html =
+            "<div data-type=\"block-math\" data-latex=\"x = y\"></div>"
+            "<table><tr><th>A</th></tr><tr><td>1</td></tr></table>";
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(!md.contains("$$\n\n\n"),
+                 qPrintable("公式后不应出现多余空行，实际:\n" + md));
+        QVERIFY2(md.startsWith("$$\nx = y\n$$\n\n|"),
+                 qPrintable("公式与表格间应恰好 1 空行，实际:\n" + md));
+    }
+
+    void testMathParagraphOneBlankRT() {
+        // 块级公式 + 段落：往返后两者间应恰好 1 空行（不误伤）
+        QString html =
+            "<div data-type=\"block-math\" data-latex=\"a = b\"></div>"
+            "<p>正文段落</p>";
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.startsWith("$$\na = b\n$$\n\n正文段落"),
+                 qPrintable("公式与段落间应恰好 1 空行，实际:\n" + md));
+    }
+
+    void testCodeBlockInnerBlanksPreserved() {
+        // 代码块内部用户有意保留的多空行，往返后不应被块间空行压缩破坏
+        QString md1 = "```\nline1\n\n\nline2\n```";
+        QString html = MarkdownHandler::toHtml(md1);
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("line1\n\n\nline2"),
+                 qPrintable("代码块内部 2 空行应原样保留，实际:\n" + md2));
+    }
+
     void testInlineMathRoundTrip() {
         // 行内公式往返：MD → HTML → MD
         QString md1 = "这是 $E=mc^2$ 公式\n";

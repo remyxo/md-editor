@@ -750,7 +750,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QStringList parts;
             for (const QString &p : latex.split(" \\\\ "))
                 parts << p.trimmed();
-            QString md = "$$\n" + parts.join("\n") + "\n$$\n";
+            QString md = "$$\n" + parts.join("\n") + "\n$$";
             QString ph = QString("ZZBM%1ZZ").arg(n++);
             placeholders << ph;
             backups << md;
@@ -1149,6 +1149,12 @@ QString MarkdownHandler::fromHtml(const QString &html)
         QRegularExpression("^(#{1,6}\\s+)\\\\([-+])",
                            QRegularExpression::MultilineOption),
         "\\1\\2");
+
+    // 规范化块间多余空行：toMarkdown（md4c）在块边界（如占位符块→表格）
+    // 会输出 3+ 连续换行；压缩为标准段落分隔（\n\n = 1 空行）。
+    // 必须在占位符还原【之前】执行：此时刻占位符均为单行文本（ZZxxxZZ），
+    // 自身不含换行；若放到还原之后，会破坏代码块/公式内用户有意保留的空行。
+    md.replace(QRegularExpression("\\n{3,}"), "\n\n");
 
     // 3) 还原占位符（逆序：后入先还原，防止嵌套占位符丢失）
     for (int i = placeholders.size() - 1; i >= 0; --i)
