@@ -352,6 +352,123 @@ function buildMermaidNode() {
     });
 }
 
+// 构造脚注引用节点（行内原子节点，显示为上标标记）
+// - id 为字面标记文本（"1" / "注1" / "附录A"）
+// - 渲染 <sup data-type="footnoteRef" data-id="{id}">{id}</sup>
+// - 自定义 NodeView：双击触发改名（与 insertLink 的 prompt 风格一致）
+function buildFootnoteReference() {
+    return TipTapNode.create({
+        name: 'footnoteReference',
+        group: 'inline',
+        inline: true,
+        atom: true,
+        selectable: true,
+        addAttributes: function() {
+            return {
+                id: { default: '' }
+            };
+        },
+        parseHTML: function() {
+            return [{
+                tag: 'sup[data-type=footnoteRef]',
+                getAttrs: function(el) {
+                    return { id: el.getAttribute('data-id') || '' };
+                }
+            }];
+        },
+        renderHTML: function(ref) {
+            var id = ref.node.attrs.id;
+            return ['sup', { 'data-type': 'footnoteRef', 'data-id': id }, id];
+        },
+        addNodeView: function() {
+            return function(ref) {
+                var node = ref.node;
+                var dom = document.createElement('sup');
+                dom.setAttribute('data-type', 'footnoteRef');
+                function render() {
+                    dom.setAttribute('data-id', node.attrs.id);
+                    dom.textContent = node.attrs.id;
+                }
+                render();
+                dom.title = '双击修改脚注标记';
+                dom.addEventListener('dblclick', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    var cur = node.attrs.id;
+                    var v = prompt('脚注标记:', cur);
+                    if (v != null) {
+                        v = v.trim();
+                        // 禁止空串与脚注语法字符
+                        if (v && v !== cur && !/[\[\]\s:]/.test(v)) {
+                            window.editorApi.renameFootnote(cur, v);
+                        }
+                    }
+                });
+                return {
+                    dom: dom,
+                    update: function(n) {
+                        if (n.type !== node.type) return false;
+                        node = n;
+                        render();
+                        return true;
+                    },
+                    selectNode: function() { dom.classList.add('ProseMirror-selectednode'); },
+                    deselectNode: function() { dom.classList.remove('ProseMirror-selectednode'); }
+                };
+            };
+        }
+    });
+}
+
+// 构造脚注容器节点（文末块容器，仅含若干 footnoteDef）
+function buildFootnoteContainer() {
+    return TipTapNode.create({
+        name: 'footnoteContainer',
+        group: 'block',
+        content: 'footnoteDef+',
+        isolating: true,
+        defining: true,
+        parseHTML: function() {
+            return [{ tag: 'div[data-type=footnoteContainer]' }];
+        },
+        renderHTML: function() {
+            return ['div', { 'data-type': 'footnoteContainer' }, 0];
+        }
+    });
+}
+
+// 构造单条脚注定义（容器子节点，单段内联富文本）
+// marker span 显示标记前缀（只读），正文包入 footnote-content span（parseHTML getContentElement 定位）
+function buildFootnoteDef() {
+    return TipTapNode.create({
+        name: 'footnoteDef',
+        content: 'inline*',
+        defining: true,
+        addAttributes: function() {
+            return {
+                id: { default: '' }
+            };
+        },
+        parseHTML: function() {
+            return [{
+                tag: 'div[data-type=footnoteDef]',
+                getAttrs: function(el) {
+                    return { id: el.getAttribute('data-id') || '' };
+                },
+                getContentElement: function(el) {
+                    return el.querySelector('.footnote-content') || el;
+                }
+            }];
+        },
+        renderHTML: function(ref) {
+            var id = ref.node.attrs.id;
+            return ['div', { 'data-type': 'footnoteDef', 'data-id': id },
+                ['span', { class: 'footnote-marker', contenteditable: 'false' }, id],
+                ['span', { class: 'footnote-content' }, 0]];
+        }
+    });
+}
+
 // Mermaid NodeView：把 source 渲染为 SVG，库缺失/渲染失败则回退显示源码
 function mermaidNodeView(ref) {
     var node = ref.node;
@@ -505,8 +622,12 @@ window.editorApi = {
         if (TipTapExtension && TipTapInputRule)
             exts.push(buildEmojiExtension());
         // Mermaid 块节点（自定义 NodeView，priority 高于 codeBlock）
-        if (TipTapNode)
+        if (TipTapNode) {
             exts.push(buildMermaidNode());
+            exts.push(buildFootnoteReference());
+            exts.push(buildFootnoteContainer());
+            exts.push(buildFootnoteDef());
+        }
         return exts;
     },
 

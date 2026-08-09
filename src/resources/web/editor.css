@@ -693,3 +693,39 @@ body.dark .emoji-picker-tabs { background: #262626; border-top-color: #3d3d3d; }
 body.dark .emoji-tab { color: #bbb; }
 body.dark .emoji-tab:hover { background: #3d3d3d; }
 body.dark .emoji-tab.active { background: #2a3f5f; color: #8ab4f8; }
+
+/* ===== 脚注（Footnote）===== */
+/* 正文脚注引用：上标、蓝色、可交互感 */
+.ProseMirror sup[data-type="footnoteRef"] {
+  color: #1967d2;
+  cursor: pointer;
+  font-size: 0.75em;
+  vertical-align: super;
+  line-height: 0;
+}
+.ProseMirror sup[data-type="footnoteRef"]:hover { text-decoration: underline; }
+
+/* 文末脚注容器：分隔线 */
+.ProseMirror div[data-type="footnoteContainer"] {
+  margin-top: 2em;
+  padding-top: 0.75em;
+  border-top: 1px solid #e0e0e0;
+  font-size: 0.9em;
+}
+
+/* 单条定义 */
+.ProseMirror div[data-type="footnoteDef"] {
+  margin: 0.25em 0;
+}
+.ProseMirror .footnote-marker {
+  color: #1967d2;
+  font-weight: 600;
+  margin-right: 0.35em;
+}
+
+/* 暗色覆盖 */
+body.dark .ProseMirror sup[data-type="footnoteRef"] { color: #8ab4f8; }
+body.dark .ProseMirror .footnote-marker { color: #8ab4f8; }
+body.dark .ProseMirror div[data-type="footnoteContainer"] {
+  border-top-color: #3c4043;
+}
