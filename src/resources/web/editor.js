@@ -1421,6 +1421,8 @@ window.editorApi = {
             var py = (typeof y === 'number') ? y : 60;
             if (px + w > W - 8) px = Math.max(8, W - w - 8);  // 右边溢出 → 右对齐
             if (py + h > H - 8) py = Math.max(8, H - h - 8);  // 底部溢出 → 上移
+            px = Math.max(8, px);  // 左侧/上方溢出 → 钳制到可见区域
+            py = Math.max(8, py);
             this.root.style.left = px + 'px';
             this.root.style.top = py + 'px';
         },
