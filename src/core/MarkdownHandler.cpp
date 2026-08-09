@@ -873,64 +873,6 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
     }
 
-    // 7) 脚注容器 <div data-type="footnoteContainer"> → [^id]: 内容（多条）
-    {
-        QRegularExpression contOpenRe(
-            R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteContainer"[^>]*>)");
-        int n = 0;
-        int offset = 0;
-        while (true) {
-            auto om = contOpenRe.match(processed, offset);
-            if (!om.hasMatch()) break;
-            int closeStart = findMatchingDivClose(processed, om.capturedStart());
-            if (closeStart < 0) { offset = om.capturedStart() + 1; continue; }
-            QString inner = processed.mid(om.capturedEnd(),
-                                          closeStart - om.capturedEnd());
-            // 提取每条 def div
-            QRegularExpression defDivRe(
-                R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteDef"[^>]*>(.*?)</div>)",
-                QRegularExpression::DotMatchesEverythingOption);
-            QRegularExpression defIdRe("data-id\\s*=\\s*\"([^\"]*)\"");
-            QRegularExpression contentOpenRe(
-                R"(<span\b[^>]*class\s*=\s*"footnote-content"[^>]*>)");
-            QString mdBlock;
-            int doff = 0;
-            while (true) {
-                auto dm = defDivRe.match(inner, doff);
-                if (!dm.hasMatch()) break;
-                auto iim = defIdRe.match(dm.captured());
-                QString id = iim.hasMatch() ? iim.captured(1) : QString();
-                // 取 footnote-content span 内的 inline HTML（跳过 marker）。
-                // content 含 Qt 生成的嵌套 <span style="...">（粗体/链接色等），
-                // 必须平衡扫描定位配对 </span>，非贪婪正则会停在首个嵌套闭合标签。
-                QString defInner = dm.captured(1);
-                auto com = contentOpenRe.match(defInner);
-                QString contentHtml;
-                if (com.hasMatch()) {
-                    int spanClose = findMatchingSpanClose(defInner, com.capturedStart());
-                    contentHtml = (spanClose >= 0)
-                        ? defInner.mid(com.capturedEnd(), spanClose - com.capturedEnd())
-                        : defInner.mid(com.capturedEnd());
-                } else {
-                    contentHtml = defInner;
-                }
-                // inline HTML → MD（嵌套 QTextDocument）
-                QTextDocument d;
-                d.setHtml(contentHtml);
-                QString cm2 = d.toMarkdown();
-                while (cm2.endsWith('\n')) cm2.chop(1);
-                mdBlock += "[^" + id + "]: " + cm2 + "\n";
-                doff = dm.capturedEnd();
-            }
-            QString ph = QString("ZZFD%1ZZ").arg(n++);
-            placeholders << ph;
-            backups << mdBlock;
-            int totalLen = closeStart + 6 - om.capturedStart();  // 含 </div>
-            processed.replace(om.capturedStart(), totalLen, ph);
-            offset = om.capturedStart() + ph.length();
-        }
-    }
-
     // 上下标 <sub>/<sup> → Pandoc ~x~/^x^（toMarkdown 会丢弃 sub/sup 标签）
     //   Pandoc 上下标内容为纯文本，剥离内部富文本标签
     {
@@ -1023,6 +965,69 @@ QString MarkdownHandler::fromHtml(const QString &html)
             int totalLen = closeStart + 5 - m.capturedStart(); // 含 </ul>
             processed.replace(m.capturedStart(), totalLen, ph);
             offset = m.capturedStart() + ph.length();
+        }
+    }
+
+    // 7) 脚注容器 <div data-type="footnoteContainer"> → [^id]: 内容（多条）
+    //    位于所有行内格式（上下标/行内代码/任务列表）占位化之后：footnote-content
+    //    内的 <sub>/<sup>/<code> 等已先被通用步骤替换为 ZZSB/ZZSP/ZZCD 占位符，
+    //    它们作为字面文本穿过嵌套 QTextDocument，最终由逆序还原统一还原
+    //    （ZZFD 最后追加 → 最先还原 → [^id]: aZZSB0ZZc → 再被 ZZSB 还原为 a~b~c）。
+    //    依赖前置的 Step 6：footnoteRef 的 <sup> 已先隔离为 ZZFR，不会被本步误读。
+    {
+        QRegularExpression contOpenRe(
+            R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteContainer"[^>]*>)");
+        int n = 0;
+        int offset = 0;
+        while (true) {
+            auto om = contOpenRe.match(processed, offset);
+            if (!om.hasMatch()) break;
+            int closeStart = findMatchingDivClose(processed, om.capturedStart());
+            if (closeStart < 0) { offset = om.capturedStart() + 1; continue; }
+            QString inner = processed.mid(om.capturedEnd(),
+                                          closeStart - om.capturedEnd());
+            // 提取每条 def div
+            QRegularExpression defDivRe(
+                R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteDef"[^>]*>(.*?)</div>)",
+                QRegularExpression::DotMatchesEverythingOption);
+            QRegularExpression defIdRe("data-id\\s*=\\s*\"([^\"]*)\"");
+            QRegularExpression contentOpenRe(
+                R"(<span\b[^>]*class\s*=\s*"footnote-content"[^>]*>)");
+            QString mdBlock;
+            int doff = 0;
+            while (true) {
+                auto dm = defDivRe.match(inner, doff);
+                if (!dm.hasMatch()) break;
+                auto iim = defIdRe.match(dm.captured());
+                QString id = iim.hasMatch() ? iim.captured(1) : QString();
+                // 取 footnote-content span 内的 inline HTML（跳过 marker）。
+                // content 含 Qt 生成的嵌套 <span style="...">（粗体/链接色等），
+                // 必须平衡扫描定位配对 </span>，非贪婪正则会停在首个嵌套闭合标签。
+                QString defInner = dm.captured(1);
+                auto com = contentOpenRe.match(defInner);
+                QString contentHtml;
+                if (com.hasMatch()) {
+                    int spanClose = findMatchingSpanClose(defInner, com.capturedStart());
+                    contentHtml = (spanClose >= 0)
+                        ? defInner.mid(com.capturedEnd(), spanClose - com.capturedEnd())
+                        : defInner.mid(com.capturedEnd());
+                } else {
+                    contentHtml = defInner;
+                }
+                // inline HTML → MD（嵌套 QTextDocument）
+                QTextDocument d;
+                d.setHtml(contentHtml);
+                QString cm2 = d.toMarkdown();
+                while (cm2.endsWith('\n')) cm2.chop(1);
+                mdBlock += "[^" + id + "]: " + cm2 + "\n";
+                doff = dm.capturedEnd();
+            }
+            QString ph = QString("ZZFD%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << mdBlock;
+            int totalLen = closeStart + 6 - om.capturedStart();  // 含 </div>
+            processed.replace(om.capturedStart(), totalLen, ph);
+            offset = om.capturedStart() + ph.length();
         }
     }
 

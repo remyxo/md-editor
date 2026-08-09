@@ -403,6 +403,13 @@ private slots:
                  qPrintable("定义2往返丢失，实际: " + back));
     }
 
+    void testFootnoteDefSubscriptRoundTrip() {
+        QString md = "正文[^1]\n\n[^1]: a~b~c";
+        QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("[^1]: a~b~c"),
+                 qPrintable("定义内下标往返丢失，实际: " + back));
+    }
+
     void testExtractTitle() {
         QString md = "# 我的文档标题\n\n内容。";
         QString title = MarkdownHandler::extractTitle(md);
