@@ -141,6 +141,155 @@ var EMOJI_SHORTCODES = {
     'red_circle': '🔴', 'large_blue_circle': '🔵', 'white_circle': '⚪', 'black_circle': '⚫'
 };
 
+// 表情符号分类数据（供 emoji 选择器使用；与 EMOJI_SHORTCODES 独立，互不影响）
+var EMOJI_CATEGORIES = [
+    { id: 'smileys', icon: '😀', name: '笑脸', emojis: [
+        { ch:'😀', kw:'笑脸 开心 grin' }, { ch:'😃', kw:'笑脸 大笑 smiley' },
+        { ch:'😄', kw:'笑脸 开心 smile' }, { ch:'😁', kw:'咧嘴 grin' },
+        { ch:'😆', kw:'哈哈 laughing' }, { ch:'😅', kw:'汗 笑 sweat_smile' },
+        { ch:'🤣', kw:'笑哭 rolling' }, { ch:'😂', kw:'笑哭 流泪 joy' },
+        { ch:'🙂', kw:'微笑 slight_smile' }, { ch:'🙃', kw:'倒脸 upside_down' },
+        { ch:'😉', kw:'眨眼 wink' }, { ch:'😊', kw:'害羞 blush' },
+        { ch:'😇', kw:'天使 innocent' }, { ch:'🥰', kw:'爱心 恋 love' },
+        { ch:'😍', kw:'花痴 heart_eyes' }, { ch:'🤩', kw:'惊叹 star_struck' },
+        { ch:'😘', kw:'飞吻 kissing_heart' }, { ch:'😗', kw:'亲吻 kissing' },
+        { ch:'😚', kw:'亲亲 kissing_closed' }, { ch:'😋', kw:'美味 yum' },
+        { ch:'😛', kw:'吐舌 stuck_out_tongue' }, { ch:'😝', kw:'吐舌 眯眼 tongue' },
+        { ch:'🤪', kw:'搞怪 zany' }, { ch:'🤔', kw:'思考 thinking' },
+        { ch:'🤨', kw:'挑眉 raised_eyebrow' }, { ch:'😐', kw:'无表情 neutral' },
+        { ch:'😑', kw:'面无表情 expressionless' }, { ch:'😶', kw:'沉默 no_mouth' },
+        { ch:'🙄', kw:'翻白眼 roll_eyes' }, { ch:'😏', kw:'得意 smirk' },
+        { ch:'😒', kw:'不悦 unamused' }, { ch:'😞', kw:'失望 disappointed' },
+        { ch:'😟', kw:'担心 worried' }, { ch:'😕', kw:'困惑 confused' },
+        { ch:'🙁', kw:'皱眉 frowning' }, { ch:'😣', kw:' persevere 忍' },
+        { ch:'😖', kw:'困扰 confounded' }, { ch:'😫', kw:'疲惫 tired' },
+        { ch:'🥺', kw:'恳求 pleading' }, { ch:'😢', kw:'哭 cry' },
+        { ch:'😭', kw:'大哭 sob' }, { ch:'😤', kw:'哼 huff' },
+        { ch:'😠', kw:'生气 angry' }, { ch:'😡', kw:'怒 rage' },
+        { ch:'🤬', kw:'爆粗 cursing' }, { ch:'😱', kw:'尖叫 scream' },
+        { ch:'😨', kw:'害怕 fearful' }, { ch:'😰', kw:'焦虑 cold_sweat' },
+        { ch:'😳', kw:'脸红 flushed' }, { ch:'😴', kw:'睡觉 sleepy' },
+        { ch:'🤤', kw:'流口水 drool' }, { ch:'🥱', kw:'打哈欠 yawn' }
+    ]},
+    { id: 'gestures', icon: '👍', name: '手势', emojis: [
+        { ch:'👍', kw:'赞 好 +1 thumbsup' }, { ch:'👎', kw:'踩 差 -1 thumbsdown' },
+        { ch:'👌', kw:'好的 ok' }, { ch:'✌️', kw:'胜利 v' },
+        { ch:'🤞', kw:'祈祷 手指 crossed' }, { ch:'🤟', kw:'爱你 love_you' },
+        { ch:'🤘', kw:'摇滚 metal' }, { ch:'🤙', kw:'call' },
+        { ch:'👈', kw:'左 point_left' }, { ch:'👉', kw:'右 point_right' },
+        { ch:'👆', kw:'上 point_up' }, { ch:'👇', kw:'下 point_down' },
+        { ch:'☝️', kw:'一 指 point_up_2' }, { ch:'✋', kw:'停 手 hand' },
+        { ch:'🤚', kw:'手背 raised_back' }, { ch:'🖐️', kw:'五 手 hand_splayed' },
+        { ch:'👋', kw:'挥手 wave' }, { ch:'🤝', kw:'握手 handshake' },
+        { ch:'👏', kw:'鼓掌 clap' }, { ch:'🙌', kw:'举手 raised_hands' },
+        { ch:'🙏', kw:'祈祷 thanks pray' }, { ch:'💪', kw:'肌肉 力量 muscle' },
+        { ch:'✍️', kw:'写 writing' }, { ch:'👀', kw:'眼睛 eyes' }
+    ]},
+    { id: 'animals', icon: '🐱', name: '动物', emojis: [
+        { ch:'🐶', kw:'狗 dog' }, { ch:'🐱', kw:'猫 cat' },
+        { ch:'🐭', kw:'老鼠 mouse' }, { ch:'🐹', kw:'仓鼠 hamster' },
+        { ch:'🐰', kw:'兔 rabbit' }, { ch:'🦊', kw:'狐狸 fox' },
+        { ch:'🐻', kw:'熊 bear' }, { ch:'🐼', kw:'熊猫 panda' },
+        { ch:'🐨', kw:'考拉 koala' }, { ch:'🐯', kw:'老虎 tiger' },
+        { ch:'🦁', kw:'狮子 lion' }, { ch:'🐮', kw:'牛 cow' },
+        { ch:'🐷', kw:'猪 pig' }, { ch:'🐸', kw:'青蛙 frog' },
+        { ch:'🐵', kw:'猴子 monkey' }, { ch:'🐔', kw:'鸡 chicken' },
+        { ch:'🐧', kw:'企鹅 penguin' }, { ch:'🐦', kw:'鸟 bird' },
+        { ch:'🦆', kw:'鸭 duck' }, { ch:'🦉', kw:'猫头鹰 owl' },
+        { ch:'🐢', kw:'龟 turtle' }, { ch:'🐠', kw:'鱼 fish' },
+        { ch:'🐬', kw:'海豚 dolphin' }, { ch:'🐳', kw:'鲸 whale' },
+        { ch:'🦋', kw:'蝴蝶 butterfly' }, { ch:'🐝', kw:'蜜蜂 bee' },
+        { ch:'🐛', kw:'虫 bug' }, { ch:'🦄', kw:'独角兽 unicorn' }
+    ]},
+    { id: 'food', icon: '🍎', name: '食物', emojis: [
+        { ch:'🍎', kw:'苹果 apple' }, { ch:'🍊', kw:'橙子 orange' },
+        { ch:'🍌', kw:'香蕉 banana' }, { ch:'🍉', kw:'西瓜 watermelon' },
+        { ch:'🍇', kw:'葡萄 grapes' }, { ch:'🍓', kw:'草莓 strawberry' },
+        { ch:'🍑', kw:'桃 peach' }, { ch:'🍍', kw:'菠萝 pineapple' },
+        { ch:'🥭', kw:'芒果 mango' }, { ch:'🍔', kw:'汉堡 burger' },
+        { ch:'🍟', kw:'薯条 fries' }, { ch:'🍕', kw:'披萨 pizza' },
+        { ch:'🌭', kw:'热狗 hotdog' }, { ch:'🥗', kw:'沙拉 salad' },
+        { ch:'🍦', kw:'冰淇淋 icecream' }, { ch:'🍰', kw:'蛋糕 cake' },
+        { ch:'🍫', kw:'巧克力 chocolate' }, { ch:'🍿', kw:'爆米花 popcorn' },
+        { ch:'☕', kw:'咖啡 coffee' }, { ch:'🍵', kw:'茶 tea' },
+        { ch:'🍺', kw:'啤酒 beer' }, { ch:'🍷', kw:'红酒 wine' },
+        { ch:'🥤', kw:'饮料 cup' }, { ch:'🧋', kw:'奶茶 boba' }
+    ]},
+    { id: 'nature', icon: '🌸', name: '自然', emojis: [
+        { ch:'🌸', kw:'樱花 cherry_blossom' }, { ch:'🌹', kw:'玫瑰 rose' },
+        { ch:'🌻', kw:'向日葵 sunflower' }, { ch:'🌷', kw:'郁金香 tulip' },
+        { ch:'🍀', kw:'四叶草 clover' }, { ch:'🌿', kw:'草 herb' },
+        { ch:'🌳', kw:'树 tree' }, { ch:'🌴', kw:'棕榈 palm' },
+        { ch:'☀️', kw:'太阳 sunny' }, { ch:'🌞', kw:'太阳脸 sun_face' },
+        { ch:'🌙', kw:'月亮 moon' }, { ch:'🌕', kw:'满月 full_moon' },
+        { ch:'⭐', kw:'星 star' }, { ch:'🌟', kw:'闪光 stars' },
+        { ch:'✨', kw:'闪烁 sparkles' }, { ch:'⚡', kw:'闪电 zap' },
+        { ch:'🔥', kw:'火 fire' }, { ch:'💧', kw:'水滴 droplet' },
+        { ch:'🌈', kw:'彩虹 rainbow' }, { ch:'☁️', kw:'云 cloud' },
+        { ch:'❄️', kw:'雪花 snowflake' }, { ch:'🌊', kw:'海浪 ocean' },
+        { ch:'⛱️', kw:'伞 beach' }, { ch:'🌋', kw:'火山 volcano' }
+    ]},
+    { id: 'activities', icon: '⚽', name: '活动', emojis: [
+        { ch:'⚽', kw:'足球 soccer' }, { ch:'🏀', kw:'篮球 basketball' },
+        { ch:'🏈', kw:'橄榄球 football' }, { ch:'⚾', kw:'棒球 baseball' },
+        { ch:'🎾', kw:'网球 tennis' }, { ch:'🏐', kw:'排球 volleyball' },
+        { ch:'🎱', kw:'台球 pool' }, { ch:'🏓', kw:'乒乓球 ping_pong' },
+        { ch:'🎮', kw:'游戏 video_game' }, { ch:'🎯', kw:'靶 dart' },
+        { ch:'🎨', kw:'艺术 调色板 art' }, { ch:'🎵', kw:'音符 musical_note' },
+        { ch:'🎸', kw:'吉他 guitar' }, { ch:'🎤', kw:'麦克风 mic' },
+        { ch:'🎉', kw:'派对 tada' }, { ch:'🎈', kw:'气球 balloon' },
+        { ch:'🎁', kw:'礼物 gift' }, { ch:'🏆', kw:'奖杯 trophy' },
+        { ch:'🥇', kw:'金牌 first' }, { ch:'🚴', kw:'骑车 bike' },
+        { ch:'🏊', kw:'游泳 swim' }, { ch:'🏃', kw:'跑步 runner' },
+        { ch:'🎲', kw:'骰子 dice' }, { ch:'🧩', kw:'拼图 puzzle' }
+    ]},
+    { id: 'travel', icon: '🚗', name: '旅行', emojis: [
+        { ch:'🚗', kw:'汽车 car' }, { ch:'🚕', kw:'出租车 taxi' },
+        { ch:'🚌', kw:'公交车 bus' }, { ch:'🚆', kw:'火车 train' },
+        { ch:'✈️', kw:'飞机 airplane' }, { ch:'🚀', kw:'火箭 rocket' },
+        { ch:'🚢', kw:'船 ship' }, { ch:'🚲', kw:'自行车 bike' },
+        { ch:'🗺️', kw:'地图 map' }, { ch:'🧭', kw:'指南针 compass' },
+        { ch:'🏠', kw:'房子 home' }, { ch:'🏢', kw:'办公楼 office' },
+        { ch:'🏫', kw:'学校 school' }, { ch:'🏥', kw:'医院 hospital' },
+        { ch:'⛰️', kw:'山 mountain' }, { ch:'🏕️', kw:'露营 camping' },
+        { ch:'🏖️', kw:'海滩 beach' }, { ch:'🌍', kw:'地球 earth' },
+        { ch:'🗽', kw:'自由女神 statue' }, { ch:'🏰', kw:'城堡 castle' },
+        { ch:'🌉', kw:'桥 bridge' }, { ch:'🎡', kw:'摩天轮 ferris' },
+        { ch:'🌋', kw:'火山 volcano' }, { ch:'🌃', kw:'夜景 night' }
+    ]},
+    { id: 'objects', icon: '💡', name: '物品', emojis: [
+        { ch:'💡', kw:'灯泡 想法 bulb' }, { ch:'🔔', kw:'铃 bell' },
+        { ch:'📚', kw:'书 books' }, { ch:'📖', kw:'阅读 book' },
+        { ch:'📝', kw:'笔记 备忘 memo' }, { ch:'✏️', kw:'铅笔 pencil' },
+        { ch:'📌', kw:'图钉 pushpin' }, { ch:'📎', kw:'回形针 paperclip' },
+        { ch:'✂️', kw:'剪刀 scissors' }, { ch:'💻', kw:'电脑 laptop' },
+        { ch:'🖥️', kw:'台式机 desktop' }, { ch:'📱', kw:'手机 phone' },
+        { ch:'⌨️', kw:'键盘 keyboard' }, { ch:'🖱️', kw:'鼠标 mouse' },
+        { ch:'💾', kw:'保存 floppy' }, { ch:'📷', kw:'相机 camera' },
+        { ch:'📺', kw:'电视 tv' }, { ch:'🔋', kw:'电池 battery' },
+        { ch:'🔑', kw:'钥匙 key' }, { ch:'🔒', kw:'锁 lock' },
+        { ch:'🔨', kw:'锤子 hammer' }, { ch:'🛠️', kw:'工具 tools' },
+        { ch:'💣', kw:'炸弹 bomb' }, { ch:'🔮', kw:'水晶球 crystal' }
+    ]},
+    { id: 'symbols', icon: '❤️', name: '符号', emojis: [
+        { ch:'❤️', kw:'心 红 heart' }, { ch:'🧡', kw:'心 橙 orange_heart' },
+        { ch:'💛', kw:'心 黄 yellow_heart' }, { ch:'💚', kw:'心 绿 green_heart' },
+        { ch:'💙', kw:'心 蓝 blue_heart' }, { ch:'💜', kw:'心 紫 purple_heart' },
+        { ch:'🖤', kw:'心 黑 black_heart' }, { ch:'🤍', kw:'心 白 white_heart' },
+        { ch:'💔', kw:'心碎 broken_heart' }, { ch:'💯', kw:'满分 100' },
+        { ch:'💢', kw:'怒 anger' }, { ch:'💤', kw:'睡 zzz' },
+        { ch:'💥', kw:'爆炸 boom' }, { ch:'💫', kw:'头晕 dizzy' },
+        { ch:'✅', kw:'对 勾 check' }, { ch:'❌', kw:'错 叉 x cross' },
+        { ch:'⚠️', kw:'警告 warning' }, { ch:'❓', kw:'问号 question' },
+        { ch:'❗', kw:'感叹号 exclamation' }, { ch:'ℹ️', kw:'信息 info' },
+        { ch:'➕', kw:'加 plus' }, { ch:'➖', kw:'减 minus' },
+        { ch:'✖️', kw:'乘 multiply' }, { ch:'➗', kw:'除 divide' },
+        { ch:'©️', kw:'版权 copyright' }, { ch:'®️', kw:'注册 registered' },
+        { ch:'™️', kw:'商标 tm' }, { ch:'♻️', kw:'回收 recycle' },
+        { ch:'⭕', kw:'圈 o' }, { ch:'🚫', kw:'禁止 prohibited' }
+    ]}
+];
+
 // 构造 Emoji 扩展：输入 :shortcode: 后替换为对应 Unicode 字符
 // （TipTap InputRule 在代码块/行内代码中自动跳过，无需特殊处理）
 function buildEmojiExtension() {
@@ -735,6 +884,16 @@ window.editorApi = {
         window.editorApi._mermaidEditor.create();
     },
 
+    // 打开 emoji 选择器浮层（C++ 侧传入定位坐标）
+    openEmojiPicker: function(x, y) {
+        window.editorApi._emojiPicker.open(x, y);
+    },
+
+    // 在光标处插入单个 emoji（供其它入口/测试复用）
+    insertEmoji: function(ch) {
+        if (this.editor) this.editor.commands.insertContent(ch);
+    },
+
     // 数学公式编辑面板
     _mathEditor: {
         overlay: null,
@@ -1228,6 +1387,259 @@ window.editorApi = {
             }, 50);
         }
     },
+
+    // ===== emoji 选择器浮层（非模态，锚定按钮下方，点外部/Esc 关闭） =====
+    _emojiPicker: {
+        root: null, searchInput: null, grid: null, tabBar: null,
+        _recent: [], _curCat: 'smileys', _filter: '', _highlight: -1,
+        _rendered: [], _charMap: null, _outsideHandler: null,
+        RECENT_KEY: 'md-editor:emoji-recent', RECENT_MAX: 32, COLS: 10,
+
+        open: function(x, y) {
+            var ed = window.editorApi.editor;
+            if (!ed) return;
+            this._loadRecent();
+            this._filter = '';
+            this.buildDom();
+            this._curCat = (this._recent && this._recent.length) ? 'recent' : EMOJI_CATEGORIES[0].id;
+            this._position(x, y);
+            this._renderTabBar();
+            this.render();
+            this._registerOutside();
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
+            var self = this;
+            setTimeout(function(){ if (self.searchInput) self.searchInput.focus(); }, 0);
+        },
+
+        _position: function(x, y) {
+            var W = window.innerWidth, H = window.innerHeight;
+            this.root.style.left = '0px'; this.root.style.top = '0px';
+            var w = this.root.offsetWidth || 360;
+            var h = this.root.offsetHeight || 360;
+            var px = (typeof x === 'number') ? x : 16;
+            var py = (typeof y === 'number') ? y : 60;
+            if (px + w > W - 8) px = Math.max(8, W - w - 8);  // 右边溢出 → 右对齐
+            if (py + h > H - 8) py = Math.max(8, H - h - 8);  // 底部溢出 → 上移
+            this.root.style.left = px + 'px';
+            this.root.style.top = py + 'px';
+        },
+
+        buildDom: function() {
+            this._cleanupDom();
+            var self = this;
+            this.root = document.createElement('div');
+            this.root.className = 'emoji-picker';
+
+            var head = document.createElement('div');
+            head.className = 'emoji-picker-head';
+            var title = document.createElement('span');
+            title.className = 'emoji-picker-title';
+            title.textContent = '插入表情';
+            head.appendChild(title);
+            var closeBtn = document.createElement('button');
+            closeBtn.className = 'emoji-picker-close';
+            closeBtn.type = 'button';
+            closeBtn.textContent = '×';
+            closeBtn.title = '关闭';
+            closeBtn.addEventListener('click', function(e){ e.stopPropagation(); self.close(); });
+            head.appendChild(closeBtn);
+            this.root.appendChild(head);
+
+            this.searchInput = document.createElement('input');
+            this.searchInput.type = 'text';
+            this.searchInput.className = 'emoji-picker-search';
+            this.searchInput.placeholder = '搜索表情（如 笑 / heart / +1）';
+            this.searchInput.addEventListener('input', function(){
+                self._filter = this.value.trim().toLowerCase();
+                self._curCat = self._filter ? '' : (self._curCat || EMOJI_CATEGORIES[0].id);
+                self._renderTabBar();
+                self.render();
+            });
+            this.searchInput.addEventListener('keydown', function(e){ self._onKeydown(e); });
+            this.root.appendChild(this.searchInput);
+
+            this.grid = document.createElement('div');
+            this.grid.className = 'emoji-picker-grid';
+            this.root.appendChild(this.grid);
+
+            this.tabBar = document.createElement('div');
+            this.tabBar.className = 'emoji-picker-tabs';
+            this.root.appendChild(this.tabBar);
+
+            // 浮层内 mousedown 不冒泡到 document（避免点内部误触发关闭）
+            this.root.addEventListener('mousedown', function(e){ e.stopPropagation(); }, true);
+            document.body.appendChild(this.root);
+        },
+
+        render: function() {
+            var list;
+            if (this._filter) {
+                list = [];
+                for (var i = 0; i < EMOJI_CATEGORIES.length; i++) {
+                    var ems = EMOJI_CATEGORIES[i].emojis;
+                    for (var j = 0; j < ems.length; j++) {
+                        if ((' ' + ems[j].kw).toLowerCase().indexOf(this._filter) >= 0) list.push(ems[j]);
+                    }
+                }
+            } else {
+                list = this._getCat(this._curCat).emojis;
+            }
+            this._rendered = list;
+            this._highlight = list.length ? 0 : -1;
+            this.grid.innerHTML = '';
+            var self = this;
+            for (var k = 0; k < list.length; k++) {
+                (function(item, idx){
+                    var btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'emoji-cell';
+                    btn.textContent = item.ch;
+                    btn.title = item.kw;
+                    if (idx === self._highlight) btn.classList.add('active');
+                    btn.addEventListener('click', function(e){ e.stopPropagation(); self._insert(item); });
+                    self.grid.appendChild(btn);
+                })(list[k], k);
+            }
+            if (!list.length) {
+                var empty = document.createElement('div');
+                empty.className = 'emoji-empty';
+                empty.textContent = '无匹配表情';
+                this.grid.appendChild(empty);
+            }
+        },
+
+        _renderTabBar: function() {
+            var self = this;
+            this.tabBar.innerHTML = '';
+            var addTab = function(cat){
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'emoji-tab';
+                b.textContent = cat.icon;
+                b.title = cat.name;
+                if (cat.id === self._curCat && !self._filter) b.classList.add('active');
+                b.addEventListener('click', function(e){
+                    e.stopPropagation();
+                    self._filter = '';
+                    if (self.searchInput) self.searchInput.value = '';
+                    self._curCat = cat.id;
+                    self._renderTabBar();
+                    self.render();
+                });
+                self.tabBar.appendChild(b);
+            };
+            if (this._recent && this._recent.length) addTab({ id:'recent', icon:'🕘', name:'最近使用' });
+            for (var i = 0; i < EMOJI_CATEGORIES.length; i++) addTab(EMOJI_CATEGORIES[i]);
+        },
+
+        _getCat: function(id) {
+            if (id === 'recent') {
+                var cm = this._getCharMap(), arr = [];
+                for (var i = 0; i < this._recent.length; i++) {
+                    var ch = this._recent[i];
+                    arr.push(cm[ch] || { ch: ch, kw: ch });
+                }
+                return { id:'recent', icon:'🕘', name:'最近', emojis: arr };
+            }
+            for (var i = 0; i < EMOJI_CATEGORIES.length; i++)
+                if (EMOJI_CATEGORIES[i].id === id) return EMOJI_CATEGORIES[i];
+            return EMOJI_CATEGORIES[0];
+        },
+
+        _getCharMap: function() {
+            if (this._charMap) return this._charMap;
+            var m = {};
+            for (var i = 0; i < EMOJI_CATEGORIES.length; i++)
+                for (var j = 0; j < EMOJI_CATEGORIES[i].emojis.length; j++) {
+                    var e = EMOJI_CATEGORIES[i].emojis[j];
+                    m[e.ch] = e;
+                }
+            this._charMap = m;
+            return m;
+        },
+
+        _insert: function(item) {
+            var ed = window.editorApi.editor;
+            if (!ed) return;
+            ed.commands.insertContent(item.ch);
+            this.addToRecent(item.ch);
+            // 插入后清空搜索、回到当前分类视图（便于连插）
+            this._filter = '';
+            if (this.searchInput) this.searchInput.value = '';
+            this._renderTabBar();
+            this.render();
+            if (this.searchInput) this.searchInput.focus();
+        },
+
+        _onKeydown: function(e) {
+            var n = this._rendered.length;
+            if (!n) return;
+            var c = this.COLS;
+            if (e.key === 'ArrowRight') { e.preventDefault(); this._highlight = (this._highlight + 1) % n; this._applyHighlight(); }
+            else if (e.key === 'ArrowLeft') { e.preventDefault(); this._highlight = (this._highlight - 1 + n) % n; this._applyHighlight(); }
+            else if (e.key === 'ArrowDown') { e.preventDefault(); this._highlight = (this._highlight + c) % n; this._applyHighlight(); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); this._highlight = (this._highlight - c + n) % n; this._applyHighlight(); }
+            else if (e.key === 'Enter') { e.preventDefault(); var it = this._rendered[this._highlight] || this._rendered[0]; if (it) this._insert(it); }
+        },
+
+        _applyHighlight: function() {
+            var cells = this.grid.querySelectorAll('.emoji-cell');
+            for (var i = 0; i < cells.length; i++) {
+                if (i === this._highlight) { cells[i].classList.add('active'); cells[i].scrollIntoView({ block:'nearest' }); }
+                else cells[i].classList.remove('active');
+            }
+        },
+
+        addToRecent: function(ch) {
+            var idx = this._recent.indexOf(ch);
+            if (idx >= 0) this._recent.splice(idx, 1);
+            this._recent.unshift(ch);
+            while (this._recent.length > this.RECENT_MAX) this._recent.pop();
+            this._saveRecent();
+        },
+
+        _loadRecent: function() {
+            try {
+                var s = localStorage.getItem(this.RECENT_KEY);
+                this._recent = s ? JSON.parse(s) : [];
+                if (!Array.isArray(this._recent)) this._recent = [];
+            } catch (e) { this._recent = []; }
+        },
+
+        _saveRecent: function() {
+            try { localStorage.setItem(this.RECENT_KEY, JSON.stringify(this._recent)); } catch (e) {}
+        },
+
+        _registerOutside: function() {
+            if (this._outsideHandler) return;
+            var self = this;
+            this._outsideHandler = function(e) {
+                if (self.root && !self.root.contains(e.target)) self.close();
+            };
+            document.addEventListener('mousedown', this._outsideHandler, true);
+        },
+
+        _unregisterOutside: function() {
+            if (this._outsideHandler) {
+                document.removeEventListener('mousedown', this._outsideHandler, true);
+                this._outsideHandler = null;
+            }
+        },
+
+        _cleanupDom: function() {
+            if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
+            this.root = null; this.searchInput = null; this.grid = null; this.tabBar = null;
+            this._rendered = []; this._highlight = -1;
+        },
+
+        close: function() {
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(false);
+            this._unregisterOutside();
+            this._cleanupDom();
+            var ed = window.editorApi.editor;
+            if (ed) ed.view.focus();
+        }
+    }
 };
 
 // DOM 加载完成后初始化
