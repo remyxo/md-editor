@@ -1519,7 +1519,7 @@ window.editorApi = {
             if (!window.mermaid) { p.textContent = src; return; }
             _ensureMermaidInited();
             var id = 'mermaid-prev-' + (++_mermaidIdSeq);
-            _mermaidRenderSafe(id, src).then(function(res) {
+            window.mermaid.render(id, src).then(function(res) {
                 p.innerHTML = _sanitizeMermaidSvg(res.svg || '');
                 var svg = p.querySelector('svg');
                 if (svg) { _fixNegativeRects(svg); svg.style.maxWidth = '100%'; svg.style.height = 'auto'; }
