@@ -2,6 +2,14 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.5] — 2026-08-09
+
+### 修复
+
+- **源码模式实时脏标记** — 修复源码模式（`Ctrl+\`）下编辑文本不实时标脏，直到切回 WYSIWYG 模式才更新；现绑定源码区 textarea 的 input 事件实时调用 `_markDirty`，对齐 WYSIWYG 的 onUpdate 行为，退出时解绑避免残留引用
+- **公式与表格间空行膨胀** — 修复多行块级公式 `$...$` 与表格/段落间原本 1 行空行，保存往返（HTML→MD）后膨胀为 3 行；`fromHtml` 现于占位符还原【之前】压缩 md4c 块边界多余空行（`\n{3,}`→`\n\n`）并移除块级公式备份的尾换行
+- **Mermaid 对话框预览消失** — 修复双击 mermaid 图弹出的编辑对话框下方预览图为空（`updatePreview` 调用了从未定义的 `_mermaidRenderSafe` 同步抛 `ReferenceError`）；改回 `window.mermaid.render`，与编辑区内联渲染 `paint()` 一致
+
 ## [0.3.4] — 2026-08-09
 
 ### 新增
