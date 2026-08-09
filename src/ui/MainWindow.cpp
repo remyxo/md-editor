@@ -431,6 +431,18 @@ void MainWindow::onTabChanged(int tabId)
 {
     Q_UNUSED(tabId)
     EditorTab *tab = m_tabWidget->currentEditorTab();
+    // 源码模式状态（m_sourceMode）是 C++ 全局的，但源码视图 textarea 只存在于
+    // 切换前标签页的 JS 上下文。若在源码模式下手动切换标签，强制退出该状态，
+    // 否则新标签页按 Ctrl+\ 会走「退出源码模式」路径，getSourceContent 返回空
+    // 文本导致当前标签内容被清空。旧标签页残留的隐藏 textarea 无副作用，忽略。
+    // 置于 if(tab) 之外：全部标签关闭时同样重置，避免状态残留。
+    if (m_sourceMode) {
+        m_sourceMode = false;
+        m_toolBar->setSourceMode(false);
+        if (QAction *act = m_menuBar->findChild<QAction *>(
+                QStringLiteral("sourceModeAction")))
+            act->setChecked(false);
+    }
     if (tab) {
         tab->setInTable(false);
         // 同步新标签页的格式状态到工具栏

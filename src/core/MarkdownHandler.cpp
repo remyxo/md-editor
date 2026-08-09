@@ -489,9 +489,15 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             if (lastBlock == BT_LIST)
                 processed += '\n';
             // 两行正文 → 第一行末尾嵌入标记，setMarkdown 保留该标记
-            // 先提取原始 HTML 内联标签（<span style>/<u>）为占位符，避免被 Qt 剥离
-            QString cl = extractHtmlInlineElements(line, htmlInlineBackups);
-            processed += extractFootnoteRefs(extractSubscripts(cl, subContents), footnoteRefs) + " " + MARKER + "\n";
+            // 提取顺序：先下标 ~x~，再脚注 [^id]，最后 HTML 内联标签（<span style>/<u>）。
+            // 若先提取 HTML 内联标签，标签内部的 MD 语法（~x~、[^id] 等）会被隐藏，
+            // 后续 sub/footnote 转换器无法识别，往返数据丢失。先替换为占位符后，
+            // 内层占位符随外层 <span>/<u> 一起被 ZZHI 包裹，还原时先开外层再开内层。
+            QString cl = line;
+            cl = extractSubscripts(cl, subContents);
+            cl = extractFootnoteRefs(cl, footnoteRefs);
+            cl = extractHtmlInlineElements(cl, htmlInlineBackups);
+            processed += cl + " " + MARKER + "\n";
             lastBlock = BT_PARA;
         } else {
             // 隔离：列表后紧跟正文时补空行（同上）
@@ -501,8 +507,11 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             // 有序列表不能打断段落，md4c 会把列表项当作段落延续行吞并
             if (isListItemLine(line) && lastBlock == BT_PARA)
                 processed += '\n';
-            QString cl = extractHtmlInlineElements(line, htmlInlineBackups);
-            processed += extractFootnoteRefs(extractSubscripts(cl, subContents), footnoteRefs) + '\n';
+            QString cl = line;
+            cl = extractSubscripts(cl, subContents);
+            cl = extractFootnoteRefs(cl, footnoteRefs);
+            cl = extractHtmlInlineElements(cl, htmlInlineBackups);
+            processed += cl + '\n';
             lastBlock = isListItemLine(line) ? BT_LIST
                         : (isParagraphLine(line) ? BT_PARA : BT_NONE);
         }
@@ -655,6 +664,12 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         for (int i = 0; i < codeBlocks.size(); ++i)
             html.replace(QString("__CODE%1__").arg(i), codeBlocks[i]);
     }
+    // 还原 HTML 内联标签占位符 ZZHI → 原始 <span style> / <u>
+    // 必须先于 ZZFR/ZZSB 还原：ZZHI 占位符内容可能含 <span>/<u> 内部的
+    // ZZSB/ZZFR 占位符（如 <span>~2~</span>、<u>[^1]</u>），先开外层标签，
+    // 内层占位符才能被后续 ZZFR/ZZSB 还原步骤继续处理。
+    for (int i = 0; i < htmlInlineBackups.size(); ++i)
+        html.replace("ZZHI" + QString::number(i) + "ZZ", htmlInlineBackups[i]);
     // 还原脚注引用占位符 ZZFR → <sup data-type="footnoteRef">
     for (int i = 0; i < footnoteRefs.size(); ++i)
         html.replace("ZZFR" + QString::number(i) + "ZZ", footnoteRefs[i]);
@@ -687,11 +702,6 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         "<p[^>]*>(<br[^>]*>)?</p>\\s*(<div data-type=\"block-math\")"), "\\3");
     html.replace(QRegularExpression(
         "(</div>)\\s*<p[^>]*>(<br[^>]*>)?</p>"), "\\1");
-
-    // 还原 HTML 内联标签占位符 ZZHI → 原始 <span style> / <u>
-    // （置于所有现有点位符还原之后，保证内容中原有的 ZZ* 占位符已先还原）
-    for (int i = 0; i < htmlInlineBackups.size(); ++i)
-        html.replace("ZZHI" + QString::number(i) + "ZZ", htmlInlineBackups[i]);
 
     return html;
 }

@@ -591,6 +591,60 @@ private slots:
         QVERIFY(html2.contains("粗体"));
         QVERIFY(html2.contains("span style=\"color: red;\""));
     }
+
+    // ===== C1 回归：span/u 内部 MD 语法（下标/上标/代码）往返不丢失 =====
+
+    void testSpanInnerSubscript()
+    {
+        // <span style> 内部的下标 ~x~ 须还原为 <sub>，不残留 ZZ* 占位符
+        QString html = MarkdownHandler::toHtml(
+            QStringLiteral("<span style=\"color: rgb(186, 55, 42);\">H~2~O</span>"));
+        QVERIFY2(html.contains("<sub>2</sub>"),
+                 qPrintable("span 内下标未还原，实际: " + html));
+        QVERIFY2(html.contains("span style=\"color: rgb(186, 55, 42);\""),
+                 qPrintable("span 样式丢失，实际: " + html));
+        QVERIFY2(!html.contains("ZZSB") && !html.contains("ZZHI"),
+                 qPrintable("残留占位符，实际: " + html));
+    }
+
+    void testUnderlineInnerSubscript()
+    {
+        // <u> 内部的下标 ~x~ 须还原为 <sub>
+        QString html = MarkdownHandler::toHtml(
+            QStringLiteral("<u>H~2~O</u>"));
+        QVERIFY2(html.contains("<sub>2</sub>"),
+                 qPrintable("u 内下标未还原，实际: " + html));
+        QVERIFY2(html.contains("<u>"),
+                 qPrintable("u 标签丢失，实际: " + html));
+        QVERIFY2(!html.contains("ZZSB") && !html.contains("ZZHI"),
+                 qPrintable("残留占位符，实际: " + html));
+    }
+
+    void testSpanInnerSubscriptRoundTrip()
+    {
+        // <span>内带 <sub> 的 HTML 经 fromHtml→toHtml 往返后下标保留
+        QString html = QStringLiteral(
+            "<p>化学式<span style=\"color: rgb(186, 55, 42);\">H<sub>2</sub>O</span>结束</p>");
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains("<span style=\"color: rgb(186, 55, 42);\">H~2~O</span>"),
+                 qPrintable("fromHtml 未产出下标 MD，实际: " + md));
+        QString html2 = MarkdownHandler::toHtml(md);
+        QVERIFY2(html2.contains("<sub>2</sub>"),
+                 qPrintable("span 内下标往返丢失，实际: " + html2));
+        QVERIFY2(!html2.contains("ZZSB") && !html2.contains("ZZHI"),
+                 qPrintable("残留占位符，实际: " + html2));
+    }
+
+    void testSpanInnerFootnote()
+    {
+        // 脚注引用在 span 内也能正确还原为 footnoteRef sup（C1 提取/还原顺序修复）
+        QString html = MarkdownHandler::toHtml(
+            QStringLiteral("<span style=\"color:red;\">a[^1]b</span>\n\n[^1]: def"));
+        QVERIFY2(html.contains("data-type=\"footnoteRef\""),
+                 qPrintable("span 内脚注未还原，实际: " + html));
+        QVERIFY2(!html.contains("ZZFR") && !html.contains("ZZHI"),
+                 qPrintable("残留占位符，实际: " + html));
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)
