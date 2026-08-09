@@ -286,6 +286,74 @@ private slots:
         QVERIFY2(md.contains("^10^"), qPrintable("应还原上标 ^10^，实际: " + md));
     }
 
+    // ===== 脚注（footnote）MD → HTML 契约 =====
+
+    void testFootnoteRefToHtml() {
+        QString md = "正文[^1]内容";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("data-type=\"footnoteRef\""),
+                 qPrintable("脚注引用未转为 sup，实际: " + html));
+        QVERIFY2(html.contains("data-id=\"1\""),
+                 qPrintable("data-id 缺失，实际: " + html));
+    }
+
+    void testFootnoteDefToHtml() {
+        QString md = "正文[^1]\n\n[^1]: 这是定义";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("data-type=\"footnoteContainer\""),
+                 qPrintable("缺少脚注容器，实际: " + html));
+        QVERIFY2(html.contains("data-type=\"footnoteDef\""),
+                 qPrintable("缺少脚注定义，实际: " + html));
+        QVERIFY2(html.contains("这是定义"),
+                 qPrintable("定义内容丢失，实际: " + html));
+    }
+
+    void testFootnoteChineseId() {
+        QString md = "正文[^注1]\n\n[^注1]: 中文脚注";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("data-id=\"注1\""),
+                 qPrintable("中文 id 未保留，实际: " + html));
+        QVERIFY2(html.contains("中文脚注"),
+                 qPrintable("中文定义丢失，实际: " + html));
+    }
+
+    void testFootnoteInCodeNotConverted() {
+        // 行内代码内的 [^x] 不转换
+        QString md1 = "代码 `[^x]` 内";
+        QString html1 = MarkdownHandler::toHtml(md1);
+        QVERIFY2(!html1.contains("data-type=\"footnoteRef\""),
+                 qPrintable("行内代码内脚注被误转，实际: " + html1));
+        // 代码块内的 [^x] 不转换
+        QString md2 = "```\n[^x]\n```";
+        QString html2 = MarkdownHandler::toHtml(md2);
+        QVERIFY2(!html2.contains("data-type=\"footnoteRef\""),
+                 qPrintable("代码块内脚注被误转，实际: " + html2));
+    }
+
+    void testFootnoteMultiRefOneDef() {
+        // 同 id 多次引用，定义去重
+        QString md = "前[^1]中[^1]后\n\n[^1]: 共享定义";
+        QString html = MarkdownHandler::toHtml(md);
+        // 引用出现两次
+        int refCount = html.count("data-type=\"footnoteRef\"");
+        QVERIFY2(refCount == 2,
+                 qPrintable(QString("期望 2 个引用，实际 %1: ").arg(refCount) + html));
+        // 定义只出现一次
+        int defCount = html.count("data-type=\"footnoteDef\"");
+        QVERIFY2(defCount == 1,
+                 qPrintable(QString("定义应去重为 1，实际 %1: ").arg(defCount) + html));
+    }
+
+    void testFootnoteDanglingRef() {
+        // 悬空引用（有 ref 无 def）不报错
+        QString md = "正文[^1]无定义";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("data-type=\"footnoteRef\""),
+                 qPrintable("悬空引用应正常转为 sup，实际: " + html));
+        QVERIFY2(!html.contains("data-type=\"footnoteContainer\""),
+                 qPrintable("无定义不应出现容器，实际: " + html));
+    }
+
     void testExtractTitle() {
         QString md = "# 我的文档标题\n\n内容。";
         QString title = MarkdownHandler::extractTitle(md);

@@ -56,6 +56,60 @@ static QString extractSubscripts(QString line, QStringList &out)
     return line;
 }
 
+// 提取脚注引用 [^id] → ZZFR 占位符（后处理还原为 <sup data-type="footnoteRef">）。
+// 先保护行内代码 `...`（其内的 [^x] 原样保留），再转换引用，最后还原代码。
+static QString extractFootnoteRefs(QString line, QStringList &refs)
+{
+    // 1) 暂存行内代码片段（含 [^x] 的反引号内容不转换）
+    QStringList codes;
+    QRegularExpression codeSpanRe("`([^`]+)`");
+    int off = 0;
+    while (true) {
+        auto m = codeSpanRe.match(line, off);
+        if (!m.hasMatch()) break;
+        codes << m.captured(0);
+        QString cph = "\x01CODE" + QString::number(codes.size() - 1) + "\x01";
+        line.replace(m.capturedStart(), m.capturedLength(), cph);
+        off = m.capturedStart() + cph.length();
+    }
+    // 2) 转换脚注引用 [^id]
+    QRegularExpression refRe("\\[\\^([^\\]]+?)\\]");
+    off = 0;
+    while (true) {
+        auto m = refRe.match(line, off);
+        if (!m.hasMatch()) break;
+        QString id = m.captured(1).trimmed();
+        refs << ("<sup data-type=\"footnoteRef\" data-id=\"" + id + "\">"
+                 + id + "</sup>");
+        QString ph = "ZZFR" + QString::number(refs.size() - 1) + "ZZ";
+        line.replace(m.capturedStart(), m.capturedLength(), ph);
+        off = m.capturedStart() + ph.length();
+    }
+    // 3) 还原行内代码
+    for (int i = 0; i < codes.size(); ++i)
+        line.replace("\x01CODE" + QString::number(i) + "\x01", codes[i]);
+    return line;
+}
+
+// 脚注定义内容（MD 行内）→ footnoteDef 契约 HTML（marker + footnote-content 包裹）。
+// 内容借嵌套 QTextDocument 转 inline HTML（保留粗体/斜体/链接等），仅取首段 inline。
+static QString buildFootnoteDefHtml(const QString &id, const QString &contentMd,
+                                    QStringList &subContents)
+{
+    QTextDocument d;
+    d.setMarkdown(extractSubscripts(contentMd, subContents));
+    QString h = d.toHtml();
+    auto bm = QRegularExpression("<body[^>]*>(.*)</body>",
+        QRegularExpression::DotMatchesEverythingOption).match(h);
+    QString inner = bm.hasMatch() ? bm.captured(1).trimmed() : QString();
+    // 去掉外层 <p></p>，仅保留 inline
+    inner.remove(QRegularExpression("^\\s*<p[^>]*>"));
+    inner.remove(QRegularExpression("</p>\\s*$"));
+    return "<div data-type=\"footnoteDef\" data-id=\"" + id + "\">"
+         + "<span class=\"footnote-marker\">" + id + "</span>"
+         + "<span class=\"footnote-content\">" + inner + "</span></div>";
+}
+
 // ===== 任务列表（GFM task list ↔ TipTap taskList/taskItem 契约）=====
 // TipTap 只认 ul[data-type="taskList"] / li[data-type="taskItem"]（data-checked），
 // 而 QTextDocument::setMarkdown 输出 Qt 自家格式（li class="unchecked/checked"），
@@ -270,6 +324,9 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList codeLangs; // 跟踪每个代码块的语言
     QStringList subContents; // 下标内容（~x~），后处理还原为 <sub>
     QStringList taskLists; // 任务列表 HTML（TipTap taskList 契约），后处理还原
+    QStringList footnoteRefs;   // 脚注引用 <sup> HTML（后处理还原）
+    QStringList footnoteDefs;   // 脚注定义 def HTML（按 id 去重，首次定义顺序）
+    QStringList footnoteDefIds; // 已收集的定义 id（去重用）
 
     QStringList mathBlocks;  // 收集 $$ 块的内容
     QStringList mathLines;    // 当前 $$ 块的行
@@ -283,6 +340,11 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     for (int i = 0; i < lines.size(); ++i) {
         const QString &line = lines[i];
         const QString &next = (i + 1 < lines.size()) ? lines[i + 1] : QString();
+
+        // 脚注定义行 [^id]: 内容（非代码块）—— 抽取归集到文末容器，从正文流移除
+        static const QRegularExpression footnoteDefRe("^\\[\\^([^\\]]+)\\]\\s*:\\s*(.*)$");
+        auto footnoteDefMatch = footnoteDefRe.match(line);
+        bool isFootnoteDef = !inCodeBlock && footnoteDefMatch.hasMatch();
 
         if (line.startsWith("$$")) {
             if (!inMathBlock) {
@@ -322,6 +384,15 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             lastBlock = BT_NONE;
         } else if (inCodeBlock) {
             processed += line + '\n';
+        } else if (isFootnoteDef) {
+            // 脚注定义行 [^id]: 内容（非代码块）—— 抽取归集到文末容器，从正文流移除
+            QString fid = footnoteDefMatch.captured(1).trimmed();
+            if (!footnoteDefIds.contains(fid)) {   // 同 id 取首次定义
+                footnoteDefIds << fid;
+                footnoteDefs << buildFootnoteDefHtml(fid, footnoteDefMatch.captured(2).trimmed(), subContents);
+            }
+            processed += '\n';   // 行被移除，留空行维持段落分隔
+            lastBlock = BT_NONE;
         } else if (line.trimmed().isEmpty()) {
             processed += '\n';
             lastBlock = BT_NONE;
@@ -345,7 +416,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             if (lastBlock == BT_LIST)
                 processed += '\n';
             // 两行正文 → 第一行末尾嵌入标记，setMarkdown 保留该标记
-            processed += extractSubscripts(line, subContents) + " " + MARKER + "\n";
+            processed += extractFootnoteRefs(extractSubscripts(line, subContents), footnoteRefs) + " " + MARKER + "\n";
             lastBlock = BT_PARA;
         } else {
             // 隔离：列表后紧跟正文时补空行（同上）
@@ -355,7 +426,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             // 有序列表不能打断段落，md4c 会把列表项当作段落延续行吞并
             if (isListItemLine(line) && lastBlock == BT_PARA)
                 processed += '\n';
-            processed += extractSubscripts(line, subContents) + '\n';
+            processed += extractFootnoteRefs(extractSubscripts(line, subContents), footnoteRefs) + '\n';
             lastBlock = isListItemLine(line) ? BT_LIST
                         : (isParagraphLine(line) ? BT_PARA : BT_NONE);
         }
@@ -513,6 +584,19 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QString c = subContents[i];
         c.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
         html.replace("ZZSB" + QString::number(i) + "ZZ", "<sub>" + c + "</sub>");
+    }
+    // 还原脚注引用占位符 ZZFR → <sup data-type="footnoteRef">
+    for (int i = 0; i < footnoteRefs.size(); ++i)
+        html.replace("ZZFR" + QString::number(i) + "ZZ", footnoteRefs[i]);
+
+    // 追加脚注定义容器（仅当存在定义）
+    if (!footnoteDefs.isEmpty()) {
+        QString container = "<div data-type=\"footnoteContainer\">";
+        for (const QString &d : footnoteDefs) container += d;
+        container += "</div>";
+        int bodyClose = html.indexOf("</body>");
+        if (bodyClose >= 0) html.insert(bodyClose, container);
+        else html += container;
     }
     // 恢复数学公式占位符（前后可能有空 <p>，一并清除）
     for (int i = 0; i < mathBlocks.size(); ++i) {
