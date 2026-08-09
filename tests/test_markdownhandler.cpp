@@ -542,6 +542,55 @@ private slots:
         QCOMPARE(html.count("<ul"), 2);
         QVERIFY(QRegularExpression("<p[^>]*>如何隔离？</p>").match(html).hasMatch());
     }
+
+    // ===== span style / <u> 混合格式往返测试 =====
+
+    void testSpanStyleRoundTrip()
+    {
+        // <span style="color:..."> 应在 fromHtml → toHtml 往返后保持
+        QString html = QStringLiteral(
+            "<p>正常文字<span style=\"color: rgb(186, 55, 42);\">红色文字</span>结束</p>");
+        QString md = MarkdownHandler::fromHtml(html);
+        // MD 中应保留原始 <span style> HTML
+        QVERIFY(md.contains("<span style=\"color: rgb(186, 55, 42);\">红色文字</span>"));
+        // 不应出现 ZZHS 占位符泄漏
+        QVERIFY(!md.contains("ZZHS"));
+        // 往返
+        QString html2 = MarkdownHandler::toHtml(md);
+        QVERIFY(html2.contains("span style=\"color: rgb(186, 55, 42);\""));
+        QVERIFY(html2.contains("红色文字"));
+    }
+
+    void testUnderlineRoundTrip()
+    {
+        // <u> 应在往返后保持
+        QString html = QStringLiteral("<p>普通<u>下划线</u>文字</p>");
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY(md.contains("<u>下划线</u>"));
+        QVERIFY(!md.contains("ZZUL"));
+        QString html2 = MarkdownHandler::toHtml(md);
+        QVERIFY(html2.contains("<u>下划线</u>"));
+    }
+
+    void testMixedFormatRoundTrip()
+    {
+        // 粗体转 MD + 颜色保持 HTML
+        QString html = QStringLiteral(
+            "<p><strong>粗体</strong> <span style=\"color: red;\">红色</span></p>");
+        QString md = MarkdownHandler::fromHtml(html);
+        // 粗体→ MD
+        QVERIFY(md.contains("**粗体**"));
+        // 颜色→ 原始 HTML
+        QVERIFY(md.contains("<span style=\"color: red;\">红色</span>"));
+        // 往返
+        QString html2 = MarkdownHandler::toHtml(md);
+        // 粗体在 toHtml 侧由 QTextDocument 输出为 font-weight 加粗 span
+        // （Qt 不输出 <strong>/<b>，而是 <span style=" font-weight:6xx/7xx;">）
+        QVERIFY2(QRegularExpression("font-weight:\\s*[67]00").match(html2).hasMatch(),
+                 qPrintable("粗体应以 font-weight 加粗样式保留，实际: " + html2));
+        QVERIFY(html2.contains("粗体"));
+        QVERIFY(html2.contains("span style=\"color: red;\""));
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)
