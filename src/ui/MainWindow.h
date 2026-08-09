@@ -31,6 +31,7 @@ private slots:
     void onInsertTable();
     void onInsertLink();
     void onInsertImage();
+    void onInsertEmoji();
     void onToggleSourceMode();
     void onExportPdf();
     void onThemeSwitch(const QString &theme);

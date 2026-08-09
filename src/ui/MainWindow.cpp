@@ -108,7 +108,8 @@ void MainWindow::setupUi()
         if (m_modalDialogOpen) {
             // 关闭 JS 侧的模态面板（Mermaid 或数学公式编辑器）
             runEditorCommand("window.editorApi._mermaidEditor.close();"
-                             "window.editorApi._mathEditor.close();");
+                             "window.editorApi._mathEditor.close();"
+                             "window.editorApi._emojiPicker.close();");
         } else {
             m_searchBar->setVisible(false);
         }
@@ -263,6 +264,8 @@ void MainWindow::connectSignals()
     connect(m_toolBar, &ToolBar::mermaidClicked, this, [this]() {
         runEditorCommand("window.editorApi.insertMermaid();");
     });
+    connect(m_toolBar, &ToolBar::emojiClicked, this, [this]() { onInsertEmoji(); });
+    connect(m_menuBar, &MenuBar::insertEmoji, this, [this]() { onInsertEmoji(); });
     connect(m_toolBar, &ToolBar::sourceToggleClicked, this, &MainWindow::onToggleSourceMode);
     connect(m_toolBar, &ToolBar::pdfExportClicked, this, &MainWindow::onExportPdf);
 
@@ -477,6 +480,22 @@ void MainWindow::onInsertTable()
             });
     popup->move(QCursor::pos());
     popup->show();
+}
+
+void MainWindow::onInsertEmoji()
+{
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    if (!tab) return;
+    if (tab->isPermanentReadOnly()) return;  // 只读模式不弹选择器
+
+    // 锚点：工具栏 emoji 按钮左下角；菜单触发时无按钮，用光标位置兜底
+    QAction *a = m_toolBar->findChild<QAction *>("emojiAction");
+    QWidget *btn = a ? m_toolBar->widgetForAction(a) : nullptr;
+    QPoint gbl = btn ? btn->mapToGlobal(QPoint(0, btn->height())) : QCursor::pos();
+    QPoint local = tab->webView()->mapFromGlobal(gbl);  // 默认 zoom=1.0：CSS px = 部件 px
+    QString js = QString("window.editorApi.openEmojiPicker(%1, %2);")
+                     .arg(local.x()).arg(local.y());
+    tab->runJsCommand(js);
 }
 
 void MainWindow::onInsertLink()
