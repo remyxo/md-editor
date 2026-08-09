@@ -13,6 +13,7 @@ public:
     void updateHistoryState(bool canUndo, bool canRedo);
     void refreshThemeIcons(const QString &theme);
     void setReadMode(bool readMode);
+    void setSourceMode(bool on);
 
 signals:
     void boldClicked();

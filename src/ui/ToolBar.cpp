@@ -261,6 +261,25 @@ void ToolBar::setReadMode(bool readMode)
     m_headingCombo->setVisible(!readMode);
 }
 
+void ToolBar::setSourceMode(bool on)
+{
+    // 源码模式下灰化所有编辑/格式化按钮，保留源码切换和阅读模式可用
+    for (QAction *a : m_allActions) {
+        if (a->objectName() != QStringLiteral("sourceAction")
+            && a->objectName() != QStringLiteral("readModeAction")
+            && a->objectName() != QStringLiteral("pdfAction")) {
+            a->setEnabled(!on);
+        }
+    }
+    // 恢复时根据格式状态重新设置按钮可用性（disabled 可能残留）
+    if (!on) {
+        for (QAction *a : m_allActions) {
+            a->setEnabled(true);
+        }
+    }
+    m_headingCombo->setEnabled(!on);
+}
+
 void ToolBar::updateFormatState(const QJsonObject &f)
 {
     if (f.contains("heading")) {
