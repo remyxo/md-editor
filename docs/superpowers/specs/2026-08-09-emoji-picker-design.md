@@ -2,7 +2,7 @@
 
 - 日期：2026-08-09
 - 版本目标：0.3.1 → **0.3.2**
-- 状态：已批准，待实现
+- 状态：已实现（四层布局 + 按使用频率统计），待 GUI 复验与版本推进
 
 ---
 
@@ -46,11 +46,11 @@
        · bridge.modalDialogChanged(true)   ← 复用「JS 面板要 Esc」标记
 
 用户交互：
-  · 输入关键词 → 实时过滤（跨分类匹配 name / keywords / 短代码）
+  · 输入关键词 → 实时过滤（跨分类匹配 keywords）
   · 点分类标签 → 切换分类
   · 方向键移动高亮 + Enter，或点击 emoji
        → editor.commands.insertContent(char)
-       → addToRecent(char)（内存 + localStorage 持久化）
+       → _bumpFreq(char)（累计「常用」使用频率，内存 + localStorage 持久化）
        → 【浮层保持打开】，搜索框重聚焦，便于连插
   · 点浮层外部 / 按 Esc / 点 ×  → close()
 
@@ -67,13 +67,15 @@ close()
 
 | 方法 | 职责 |
 |------|------|
-| `buildDom()` | 构建浮层 DOM：顶部搜索框 + 中部可滚动网格 + 底部分类标签条。`position: fixed`，高 `z-index`，**无遮罩 div**。 |
-| `open(x, y)` | 挂载 DOM；按 (x, y) 定位并钳制（右边溢出→右对齐；底部溢出→限高并让网格内部滚动）；注册 document 级 `mousedown` 捕获监听（目标不在浮层内→关闭）；`bridge.modalDialogChanged(true)`；聚焦搜索框。**默认选中分类：若「最近使用」非空则选它，否则选「笑脸与情感」。** |
-| `render(items)` | 渲染 emoji 列表（分类视图或搜索结果）；记录当前高亮项用于键盘导航。 |
-| `filter(query)` | 大小写无关匹配 `name` / `keywords`；有查询时隐藏分类条、平铺所有匹配项；无查询时恢复分类视图。 |
+| `buildDom()` | 构建**四层**浮层 DOM（自上而下）：① 搜索行（搜索框 + × 关闭按钮，无标题）；② 常用区（「常用表情符号」标签 + 频率网格，最多 8 个，由 `_renderFreq()` 控制显隐）；③ 当前分类可滚动网格（10 列）；④ 分类标签条（文字标签）。`position: fixed`，高 `z-index`，**无遮罩 div**。 |
+| `open(x, y)` | 挂载 DOM；`_loadFreq()` 加载频率数据；按 (x, y) 定位并钳制（右边溢出→右对齐；底部溢出→限高并让网格内部滚动）；注册 document 级 `mousedown` 捕获监听（目标不在浮层内→关闭）；`bridge.modalDialogChanged(true)`；聚焦搜索框。**默认选中分类恒为第一个（笑脸）**（「最近使用」概念已移除）。 |
+| `render(items)` | 渲染 emoji 列表（分类视图或搜索结果）；记录当前高亮项用于键盘导航；**末尾调 `_renderFreq()` 刷新常用区**。 |
+| `filter(query)` | 大小写无关匹配 `keywords`；有查询时隐藏常用区、分类标签条保留（无高亮项）、平铺所有匹配项；无查询时恢复分类视图。 |
 | `selectCategory(id)` | 切换分类并 `render`。 |
-| `insert(char)` | `editor.commands.insertContent(char)`；**保持浮层打开**；搜索框重聚焦（保留当前过滤或清空，见 §8）；**插入后把该 emoji 加入「最近使用」**（见下）。 |
-| `addToRecent(char)` | 维护最近使用列表：去重后置顶；上限 32 条；写入 `_recent`（内存）并持久化到 `localStorage`（见 §5.1）。触发当前若处于「最近使用」分类则刷新渲染。 |
+| `insert(char)` | `editor.commands.insertContent(char)`；**保持浮层打开**；清空搜索回到当前分类并重聚焦；**插入后调 `_bumpFreq(char)` 累计「常用」频率**（见 §5.1）。 |
+| `_bumpFreq(char)` | 该 emoji 计数 +1 并赋最新序号 `_freqSeq`；写入 `_freq`（内存）并持久化到 `localStorage`（键 `md-editor:emoji-freq`）。 |
+| `_topFrequent()` | 返回频率前 8：`count` 降序、并列 `seq`（最近使用序号）降序——「最常用优先，同样常用则最近用的靠前」。 |
+| `_renderFreq()` | 渲染常用区：搜索中或无数据时整层隐藏；否则填充前 8。 |
 | `close()` | **第一时间** `bridge.modalDialogChanged(false)`（不等任何异步）；移除 DOM；编辑器重聚焦。 |
 
 ### 键盘导航
@@ -96,18 +98,20 @@ insertEmoji: function(char) {
 
 ## 5. Emoji 数据集 `EMOJI_CATEGORIES`（editor.js）
 
-- 约 **8 个分类**：笑脸与情感 / 手势与人物 / 动物与自然 / 食物与饮品 / 活动 / 旅行与地点 / 物品 / 符号与旗帜。
+- **9 个分类**：笑脸 / 手势 / 动物 / 食物 / 自然 / 活动 / 旅行 / 物品 / 符号（`name` 均为 2 字，便于底部文字标签条紧凑单行显示）。
 - 合计约 **300 条**精选常用 emoji。
-- 每条结构：`{ char, name, keywords:[] }`，例如 `{ char:'😀', name:'grinning', keywords:['笑脸','开心','smile'] }`。
-- 分类结构：`[{ id, icon, name, emojis: [...] }, ...]`。
+- 每条结构：`{ ch, kw }`，例如 `{ ch:'😀', kw:'笑脸 开心 smile' }`（`kw` 为空格分隔关键词，搜索时大小写无关匹配）。
+- 分类结构：`[{ id, icon, name, emojis: [...] }, ...]`（`icon` 字段保留，但底部标签条改用 `name` 文字渲染，不再用 emoji 图标）。
 
-### 5.1 「最近使用」一栏
+### 5.1 「常用表情符号」区（按使用频率）
 
-- 作为分类标签条的**第一项**，`id = 'recent'`，仅当列表非空时显示。
-- 数据：内存数组 `_emojiPicker._recent`（最近在前、去重、上限 **32**）。
-- 持久化：写入 QWebEngineView 的 `localStorage`（键 `md-editor:emoji-recent`），`try/catch` 包裹——不可用或读取失败时降级为仅内存。这样「最近使用」在重启/重开文档后仍保留。
-- `insert(char)` 成功插入后调 `addToRecent(char)`。
-- `open()` 时默认选中：`_recent` 非空 → 选 `recent`；否则选第一个分类（笑脸）。
+- 浮层第二层：标签「常用表情符号」+ 频率网格（最多 **8** 个）。
+- 排序：按使用 `count` 降序；count 并列时按 `seq`（最近一次使用的单调递增序号）降序——即「最常用优先，同样常用则最近用的排前面」。
+- 数据：内存对象 `_emojiPicker._freq = { ch: { count, seq } }`，`_freqSeq` 单调递增计数器；`_loadFreq` 恢复时把 `_freqSeq` 续到历史最大 `seq`，避免下次 `bump` 撞号。
+- 持久化：写入 QWebEngineView 的 `localStorage`（键 `md-editor:emoji-freq`），`try/catch` 包裹——不可用或读取失败时降级为仅内存。这样「常用」在重启/重开文档后仍保留。
+- 显隐：搜索中（`_filter` 非空）或无任何使用记录时**整层隐藏**；否则显示前 8。
+- `insert(char)` 成功插入后调 `_bumpFreq(char)`；`render()` 末尾调 `_renderFreq()` 刷新常用区。
+- 「最近使用」概念已整体移除：不再有 `recent` 分类标签；localStorage 旧键 `md-editor:emoji-recent` 废弃（本特性未正式发布，不迁移历史）。
 
 ### 与现有 `EMOJI_SHORTCODES` 的关系
 
@@ -184,7 +188,7 @@ insertEmoji: function(char) {
 - **定位钳制**：`x + 宽度 > innerWidth` → 改为右对齐（`right: ...` 或 `left = innerWidth - 宽度 - 边距`）；`y + 高度 > innerHeight` → 限高，让中部网格内部滚动。
 - **编辑器失焦后插入**：ProseMirror 在编辑器失焦时仍保留选区状态，`editor.commands.insertContent(char)` 在原光标处插入。
 - **连插**：点 emoji 后浮层不关闭、搜索框重聚焦；插入后是否清空搜索框——**清空**（每次插入后回到当前分类视图，便于继续按视觉挑选）。
-- **最近使用**：去重置顶，上限 32 条；持久化到 `localStorage`。`localStorage` 不可用时降级为仅内存（不影响功能）。重开应用/文档后「最近使用」分类仍可显示历史记录。
+- **常用区（频率）**：按使用 `count` 降序、`seq` 降序 tie-break 取前 8；持久化到 `localStorage`（键 `md-editor:emoji-freq`）。`localStorage` 不可用时降级为仅内存（不影响功能）。重开应用/文档后「常用」区仍按历史频率显示。搜索中或无记录时常用区隐藏。
 - **切换标签页**：若用户切换文档标签，应关闭当前浮层。可在 `EditorTab` 失焦/隐藏或标签切换时调 `close()`（实现时确认最佳挂载点；最简方案：`open` 时记录所属 tab，切换时由 C++ 触发关闭）。
 - **主题切换**：emoji 是 Unicode 字符，与主题无关；仅工具栏/菜单图标需 light/dark 两份（已在 §6.1 覆盖）。
 - **只读模式**：只读（阅读）模式下点 emoji 应无效果或关闭入口。`onInsertEmoji` 中检查 `tab->isPermanentReadOnly()`，是则直接 return（与阅读模式其他编辑入口一致）。
@@ -195,16 +199,16 @@ JS 浮层难以在 C++ `ctest` 中自动化，采用**手动验证清单**：
 
 1. 工具栏出现 emoji 图标，亮/暗主题切换图标颜色正确。
 2. 菜单「插入 > 表情符号...」存在并可触发。
-3. 点工具栏图标 → 浮层出现在按钮正下方，不遮挡/暗化编辑区。
+3. 点工具栏图标 → 浮层出现在按钮正下方，不遮挡/暗化编辑区；自上而下为搜索行（+×）、常用区（首次为空→隐藏）、分类网格、文字分类标签条四层。
 4. 搜索框输入关键词（如「心」「heart」）→ 实时过滤，跨分类命中。
-5. 点分类标签 → 切换显示对应分类。
+5. 点底部**文字分类标签**（笑脸/手势/…/符号，当前项高亮）→ 切换显示对应分类。
 6. 方向键移动高亮，Enter 插入当前项；点击 emoji 插入。
 7. 插入后浮层保持打开，可连插多个；搜索框清空回到分类视图。
 8. Esc → 关闭浮层；点浮层外部（含编辑区）→ 关闭。
 9. 插入的 emoji 在 MD↔HTML 往返、保存重开后正确保留。
 10. 只读模式下入口不生效。
 11. 切换文档标签页时浮层关闭（不残留到下一个文档）。
-12. 「最近使用」：插入若干 emoji 后，该栏按最近在前显示、去重；重启应用重开浮层仍可见历史（`localStorage` 持久化生效）。
+12. 「常用区」：多次插入相同 emoji 后，常用区按使用频率排序显示（最多 8 个，频率并列时最近用的靠前）；搜索时常用区隐藏；重启应用重开浮层仍按历史频率显示（`localStorage` 持久化生效）。
 
 `MarkdownHandler` 无需修改——emoji 是纯 Unicode 文本，HTML 往返无损。
 
