@@ -626,7 +626,7 @@ body.dark .mermaid-hint {
 /* ===== 表情符号选择器（非模态浮层，四层布局：搜索行 + 常用区 + 分类网格 + 分类标签） ===== */
 .emoji-picker {
     position: fixed;
-    width: 360px;
+    width: 380px;
     max-height: 420px;
     background: #ffffff;
     border-radius: 10px;
@@ -638,7 +638,7 @@ body.dark .mermaid-hint {
                  "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
 }
 /* ① 搜索行：搜索框 + × 关闭按钮 */
-.emoji-picker-searchrow { display: flex; align-items: center; gap: 4px; padding: 8px 8px 0; }
+.emoji-picker-searchrow { display: flex; align-items: center; gap: 4px; padding: 10px 10px 0; }
 .emoji-picker-searchrow .emoji-picker-search { flex: 1 1 auto; margin: 0; }
 .emoji-picker-search {
     padding: 7px 10px;
@@ -656,15 +656,15 @@ body.dark .mermaid-hint {
 /* ② 常用区：标签 + 按频率取前 8 */
 .emoji-freq { padding: 4px 0 2px; }
 .emoji-freq-label { font-size: 12px; color: #888; padding: 2px 10px 4px; }
-.emoji-freq-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; padding: 0 8px 2px; }
+.emoji-freq-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; padding: 0 10px 2px; }
 /* ③ 当前分类网格 */
 .emoji-picker-grid {
     overflow-y: auto;
-    display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px;
-    padding: 4px 8px; min-height: 120px; max-height: 260px;
+    display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px;
+    padding: 4px 10px; min-height: 120px; max-height: 260px;
 }
 .emoji-cell {
-    font-size: 22px; line-height: 1; padding: 4px 0;
+    font-size: 24px; line-height: 1; padding: 5px 0;
     border: none; background: transparent; cursor: pointer;
     border-radius: 5px; text-align: center;
 }
@@ -672,11 +672,11 @@ body.dark .mermaid-hint {
 .emoji-empty { grid-column: 1 / -1; text-align: center; color: #999; font-size: 14px; padding: 30px 0; }
 /* ④ 分类标签条（文字标签，当前项高亮） */
 .emoji-picker-tabs {
-    display: flex; flex-wrap: wrap; gap: 2px; overflow-x: auto;
-    padding: 6px 8px; border-top: 1px solid #eee; background: #fafafa;
+    display: flex; flex-wrap: nowrap; gap: 3px; overflow-x: auto;
+    padding: 6px 10px; border-top: 1px solid #eee; background: #fafafa;
 }
 .emoji-tab {
-    font-size: 13px; padding: 4px 8px; border: none; background: transparent;
+    font-size: 12px; padding: 4px 6px; border: none; background: transparent;
     cursor: pointer; border-radius: 5px; line-height: 1.2; color: #555; white-space: nowrap;
 }
 .emoji-tab:hover { background: #e6e6e6; }
