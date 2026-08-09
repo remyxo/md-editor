@@ -56,6 +56,46 @@ static QString extractSubscripts(QString line, QStringList &out)
     return line;
 }
 
+// 提取 markdown 行中的原始 HTML 内联标签（<span style>/<u>），
+// 替换为占位符 ZZHI{n}ZZ。这些标签无法用 Markdown 语法表达，
+// 需保护后直通 Qt setMarkdown，后处理时还原为原始 HTML。
+// 不用 DotMatchesEverythingOption——markdown 源码逐行处理，<span>/<u>
+// 作为内联元素不会跨行（与 fromHtml() 侧不同，那里处理的是完整 HTML 文档）。
+static QString extractHtmlInlineElements(const QString &line,
+                                         QStringList &backups)
+{
+    QString r = line;
+    int n = backups.size();
+    // <span style="...">text</span>
+    {
+        QRegularExpression spanRe(
+            R"(<span\b[^>]*\bstyle\s*=\s*"[^"]*"[^>]*>(.*?)</span>)");
+        int offset = 0;
+        while (true) {
+            auto m = spanRe.match(r, offset);
+            if (!m.hasMatch()) break;
+            backups << m.captured();
+            QString ph = QString("ZZHI%1ZZ").arg(n++);
+            r.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
+    // <u>text</u>
+    {
+        QRegularExpression uRe(R"(<u>(.*?)</u>)");
+        int offset = 0;
+        while (true) {
+            auto m = uRe.match(r, offset);
+            if (!m.hasMatch()) break;
+            backups << m.captured();
+            QString ph = QString("ZZHI%1ZZ").arg(n++);
+            r.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
+    return r;
+}
+
 // 提取脚注引用 [^id] → ZZFR 占位符（后处理还原为 <sup data-type="footnoteRef">）。
 // 先保护行内代码 `...`（其内的 [^x] 原样保留），再转换引用，最后还原代码。
 static QString extractFootnoteRefs(QString line, QStringList &refs)
@@ -359,6 +399,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList footnoteRefs;   // 脚注引用 <sup> HTML（后处理还原）
     QStringList footnoteDefs;   // 脚注定义 def HTML（按 id 去重，首次定义顺序）
     QStringList footnoteDefIds; // 已收集的定义 id（去重用）
+    QStringList htmlInlineBackups; // 原始 HTML 内联标签（<span style> / <u>）
 
     QStringList mathBlocks;  // 收集 $$ 块的内容
     QStringList mathLines;    // 当前 $$ 块的行
@@ -448,7 +489,9 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             if (lastBlock == BT_LIST)
                 processed += '\n';
             // 两行正文 → 第一行末尾嵌入标记，setMarkdown 保留该标记
-            processed += extractFootnoteRefs(extractSubscripts(line, subContents), footnoteRefs) + " " + MARKER + "\n";
+            // 先提取原始 HTML 内联标签（<span style>/<u>）为占位符，避免被 Qt 剥离
+            QString cl = extractHtmlInlineElements(line, htmlInlineBackups);
+            processed += extractFootnoteRefs(extractSubscripts(cl, subContents), footnoteRefs) + " " + MARKER + "\n";
             lastBlock = BT_PARA;
         } else {
             // 隔离：列表后紧跟正文时补空行（同上）
@@ -458,7 +501,8 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             // 有序列表不能打断段落，md4c 会把列表项当作段落延续行吞并
             if (isListItemLine(line) && lastBlock == BT_PARA)
                 processed += '\n';
-            processed += extractFootnoteRefs(extractSubscripts(line, subContents), footnoteRefs) + '\n';
+            QString cl = extractHtmlInlineElements(line, htmlInlineBackups);
+            processed += extractFootnoteRefs(extractSubscripts(cl, subContents), footnoteRefs) + '\n';
             lastBlock = isListItemLine(line) ? BT_LIST
                         : (isParagraphLine(line) ? BT_PARA : BT_NONE);
         }
@@ -643,6 +687,11 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         "<p[^>]*>(<br[^>]*>)?</p>\\s*(<div data-type=\"block-math\")"), "\\3");
     html.replace(QRegularExpression(
         "(</div>)\\s*<p[^>]*>(<br[^>]*>)?</p>"), "\\1");
+
+    // 还原 HTML 内联标签占位符 ZZHI → 原始 <span style> / <u>
+    // （置于所有现有点位符还原之后，保证内容中原有的 ZZ* 占位符已先还原）
+    for (int i = 0; i < htmlInlineBackups.size(); ++i)
+        html.replace("ZZHI" + QString::number(i) + "ZZ", htmlInlineBackups[i]);
 
     return html;
 }
