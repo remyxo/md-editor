@@ -128,6 +128,9 @@ void MenuBar::setupUi()
     QAction *hrAct = m_insertMenu->addAction("分割线");
     connect(hrAct, &QAction::triggered, this, &MenuBar::insertHorizontalRule);
 
+    QAction *emojiAct = m_insertMenu->addAction("表情符号...");
+    connect(emojiAct, &QAction::triggered, this, &MenuBar::insertEmoji);
+
     // === 帮助菜单 ===
     m_helpMenu = addMenu("帮助(&H)");
 
