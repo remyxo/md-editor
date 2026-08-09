@@ -131,6 +131,9 @@ void MenuBar::setupUi()
     QAction *emojiAct = m_insertMenu->addAction("表情符号...");
     connect(emojiAct, &QAction::triggered, this, &MenuBar::insertEmoji);
 
+    QAction *footnoteAct = m_insertMenu->addAction("脚注...");
+    connect(footnoteAct, &QAction::triggered, this, &MenuBar::insertFootnote);
+
     // === 帮助菜单 ===
     m_helpMenu = addMenu("帮助(&H)");
 

@@ -265,7 +265,13 @@ void MainWindow::connectSignals()
         runEditorCommand("window.editorApi.insertMermaid();");
     });
     connect(m_toolBar, &ToolBar::emojiClicked, this, [this]() { onInsertEmoji(); });
+    connect(m_toolBar, &ToolBar::footnoteClicked, this, [this]() {
+        runEditorCommand("window.editorApi.insertFootnote();");
+    });
     connect(m_menuBar, &MenuBar::insertEmoji, this, [this]() { onInsertEmoji(); });
+    connect(m_menuBar, &MenuBar::insertFootnote, this, [this]() {
+        runEditorCommand("window.editorApi.insertFootnote();");
+    });
     connect(m_toolBar, &ToolBar::sourceToggleClicked, this, &MainWindow::onToggleSourceMode);
     connect(m_toolBar, &ToolBar::pdfExportClicked, this, &MainWindow::onExportPdf);
 

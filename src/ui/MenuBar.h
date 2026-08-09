@@ -39,6 +39,7 @@ signals:
     void insertCodeBlock();
     void insertHorizontalRule();
     void insertEmoji();
+    void insertFootnote();
 
     void switchTheme(const QString &name);
 

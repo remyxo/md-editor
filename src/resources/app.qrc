@@ -33,6 +33,7 @@
         <file>icons/light/math.svg</file>
         <file>icons/light/diagram.svg</file>
         <file>icons/light/emoji.svg</file>
+        <file>icons/light/footnote.svg</file>
         <file>icons/light/undo.svg</file>
         <file>icons/light/redo.svg</file>
         <file>icons/dark/bold.svg</file>
@@ -65,6 +66,7 @@
         <file>icons/dark/math.svg</file>
         <file>icons/dark/diagram.svg</file>
         <file>icons/dark/emoji.svg</file>
+        <file>icons/dark/footnote.svg</file>
         <file>icons/dark/undo.svg</file>
         <file>icons/dark/redo.svg</file>
         <file>web/fonts/KaTeX_AMS-Regular.ttf</file>

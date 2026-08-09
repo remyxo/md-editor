@@ -182,6 +182,8 @@ void ToolBar::setupUi()
         "插入 Mermaid 图表", ":/icons/light/diagram.svg");
     makeAction(this, &m_iconPaths, "emojiAction",
         "插入表情", ":/icons/light/emoji.svg");
+    makeAction(this, &m_iconPaths, "footnoteAction",
+        "插入脚注", ":/icons/light/footnote.svg");
 
     addSeparator();
 
@@ -232,6 +234,8 @@ void ToolBar::setupUi()
             connect(a, &QAction::triggered, this, &ToolBar::mermaidClicked);
         else if (a->objectName() == "emojiAction")
             connect(a, &QAction::triggered, this, &ToolBar::emojiClicked);
+        else if (a->objectName() == "footnoteAction")
+            connect(a, &QAction::triggered, this, &ToolBar::footnoteClicked);
         else if (a->objectName() == "readModeAction")
             connect(a, &QAction::triggered, this, &ToolBar::toggleReadModeClicked);
     }

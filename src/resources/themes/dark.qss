@@ -103,7 +103,8 @@ QToolButton#blockquoteAction { color: #c4c9ce; }
 QToolButton#linkAction,
 QToolButton#imageAction,
 QToolButton#tableAction,
-QToolButton#hrAction { color: #8ab4f8; }
+QToolButton#hrAction,
+QToolButton#footnoteAction { color: #8ab4f8; }
 
 /* 视图/导出 */
 QToolButton#sourceAction { color: #c4c9ce; }
