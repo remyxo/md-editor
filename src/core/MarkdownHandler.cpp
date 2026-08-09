@@ -579,12 +579,6 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         for (int i = 0; i < codeBlocks.size(); ++i)
             html.replace(QString("__CODE%1__").arg(i), codeBlocks[i]);
     }
-    // 恢复下标占位符 ZZSB → <sub>（内容来自原始 markdown，需 HTML 转义）
-    for (int i = 0; i < subContents.size(); ++i) {
-        QString c = subContents[i];
-        c.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-        html.replace("ZZSB" + QString::number(i) + "ZZ", "<sub>" + c + "</sub>");
-    }
     // 还原脚注引用占位符 ZZFR → <sup data-type="footnoteRef">
     for (int i = 0; i < footnoteRefs.size(); ++i)
         html.replace("ZZFR" + QString::number(i) + "ZZ", footnoteRefs[i]);
@@ -597,6 +591,13 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         int bodyClose = html.indexOf("</body>");
         if (bodyClose >= 0) html.insert(bodyClose, container);
         else html += container;
+    }
+    // 恢复下标占位符 ZZSB → <sub>（内容来自原始 markdown，需 HTML 转义）
+    // 注意：必须在脚注容器追加之后执行——脚注定义内容可能含 ZZSB 占位符。
+    for (int i = 0; i < subContents.size(); ++i) {
+        QString c = subContents[i];
+        c.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        html.replace("ZZSB" + QString::number(i) + "ZZ", "<sub>" + c + "</sub>");
     }
     // 恢复数学公式占位符（前后可能有空 <p>，一并清除）
     for (int i = 0; i < mathBlocks.size(); ++i) {

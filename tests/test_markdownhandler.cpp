@@ -354,6 +354,16 @@ private slots:
                  qPrintable("无定义不应出现容器，实际: " + html));
     }
 
+    void testFootnoteDefSubscript() {
+        // 定义内容内的下标 ~x~ 须正确还原为 <sub>（不残留 ZZSB 占位符）
+        QString md = "正文[^1]\n\n[^1]: a~b~c";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("<sub>b</sub>"),
+                 qPrintable("定义内下标未还原，实际: " + html));
+        QVERIFY2(!html.contains("ZZSB"),
+                 qPrintable("残留 ZZSB 占位符，实际: " + html));
+    }
+
     void testExtractTitle() {
         QString md = "# 我的文档标题\n\n内容。";
         QString title = MarkdownHandler::extractTitle(md);
