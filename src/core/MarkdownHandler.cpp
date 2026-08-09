@@ -1031,6 +1031,44 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
     }
 
+    // N) 保护 Markdown 无法表达的 HTML 内联元素 → 占位符
+    //    QTextDocument::toMarkdown() 会丢弃内联 CSS 样式和下划线标签，
+    //    占位符保护后还原为原始 HTML，与 toHtml() 形成对称往返。
+    //    置于最后：本步匹配的最外层 <span>/<u> 包裹的文本可能含已被早期
+    //    步骤保护的占位符（ZZ*），它们作为字面文本穿过 toMarkdown，最终由
+    //    逆序还原统一还原（本步最后追加 → 最先还原最外层）。
+    {
+        int n = 0;
+        int offset = 0;
+        // <span style="...">text</span>
+        QRegularExpression spanStyleRe(
+            R"(<span\b[^>]*\bstyle\s*=\s*"[^"]*"[^>]*>(.*?)</span>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = spanStyleRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("ZZHS%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << m.captured();  // 保留完整原始 HTML
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+        // <u>text</u>（重置 offset：<u> 可能位于最后一个 <span> 之前）
+        offset = 0;
+        QRegularExpression uRe(
+            R"(<u>(.*?)</u>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = uRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("ZZUL%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << m.captured();  // 保留完整原始 HTML
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
+
     QTextDocument doc;
     doc.setHtml(processed);
     QString md = doc.toMarkdown();
