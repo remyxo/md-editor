@@ -364,6 +364,45 @@ private slots:
                  qPrintable("残留 ZZSB 占位符，实际: " + html));
     }
 
+    // ===== 脚注（footnote）HTML → MD 往返 =====
+
+    void testFootnoteRefRoundTrip() {
+        QString md = "正文[^1]内容";
+        QString html = MarkdownHandler::toHtml(md);
+        QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("[^1]"),
+                 qPrintable("引用往返丢失，实际: " + back));
+    }
+
+    void testFootnoteDefRoundTrip() {
+        QString md = "正文[^1]\n\n[^1]: 这是定义";
+        QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("[^1]"),
+                 qPrintable("引用往返丢失，实际: " + back));
+        QVERIFY2(back.contains("[^1]: 这是定义"),
+                 qPrintable("定义行往返丢失，实际: " + back));
+    }
+
+    void testFootnoteRichContentRoundTrip() {
+        QString md = "见[^a]\n\n[^a]: **加粗** 与 [链](http://x)";
+        QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("[^a]:"),
+                 qPrintable("自定义 id 定义丢失，实际: " + back));
+        QVERIFY2(back.contains("**加粗**"),
+                 qPrintable("定义内加粗丢失，实际: " + back));
+        QVERIFY2(back.contains("[链](http://x)"),
+                 qPrintable("定义内链接丢失，实际: " + back));
+    }
+
+    void testFootnoteMultiDefRoundTrip() {
+        QString md = "一[^1]二[^2]\n\n[^1]: A\n[^2]: B";
+        QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("[^1]: A"),
+                 qPrintable("定义1往返丢失，实际: " + back));
+        QVERIFY2(back.contains("[^2]: B"),
+                 qPrintable("定义2往返丢失，实际: " + back));
+    }
+
     void testExtractTitle() {
         QString md = "# 我的文档标题\n\n内容。";
         QString title = MarkdownHandler::extractTitle(md);
