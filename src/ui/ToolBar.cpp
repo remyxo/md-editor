@@ -180,6 +180,8 @@ void ToolBar::setupUi()
         "插入公式 (Ctrl+M)", ":/icons/light/math.svg");
     makeAction(this, &m_iconPaths, "diagramAction",
         "插入 Mermaid 图表", ":/icons/light/diagram.svg");
+    makeAction(this, &m_iconPaths, "emojiAction",
+        "插入表情", ":/icons/light/emoji.svg");
 
     addSeparator();
 
@@ -228,6 +230,8 @@ void ToolBar::setupUi()
             connect(a, &QAction::triggered, this, &ToolBar::mathClicked);
         else if (a->objectName() == "diagramAction")
             connect(a, &QAction::triggered, this, &ToolBar::mermaidClicked);
+        else if (a->objectName() == "emojiAction")
+            connect(a, &QAction::triggered, this, &ToolBar::emojiClicked);
         else if (a->objectName() == "readModeAction")
             connect(a, &QAction::triggered, this, &ToolBar::toggleReadModeClicked);
     }
