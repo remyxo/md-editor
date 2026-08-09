@@ -161,12 +161,7 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::toggleSidebar, this, [this]() {
         m_sideBar->setCollapsed(!m_sideBar->isCollapsed());
     });
-    connect(m_menuBar, &MenuBar::toggleSourceMode, this, [this]() {
-        static bool srcMode = false;
-        srcMode = !srcMode;
-        m_menuBar->findChild<QAction *>("sourceModeAction")->setChecked(srcMode);
-        onToggleSourceMode();
-    });
+    connect(m_menuBar, &MenuBar::toggleSourceMode, this, &MainWindow::onToggleSourceMode);
     auto toggleReadMode = [this]() {
         EditorTab *tab = m_tabWidget->currentEditorTab();
         if (tab && tab->isPermanentReadOnly()) return;
@@ -457,6 +452,16 @@ void MainWindow::runEditorCommand(const QString &js)
     }
 }
 
+// 转义字符串以安全嵌入 JS 模板字面量 `...`（与 EditorTab::loadFile 一致）
+static QString escapeForJsTemplate(const QString &s)
+{
+    QString r = s;
+    r.replace("\\", "\\\\");
+    r.replace("`", "\\`");
+    r.replace("$", "\\$");
+    return r;
+}
+
 // === 工具栏响应实现 ===
 
 void MainWindow::onBoldClicked()
@@ -521,7 +526,45 @@ void MainWindow::onInsertImage()
 
 void MainWindow::onToggleSourceMode()
 {
-    runEditorCommand("window.editorApi.toggleSourceMode();");
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    if (!tab || m_sourceModeToggling) return;
+    m_sourceModeToggling = true;
+
+    if (!m_sourceMode) {
+        // → 进入源码模式：获取编辑器 HTML → 转换为 MD → 显示到 textarea
+        tab->webView()->page()->runJavaScript(
+            QStringLiteral("window.editorApi.getContent()"),
+            [this, tab](const QVariant &result) {
+                QString html = result.toString();
+                QString md = MarkdownHandler::fromHtml(html);
+                QString escaped = escapeForJsTemplate(md);
+                tab->runJsCommand(
+                    QString("window.editorApi.enterSourceMode(`%1`);").arg(escaped));
+                m_sourceMode = true;
+                m_toolBar->setSourceMode(true);
+                if (QAction *act = m_menuBar->findChild<QAction *>(
+                        QStringLiteral("sourceModeAction")))
+                    act->setChecked(true);
+                m_sourceModeToggling = false;
+            });
+    } else {
+        // → 退出源码模式：获取 textarea MD → 转换为 HTML → 加载到编辑器
+        tab->webView()->page()->runJavaScript(
+            QStringLiteral("window.editorApi.getSourceContent()"),
+            [this, tab](const QVariant &result) {
+                QString md = result.toString();
+                QString html = MarkdownHandler::toHtml(md);
+                QString escaped = escapeForJsTemplate(html);
+                tab->runJsCommand(
+                    QString("window.editorApi.exitSourceMode(`%1`);").arg(escaped));
+                m_sourceMode = false;
+                m_toolBar->setSourceMode(false);
+                if (QAction *act = m_menuBar->findChild<QAction *>(
+                        QStringLiteral("sourceModeAction")))
+                    act->setChecked(false);
+                m_sourceModeToggling = false;
+            });
+    }
 }
 
 void MainWindow::onExportPdf()
