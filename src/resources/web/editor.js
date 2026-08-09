@@ -569,6 +569,7 @@ window.editorApi = {
     _mathEditing: false,
     isSourceMode: false,
     _sourceValue: null,
+    _onSourceInput: null,
     _readOnly: false,
 
     // === 内部辅助方法 ===
@@ -889,6 +890,11 @@ window.editorApi = {
         if (this._readOnly) sourceView.setAttribute('readonly', '');
         else sourceView.removeAttribute('readonly');
         this.isSourceMode = true;
+        // 绑定 input 监听：源码区编辑时实时标记脏状态（对齐 WYSIWYG 的 onUpdate 实时标记）。
+        // 程序化 sourceView.value = md 不会触发 input 事件，初始填充安全。
+        var api = this;
+        this._onSourceInput = function() { api._markDirty(); };
+        sourceView.addEventListener('input', this._onSourceInput);
     },
 
     // 退出源码模式（C++ 侧传入已转换好的 HTML）
@@ -897,6 +903,11 @@ window.editorApi = {
         var sourceView = document.getElementById('source-view');
         var editorDiv = document.getElementById('editor');
         var changed = sourceView.value !== this._sourceValue;
+        // 解绑 input 监听，避免退出后残留引用。
+        if (this._onSourceInput) {
+            sourceView.removeEventListener('input', this._onSourceInput);
+            this._onSourceInput = null;
+        }
         this._loading = true;
         this.editor.commands.setContent(html);
         this._loading = false;
