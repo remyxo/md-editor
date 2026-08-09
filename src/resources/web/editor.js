@@ -1576,9 +1576,9 @@ window.editorApi = {
             if (!n) return;
             var c = this.COLS;
             if (e.key === 'ArrowRight') { e.preventDefault(); this._highlight = (this._highlight + 1) % n; this._applyHighlight(); }
-            else if (e.key === 'ArrowLeft') { e.preventDefault(); this._highlight = (this._highlight - 1 + n) % n; this._applyHighlight(); }
+            else if (e.key === 'ArrowLeft') { e.preventDefault(); this._highlight = ((this._highlight - 1) % n + n) % n; this._applyHighlight(); }
             else if (e.key === 'ArrowDown') { e.preventDefault(); this._highlight = (this._highlight + c) % n; this._applyHighlight(); }
-            else if (e.key === 'ArrowUp') { e.preventDefault(); this._highlight = (this._highlight - c + n) % n; this._applyHighlight(); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); this._highlight = ((this._highlight - c) % n + n) % n; this._applyHighlight(); }
             else if (e.key === 'Enter') { e.preventDefault(); var it = this._rendered[this._highlight] || this._rendered[0]; if (it) this._insert(it); }
         },
 
