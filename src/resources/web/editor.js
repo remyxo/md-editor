@@ -1391,17 +1391,18 @@ window.editorApi = {
     // ===== emoji 选择器浮层（非模态，锚定按钮下方，点外部/Esc 关闭） =====
     _emojiPicker: {
         root: null, searchInput: null, grid: null, tabBar: null,
-        _recent: [], _curCat: 'smileys', _filter: '', _highlight: -1,
+        freqSection: null, freqGrid: null,
+        _freq: {}, _freqSeq: 0, _curCat: 'smileys', _filter: '', _highlight: -1,
         _rendered: [], _charMap: null, _outsideHandler: null,
-        RECENT_KEY: 'md-editor:emoji-recent', RECENT_MAX: 32, COLS: 10,
+        FREQ_KEY: 'md-editor:emoji-freq', FREQ_TOP: 8, COLS: 10,
 
         open: function(x, y) {
             var ed = window.editorApi.editor;
             if (!ed) return;
-            this._loadRecent();
+            this._loadFreq();
             this._filter = '';
             this.buildDom();
-            this._curCat = (this._recent && this._recent.length) ? 'recent' : EMOJI_CATEGORIES[0].id;
+            this._curCat = EMOJI_CATEGORIES[0].id;
             this._position(x, y);
             this._renderTabBar();
             this.render();
@@ -1430,21 +1431,9 @@ window.editorApi = {
             this.root = document.createElement('div');
             this.root.className = 'emoji-picker';
 
-            var head = document.createElement('div');
-            head.className = 'emoji-picker-head';
-            var title = document.createElement('span');
-            title.className = 'emoji-picker-title';
-            title.textContent = '插入表情';
-            head.appendChild(title);
-            var closeBtn = document.createElement('button');
-            closeBtn.className = 'emoji-picker-close';
-            closeBtn.type = 'button';
-            closeBtn.textContent = '×';
-            closeBtn.title = '关闭';
-            closeBtn.addEventListener('click', function(e){ e.stopPropagation(); self.close(); });
-            head.appendChild(closeBtn);
-            this.root.appendChild(head);
-
+            // ① 搜索行：搜索框 + 关闭按钮（无标题）
+            var searchRow = document.createElement('div');
+            searchRow.className = 'emoji-picker-searchrow';
             this.searchInput = document.createElement('input');
             this.searchInput.type = 'text';
             this.searchInput.className = 'emoji-picker-search';
@@ -1456,12 +1445,34 @@ window.editorApi = {
                 self.render();
             });
             this.searchInput.addEventListener('keydown', function(e){ self._onKeydown(e); });
-            this.root.appendChild(this.searchInput);
+            searchRow.appendChild(this.searchInput);
+            var closeBtn = document.createElement('button');
+            closeBtn.className = 'emoji-picker-close';
+            closeBtn.type = 'button';
+            closeBtn.textContent = '×';
+            closeBtn.title = '关闭';
+            closeBtn.addEventListener('click', function(e){ e.stopPropagation(); self.close(); });
+            searchRow.appendChild(closeBtn);
+            this.root.appendChild(searchRow);
 
+            // ② 常用区：标签 + 频率网格（_renderFreq 控制显隐与内容）
+            this.freqSection = document.createElement('div');
+            this.freqSection.className = 'emoji-freq';
+            var freqLabel = document.createElement('div');
+            freqLabel.className = 'emoji-freq-label';
+            freqLabel.textContent = '常用表情符号';
+            this.freqSection.appendChild(freqLabel);
+            this.freqGrid = document.createElement('div');
+            this.freqGrid.className = 'emoji-freq-grid';
+            this.freqSection.appendChild(this.freqGrid);
+            this.root.appendChild(this.freqSection);
+
+            // ③ 当前分类网格
             this.grid = document.createElement('div');
             this.grid.className = 'emoji-picker-grid';
             this.root.appendChild(this.grid);
 
+            // ④ 分类标签条
             this.tabBar = document.createElement('div');
             this.tabBar.className = 'emoji-picker-tabs';
             this.root.appendChild(this.tabBar);
@@ -1506,6 +1517,7 @@ window.editorApi = {
                 empty.textContent = '无匹配表情';
                 this.grid.appendChild(empty);
             }
+            this._renderFreq();
         },
 
         _renderTabBar: function() {
@@ -1515,7 +1527,7 @@ window.editorApi = {
                 var b = document.createElement('button');
                 b.type = 'button';
                 b.className = 'emoji-tab';
-                b.textContent = cat.icon;
+                b.textContent = cat.name;
                 b.title = cat.name;
                 if (cat.id === self._curCat && !self._filter) b.classList.add('active');
                 b.addEventListener('click', function(e){
@@ -1528,19 +1540,10 @@ window.editorApi = {
                 });
                 self.tabBar.appendChild(b);
             };
-            if (this._recent && this._recent.length) addTab({ id:'recent', icon:'🕘', name:'最近使用' });
             for (var i = 0; i < EMOJI_CATEGORIES.length; i++) addTab(EMOJI_CATEGORIES[i]);
         },
 
         _getCat: function(id) {
-            if (id === 'recent') {
-                var cm = this._getCharMap(), arr = [];
-                for (var i = 0; i < this._recent.length; i++) {
-                    var ch = this._recent[i];
-                    arr.push(cm[ch] || { ch: ch, kw: ch });
-                }
-                return { id:'recent', icon:'🕘', name:'最近', emojis: arr };
-            }
             for (var i = 0; i < EMOJI_CATEGORIES.length; i++)
                 if (EMOJI_CATEGORIES[i].id === id) return EMOJI_CATEGORIES[i];
             return EMOJI_CATEGORIES[0];
@@ -1562,7 +1565,7 @@ window.editorApi = {
             var ed = window.editorApi.editor;
             if (!ed) return;
             ed.commands.insertContent(item.ch);
-            this.addToRecent(item.ch);
+            this._bumpFreq(item.ch);
             // 插入后清空搜索、回到当前分类视图（便于连插）
             this._filter = '';
             if (this.searchInput) this.searchInput.value = '';
@@ -1590,24 +1593,63 @@ window.editorApi = {
             }
         },
 
-        addToRecent: function(ch) {
-            var idx = this._recent.indexOf(ch);
-            if (idx >= 0) this._recent.splice(idx, 1);
-            this._recent.unshift(ch);
-            while (this._recent.length > this.RECENT_MAX) this._recent.pop();
-            this._saveRecent();
+        _bumpFreq: function(ch) {
+            var e = this._freq[ch] || { count: 0, seq: 0 };
+            e.count++; e.seq = ++this._freqSeq;
+            this._freq[ch] = e;
+            this._saveFreq();
         },
 
-        _loadRecent: function() {
+        _loadFreq: function() {
+            this._freq = {}; this._freqSeq = 0;
             try {
-                var s = localStorage.getItem(this.RECENT_KEY);
-                this._recent = s ? JSON.parse(s) : [];
-                if (!Array.isArray(this._recent)) this._recent = [];
-            } catch (e) { this._recent = []; }
+                var s = localStorage.getItem(this.FREQ_KEY);
+                var obj = s ? JSON.parse(s) : null;
+                if (obj && typeof obj === 'object') {
+                    this._freq = obj;
+                    for (var k in obj) if (obj[k] && obj[k].seq > this._freqSeq) this._freqSeq = obj[k].seq;
+                }
+            } catch (e) { this._freq = {}; this._freqSeq = 0; }
         },
 
-        _saveRecent: function() {
-            try { localStorage.setItem(this.RECENT_KEY, JSON.stringify(this._recent)); } catch (e) {}
+        _saveFreq: function() {
+            try { localStorage.setItem(this.FREQ_KEY, JSON.stringify(this._freq)); } catch (e) {}
+        },
+
+        _topFrequent: function() {
+            var cm = this._getCharMap(), self = this;
+            var keys = Object.keys(this._freq);
+            keys.sort(function(a, b) {
+                var fa = self._freq[a], fb = self._freq[b];
+                var d = (fb ? fb.count : 0) - (fa ? fa.count : 0);   // 次数降序
+                if (d) return d;
+                return (fb ? fb.seq : 0) - (fa ? fa.seq : 0);        // 并列 → 最近使用(seq)在前
+            });
+            var out = [];
+            for (var i = 0; i < keys.length && out.length < self.FREQ_TOP; i++) {
+                var ch = keys[i];
+                out.push(cm[ch] || { ch: ch, kw: ch });
+            }
+            return out;
+        },
+
+        _renderFreq: function() {
+            if (!this.freqSection || !this.freqGrid) return;
+            this.freqGrid.innerHTML = '';
+            if (this._filter) { this.freqSection.style.display = 'none'; return; }   // 搜索时隐藏
+            var top = this._topFrequent();
+            if (!top.length) { this.freqSection.style.display = 'none'; return; }    // 空时隐藏
+            this.freqSection.style.display = '';
+            var self = this;
+            for (var i = 0; i < top.length; i++) {
+                (function(item){
+                    var btn = document.createElement('button');
+                    btn.type = 'button'; btn.className = 'emoji-cell';
+                    btn.textContent = item.ch; btn.title = item.kw;
+                    btn.addEventListener('click', function(e){ e.stopPropagation(); self._insert(item); });
+                    self.freqGrid.appendChild(btn);
+                })(top[i]);
+            }
         },
 
         _registerOutside: function() {
@@ -1629,6 +1671,7 @@ window.editorApi = {
         _cleanupDom: function() {
             if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
             this.root = null; this.searchInput = null; this.grid = null; this.tabBar = null;
+            this.freqSection = null; this.freqGrid = null;
             this._rendered = []; this._highlight = -1;
         },
 
