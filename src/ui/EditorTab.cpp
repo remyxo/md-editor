@@ -28,6 +28,11 @@ protected:
     void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level,
         const QString &msg, int line, const QString &src) override {
         Q_UNUSED(level); Q_UNUSED(line); Q_UNUSED(src);
+        // Mermaid 内部 innerHTML 赋值时产生的 SVG 负 rect 解析报错：
+        // editor.js 的 _sanitizeMermaidSvg + _fixNegativeRects 会修正最终 DOM，
+        // 此处为浏览器引擎级消息，JS console API 覆写无法拦截，故在 C++ 侧过滤。
+        if (msg.contains("A negative value is not valid"))
+            return;
         qDebug() << "[JS]" << msg;
     }
 private:

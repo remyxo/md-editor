@@ -78,6 +78,7 @@ function _fixNegativeRects(svgEl) {
     }
 }
 
+
 // 懒初始化 mermaid（按当前明暗主题），保证只初始化一次
 function _ensureMermaidInited() {
     if (!window.mermaid || window.__mermaidInited) return;
@@ -1315,7 +1316,7 @@ window.editorApi = {
             if (!window.mermaid) { p.textContent = src; return; }
             _ensureMermaidInited();
             var id = 'mermaid-prev-' + (++_mermaidIdSeq);
-            window.mermaid.render(id, src).then(function(res) {
+            _mermaidRenderSafe(id, src).then(function(res) {
                 p.innerHTML = _sanitizeMermaidSvg(res.svg || '');
                 var svg = p.querySelector('svg');
                 if (svg) { _fixNegativeRects(svg); svg.style.maxWidth = '100%'; svg.style.height = 'auto'; }

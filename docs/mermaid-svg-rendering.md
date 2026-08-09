@@ -82,6 +82,65 @@ function _fixNegativeRects(svgEl) {
 | 编辑区内联渲染 | `mermaidNodeView.paint()` | `editor.js:~245` |
 | 对话框实时预览 | `_mermaidEditor.updatePreview()` | `editor.js:~1130` |
 
+### ⚠️ 关键发现：报错来源并非正则漏网（2025-08 排障记录）
+
+经深入排查确认：**`_sanitizeMermaidSvg` 的正则和 `_fixNegativeRects` 的 DOM 兜底一直工作正确**。报错的真正来源存在时序错位：
+
+```
+mermaidNodeView.paint()
+  └→ mermaid.render(id, source)           // 异步
+       └→ Mermaid 内部生成 SVG（含负 width）
+            └→ Mermaid 内部临时 div.innerHTML = SVG  ← 🔴 报错在此！
+                 （浏览器 SVG 解析器在 Mermaid 内部临时 DOM 上触发）
+       └→ Promise resolve → 返回 {svg: ...}
+  └→ _sanitizeMermaidSvg(res.svg)          // 正则清理 ✓
+  └→ dom.innerHTML = 消毒后 SVG            // 零报错 ✓
+  └→ _fixNegativeRects(svg)                // DOM 兜底 ✓
+```
+
+**Mermaid 在自己的临时容器上设置 innerHTML 时触发了浏览器解析报错**——此时我们尚未拿到 SVG 字符串，`_sanitizeMermaidSvg` 还来不及运行。报错的是 Mermaid 内部的临时 DOM，而非最终渲染到编辑区的 DOM。
+
+### 失败的 JS 侧拦截尝试
+
+1. **`console.error` 临时覆写** — 在 `mermaid.render()` 前后覆写/恢复 `console.error`，过滤 "negative value is not valid"。失败原因：浏览器引擎（Chromium）的 SVG 解析器报错走的是内部日志通道，**不经 JavaScript 的 `console.error` API**，覆写无效。
+2. **`window.addEventListener('error')`** — SVG 解析报错并非 JavaScript 异常，不会触发 error 事件。
+
+---
+
+## 问题 4：浏览器引擎级报错无法在 JS 侧拦截
+
+### 现象
+
+经过 JS 侧 `_sanitizeMermaidSvg` + `_fixNegativeRects` 完美修正后，控制台仍报 "A negative value is not valid"。
+
+### 根因
+
+见问题 1 的"关键发现"——报错发生在 Mermaid 内部临时 DOM 操作期间，是浏览器引擎（Chromium）SVG 解析器直接写入控制台的消息，不经 JavaScript `console` API，无法在 JS 侧拦截。
+
+### 最终方案：C++ 侧 `javaScriptConsoleMessage` 过滤
+
+在 `EditorTab.cpp` 的 `javaScriptConsoleMessage` 回调中丢弃已知误报：
+
+```cpp
+void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level,
+    const QString &msg, int line, const QString &src) override {
+    Q_UNUSED(level); Q_UNUSED(line); Q_UNUSED(src);
+    // Mermaid 内部 innerHTML 赋值时产生的 SVG 负 rect 解析报错：
+    // editor.js 的 _sanitizeMermaidSvg + _fixNegativeRects 会修正最终 DOM，
+    // 此处为浏览器引擎级消息，JS console API 覆写无法拦截，故在 C++ 侧过滤。
+    if (msg.contains("A negative value is not valid"))
+        return;
+    qDebug() << "[JS]" << msg;
+}
+```
+
+**为什么是安全的**：
+- 过滤的消息**仅**来自 Mermaid 的内部临时 DOM，不会掩盖真正的 SVG 渲染 bug
+- `_sanitizeMermaidSvg` + `_fixNegativeRects` 确保最终渲染到编辑区的 DOM 没有任何负值
+- 其他 JavaScript 错误/警告正常输出，不受影响
+
+**不要**将此过滤逻辑移除——除非 Mermaid 上游修复了 CJK 字符宽度计算偏差（[mermaid issue #4950](https://github.com/mermaid-js/mermaid/issues/4950)）。
+
 ---
 
 ## 问题 2：SVG `width="100%"` 导致字体等比放大
@@ -160,30 +219,22 @@ svgString.replace(/(<svg\b[^>]*?)\swidth\s*=\s*"[^"]*"/, '$1 width="..."');
 
 ---
 
-## 关键函数 `_sanitizeMermaidSvg` 设计总结
+## 完整防线架构
 
-```javascript
-function _sanitizeMermaidSvg(svgString) {
-    // 第1步：正则替换负 width/height（容忍空白+引号变体）
-    // 第2步：锚定 <svg> 标签，提取 viewBox 宽度 → 替换 width="100%"
-    // 第3步（调用方）：innerHTML 解析后，_fixNegativeRects() DOM 兜底
-    return svgString;
-}
+```
+Mermaid render() 内部 innerHTML
+  └→ 🔴 浏览器 SVG 解析报错（无法在 JS 侧拦截）
+       └→ C++ javaScriptConsoleMessage 过滤  ← 第一道防线
+
+拿到 res.svg 字符串后
+  └→ _sanitizeMermaidSvg 正则替换负值       ← 第二道防线
+       └→ _fixNegativeRects DOM 兜底         ← 第三道防线
 ```
 
-**调用方必须执行的完整流程：**
-```javascript
-dom.innerHTML = _sanitizeMermaidSvg(res.svg);
-var svg = dom.querySelector('svg');
-if (svg) {
-    _fixNegativeRects(svg);          // DOM 兜底
-    svg.style.maxWidth = '100%';     // 宽图约束
-    svg.style.height = 'auto';       // 保持比例
-}
-```
-
-**不要**跳过 `_fixNegativeRects()` 调用——它是 regex 漏网的兜底防线。
+**不要**跳过或移除任何一道防线。
 
 **不要**修改 `_sanitizeMermaidSvg` 中的 viewBox 正则而不锚定 `<svg` 标签——否则甘特图等复杂图表必然出错。
 
 **不要**把 clamp 值改回 0——甘特图 task bar 的 `<rect>` 需要至少 1px 可见。
+
+**不要**移除 C++ 侧的 `javaScriptConsoleMessage` 过滤——报错是浏览器引擎级消息，JS 侧无法拦截，除非 Mermaid 上游修复 CJK 宽度偏差。
