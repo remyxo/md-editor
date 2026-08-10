@@ -16,7 +16,6 @@
         <file>icons/light/align-left.svg</file>
         <file>icons/light/align-center.svg</file>
         <file>icons/light/align-right.svg</file>
-        <file>icons/light/align-justify.svg</file>
         <file>icons/light/list-bullet.svg</file>
         <file>icons/light/list-ordered.svg</file>
         <file>icons/light/task-list.svg</file>
@@ -51,7 +50,6 @@
         <file>icons/dark/align-left.svg</file>
         <file>icons/dark/align-center.svg</file>
         <file>icons/dark/align-right.svg</file>
-        <file>icons/dark/align-justify.svg</file>
         <file>icons/dark/list-bullet.svg</file>
         <file>icons/dark/list-ordered.svg</file>
         <file>icons/dark/task-list.svg</file>
