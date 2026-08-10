@@ -948,6 +948,20 @@ private slots:
             QStringLiteral("A<br/>B"));
         QVERIFY2(md3.contains("<br/>") && md3.contains("A") && md3.contains("B"),
                  qPrintable("toHtml <br/> 丢失，实际: " + md3));
+
+        // 完整往返：toHtml → fromHtml 用实际 toHtml body 输出（模拟源码模式切换）
+        QString actualHtml = MarkdownHandler::toHtml(
+            QStringLiteral("第一行<br>第二行"));
+        // 提取 body 内容（模拟 EditorTab::loadFile → setContent → getContent 链路）
+        int bsi = actualHtml.indexOf("<body");
+        int bei = actualHtml.indexOf("</body>");
+        bsi = actualHtml.indexOf('>', bsi) + 1;
+        QString body = actualHtml.mid(bsi, bei - bsi).trimmed();
+        QString actualMd = MarkdownHandler::fromHtml(body);
+        QVERIFY2(actualMd.contains("第一行") && actualMd.contains("第二行"),
+                 qPrintable("完整往返丢失内容，body=[" + body + "] md=[" + actualMd + "]"));
+        QVERIFY2(!actualMd.contains("<br>") && !actualMd.contains("ZZHI"),
+                 qPrintable("残留 br/ZZHI 占位符，md=[" + actualMd + "]"));
     }
 
     void testTextAlignFromHtml()
