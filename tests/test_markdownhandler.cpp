@@ -930,15 +930,17 @@ private slots:
         QVERIFY2(!html.contains("ZZHI"),
                  qPrintable("toHtml 残留 ZZHI，实际: " + html));
 
-        // fromHtml：编辑器中的 <br> 应转为硬换行（\n）保存
+        // fromHtml：编辑器中的 <br> 应保留为字面 <br> 标签（同 <kbd>/<small>）
         QString md2 = MarkdownHandler::fromHtml(
             QStringLiteral("<p>第一行<br>第二行</p>"));
         QVERIFY2(md2.contains("第一行") && md2.contains("第二行"),
-                 qPrintable("fromHtml <br> 内容丢失，实际: " + md2));
-        QVERIFY2(!md2.contains("<br>") && !md2.contains("ZZBR"),
-                 qPrintable("fromHtml 残留 br/ZZBR，实际: " + md2));
+                 qPrintable("fromHtml 内容丢失，实际: " + md2));
+        QVERIFY2(md2.contains("<br>"),
+                 qPrintable("fromHtml <br> 应保留为字面标签，实际: " + md2));
+        QVERIFY2(!md2.contains("ZZBR") && !md2.contains("ZZHI"),
+                 qPrintable("fromHtml 残留占位符，实际: " + md2));
 
-        // 二次往返：fromHtml 产出的 \n 经 toHtml 转回 <br>
+        // 二次往返：fromHtml 产出的 <br> 经 toHtml 转回 HTML <br>
         QString html2 = MarkdownHandler::toHtml(md2);
         QVERIFY2(html2.contains("<br>"),
                  qPrintable("二次往返 br 丢失，实际: " + html2));
@@ -960,8 +962,8 @@ private slots:
         QString actualMd = MarkdownHandler::fromHtml(body);
         QVERIFY2(actualMd.contains("第一行") && actualMd.contains("第二行"),
                  qPrintable("完整往返丢失内容，body=[" + body + "] md=[" + actualMd + "]"));
-        QVERIFY2(!actualMd.contains("<br>") && !actualMd.contains("ZZHI"),
-                 qPrintable("残留 br/ZZHI 占位符，md=[" + actualMd + "]"));
+        QVERIFY2(actualMd.contains("<br>"),
+                 qPrintable("完整往返 <br> 应保留为字面标签，md=[" + actualMd + "]"));
     }
 
     void testBrSoloLine()
@@ -980,16 +982,13 @@ private slots:
         QString md2 = MarkdownHandler::fromHtml(body);
         qDebug() << "[testBrSolo] fromHtml:" << md2;
 
-        // 所有文本应保留
+        // 所有文本应保留，<br> 应保留为字面标签
         QVERIFY2(md2.contains("第三行") && md2.contains("第四行"),
                  qPrintable("<br> 后内容丢失，md=[" + md2 + "]"));
-        // 全部文本应保留，<br> 行前后各有一个 <br> 形成一个空行
-        int count = body.count("<br");
-        QVERIFY2(count == 4,
-                 qPrintable(QString("toHtml 产生 %1 个 <br>（期望 4），body=[%2]").arg(count).arg(body)));
-        // fromHtml 应产生恰好 1 个空行（\n\n）在 <br> 原位置
-        QVERIFY2(md2.contains("第二行。") && md2.contains("第三行。"),
-                 qPrintable("内容丢失，md=[" + md2 + "]"));
+        QVERIFY2(md2.contains("<br>"),
+                 qPrintable("<br> 标签应在 MD 中保留，md=[" + md2 + "]"));
+        QVERIFY2(!md2.contains("ZZBR") && !md2.contains("ZZHI"),
+                 qPrintable("残留占位符，md=[" + md2 + "]"));
     }
 
     void testTextAlignFromHtml()

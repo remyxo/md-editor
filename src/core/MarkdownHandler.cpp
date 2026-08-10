@@ -1321,7 +1321,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             processed.replace(m.capturedStart(), m.capturedLength(), replacement);
             offset = m.capturedStart() + replacement.length();
         }
-        // <br> 硬换行 → 占位符（toMarkdown 可能以软换行输出，往返丢失）
+        // <br> 硬换行 → 占位符，保留为原始 HTML（同 <kbd>/<small> 等）
         offset = 0;
         QRegularExpression brRe(R"(<br\b[^>]*>)");
         while (true) {
@@ -1329,7 +1329,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (!m.hasMatch()) break;
             QString ph = QString("ZZBR%1ZZ").arg(n++);
             placeholders << ph;
-            backups << QStringLiteral("\n");
+            backups << m.captured();  // 保留原样 <br> 标签
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }
