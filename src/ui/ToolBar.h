@@ -45,6 +45,7 @@ signals:
     void mermaidClicked();
     void emojiClicked();
     void footnoteClicked();
+    void clearFormatClicked();
     void sourceToggleClicked();
     void pdfExportClicked();
     void toggleReadModeClicked();
@@ -78,6 +79,7 @@ private:
     QAction *m_blockquoteAction;
     QAction *m_readModeAction;
     QAction *m_footnoteAction = nullptr;
+    QAction *m_clearFormatAction = nullptr;
     QList<QAction*> m_allActions;
     bool m_isDark;
     QMap<QAction*, QString> m_iconPaths; // action → 亮色图标路径

@@ -125,6 +125,11 @@ void ToolBar::setupUi()
         "上标", ":/icons/light/superscript.svg");
     m_superscriptAction->setCheckable(true);
 
+    m_clearFormatAction = makeAction(this, &m_iconPaths, "clearFormatAction",
+        "清除样式", ":/icons/light/clear-format.svg");
+
+    addSeparator();
+
     // 颜色按钮：点击弹出调色板（非 checkable）
     m_textColorAction = makeAction(this, &m_iconPaths, "textColorAction",
         "文字颜色", ":/icons/light/text-color.svg");
@@ -214,6 +219,7 @@ void ToolBar::setupUi()
     connect(m_highlightAction, &QAction::triggered, this, &ToolBar::highlightClicked);
     connect(m_subscriptAction, &QAction::triggered, this, &ToolBar::subscriptClicked);
     connect(m_superscriptAction, &QAction::triggered, this, &ToolBar::superscriptClicked);
+    connect(m_clearFormatAction, &QAction::triggered, this, &ToolBar::clearFormatClicked);
     connect(m_alignLeftAction, &QAction::triggered, this, [this]{ emit alignSelected("left"); });
     connect(m_alignCenterAction, &QAction::triggered, this, [this]{ emit alignSelected("center"); });
     connect(m_alignRightAction, &QAction::triggered, this, [this]{ emit alignSelected("right"); });

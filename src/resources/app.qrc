@@ -37,6 +37,7 @@
         <file>icons/light/footnote.svg</file>
         <file>icons/light/undo.svg</file>
         <file>icons/light/redo.svg</file>
+        <file>icons/light/clear-format.svg</file>
         <file>icons/dark/bold.svg</file>
         <file>icons/dark/italic.svg</file>
         <file>icons/dark/strikethrough.svg</file>
@@ -71,6 +72,7 @@
         <file>icons/dark/footnote.svg</file>
         <file>icons/dark/undo.svg</file>
         <file>icons/dark/redo.svg</file>
+        <file>icons/dark/clear-format.svg</file>
         <file>web/fonts/KaTeX_AMS-Regular.ttf</file>
         <file>web/fonts/KaTeX_AMS-Regular.woff</file>
         <file>web/fonts/KaTeX_AMS-Regular.woff2</file>

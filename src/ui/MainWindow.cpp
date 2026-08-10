@@ -228,6 +228,9 @@ void MainWindow::connectSignals()
     connect(m_toolBar, &ToolBar::superscriptClicked, this, [this]() {
         runEditorCommand("window.editorApi.toggleSuperscript();");
     });
+    connect(m_toolBar, &ToolBar::clearFormatClicked, this, [this]() {
+        runEditorCommand("window.editorApi.clearFormatting();");
+    });
     connect(m_toolBar, &ToolBar::alignSelected, this, [this](const QString &alignment) {
         runEditorCommand(QString("window.editorApi.setTextAlign('%1');").arg(alignment));
     });

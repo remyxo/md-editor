@@ -1094,6 +1094,33 @@ window.editorApi = {
     insertImage: function(path) { if (this.editor) this.editor.commands.setImage({ src: path }); },
     insertHorizontalRule: function() { if (this.editor) this.editor.commands.setHorizontalRule(); },
 
+    // 清除样式：选中文字（或无选中时光标所在段落）→ 剥离所有 inline marks、
+    // 重置为正文段落、恢复左对齐，得到最干净的"正文"状态
+    clearFormatting: function() {
+        if (!this.editor) return;
+        var ed = this.editor;
+        var state = ed.state;
+        var from = state.selection.from;
+        var to = state.selection.to;
+
+        // 无选中 → 扩展到当前文本块全文
+        if (from === to) {
+            var $pos = state.doc.resolve(from);
+            if ($pos.parent.isTextblock) {
+                from = $pos.start();
+                to = $pos.end();
+            }
+        }
+
+        ed.chain()
+            .setTextSelection({ from: from, to: to })
+            .unsetAllMarks()        // 剥离 bold/italic/colorSpan/link/code 等所有 mark
+            .clearNodes()           // heading/blockquote → paragraph
+            .setTextAlign('left')   // 重置对齐
+            .run();
+        this._markDirty();
+    },
+
     // 进入源码模式（C++ 侧传入已转换好的 Markdown）
     enterSourceMode: function(md) {
         if (!this.editor) return;
