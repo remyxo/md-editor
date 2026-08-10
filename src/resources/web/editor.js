@@ -16,6 +16,7 @@ var TipTapTextAlign = window.TipTapExtensionTextAlign;
 var TipTapExtension = window.TipTapExtension;
 var TipTapInputRule = window.TipTapInputRule;
 var TipTapNode = window.TipTapNode;
+var TipTapMark = window.TipTapMark;
 
 // Mermaid 渲染实例的 id 序列（每次 render 需唯一 id）
 var _mermaidIdSeq = 0;
@@ -290,6 +291,60 @@ var EMOJI_CATEGORIES = [
         { ch:'⭕', kw:'圈 o' }, { ch:'🚫', kw:'禁止 prohibited' }
     ]}
 ];
+
+// 解析 colorSpan 的 style 字符串 → { color, bg }（缺省属性省略）。
+// 注意：用 (^|;) 锚定 color 前边界，避免匹配到 "background-color" 的尾部 color。
+function _parseColorStyle(styleStr) {
+    var o = {};
+    if (!styleStr) return o;
+    var bg = styleStr.match(/background-color\s*:\s*([^;]+)/i);
+    var fg = styleStr.match(/(^|;)\s*color\s*:\s*([^;]+)/i);
+    if (bg) o.bg = bg[1].trim();
+    if (fg) o.color = fg[2].trim();
+    return o;
+}
+
+// { color, bg } → 'color:..;background-color:..'（固定属性顺序，保证往返稳定）。
+function _stringifyColorStyle(o) {
+    var parts = [];
+    if (o.color) parts.push('color:' + o.color);
+    if (o.bg) parts.push('background-color:' + o.bg);
+    return parts.join(';');
+}
+
+// 构造 colorSpan mark：承载 <span style="..."> 的内联样式（颜色为主，底层保真任意 style）。
+// - parseHTML 仅认带 style 的 span；无 style 的 span（脚注 marker/content）返回 false 放行
+// - mark 级 renderHTML 输出空属性 span，style 由 attribute 级 renderHTML 注入
+//   （规避 TipTap v2/v3 的 mark renderHTML 签名差异）
+function buildColorSpanExtension() {
+    return TipTapMark.create({
+        name: 'colorSpan',
+        addAttributes: function() {
+            return {
+                style: {
+                    default: '',
+                    parseHTML: function(el) {
+                        return el.getAttribute('style') || '';
+                    },
+                    renderHTML: function(attrs) {
+                        return attrs.style ? { style: attrs.style } : {};
+                    }
+                }
+            };
+        },
+        parseHTML: function() {
+            return [{
+                tag: 'span',
+                getAttrs: function(el) {
+                    return el.getAttribute('style') ? {} : false;
+                }
+            }];
+        },
+        renderHTML: function() {
+            return ['span', {}, 0];
+        }
+    });
+}
 
 // 构造 Emoji 扩展：输入 :shortcode: 后替换为对应 Unicode 字符
 // （TipTap InputRule 在代码块/行内代码中自动跳过，无需特殊处理）
@@ -622,6 +677,9 @@ window.editorApi = {
         // Emoji 短代码 InputRule（:shortcode: → Unicode 字符）
         if (TipTapExtension && TipTapInputRule)
             exts.push(buildEmojiExtension());
+        // 颜色 span（<span style> 内联样式 mark，parseHTML 仅认带 style 的 span）
+        if (TipTapMark)
+            exts.push(buildColorSpanExtension());
         // Mermaid 块节点（自定义 NodeView，priority 高于 codeBlock）
         if (TipTapNode) {
             exts.push(buildMermaidNode());
@@ -756,6 +814,8 @@ window.editorApi = {
         format.textAlign = ed.getAttributes('paragraph').textAlign
             || ed.getAttributes('heading').textAlign
             || 'left';
+        // 颜色 span 的 style 字符串（文字色/背景色回显）
+        format.colorSpanStyle = ed.getAttributes('colorSpan').style || '';
         // 结构
         format.bulletList = !!ed.isActive('bulletList');
         format.orderedList = !!ed.isActive('orderedList');
@@ -845,6 +905,35 @@ window.editorApi = {
     toggleSuperscript: function() { if (this.editor) this.editor.commands.toggleSuperscript(); },
     setTextAlign: function(alignment) {
         if (this.editor) this.editor.commands.setTextAlign(alignment);
+    },
+    // === 内联颜色（colorSpan mark 的样式合并命令） ===
+    applyTextColor: function(color) {
+        if (!this.editor) return;
+        var cur = _parseColorStyle(this.editor.getAttributes('colorSpan').style || '');
+        cur.color = color;
+        this.editor.commands.setMark('colorSpan', { style: _stringifyColorStyle(cur) });
+    },
+    applyBgColor: function(color) {
+        if (!this.editor) return;
+        var cur = _parseColorStyle(this.editor.getAttributes('colorSpan').style || '');
+        cur.bg = color;
+        this.editor.commands.setMark('colorSpan', { style: _stringifyColorStyle(cur) });
+    },
+    clearTextColor: function() {
+        if (!this.editor) return;
+        var cur = _parseColorStyle(this.editor.getAttributes('colorSpan').style || '');
+        delete cur.color;
+        var s = _stringifyColorStyle(cur);
+        if (s) this.editor.commands.setMark('colorSpan', { style: s });
+        else this.editor.commands.unsetMark('colorSpan');
+    },
+    clearBgColor: function() {
+        if (!this.editor) return;
+        var cur = _parseColorStyle(this.editor.getAttributes('colorSpan').style || '');
+        delete cur.bg;
+        var s = _stringifyColorStyle(cur);
+        if (s) this.editor.commands.setMark('colorSpan', { style: s });
+        else this.editor.commands.unsetMark('colorSpan');
     },
     setHeading: function(level) {
         if (!this.editor) return;
