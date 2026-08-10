@@ -12,6 +12,8 @@
 
 - **sub/sup 原始 HTML 保护** — 修复 MD 文件中手写 `<sub>`/`<sup>` 标签被 QTextDocument 静默丢弃的问题，toHtml 新增 ZZHI 占位符保护，fromHtml 统一转为 Pandoc `~x~`/`^x^` 语法
 - **mark 原始 HTML 保护** — 修复 MD 文件中手写 `<mark>` 标签被 QTextDocument 静默丢弃的问题，toHtml 新增 ZZHI 占位符保护，fromHtml 统一转为 `==text==` 语法
+- **段落对齐往返保真** — 修复 WYSIWYG 中设置的左/居中/右对齐在源码模式/保存后丢失的问题，fromHtml 将 `text-align` CSS 转为 `<div align="...">` 容器确保双向往返
+- **br 硬换行保护** — 修复 MD 文件中手写 `<br>` 标签被 QTextDocument 丢弃导致其后内容消失的问题，toHtml 新增 ZZHI 占位符保护
 
 ## [0.3.6] — 2026-08-10
 
