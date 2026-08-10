@@ -158,6 +158,19 @@ static QString extractHtmlInlineElements(const QString &line,
             offset = m.capturedStart() + ph.length();
         }
     }
+    // <br>（硬换行——自闭合 void 元素，保护不被 QTextDocument 丢弃）
+    {
+        QRegularExpression brRe(R"(<br\s*/?>)");
+        int offset = 0;
+        while (true) {
+            auto m = brRe.match(r, offset);
+            if (!m.hasMatch()) break;
+            backups << m.captured();
+            QString ph = QString("ZZHI%1ZZ").arg(n++);
+            r.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
     return r;
 }
 
@@ -1262,6 +1275,40 @@ QString MarkdownHandler::fromHtml(const QString &html)
             backups << m.captured();
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
+        }
+        // 对齐：<p style="text-align:..."> / 标题 text-align → <div align="...">
+        // TipTap TextAlign 为段落/标题注入 text-align CSS，toMarkdown 丢弃。
+        // 提取对齐值并还原为 <div align="...">（已支持往返），内容 ZZ* 占位符
+        // 在逆序还原阶段后续解析。
+        offset = 0;
+        QRegularExpression alignRe(
+            R"re(<(p|h[1-6])\b[^>]*\bstyle\s*=\s*"([^"]*\btext-align\s*:\s*(left|center|right)[^"]*)"[^>]*>(.*?)</\1>)re",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = alignRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString tag = m.captured(1);
+            QString fullStyle = m.captured(2);
+            QString align = m.captured(3);
+            QString content = m.captured(4);
+            // 从 style 中剥离 text-align:XXX（含前后分号/空格）
+            QString stripped = fullStyle;
+            stripped.remove(QRegularExpression(
+                R"(\s*text-align\s*:\s*(left|center|right)\s*;?)"));
+            stripped = stripped.trimmed();
+            if (stripped.endsWith(';'))
+                stripped.chop(1);
+            stripped = stripped.trimmed();
+            QString ph = QString("ZZA%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << QString("<div align=\"%1\">%2</div>").arg(align, content);
+            QString replacement;
+            if (stripped.isEmpty())
+                replacement = QString("<%1>%2</%1>").arg(tag, ph);
+            else
+                replacement = QString("<%1 style=\"%2\">%3</%1>").arg(tag, stripped, ph);
+            processed.replace(m.capturedStart(), m.capturedLength(), replacement);
+            offset = m.capturedStart() + replacement.length();
         }
     }
 

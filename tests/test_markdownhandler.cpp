@@ -919,6 +919,38 @@ private slots:
         QVERIFY2(!html2.contains("ZZMK") && !html2.contains("ZZHI"),
                  qPrintable("残留占位符，实际: " + html2));
     }
+
+    void testBrToHtml()
+    {
+        // toHtml：原始 <br> 硬换行标签应被保护（不被 QTextDocument 丢弃）
+        QString md = QStringLiteral("第一行<br>第二行");
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("第一行") && html.contains("<br>") && html.contains("第二行"),
+                 qPrintable("toHtml <br> 丢失，实际: " + html));
+        QVERIFY2(!html.contains("ZZHI"),
+                 qPrintable("残留 ZZHI 占位符，实际: " + html));
+    }
+
+    void testTextAlignFromHtml()
+    {
+        // fromHtml：段落 text-align 样式应转为 <div align="..."> 容器
+        QString md = MarkdownHandler::fromHtml(
+            QStringLiteral("<p style=\"text-align: center\">居中文字</p>"));
+        QVERIFY2(md.contains("<div align=\"center\">居中文字</div>"),
+                 qPrintable("text-align:center 未转为 div align，实际: " + md));
+
+        // 左对齐
+        QString md2 = MarkdownHandler::fromHtml(
+            QStringLiteral("<p style=\"text-align: left\">左对齐</p>"));
+        QVERIFY2(md2.contains("<div align=\"left\">左对齐</div>"),
+                 qPrintable("text-align:left 未转为 div align，实际: " + md2));
+
+        // 右对齐
+        QString md3 = MarkdownHandler::fromHtml(
+            QStringLiteral("<p style=\"text-align: right\">右对齐</p>"));
+        QVERIFY2(md3.contains("<div align=\"right\">右对齐</div>"),
+                 qPrintable("text-align:right 未转为 div align，实际: " + md3));
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)
