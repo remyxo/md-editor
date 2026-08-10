@@ -836,6 +836,34 @@ private slots:
         QVERIFY2(md.contains("1\\."),
                  qPrintable("正文数字点转义必须保留，实际: " + md));
     }
+
+    void testHeadingFontSpanStripped()
+    {
+        // QTextDocument 在标题中注入的 <span style="font-weight:700;font-size:...">
+        // 是默认标题渲染而非用户内容，fromHtml 应剔除这些纯字体样式 span
+        QString md = MarkdownHandler::fromHtml(
+            QStringLiteral("<h1><span style=\"font-weight:700;font-size:xx-large\">标题1</span></h1>"));
+        QVERIFY2(md == QStringLiteral("# 标题1"),
+                 qPrintable("标题纯字体 span 应被剔除，实际: " + md));
+
+        // h2 的 QTextDocument 字体 span 也应被剔除
+        QString md2 = MarkdownHandler::fromHtml(
+            QStringLiteral("<h2><span style=\"font-weight:700;font-size:x-large\">小节</span></h2>"));
+        QVERIFY2(md2 == QStringLiteral("## 小节"),
+                 qPrintable("h2 字体 span 应被剔除，实际: " + md2));
+
+        // 标题内用户颜色 span 不受影响
+        QString md3 = MarkdownHandler::fromHtml(
+            QStringLiteral("<h1><span style=\"color:red\">红标题</span></h1>"));
+        QVERIFY2(md3.contains("<span style=\"color:red\">红标题</span>"),
+                 qPrintable("用户颜色 span 不应被剔除，实际: " + md3));
+
+        // 混合：QTextDocument 标题 span + 用户内联样式应保留后者
+        QString md4 = MarkdownHandler::fromHtml(
+            QStringLiteral("<h2><span style=\"font-weight:700;font-size:x-large;color:#2563eb\">蓝色标题</span></h2>"));
+        QVERIFY2(md4.contains("color:#2563eb"),
+                 qPrintable("含颜色的标题 span 不应被剔除，实际: " + md4));
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)

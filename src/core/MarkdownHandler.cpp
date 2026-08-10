@@ -1256,6 +1256,19 @@ QString MarkdownHandler::fromHtml(const QString &html)
     for (int i = placeholders.size() - 1; i >= 0; --i)
         md.replace(placeholders[i], backups[i]);
 
+    // 4) 去除 QTextDocument 在标题行注入的纯字体样式 <span>
+    //    QTextDocument::setHtml 对标题默认渲染为 <hN><span style="font-weight:700;
+    //    font-size:...">text</span></hN>，ZZHS 保护后在 MD 中显现为
+    //    "# <span style="...">text</span>"。这里只剔除仅含 font-weight/font-size
+    //    的 span（不含 color/background-color 等用户样式），避免 QTextDocument 的
+    //    标题默认渲染泄漏到 .md 源码，同时保留用户手写的颜色 span。
+    {
+        static const QRegularExpression headingFontSpan(
+            R"(^(#{1,6}\s+)<span\s+style\s*=\s*"(?![^"]*\bcolor\s*:|[^"]*\bbackground-color\s*:)[^"]*"[^>]*>(.*?)</span>)",
+            QRegularExpression::MultilineOption);
+        md.replace(headingFontSpan, "\\1\\2");
+    }
+
     while (md.endsWith('\n'))
         md.chop(1);
     return md;
