@@ -12,6 +12,7 @@
 4. **版本推进**：每次默认 +0.0.1，除非明确指定目标版本。更新 `CMakeLists.txt` 中 `project(md-editor VERSION x.y.z)` 和 tag
 5. **编辑区内部存储 HTML**：读文件时 MD→HTML，写文件时 HTML→MD，通过 `MarkdownHandler` 转换
 6. **先讨论设计再编码**：不确定的地方先和用户确认
+7. **往返保真（Round-Trip Fidelity）**：MD→HTML→MD 转换必须保证信息不丢失。详见下方「往返保真规则」
 
 ## 架构
 
@@ -27,6 +28,31 @@ MainWindow (Qt)
 ├── StatusBar         行号/列号/字数
 └── SearchBar         (隐藏面板)
 ```
+
+## 往返保真规则
+
+**核心原则：MD→HTML→MD 完整转换链路中，不得丢失用户写入的任何语义信息。**
+
+### HTML 标签转换规则
+
+| 规则 | 适用标签 | 说明 |
+|------|---------|------|
+| **有 MD 等价语法的→转为 MD 语法** | `<sub>`→`~x~`、`<sup>`→`^x^`、`<mark>`→`==x==`、`<hr>`→`---` | 输出可移植的标准 Markdown |
+| **无 MD 等价语法的→保留字面 HTML** | `<br>`、`<kbd>`、`<small>`、`<span style>`、`<div>` | `\n` 是字符不是语法，不得用于替代 `<br>` |
+
+### 实现机制
+
+```
+toHtml (MD→HTML)                   fromHtml (HTML→MD)
+─────────────────                   ─────────────────
+手写 HTML 标签 → ZZ* 占位符保护      HTML 标签 → ZZ* 占位符保护
+  → setMarkdown（标签在占位符中安全）   → setHtml → toMarkdown
+  → 还原占位符 → 完整 HTML              → 还原占位符 → 完整 MD
+```
+
+### 相关文档
+
+- **[`<br>` 与软换行往返机制](docs/br-and-softbreak-roundtrip.md)** — BRMARKER/data-brk 三层分离架构、占位符速查表
 
 ## 通信协议
 
