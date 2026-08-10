@@ -807,6 +807,29 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         }
     }
 
+    // 兜底：剥离标题内 QTextDocument 注入的 font span（font-size + font-weight）
+    // 上面重组 regex 只处理含 <div align> 的标题且限于 h1（xx-large），工具栏
+    // 反复操作后 TipTap getHTML() 可能产生非常规格式导致重组不匹配，未剥离的
+    // font span（font-weight:700）被 TipTap Bold parseHTML 解析为 <strong> mark，
+    // 后续往返持续污染。此处兜底剥离所有 h1-h3 标题内的纯字体 span，阻断污染链。
+    {
+        // 匹配 <hN...><span style="font-size:(xx-large|x-large|large);...font-weight:700...">content</span></hN>
+        static const QRegularExpression fallbackRe(
+            R"re(<(h[1-6])(\b[^>]*)>\s*<span\b[^>]*\bfont-size\s*:\s*(?:xx-large|x-large|large)\b[^>]*\bfont-weight\s*:\s*700[^>]*>(.*?)</span>\s*</\1>)re",
+            QRegularExpression::DotMatchesEverythingOption);
+        int off = 0;
+        while (true) {
+            auto m = fallbackRe.match(html, off);
+            if (!m.hasMatch()) break;
+            QString hTag = m.captured(1);
+            QString hAttrs = m.captured(2);
+            QString content = m.captured(3);
+            QString replacement = QString("<%1%2>%3</%1>").arg(hTag, hAttrs, content);
+            html.replace(m.capturedStart(), m.capturedLength(), replacement);
+            off = m.capturedStart() + replacement.length();
+        }
+    }
+
     // 还原 HTML 内联标签占位符 ZZHI → 原始 <span style> / <u>
     // 必须先于 ZZFR/ZZSB 还原：ZZHI 占位符内容可能含 <span>/<u> 内部的
     // ZZSB/ZZFR 占位符（如 <span>~2~</span>、<u>[^1]</u>），先开外层标签，
@@ -1403,6 +1426,66 @@ QString MarkdownHandler::fromHtml(const QString &html)
             R"(^(#{1,6}\s+)<span\s+style\s*=\s*"(?![^"]*\bcolor\s*:|[^"]*\bbackground-color\s*:)[^"]*"[^>]*>(.*?)</span>)",
             QRegularExpression::MultilineOption);
         md.replace(headingFontSpan, "\\1\\2");
+    }
+
+    // 5) 防御：剥离 <div> 内残留的 heading font-span + <strong> 污染
+    //    toHtml 重组可能因 Toolbar 反复操作后 TipTap getHTML() 的非常规格式
+    //    而漏过；未剥离的 font-weight:700 被 TipTap Bold parseHTML 解析为
+    //    <strong> mark，后续往返持续污染。此处检测并剥离两种模式：
+    //    a) 已有标题前缀：仅剥离 span/strong，保留 # 和 <div>
+    //    b) 无标题前缀：剥离后按 font-size 恢复标题前缀（xx-large→#, x-large→##, large→###）
+    {
+        // 匹配 <span style="...font-size:(xx-large|x-large|large)...font-weight:700...">text</span>
+        // 使用前瞻断言确保同时存在 font-size 和 font-weight:700，不限属性顺序
+        auto makeSpanRe = []() {
+            return QRegularExpression(
+                R"re(<span\s+style\s*=\s*"(?=.*\bfont-size\s*:\s*(xx-large|x-large|large)\b)(?=.*\bfont-weight\s*:\s*700\b)[^"]*"[^>]*>(.*?)</span>)re");
+        };
+        auto headingForSize = [](const QString &fs) -> QString {
+            if (fs == "xx-large") return "# ";
+            if (fs == "x-large") return "## ";
+            return "### ";
+        };
+
+        // 模式 a：已有标题前缀 — 仅剥离 span+strong
+        {
+            static const QRegularExpression prefixedStrongSpan(
+                R"re(^(#{1,6}\s+)<div\b([^>]*)>\s*<strong>\s*<span\s+style\s*=\s*"(?=.*\bfont-size\s*:\s*(xx-large|x-large|large)\b)(?=.*\bfont-weight\s*:\s*700\b)[^"]*"[^>]*>(.*?)</span>\s*</strong>\s*</div>)re",
+                QRegularExpression::MultilineOption);
+            static const QRegularExpression prefixedSpan(
+                R"re(^(#{1,6}\s+)<div\b([^>]*)>\s*<span\s+style\s*=\s*"(?=.*\bfont-size\s*:\s*(xx-large|x-large|large)\b)(?=.*\bfont-weight\s*:\s*700\b)[^"]*"[^>]*>(.*?)</span>\s*</div>)re",
+                QRegularExpression::MultilineOption);
+            md.replace(prefixedStrongSpan, "\\1<div\\2>\\4</div>");
+            md.replace(prefixedSpan, "\\1<div\\2>\\4</div>");
+        }
+
+        // 模式 b：无标题前缀 — 剥离后恢复 # 前缀
+        {
+            auto process = [&](const QRegularExpression &re) {
+                int pos = 0;
+                while (true) {
+                    auto m = re.match(md, pos);
+                    if (!m.hasMatch()) break;
+                    QString divAttrs = m.captured(1).trimmed();
+                    QString fontSize = m.captured(2);
+                    QString content = m.captured(3);
+                    QString prefix = headingForSize(fontSize);
+                    QString replacement;
+                    if (divAttrs.isEmpty())
+                        replacement = prefix + content;
+                    else
+                        replacement = prefix + "<div " + divAttrs + ">" + content + "</div>";
+                    md.replace(m.capturedStart(), m.capturedLength(), replacement);
+                    pos = m.capturedStart() + replacement.length();
+                }
+            };
+            static const QRegularExpression bareStrongSpan(
+                R"re(<div\b([^>]*)>\s*<strong>\s*<span\s+style\s*=\s*"(?=.*\bfont-size\s*:\s*(xx-large|x-large|large)\b)(?=.*\bfont-weight\s*:\s*700\b)[^"]*"[^>]*>(.*?)</span>\s*</strong>\s*</div>)re");
+            static const QRegularExpression bareSpan(
+                R"re(<div\b([^>]*)>\s*<span\s+style\s*=\s*"(?=.*\bfont-size\s*:\s*(xx-large|x-large|large)\b)(?=.*\bfont-weight\s*:\s*700\b)[^"]*"[^>]*>(.*?)</span>\s*</div>)re");
+            process(bareStrongSpan);
+            process(bareSpan);
+        }
     }
 
     while (md.endsWith('\n'))

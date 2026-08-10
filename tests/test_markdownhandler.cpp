@@ -1065,6 +1065,128 @@ private slots:
         QVERIFY2(md3.contains("<div align=\"right\">右对齐</div>"),
                  qPrintable("text-align:right 未转为 div align，实际: " + md3));
     }
+
+    void testHeadingFontSpanFallback()
+    {
+        // 验证 toHtml 兜底剥离：正常标题（无 div）的 font span 被移除
+        QString md = QStringLiteral("# 普通标题");
+        QString html = MarkdownHandler::toHtml(md);
+        int bsi = html.indexOf("<body");
+        int bei = html.indexOf("</body>");
+        bsi = html.indexOf('>', bsi) + 1;
+        QString body = html.mid(bsi, bei - bsi).trimmed();
+
+        // 不应包含 font-size:xx-large 或 font-weight:700（已被兜底剥离）
+        QVERIFY2(!body.contains("font-size:xx-large"),
+                 qPrintable("h1 残留 font-size span，body=[" + body + "]"));
+        QVERIFY2(!body.contains("font-weight:700"),
+                 qPrintable("h1 残留 font-weight span，body=[" + body + "]"));
+
+        // h2 同理
+        QString mdH2 = QStringLiteral("## h2 标题");
+        QString h2Html = MarkdownHandler::toHtml(mdH2);
+        int bsi2 = h2Html.indexOf("<body");
+        int bei2 = h2Html.indexOf("</body>");
+        bsi2 = h2Html.indexOf('>', bsi2) + 1;
+        QString bodyH2 = h2Html.mid(bsi2, bei2 - bsi2).trimmed();
+        QVERIFY2(!bodyH2.contains("font-size:x-large") && !bodyH2.contains("font-weight:700"),
+                 qPrintable("h2 残留 font span，body=[" + bodyH2 + "]"));
+
+        // h3 同理
+        QString mdH3 = QStringLiteral("### h3 标题");
+        QString h3Html = MarkdownHandler::toHtml(mdH3);
+        int bsi3 = h3Html.indexOf("<body");
+        int bei3 = h3Html.indexOf("</body>");
+        bsi3 = h3Html.indexOf('>', bsi3) + 1;
+        QString bodyH3 = h3Html.mid(bsi3, bei3 - bsi3).trimmed();
+        QVERIFY2(!bodyH3.contains("font-size:large") && !bodyH3.contains("font-weight:700"),
+                 qPrintable("h3 残留 font span，body=[" + bodyH3 + "]"));
+    }
+
+    void testDivHeadingSpanDefensivePrefixed()
+    {
+        // 模拟用户反复操作后的降解输出：
+        // "# <div align=\"center\"><strong><span style=\"font-size: xx-large; font-weight: 700;\">标题</span></strong></div>"
+        // 应被 fromHtml 防御步骤剥离 strong+span，保留 # 和 <div>
+        QString degraded = QStringLiteral(
+            "# <div align=\"center\"><strong><span style=\"font-size: xx-large; font-weight: 700;\">这是标题1</span></strong></div>");
+        QString html = MarkdownHandler::toHtml(degraded);
+        int bsi = html.indexOf("<body");
+        int bei = html.indexOf("</body>");
+        bsi = html.indexOf('>', bsi) + 1;
+        QString body = html.mid(bsi, bei - bsi).trimmed();
+
+        // 往返应稳定：font span 和 strong 被清除
+        QString md2 = MarkdownHandler::fromHtml(body);
+        QVERIFY2(md2.contains("#") && md2.contains("<div align=\"center\">这是标题1</div>"),
+                 qPrintable("降解格式未恢复，md=[" + md2 + "]"));
+        QVERIFY2(!md2.contains("font-size:xx-large"),
+                 qPrintable("残留 font-size span，md=[" + md2 + "]"));
+        QVERIFY2(!md2.contains("<strong>"),
+                 qPrintable("残留 <strong>，md=[" + md2 + "]"));
+
+        // 无 strong 版本
+        QString degraded2 = QStringLiteral(
+            "# <div align=\"left\"><span style=\"font-size: x-large; font-weight: 700;\">h2标题</span></div>");
+        QString md3 = MarkdownHandler::fromHtml(degraded2);
+        QVERIFY2(md3.contains("##") && md3.contains("<div align=\"left\">h2标题</div>"),
+                 qPrintable("无strong降解恢复失败，md=[" + md3 + "]"));
+    }
+
+    void testDivHeadingSpanDefensiveBare()
+    {
+        // 模拟标题信息完全丢失的情况（无 # 前缀，纯 div+font-span）
+        // fromHtml 应检测 font-size 并恢复标题前缀
+
+        // h1 无 strong
+        QString degraded = QStringLiteral(
+            "<div align=\"center\"><span style=\"font-size: xx-large; font-weight: 700;\">居中标题</span></div>");
+        QString md = MarkdownHandler::fromHtml(degraded);
+        QVERIFY2(md.contains("# <div align=\"center\">居中标题</div>"),
+                 qPrintable("bare h1 降解未恢复，md=[" + md + "]"));
+
+        // h2 带 strong
+        QString degraded2 = QStringLiteral(
+            "<div align=\"left\"><strong><span style=\"font-weight: 700; font-size: x-large;\">左对齐h2</span></strong></div>");
+        QString md2 = MarkdownHandler::fromHtml(degraded2);
+        QVERIFY2(md2.contains("## <div align=\"left\">左对齐h2</div>"),
+                 qPrintable("bare h2+strong 降解未恢复，md=[" + md2 + "]"));
+
+        // h3 无 div 属性（纯 div）
+        QString degraded3 = QStringLiteral(
+            "<div><span style=\"font-size: large; font-weight: 700;\">h3标题</span></div>");
+        QString md3 = MarkdownHandler::fromHtml(degraded3);
+        QVERIFY2(md3.contains("### h3标题"),
+                 qPrintable("bare h3 无div属性降解未恢复，md=[" + md3 + "]"));
+
+        // h2 无 strong，属性顺序 font-weight 在前
+        QString degraded4 = QStringLiteral(
+            "<div align=\"right\"><span style=\"font-weight: 700; font-size: x-large;\">右对齐h2</span></div>");
+        QString md4 = MarkdownHandler::fromHtml(degraded4);
+        QVERIFY2(md4.contains("## <div align=\"right\">右对齐h2</div>"),
+                 qPrintable("bare h2 属性反序未恢复，md=[" + md4 + "]"));
+    }
+
+    void testHeadingDivDegradation5Round()
+    {
+        // 模拟"反复居中、左对齐、切换正文、标题1、居中"后的降解状态
+        // 验证 5 轮往返后不退化
+        QString degraded = QStringLiteral(
+            "# <div align=\"center\"><strong><span style=\"font-size: xx-large; font-weight: 700;\">这是标题1</span></strong></div>");
+        for (int r = 0; r < 5; ++r) {
+            QString html = MarkdownHandler::toHtml(degraded);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            degraded = MarkdownHandler::fromHtml(body);
+        }
+        // 5 轮后应干净
+        QVERIFY2(degraded.contains("#") && degraded.contains("<div align=\"center\">这是标题1</div>"),
+                 qPrintable("5 轮降解恢复失败，md=[" + degraded + "]"));
+        QVERIFY2(!degraded.contains("font-size") && !degraded.contains("<strong>"),
+                 qPrintable("5 轮后残留污染，md=[" + degraded + "]"));
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)
