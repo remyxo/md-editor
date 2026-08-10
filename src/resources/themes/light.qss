@@ -326,3 +326,5 @@ QLineEdit:focus {
 QTabWidget QWidget {
     background-color: #ffffff;
 }
+
+/* kbd 键盘按键（web 编辑器内样式见 editor.css） */

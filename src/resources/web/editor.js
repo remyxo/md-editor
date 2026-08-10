@@ -346,6 +346,34 @@ function buildColorSpanExtension() {
     });
 }
 
+// 构造 kbd mark：键盘按键内联样式，渲染为 <kbd> 标签（等宽字体 + 边框圆角）。
+// 无 Markdown 语法；仅用于手写 HTML <kbd> 的解析与往返保真。
+function buildKbdExtension() {
+    return TipTapMark.create({
+        name: 'kbd',
+        parseHTML: function() {
+            return [{ tag: 'kbd' }];
+        },
+        renderHTML: function(props) {
+            return ['kbd', (props && props.HTMLAttributes) || {}, 0];
+        }
+    });
+}
+
+// 构造 small mark：小字内联样式，渲染为 <small> 标签（浏览器默认 font-size: smaller）。
+// 无 Markdown 语法；仅用于手写 HTML <small> 的解析与往返保真。
+function buildSmallExtension() {
+    return TipTapMark.create({
+        name: 'small',
+        parseHTML: function() {
+            return [{ tag: 'small' }];
+        },
+        renderHTML: function(props) {
+            return ['small', (props && props.HTMLAttributes) || {}, 0];
+        }
+    });
+}
+
 // 构造 Emoji 扩展：输入 :shortcode: 后替换为对应 Unicode 字符
 // （TipTap InputRule 在代码块/行内代码中自动跳过，无需特殊处理）
 function buildEmojiExtension() {
@@ -681,6 +709,11 @@ window.editorApi = {
         // 颜色 span（<span style> 内联样式 mark，parseHTML 仅认带 style 的 span）
         if (TipTapMark)
             exts.push(buildColorSpanExtension());
+        // kbd / small 内联标签（手写 HTML 解析 + 往返保真，无 Markdown 语法）
+        if (TipTapMark) {
+            exts.push(buildKbdExtension());
+            exts.push(buildSmallExtension());
+        }
         // Mermaid 块节点（自定义 NodeView，priority 高于 codeBlock）
         if (TipTapNode) {
             exts.push(buildMermaidNode());

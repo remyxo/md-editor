@@ -729,3 +729,22 @@ body.dark .ProseMirror .footnote-marker { color: #8ab4f8; }
 body.dark .ProseMirror div[data-type="footnoteContainer"] {
   border-top-color: #3c4043;
 }
+
+/* kbd 键盘按键 */
+kbd {
+    font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+    font-size: 0.85em;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    padding: 0.05em 0.35em;
+    background: #f0f0f0;
+}
+/* small 小字（浏览器默认行为即可，不额外声明） */
+/* 暗色主题 kbd */
+@media (prefers-color-scheme: dark) {
+    kbd {
+        border-color: #777;
+        background: #333;
+        color: #eee;
+    }
+}
