@@ -920,7 +920,7 @@ private slots:
                  qPrintable("残留占位符，实际: " + html2));
     }
 
-    void testBrToHtml()
+    void testBrRoundTrip()
     {
         // toHtml：原始 <br> 硬换行标签应被保护（不被 QTextDocument 丢弃）
         QString md = QStringLiteral("第一行<br>第二行");
@@ -928,7 +928,20 @@ private slots:
         QVERIFY2(html.contains("第一行") && html.contains("<br>") && html.contains("第二行"),
                  qPrintable("toHtml <br> 丢失，实际: " + html));
         QVERIFY2(!html.contains("ZZHI"),
-                 qPrintable("残留 ZZHI 占位符，实际: " + html));
+                 qPrintable("toHtml 残留 ZZHI，实际: " + html));
+
+        // fromHtml：编辑器中的 <br> 应转为硬换行（\n）保存
+        QString md2 = MarkdownHandler::fromHtml(
+            QStringLiteral("<p>第一行<br>第二行</p>"));
+        QVERIFY2(md2.contains("第一行") && md2.contains("第二行"),
+                 qPrintable("fromHtml <br> 内容丢失，实际: " + md2));
+        QVERIFY2(!md2.contains("<br>") && !md2.contains("ZZBR"),
+                 qPrintable("fromHtml 残留 br/ZZBR，实际: " + md2));
+
+        // 二次往返：fromHtml 产出的 \n 经 toHtml 转回 <br>
+        QString html2 = MarkdownHandler::toHtml(md2);
+        QVERIFY2(html2.contains("<br>"),
+                 qPrintable("二次往返 br 丢失，实际: " + html2));
     }
 
     void testTextAlignFromHtml()

@@ -1310,6 +1310,18 @@ QString MarkdownHandler::fromHtml(const QString &html)
             processed.replace(m.capturedStart(), m.capturedLength(), replacement);
             offset = m.capturedStart() + replacement.length();
         }
+        // <br> 硬换行 → 占位符（toMarkdown 可能以软换行输出，往返丢失）
+        offset = 0;
+        QRegularExpression brRe(R"(<br\s*/?>)");
+        while (true) {
+            auto m = brRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("ZZBR%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << QStringLiteral("\n");
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
     }
 
     QTextDocument doc;
