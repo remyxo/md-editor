@@ -423,6 +423,39 @@ function buildDivBlockExtension() {
     });
 }
 
+// 构造自定义 HardBreak：仅匹配普通 <br>（不含 data-brk 属性），
+// 与 brk 扩展分工：<br> → hardBreak 节点（用户手写），<br data-brk> → brk 节点（BRMARKER 生成）
+function buildCustomHardBreak() {
+    return TipTapNode.create({
+        name: 'hardBreak',
+        group: 'inline',
+        inline: true,
+        selectable: false,
+        parseHTML: function() {
+            return [{ tag: 'br:not([data-brk])' }];
+        },
+        renderHTML: function(props) {
+            return ['br', (props && props.HTMLAttributes) || {}];
+        }
+    });
+}
+
+// 构造 brk 节点：BRMARKER 生成的硬换行标记，带 data-brk 属性以区分用户手写 <br>
+function buildBrkExtension() {
+    return TipTapNode.create({
+        name: 'brk',
+        group: 'inline',
+        inline: true,
+        selectable: false,
+        parseHTML: function() {
+            return [{ tag: 'br[data-brk]' }];
+        },
+        renderHTML: function() {
+            return ['br', { 'data-brk': '' }];
+        }
+    });
+}
+
 // 构造 Emoji 扩展：输入 :shortcode: 后替换为对应 Unicode 字符
 // （TipTap InputRule 在代码块/行内代码中自动跳过，无需特殊处理）
 function buildEmojiExtension() {
@@ -731,6 +764,7 @@ window.editorApi = {
         var exts = [
             TipTapStarterKit.configure({
                 codeBlock: false,
+                hardBreak: false,
                 heading: { levels: [1, 2, 3, 4, 5, 6] }
             }),
             TipTapTableKit.configure({ resizable: true }),
@@ -766,6 +800,11 @@ window.editorApi = {
         // div 块级容器（仅包裹内联内容，排除 data-type div）
         if (TipTapNode)
             exts.push(buildDivBlockExtension());
+        // 自定义 HardBreak（普通 <br>）+ brk 节点（<br data-brk>，BRMARKER 标记）
+        if (TipTapNode) {
+            exts.push(buildCustomHardBreak());
+            exts.push(buildBrkExtension());
+        }
         // Mermaid 块节点（自定义 NodeView，priority 高于 codeBlock）
         if (TipTapNode) {
             exts.push(buildMermaidNode());

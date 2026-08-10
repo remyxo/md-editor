@@ -695,9 +695,9 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         }
     }
 
-    // 后处理 2: BRMARKER → <br>
-    html.replace(MARKER + " ", "<br>");
-    html.replace(MARKER, "<br>");
+    // 后处理 2: BRMARKER → <br data-brk>（标记以区分用户手写 <br>）
+    html.replace(MARKER + " ", "<br data-brk>");
+    html.replace(MARKER, "<br data-brk>");
 
     // 还原任务列表占位符 ZZTL → TipTap taskList 契约 HTML
     //   先于 mark/上下标/行内公式转换还原，条目文本中的相应语法也能被转换；
@@ -1321,9 +1321,10 @@ QString MarkdownHandler::fromHtml(const QString &html)
             processed.replace(m.capturedStart(), m.capturedLength(), replacement);
             offset = m.capturedStart() + replacement.length();
         }
-        // <br> 硬换行 → 占位符，保留为原始 HTML（同 <kbd>/<small> 等）
+        // <br> 硬换行（不含 data-brk 标记——BRMARKER 生成的由 toMarkdown 处理）
         offset = 0;
-        QRegularExpression brRe(R"(<br\b[^>]*>)");
+        QRegularExpression brRe(
+            R"re(<br\b(?![^>]*\bdata-brk)[^>]*>)re");
         while (true) {
             auto m = brRe.match(processed, offset);
             if (!m.hasMatch()) break;
