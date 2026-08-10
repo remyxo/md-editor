@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.7] — 2026-08-10
+
+### 新增
+
+- **HTML 标签支持** — 新增 `<kbd>`（键盘按键）、`<small>`（小字）内联标记和 `<div>`（块级容器，仅包裹内联内容）的 TipTap 自定义扩展，手写 HTML 解析、渲染和 MD↔HTML 往返保真
+
 ## [0.3.6] — 2026-08-10
 
 ### 新增
