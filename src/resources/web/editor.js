@@ -314,8 +314,8 @@ function _stringifyColorStyle(o) {
 
 // 构造 colorSpan mark：承载 <span style="..."> 的内联样式（颜色为主，底层保真任意 style）。
 // - parseHTML 仅认带 style 的 span；无 style 的 span（脚注 marker/content）返回 false 放行
-// - mark 级 renderHTML 输出空属性 span，style 由 attribute 级 renderHTML 注入
-//   （规避 TipTap v2/v3 的 mark renderHTML 签名差异）
+// - 属性级 renderHTML 负责将 style attrs 转为 DOM style 属性，产物经 getRenderedAttributes
+//   注入到 HTMLAttributes 后传入 mark 级 renderHTML（TipTap v3 签名为 ({mark, HTMLAttributes})）
 function buildColorSpanExtension() {
     return TipTapMark.create({
         name: 'colorSpan',
@@ -340,8 +340,8 @@ function buildColorSpanExtension() {
                 }
             }];
         },
-        renderHTML: function() {
-            return ['span', {}, 0];
+        renderHTML: function(props) {
+            return ['span', (props && props.HTMLAttributes) || {}, 0];
         }
     });
 }
