@@ -1000,7 +1000,6 @@ private slots:
         int bei = html.indexOf("</body>");
         bsi = html.indexOf('>', bsi) + 1;
         QString body = html.mid(bsi, bei - bsi).trimmed();
-        qDebug() << "[testHeadingDiv] toHtml full:" << html;
         qDebug() << "[testHeadingDiv] toHtml body:" << body;
 
         QString md2 = MarkdownHandler::fromHtml(body);
@@ -1028,6 +1027,22 @@ private slots:
             MarkdownHandler::toHtml(mdH3));
         QVERIFY2(outH3.contains("###") && outH3.contains("<div align=\"left\">小节标题</div>"),
                  qPrintable("h3 往返失败，out=[" + outH3 + "]"));
+
+        // 多轮往返：模拟反复切换源码/WYSIWYG（5 轮）
+        QString multi = QStringLiteral("# <div align=\"center\">标题</div>");
+        for (int r = 0; r < 5; ++r) {
+            QString body2 = MarkdownHandler::toHtml(multi);
+            int bsi2 = body2.indexOf("<body");
+            int bei2 = body2.indexOf("</body>");
+            bsi2 = body2.indexOf('>', bsi2) + 1;
+            QString bodyContent = body2.mid(bsi2, bei2 - bsi2).trimmed();
+            multi = MarkdownHandler::fromHtml(bodyContent);
+        }
+        // 5 轮后应仍保留 # 和 div
+        QVERIFY2(multi.contains("#") && multi.contains("<div align=\"center\">标题</div>"),
+                 qPrintable("5 轮往返后退化，md=[" + multi + "]"));
+        QVERIFY2(!multi.contains("font-size:xx-large"),
+                 qPrintable("5 轮后残留 heading font span，md=[" + multi + "]"));
     }
 
     void testTextAlignFromHtml()
