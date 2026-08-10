@@ -678,6 +678,49 @@ private slots:
                  qPrintable("残留占位符，实际: " + html));
     }
 
+    void testColorSpanRoundTrip()
+    {
+        // 源码手写 <span style="color:red"> 经 toHtml 保护往返后还原
+        QString md = QStringLiteral("普通文本<span style=\"color:red\">红色</span>尾部");
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("<span style=\"color:red\">红色</span>"),
+                 qPrintable("toHtml 未保留颜色 span，实际: " + html));
+
+        // fromHtml（编辑器 getHTML → 保存）侧对称保护
+        QString md2 = MarkdownHandler::fromHtml(
+            QStringLiteral("<p>普通文本<span style=\"color:red\">红色</span>尾部</p>"));
+        QVERIFY2(md2.contains("<span style=\"color:red\">红色</span>"),
+                 qPrintable("fromHtml 未保留颜色 span，实际: " + md2));
+
+        // 二次往返 toHtml→fromHtml→toHtml，无占位符残留
+        QString html2 = MarkdownHandler::toHtml(md2);
+        QVERIFY2(html2.contains("<span style=\"color:red\">红色</span>"),
+                 qPrintable("二次往返颜色 span 丢失，实际: " + html2));
+        QVERIFY2(!html2.contains("ZZHI") && !html2.contains("ZZHS"),
+                 qPrintable("残留占位符，实际: " + html2));
+    }
+
+    void testColorSpanMultiStyleRoundTrip()
+    {
+        // 多属性 style（文字色 + 背景色）完整往返
+        QString md = QStringLiteral("<span style=\"color:#ffffff;background-color:#e23b3b\">红底白字</span>");
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("color:#ffffff") && html.contains("background-color:#e23b3b"),
+                 qPrintable("多属性 style 往返丢失，实际: " + html));
+    }
+
+    void testColorSpanWithBoldRoundTrip()
+    {
+        // 粗体包裹颜色 span（编辑器内 <strong><span style>…</span></strong> 的 .md 形态）
+        // 注：Qt QTextDocument 把 ** 粗体渲染为 <span style=" font-weight:700;">（非 <strong>），
+        // 见同文件 testMixedFormatRoundTrip 的同样约定；此处验证粗体包裹下颜色 span 保留
+        QString md = QStringLiteral("**<span style=\"color:red\">粗红</span>**");
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(QRegularExpression("font-weight:\\s*700").match(html).hasMatch()
+                     && html.contains("<span style=\"color:red\">粗红</span>"),
+                 qPrintable("粗体+颜色 span 往返异常，实际: " + html));
+    }
+
     // ===== 标题行首列表标记不应被过度转义（md4c 转义修复）=====
 
     void testHeadingNumberDotNotEscaped()
