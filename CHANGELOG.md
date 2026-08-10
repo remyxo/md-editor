@@ -8,6 +8,10 @@
 
 - **HTML 标签支持** — 新增 `<kbd>`（键盘按键）、`<small>`（小字）内联标记和 `<div>`（块级容器，仅包裹内联内容）的 TipTap 自定义扩展，手写 HTML 解析、渲染和 MD↔HTML 往返保真
 
+### 修复
+
+- **sub/sup 原始 HTML 保护** — 修复 MD 文件中手写 `<sub>`/`<sup>` 标签被 QTextDocument 静默丢弃的问题，toHtml 新增 ZZHI 占位符保护，fromHtml 统一转为 Pandoc `~x~`/`^x^` 语法
+
 ## [0.3.6] — 2026-08-10
 
 ### 新增
