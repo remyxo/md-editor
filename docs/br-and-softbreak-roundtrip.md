@@ -1,5 +1,23 @@
 # `<br>` 与软换行往返机制
 
+## 设计原则：HTML → MD 转换规则
+
+**有 Markdown 等价语法的，转为 MD 语法；没有的，保留字面 HTML 标签。**
+
+| HTML 标签 | MD 语法 | 分类 | 处理方式 |
+|-----------|---------|------|----------|
+| `<sub>` | `~x~`（Pandoc） | 有 MD 语法 | fromHtml 转为 `~x~` |
+| `<sup>` | `^x^`（Pandoc） | 有 MD 语法 | fromHtml 转为 `^x^` |
+| `<mark>` | `==x==`（GFM） | 有 MD 语法 | fromHtml 转为 `==x==` |
+| `<hr>` | `---` / `***` | 有 MD 语法 | fromHtml 转为 `---` |
+| `<br>` | **无** — `\n` 只是字符不是语法 | **无 MD 语法** | fromHtml 保留字面 `<br>` |
+| `<kbd>` | 无 | 无 MD 语法 | 保留字面 `<kbd>` |
+| `<small>` | 无 | 无 MD 语法 | 保留字面 `<small>` |
+| `<span style>` | 无 | 无 MD 语法 | 保留字面 `<span style>` |
+| `<div>` | 无 | 无 MD 语法 | 保留字面 `<div>` |
+
+> **核心判断**：`\n` 是一个字符（ASCII 0x0A），不是 Markdown 语法。将 `<br>` 替换为 `\n` 意味着丢失了"这是一个硬换行标签"的语义信息——这在 Markdown 中无法表达，因此必须保留为字面 HTML 标签。
+
 ## 问题域
 
 Markdown 编辑器同时存在两种换行来源，且均输出为 HTML `<br>`：
