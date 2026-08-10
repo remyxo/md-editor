@@ -964,6 +964,34 @@ private slots:
                  qPrintable("残留 br/ZZHI 占位符，md=[" + actualMd + "]"));
     }
 
+    void testBrSoloLine()
+    {
+        // 用户场景：多行 md 中 <br> 独占一行时，应保留为一个换行
+        QString md = QStringLiteral("第一行。\n第二行。\n<br>\n第三行。\n第四行。");
+        QString html = MarkdownHandler::toHtml(md);
+        // body 提取（模拟 EditorTab::loadFile）
+        int bsi = html.indexOf("<body");
+        int bei = html.indexOf("</body>");
+        bsi = html.indexOf('>', bsi) + 1;
+        QString body = html.mid(bsi, bei - bsi).trimmed();
+        qDebug() << "[testBrSolo] toHtml body:" << body;
+
+        // 往返
+        QString md2 = MarkdownHandler::fromHtml(body);
+        qDebug() << "[testBrSolo] fromHtml:" << md2;
+
+        // 所有文本应保留
+        QVERIFY2(md2.contains("第三行") && md2.contains("第四行"),
+                 qPrintable("<br> 后内容丢失，md=[" + md2 + "]"));
+        // 全部文本应保留，<br> 行前后各有一个 <br> 形成一个空行
+        int count = body.count("<br");
+        QVERIFY2(count == 4,
+                 qPrintable(QString("toHtml 产生 %1 个 <br>（期望 4），body=[%2]").arg(count).arg(body)));
+        // fromHtml 应产生恰好 1 个空行（\n\n）在 <br> 原位置
+        QVERIFY2(md2.contains("第二行。") && md2.contains("第三行。"),
+                 qPrintable("内容丢失，md=[" + md2 + "]"));
+    }
+
     void testTextAlignFromHtml()
     {
         // fromHtml：段落 text-align 样式应转为 <div align="..."> 容器

@@ -2,6 +2,15 @@
 #include <QTextDocument>
 #include <QRegularExpression>
 
+// 行是否仅为 <br> 等硬换行标签（含属性及自闭合写法）
+// 用于 BRMARKER 逻辑：<br> 本身即是换行，其前后 \n 不应再触发 BRMARKER
+static bool isBrOnlyLine(const QString &line)
+{
+    static const QRegularExpression brRe(
+        R"(^\s*<br\b[^>]*>\s*$)");
+    return brRe.match(line).hasMatch();
+}
+
 static bool isParagraphLine(const QString &line)
 {
     if (line.isEmpty()) return false;
@@ -14,7 +23,8 @@ static bool isParagraphLine(const QString &line)
     }
     // 数学公式分隔符不是正文行（避免 BRMARKER 插入导致多余 <br>）
     if (trimmed.startsWith("$$")) return false;
-    // 引用行也是正文（需保留内部换行）
+    // <br> 独占行仍算正文行——其后的 \n 仍需 BRMARKER 表达换行；
+    // 但其前的 \n 由调用侧通过 isBrOnlyLine 抑制 BRMARKER
     if (c == '>') return true;
     return c != '#' && c != '-' && c != '|'
            && !(c >= '0' && c <= '9' && trimmed.length() > 1
@@ -562,7 +572,8 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             processed += "ZZTL" + QString::number(taskLists.size() - 1) + "ZZ\n";
             lastBlock = BT_LIST;
         } else if (isParagraphLine(line) && !next.isEmpty()
-                   && isParagraphLine(next)) {
+                   && isParagraphLine(next)
+                   && !isBrOnlyLine(next)) {
             // 隔离：列表后紧跟正文时补空行，避免被吞入列表项
             if (lastBlock == BT_LIST)
                 processed += '\n';
