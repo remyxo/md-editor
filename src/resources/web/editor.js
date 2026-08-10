@@ -374,6 +374,55 @@ function buildSmallExtension() {
     });
 }
 
+// 构造 divBlock 节点：块级容器（仅包裹对内联），渲染为 <div> 标签。
+// - 排除 data-type 属性的 div（内部结构：脚注容器/数学块等由专有扩展处理）
+// - content: inline* 表示只包裹文本与内联标记，不包裹段落/列表
+// - group: block 使 divBlock 能直接出现在文档根层级（与 paragraph/heading 同级）
+function buildDivBlockExtension() {
+    return TipTapNode.create({
+        name: 'divBlock',
+        group: 'block',
+        content: 'inline*',
+        addAttributes: function() {
+            return {
+                style: {
+                    default: '',
+                    parseHTML: function(el) { return el.getAttribute('style') || ''; },
+                    renderHTML: function(attrs) {
+                        return attrs.style ? { style: attrs.style } : {};
+                    }
+                },
+                align: {
+                    default: '',
+                    parseHTML: function(el) { return el.getAttribute('align') || ''; },
+                    renderHTML: function(attrs) {
+                        return attrs.align ? { align: attrs.align } : {};
+                    }
+                },
+                class: {
+                    default: '',
+                    parseHTML: function(el) { return el.getAttribute('class') || ''; },
+                    renderHTML: function(attrs) {
+                        return attrs.class ? { class: attrs.class } : {};
+                    }
+                }
+            };
+        },
+        parseHTML: function() {
+            return [{
+                tag: 'div',
+                getAttrs: function(el) {
+                    // 排除内部结构的 div（脚注/数学块等已有专属扩展）
+                    return el.hasAttribute('data-type') ? false : {};
+                }
+            }];
+        },
+        renderHTML: function(props) {
+            return ['div', (props && props.HTMLAttributes) || {}, 0];
+        }
+    });
+}
+
 // 构造 Emoji 扩展：输入 :shortcode: 后替换为对应 Unicode 字符
 // （TipTap InputRule 在代码块/行内代码中自动跳过，无需特殊处理）
 function buildEmojiExtension() {
@@ -714,6 +763,9 @@ window.editorApi = {
             exts.push(buildKbdExtension());
             exts.push(buildSmallExtension());
         }
+        // div 块级容器（仅包裹内联内容，排除 data-type div）
+        if (TipTapNode)
+            exts.push(buildDivBlockExtension());
         // Mermaid 块节点（自定义 NodeView，priority 高于 codeBlock）
         if (TipTapNode) {
             exts.push(buildMermaidNode());
