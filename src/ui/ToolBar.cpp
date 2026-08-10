@@ -4,6 +4,12 @@
 #include <QLabel>
 #include <QJsonObject>
 #include <QIcon>
+#include <QMenu>
+#include <QWidgetAction>
+#include <QGridLayout>
+#include <QPushButton>
+#include <QColorDialog>
+#include <QRegularExpression>
 
 ToolBar::ToolBar(QWidget *parent)
     : QToolBar(parent)
@@ -19,6 +25,8 @@ ToolBar::ToolBar(QWidget *parent)
     , m_highlightAction(nullptr)
     , m_subscriptAction(nullptr)
     , m_superscriptAction(nullptr)
+    , m_textColorAction(nullptr)
+    , m_bgColorAction(nullptr)
     , m_alignLeftAction(nullptr)
     , m_alignCenterAction(nullptr)
     , m_alignRightAction(nullptr)
@@ -116,6 +124,12 @@ void ToolBar::setupUi()
         "上标", ":/icons/light/superscript.svg");
     m_superscriptAction->setCheckable(true);
 
+    // 颜色按钮：点击弹出调色板（非 checkable）
+    m_textColorAction = makeAction(this, &m_iconPaths, "textColorAction",
+        "文字颜色", ":/icons/light/text-color.svg");
+    m_bgColorAction = makeAction(this, &m_iconPaths, "bgColorAction",
+        "背景颜色", ":/icons/light/bg-color.svg");
+
     addSeparator();
 
     // === 文字对齐（互斥按钮组） ===
@@ -202,6 +216,12 @@ void ToolBar::setupUi()
     connect(m_alignLeftAction, &QAction::triggered, this, [this]{ emit alignSelected("left"); });
     connect(m_alignCenterAction, &QAction::triggered, this, [this]{ emit alignSelected("center"); });
     connect(m_alignRightAction, &QAction::triggered, this, [this]{ emit alignSelected("right"); });
+    connect(m_textColorAction, &QAction::triggered, this, [this]{
+        buildColorMenu(true)->exec(QCursor::pos());
+    });
+    connect(m_bgColorAction, &QAction::triggered, this, [this]{
+        buildColorMenu(false)->exec(QCursor::pos());
+    });
     connect(m_bulletListAction, &QAction::triggered, this, &ToolBar::bulletListClicked);
     connect(m_orderedListAction, &QAction::triggered, this, &ToolBar::orderedListClicked);
     connect(m_taskListAction, &QAction::triggered, this, &ToolBar::taskListClicked);
@@ -236,6 +256,70 @@ void ToolBar::setupUi()
 
     // 收集所有 action，用于阅读模式禁用
     m_allActions = findChildren<QAction *>().toList();
+}
+
+// 构建颜色选择弹出菜单：无颜色 + 12 预设色网格 + 更多颜色（QColorDialog）。
+// forText=true 为文字色按钮，false 为背景色按钮。
+QMenu *ToolBar::buildColorMenu(bool forText)
+{
+    QMenu *menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+
+    // 无颜色
+    QAction *noneAct = menu->addAction(forText ? QStringLiteral("无文字颜色") : QStringLiteral("无背景颜色"));
+    connect(noneAct, &QAction::triggered, this, [this, forText]() {
+        if (forText) emit textColorCleared();
+        else emit bgColorCleared();
+    });
+
+    menu->addSeparator();
+
+    // 12 预设色网格（6 列 × 2 行）
+    static const QStringList COLORS = {
+        "#000000", "#7f7f7f", "#e23b3b", "#e8833a", "#d4a017", "#2e8b57",
+        "#17a2b8", "#2563eb", "#7c3aed", "#db2777", "#8b4513", "#ffffff"
+    };
+    const QString cur = (forText ? m_currentTextColor : m_currentBgColor).toLower();
+
+    QWidget *grid = new QWidget;
+    QGridLayout *layout = new QGridLayout(grid);
+    layout->setSpacing(4);
+    layout->setContentsMargins(6, 6, 6, 6);
+    int idx = 0;
+    for (const QString &c : COLORS) {
+        QPushButton *btn = new QPushButton;
+        btn->setFixedSize(24, 24);
+        btn->setToolTip(c);
+        QString border = (!cur.isEmpty() && cur == c.toLower())
+            ? QStringLiteral("2px solid #2196f3")     // 当前色高亮
+            : QStringLiteral("1px solid #999");
+        btn->setStyleSheet(QStringLiteral(
+            "QPushButton{background:%1;border:%2;border-radius:3px;}"
+            "QPushButton:hover{border:2px solid #2196f3;}").arg(c, border));
+        connect(btn, &QPushButton::clicked, this, [this, forText, c, menu]() {
+            menu->close();
+            if (forText) emit textColorSelected(c);
+            else emit bgColorSelected(c);
+        });
+        layout->addWidget(btn, idx / 6, idx % 6);
+        ++idx;
+    }
+    QWidgetAction *gridAct = new QWidgetAction(menu);
+    gridAct->setDefaultWidget(grid);
+    menu->addAction(gridAct);
+
+    menu->addSeparator();
+
+    // 更多颜色（QColorDialog）
+    QAction *moreAct = menu->addAction(QStringLiteral("更多颜色…"));
+    connect(moreAct, &QAction::triggered, this, [this, forText]() {
+        QColor chosen = QColorDialog::getColor(Qt::white, this,
+            forText ? QStringLiteral("选择文字颜色") : QStringLiteral("选择背景颜色"));
+        if (!chosen.isValid()) return;   // 用户取消
+        if (forText) emit textColorSelected(chosen.name());
+        else emit bgColorSelected(chosen.name());
+    });
+    return menu;
 }
 
 void ToolBar::setReadMode(bool readMode)
@@ -312,6 +396,18 @@ void ToolBar::updateFormatState(const QJsonObject &f)
         m_alignLeftAction->blockSignals(false);
         m_alignCenterAction->blockSignals(false);
         m_alignRightAction->blockSignals(false);
+    }
+    // 颜色 span 回显：解析当前 colorSpanStyle 缓存 color / background-color
+    if (f.contains("colorSpanStyle")) {
+        QString style = f["colorSpanStyle"].toString();
+        QRegularExpression colorRe("(?:^|;)\\s*color\\s*:\\s*([^;]+)",
+            QRegularExpression::CaseInsensitiveOption);
+        QRegularExpression bgRe("background-color\\s*:\\s*([^;]+)",
+            QRegularExpression::CaseInsensitiveOption);
+        auto cm = colorRe.match(style);
+        auto bm = bgRe.match(style);
+        m_currentTextColor = cm.hasMatch() ? cm.captured(1).trimmed() : QString();
+        m_currentBgColor = bm.hasMatch() ? bm.captured(1).trimmed() : QString();
     }
 }
 

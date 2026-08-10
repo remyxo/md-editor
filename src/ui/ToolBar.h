@@ -4,6 +4,8 @@
 #include <QToolBar>
 #include <QComboBox>
 
+class QMenu;
+
 class ToolBar : public QToolBar {
     Q_OBJECT
 public:
@@ -24,6 +26,10 @@ signals:
     void highlightClicked();
     void subscriptClicked();
     void superscriptClicked();
+    void textColorSelected(const QString &color);
+    void bgColorSelected(const QString &color);
+    void textColorCleared();
+    void bgColorCleared();
     void alignSelected(const QString &alignment);
     void headingSelected(int level);
     void bulletListClicked();
@@ -57,6 +63,11 @@ private:
     QAction *m_highlightAction;
     QAction *m_subscriptAction;
     QAction *m_superscriptAction;
+    QAction *m_textColorAction;
+    QAction *m_bgColorAction;
+    QMenu *buildColorMenu(bool forText);
+    QString m_currentTextColor;   // 回显：当前光标处 colorSpan 的文字色
+    QString m_currentBgColor;     // 回显：当前光标处 colorSpan 的背景色
     QAction *m_alignLeftAction;
     QAction *m_alignCenterAction;
     QAction *m_alignRightAction;

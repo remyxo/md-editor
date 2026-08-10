@@ -9,6 +9,8 @@
         <file>icons/light/code.svg</file>
         <file>icons/light/underline.svg</file>
         <file>icons/light/highlight.svg</file>
+        <file>icons/light/text-color.svg</file>
+        <file>icons/light/bg-color.svg</file>
         <file>icons/light/subscript.svg</file>
         <file>icons/light/superscript.svg</file>
         <file>icons/light/align-left.svg</file>
@@ -42,6 +44,8 @@
         <file>icons/dark/code.svg</file>
         <file>icons/dark/underline.svg</file>
         <file>icons/dark/highlight.svg</file>
+        <file>icons/dark/text-color.svg</file>
+        <file>icons/dark/bg-color.svg</file>
         <file>icons/dark/subscript.svg</file>
         <file>icons/dark/superscript.svg</file>
         <file>icons/dark/align-left.svg</file>

@@ -231,6 +231,20 @@ void MainWindow::connectSignals()
     connect(m_toolBar, &ToolBar::alignSelected, this, [this](const QString &alignment) {
         runEditorCommand(QString("window.editorApi.setTextAlign('%1');").arg(alignment));
     });
+    // 颜色按钮：#rrggbb 无单引号，安全；防御性转义以防扩展支持命名色
+    // 注：lambda 按值接 color 以便调用非 const 的 QString::replace
+    connect(m_toolBar, &ToolBar::textColorSelected, this, [this](QString color) {
+        runEditorCommand(QString("window.editorApi.applyTextColor('%1');").arg(color.replace('\'', "\\'")));
+    });
+    connect(m_toolBar, &ToolBar::bgColorSelected, this, [this](QString color) {
+        runEditorCommand(QString("window.editorApi.applyBgColor('%1');").arg(color.replace('\'', "\\'")));
+    });
+    connect(m_toolBar, &ToolBar::textColorCleared, this, [this]() {
+        runEditorCommand("window.editorApi.clearTextColor();");
+    });
+    connect(m_toolBar, &ToolBar::bgColorCleared, this, [this]() {
+        runEditorCommand("window.editorApi.clearBgColor();");
+    });
     connect(m_toolBar, &ToolBar::headingSelected, this, &MainWindow::onHeadingSelected);
     connect(m_toolBar, &ToolBar::bulletListClicked, this, [this]() {
         runEditorCommand("window.editorApi.toggleBulletList();");
