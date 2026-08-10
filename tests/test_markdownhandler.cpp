@@ -991,6 +991,41 @@ private slots:
                  qPrintable("残留占位符，md=[" + md2 + "]"));
     }
 
+    void testHeadingWithDiv()
+    {
+        // 用户场景：# 后跟 <div>——标题信息不应丢失
+        QString md = QStringLiteral("# <div align=\"center\">这是标题1</div>");
+        QString html = MarkdownHandler::toHtml(md);
+        int bsi = html.indexOf("<body");
+        int bei = html.indexOf("</body>");
+        bsi = html.indexOf('>', bsi) + 1;
+        QString body = html.mid(bsi, bei - bsi).trimmed();
+        qDebug() << "[testHeadingDiv] toHtml body:" << body;
+
+        QString md2 = MarkdownHandler::fromHtml(body);
+        qDebug() << "[testHeadingDiv] fromHtml:" << md2;
+
+        // 标题标记 # 必须保留
+        QVERIFY2(md2.contains("#"),
+                 qPrintable("# 丢失，md=[" + md2 + "]"));
+        // div 容器必须保留
+        QVERIFY2(md2.contains("<div align=\"center\">"),
+                 qPrintable("<div> 丢失，md=[" + md2 + "]"));
+
+        // h2 / h3 同理
+        QString mdH2 = QStringLiteral("## <div align=\"center\">章节标题</div>");
+        QString outH2 = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(mdH2));
+        QVERIFY2(outH2.contains("##") && outH2.contains("<div align=\"center\">章节标题</div>"),
+                 qPrintable("h2 往返失败，out=[" + outH2 + "]"));
+
+        QString mdH3 = QStringLiteral("### <div align=\"left\">小节标题</div>");
+        QString outH3 = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(mdH3));
+        QVERIFY2(outH3.contains("###") && outH3.contains("<div align=\"left\">小节标题</div>"),
+                 qPrintable("h3 往返失败，out=[" + outH3 + "]"));
+    }
+
     void testTextAlignFromHtml()
     {
         // fromHtml：段落 text-align 样式应转为 <div align="..."> 容器
