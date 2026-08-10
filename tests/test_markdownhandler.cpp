@@ -1000,11 +1000,15 @@ private slots:
         int bei = html.indexOf("</body>");
         bsi = html.indexOf('>', bsi) + 1;
         QString body = html.mid(bsi, bei - bsi).trimmed();
+        qDebug() << "[testHeadingDiv] toHtml full:" << html;
         qDebug() << "[testHeadingDiv] toHtml body:" << body;
 
         QString md2 = MarkdownHandler::fromHtml(body);
         qDebug() << "[testHeadingDiv] fromHtml:" << md2;
 
+        // toHtml 应将 <div align> 转为 heading text-align（TipTap TextAlign 渲染）
+        QVERIFY2(body.contains("text-align:center") && body.contains("<h1") && body.contains("这是标题1"),
+                 qPrintable("h1 应带 text-align:center，body=[" + body + "]"));
         // 标题标记 # 必须保留
         QVERIFY2(md2.contains("#"),
                  qPrintable("# 丢失，md=[" + md2 + "]"));

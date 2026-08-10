@@ -783,6 +783,30 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     // 被后续各自的还原步骤继续处理（与 ZZHI 先于 ZZFR 同理）。
     for (int i = 0; i < divBackups.size(); ++i)
         html.replace("ZZDV" + QString::number(i) + "ZZ", divBackups[i]);
+
+    // 修复 <hN><span font-size:xx-large><div align="X">text</div></span></hN>
+    // → <hN style="text-align:X">text</hN>
+    // QTextDocument 把 <div> 放在标题内，但 TipTap divBlock 是 block 节点不
+    // 能嵌套在标题中。此处提取 <div align> → <hN style="text-align:">，
+    // 利用已有 TextAlign 扩展渲染居中标题，fromHtml 的 ZZA 机制负责往返还原。
+    {
+        QRegularExpression re(
+            R"re(<(h[1-6])\b[^>]*>\s*<span\b[^>]*\bfont-size\s*:\s*xx-large[^>]*>\s*<div\b[^>]*\balign\s*=\s*"([^"]*)"[^>]*>(.*?)</div>\s*</span>\s*</\1>)re",
+            QRegularExpression::DotMatchesEverythingOption);
+        int off = 0;
+        while (true) {
+            auto m = re.match(html, off);
+            if (!m.hasMatch()) break;
+            QString hTag = m.captured(1);
+            QString align = m.captured(2);
+            QString content = m.captured(3);
+            QString replacement =
+                QString("<%1 style=\"text-align:%2\">%3</%1>").arg(hTag, align, content);
+            html.replace(m.capturedStart(), m.capturedLength(), replacement);
+            off = m.capturedStart() + replacement.length();
+        }
+    }
+
     // 还原 HTML 内联标签占位符 ZZHI → 原始 <span style> / <u>
     // 必须先于 ZZFR/ZZSB 还原：ZZHI 占位符内容可能含 <span>/<u> 内部的
     // ZZSB/ZZFR 占位符（如 <span>~2~</span>、<u>[^1]</u>），先开外层标签，
