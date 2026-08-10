@@ -93,6 +93,32 @@ static QString extractHtmlInlineElements(const QString &line,
             offset = m.capturedStart() + ph.length();
         }
     }
+    // <kbd>text</kbd>（内联键盘元素，与 <u> 一样复用 ZZHI 占位符体系）
+    {
+        QRegularExpression kbdRe(R"(<kbd>(.*?)</kbd>)");
+        int offset = 0;
+        while (true) {
+            auto m = kbdRe.match(r, offset);
+            if (!m.hasMatch()) break;
+            backups << m.captured();
+            QString ph = QString("ZZHI%1ZZ").arg(n++);
+            r.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
+    // <small>text</small>（内联小字元素）
+    {
+        QRegularExpression smallRe(R"(<small>(.*?)</small>)");
+        int offset = 0;
+        while (true) {
+            auto m = smallRe.match(r, offset);
+            if (!m.hasMatch()) break;
+            backups << m.captured();
+            QString ph = QString("ZZHI%1ZZ").arg(n++);
+            r.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
     return r;
 }
 
@@ -517,6 +543,28 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         }
     }
 
+    // 保护手写 <div> 块级容器（排除 data-type 内部结构）
+    // 必须置于 setMarkdown 之前：QTextDocument 的 markdown 解析会丢弃 <div> 标签
+    // （仅保留内部文本），若在 setMarkdown 之后再匹配已无 <div> 可保。
+    // 块级 <div> 可能跨行，故用 DotMatchesEverythingOption 对整个 processed 预扫描。
+    // 注释见后处理 ZZDV 还原步骤：还原必须先于 ZZHI 等内层占位符。
+    QStringList divBackups;
+    {
+        QRegularExpression divRe(
+            R"(<div\b(?![^>]*\bdata-type\s*=)[^>]*>(.*?)</div>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        int n = 0;
+        int offset = 0;
+        while (true) {
+            auto m = divRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            divBackups << m.captured();
+            QString ph = QString("ZZDV%1ZZ").arg(n++);
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
+
     QTextDocument doc;
     doc.setMarkdown(processed);
     QString html = doc.toHtml();
@@ -664,6 +712,12 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         for (int i = 0; i < codeBlocks.size(); ++i)
             html.replace(QString("__CODE%1__").arg(i), codeBlocks[i]);
     }
+    // 还原 <div> 占位符 ZZDV → 原始 <div>
+    // 必须先于 ZZHI/ZZFR/ZZSB 等内层占位符还原：div 内部可能含这些占位符
+    // （如 <div><span style>…</span></div>），先还原外层 div，内层占位符才能
+    // 被后续各自的还原步骤继续处理（与 ZZHI 先于 ZZFR 同理）。
+    for (int i = 0; i < divBackups.size(); ++i)
+        html.replace("ZZDV" + QString::number(i) + "ZZ", divBackups[i]);
     // 还原 HTML 内联标签占位符 ZZHI → 原始 <span style> / <u>
     // 必须先于 ZZFR/ZZSB 还原：ZZHI 占位符内容可能含 <span>/<u> 内部的
     // ZZSB/ZZFR 占位符（如 <span>~2~</span>、<u>[^1]</u>），先开外层标签，
@@ -1123,6 +1177,48 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString ph = QString("ZZUL%1ZZ").arg(n++);
             placeholders << ph;
             backups << m.captured();  // 保留完整原始 HTML
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+        // <kbd>text</kbd>（内联键盘元素，QTextDocument::toMarkdown 会丢弃标签）
+        offset = 0;
+        QRegularExpression kbdRe(
+            R"(<kbd>(.*?)</kbd>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = kbdRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("ZZKD%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << m.captured();
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+        // <small>text</small>（内联小字元素）
+        offset = 0;
+        QRegularExpression smallRe(
+            R"(<small>(.*?)</small>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = smallRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("ZZSM%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << m.captured();
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+        // <div>（块级容器，排除 data-type 内部结构）
+        offset = 0;
+        QRegularExpression divRe(
+            R"(<div\b(?![^>]*\bdata-type\s*=)[^>]*>(.*?)</div>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = divRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("ZZDV%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << m.captured();
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }

@@ -678,6 +678,71 @@ private slots:
                  qPrintable("残留占位符，实际: " + html));
     }
 
+    void testKbdRoundTrip()
+    {
+        // kbd 往返：toHtml 保护 → fromHtml 还原 → 二次往返无占位符残留
+        QString md = QStringLiteral("按<kbd>Esc</kbd>键退出");
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("<kbd>Esc</kbd>"),
+                 qPrintable("toHtml 未保留 <kbd>，实际: " + html));
+
+        QString md2 = MarkdownHandler::fromHtml(
+            QStringLiteral("<p>按<kbd>Esc</kbd>键退出</p>"));
+        QVERIFY2(md2.contains("<kbd>Esc</kbd>"),
+                 qPrintable("fromHtml 未保留 <kbd>，实际: " + md2));
+
+        // 二次往返，无占位符残留
+        QString html2 = MarkdownHandler::toHtml(md2);
+        QVERIFY2(html2.contains("<kbd>Esc</kbd>"),
+                 qPrintable("二次往返 kbd 丢失，实际: " + html2));
+        QVERIFY2(!html2.contains("ZZKD") && !html2.contains("ZZHI"),
+                 qPrintable("残留占位符，实际: " + html2));
+    }
+
+    void testSmallRoundTrip()
+    {
+        QString md = QStringLiteral("这是<small>小字注释</small>文字");
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("<small>小字注释</small>"),
+                 qPrintable("toHtml 未保留 <small>，实际: " + html));
+
+        QString md2 = MarkdownHandler::fromHtml(
+            QStringLiteral("<p>这是<small>小字注释</small>文字</p>"));
+        QVERIFY2(md2.contains("<small>小字注释</small>"),
+                 qPrintable("fromHtml 未保留 <small>，实际: " + md2));
+
+        QString html2 = MarkdownHandler::toHtml(md2);
+        QVERIFY2(html2.contains("<small>小字注释</small>"),
+                 qPrintable("二次往返 small 丢失，实际: " + html2));
+        QVERIFY2(!html2.contains("ZZSM") && !html2.contains("ZZHI"),
+                 qPrintable("残留占位符，实际: " + html2));
+    }
+
+    void testDivBlockRoundTrip()
+    {
+        // 无 data-type 的手写 <div> 应被保护往返
+        QString md = QStringLiteral("<div>容器内容</div>");
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("<div>容器内容</div>"),
+                 qPrintable("toHtml 未保留 <div>，实际: " + html));
+
+        QString md2 = MarkdownHandler::fromHtml(
+            QStringLiteral("<div>容器内容</div>"));
+        QVERIFY2(md2.contains("<div>容器内容</div>"),
+                 qPrintable("fromHtml 未保留 <div>，实际: " + md2));
+
+        // 有 data-type 的 <div> 不被保护（属于脚注/math 扩展）
+        QString md3 = QStringLiteral("<div data-type=\"x\">内部</div>");
+        QString html3 = MarkdownHandler::toHtml(md3);
+        QVERIFY2(!html3.contains("ZZDV"),
+                 qPrintable("data-type div 不应进入 ZZDV 保护，实际: " + html3));
+
+        // 二次往返无残留
+        QString html4 = MarkdownHandler::toHtml(md2);
+        QVERIFY2(!html4.contains("ZZDV"),
+                 qPrintable("残留 ZZDV 占位符，实际: " + html4));
+    }
+
     void testColorSpanRoundTrip()
     {
         // 源码手写 <span style="color:red"> 经 toHtml 保护往返后还原
