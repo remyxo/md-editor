@@ -160,7 +160,7 @@ static QString extractHtmlInlineElements(const QString &line,
     }
     // <br>（硬换行——自闭合 void 元素，保护不被 QTextDocument 丢弃）
     {
-        QRegularExpression brRe(R"(<br\s*/?>)");
+        QRegularExpression brRe(R"(<br\b[^>]*>)");
         int offset = 0;
         while (true) {
             auto m = brRe.match(r, offset);
@@ -376,7 +376,7 @@ static QString taskItemInlineText(QString content)
         "<a\\b[^>]*href\\s*=\\s*\"([^\"]*)\"[^>]*>(.*?)</a>",
         QRegularExpression::DotMatchesEverythingOption), "[\\2](\\1)");
     // 块边界 → 换行（条目内多段落用缩进续行表达）
-    content.replace(QRegularExpression("<br\\s*/?>"), "\n");
+    content.replace(QRegularExpression("<br\\b[^>]*>"), "\n");
     content.replace(QRegularExpression("</p>"), "\n");
     content.remove(QRegularExpression("<[^>]*>"));
     content = unescapeHtmlEntities(content);
@@ -1312,7 +1312,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
         // <br> 硬换行 → 占位符（toMarkdown 可能以软换行输出，往返丢失）
         offset = 0;
-        QRegularExpression brRe(R"(<br\s*/?>)");
+        QRegularExpression brRe(R"(<br\b[^>]*>)");
         while (true) {
             auto m = brRe.match(processed, offset);
             if (!m.hasMatch()) break;

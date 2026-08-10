@@ -942,6 +942,12 @@ private slots:
         QString html2 = MarkdownHandler::toHtml(md2);
         QVERIFY2(html2.contains("<br>"),
                  qPrintable("二次往返 br 丢失，实际: " + html2));
+
+        // 带属性的 <br/> 自闭合形式也应受保护
+        QString md3 = MarkdownHandler::toHtml(
+            QStringLiteral("A<br/>B"));
+        QVERIFY2(md3.contains("<br/>") && md3.contains("A") && md3.contains("B"),
+                 qPrintable("toHtml <br/> 丢失，实际: " + md3));
     }
 
     void testTextAlignFromHtml()
