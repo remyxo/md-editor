@@ -895,6 +895,30 @@ private slots:
                  && !html2.contains("ZZHI"),
                  qPrintable("残留占位符，实际: " + html2));
     }
+
+    void testMarkRoundTrip()
+    {
+        // toHtml：原始 <mark> HTML 标签应被保护（不被 QTextDocument 丢弃）
+        QString md = QStringLiteral("这是<mark>高亮文字</mark>测试");
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("<mark>高亮文字</mark>"),
+                 qPrintable("toHtml 未保留 <mark>，实际: " + html));
+
+        // fromHtml：<mark> → ==text==（Markdown 高亮语法）
+        QString md2 = MarkdownHandler::fromHtml(
+            QStringLiteral("<p>这是<mark>高亮文字</mark>测试</p>"));
+        QVERIFY2(md2.contains("==高亮文字=="),
+                 qPrintable("fromHtml 未将 <mark> 转为 ==x==，实际: " + md2));
+        QVERIFY2(!md2.contains("<mark>"),
+                 qPrintable("fromHtml 残留原始 <mark> 标签，实际: " + md2));
+
+        // 二次往返：toHtml 将 ==x== 转回 <mark>
+        QString html2 = MarkdownHandler::toHtml(md2);
+        QVERIFY2(html2.contains("<mark>高亮文字</mark>"),
+                 qPrintable("二次往返 mark 丢失，实际: " + html2));
+        QVERIFY2(!html2.contains("ZZMK") && !html2.contains("ZZHI"),
+                 qPrintable("残留占位符，实际: " + html2));
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)
