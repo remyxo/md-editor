@@ -1100,8 +1100,9 @@ window.editorApi = {
         if (!this.editor) return;
         var ed = this.editor;
         var state = ed.state;
-        var from = state.selection.from;
-        var to = state.selection.to;
+        var sel = state.selection;
+        var from = sel.from;
+        var to = sel.to;
 
         // 无选中 → 扩展到当前文本块全文
         if (from === to) {
@@ -1121,20 +1122,35 @@ window.editorApi = {
             .run();
 
         // 阶段 2: clearNodes 仅处理标准 block（heading/blockquote/
-        // codeBlock），不处理自定义 divBlock。直接用 ProseMirror 事务
-        // 把选中范围内的 divBlock 替换为 paragraph，保留内联内容。
-        var tr = ed.state.tr;
-        var changed = false;
-        ed.state.doc.nodesBetween(from, to, function(node, pos) {
-            if (node.type.name === 'divBlock') {
-                var pType = ed.state.schema.nodes.paragraph;
-                if (pType) {
-                    tr.setBlockType(pos, pos + node.nodeSize, pType);
-                    changed = true;
-                }
-                return false; // 不深入 divBlock 内部
+        // codeBlock），不处理自定义 divBlock。Phase 1 的 dispatch 可能改变
+        // 文档结构使旧 from/to 失效，故从新 state 重新计算选区。
+        // 用 tr.replaceWith 直接替换节点，绕过 setBlockType 的 isTextblock 守卫。
+        state = ed.state;
+        sel = state.selection;
+        from = sel.from;
+        to = sel.to;
+        if (from === to) {
+            var $pos2 = state.doc.resolve(from);
+            if ($pos2.parent.isTextblock) {
+                from = $pos2.start();
+                to = $pos2.end();
             }
-        });
+        }
+
+        var tr = state.tr;
+        var changed = false;
+        var pType = state.schema.nodes.paragraph;
+        if (pType) {
+            state.doc.nodesBetween(from, to, function(node, pos) {
+                if (node.type.name === 'divBlock') {
+                    // 用 paragraph 包裹 divBlock 的内联内容，剥离 div 包装
+                    tr.replaceWith(pos, pos + node.nodeSize,
+                                  pType.create(null, node.content));
+                    changed = true;
+                    return false;
+                }
+            });
+        }
         if (changed) ed.view.dispatch(tr);
 
         this._markDirty();
