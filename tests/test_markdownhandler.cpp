@@ -864,6 +864,37 @@ private slots:
         QVERIFY2(md4.contains("color:#2563eb"),
                  qPrintable("含颜色的标题 span 不应被剔除，实际: " + md4));
     }
+
+    void testSubSupRoundTrip()
+    {
+        // toHtml：原始 <sub>/<sup> HTML 标签应被保护（不被 QTextDocument 丢弃）
+        QString md = QStringLiteral("化学式H<sub>2</sub>O和指数x<sup>2</sup>测试");
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("<sub>2</sub>"),
+                 qPrintable("toHtml 未保留 <sub>，实际: " + html));
+        QVERIFY2(html.contains("<sup>2</sup>"),
+                 qPrintable("toHtml 未保留 <sup>，实际: " + html));
+
+        // fromHtml：<sub> → ~x~，<sup> → ^x^（Pandoc 语法）
+        QString md2 = MarkdownHandler::fromHtml(
+            QStringLiteral("<p>化学式H<sub>2</sub>O和指数x<sup>2</sup>测试</p>"));
+        QVERIFY2(md2.contains("~2~"),
+                 qPrintable("fromHtml 未将 <sub> 转为 ~x~，实际: " + md2));
+        QVERIFY2(md2.contains("^2^"),
+                 qPrintable("fromHtml 未将 <sup> 转为 ^x^，实际: " + md2));
+        QVERIFY2(!md2.contains("<sub>") && !md2.contains("<sup>"),
+                 qPrintable("fromHtml 残留原始 sub/sup 标签，实际: " + md2));
+
+        // 二次往返：toHtml 将 ~x~/^x^ 转回 <sub>/<sup>
+        QString html2 = MarkdownHandler::toHtml(md2);
+        QVERIFY2(html2.contains("<sub>2</sub>"),
+                 qPrintable("二次往返 sub 丢失，实际: " + html2));
+        QVERIFY2(html2.contains("<sup>2</sup>"),
+                 qPrintable("二次往返 sup 丢失，实际: " + html2));
+        QVERIFY2(!html2.contains("ZZSB") && !html2.contains("ZZSP")
+                 && !html2.contains("ZZHI"),
+                 qPrintable("残留占位符，实际: " + html2));
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)

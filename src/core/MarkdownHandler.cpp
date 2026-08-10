@@ -119,6 +119,32 @@ static QString extractHtmlInlineElements(const QString &line,
             offset = m.capturedStart() + ph.length();
         }
     }
+    // <sub>text</sub>（下标，保护原始 HTML 不被 QTextDocument 丢弃）
+    {
+        QRegularExpression subRe(R"(<sub[^>]*>(.*?)</sub>)");
+        int offset = 0;
+        while (true) {
+            auto m = subRe.match(r, offset);
+            if (!m.hasMatch()) break;
+            backups << m.captured();
+            QString ph = QString("ZZHI%1ZZ").arg(n++);
+            r.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
+    // <sup>text</sup>（上标，不含 data-type 属性——脚注 sup 另有专门处理）
+    {
+        QRegularExpression supRe(R"(<sup(?![^>]*\bdata-type\s*=)[^>]*>(.*?)</sup>)");
+        int offset = 0;
+        while (true) {
+            auto m = supRe.match(r, offset);
+            if (!m.hasMatch()) break;
+            backups << m.captured();
+            QString ph = QString("ZZHI%1ZZ").arg(n++);
+            r.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+    }
     return r;
 }
 
