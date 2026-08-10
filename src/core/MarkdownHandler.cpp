@@ -546,13 +546,15 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     // 保护手写 <div> 块级容器（排除 data-type 内部结构）
     // 必须置于 setMarkdown 之前：QTextDocument 的 markdown 解析会丢弃 <div> 标签
     // （仅保留内部文本），若在 setMarkdown 之后再匹配已无 <div> 可保。
-    // 块级 <div> 可能跨行，故用 DotMatchesEverythingOption 对整个 processed 预扫描。
+    // 仅保护单行 <div>：若开启 DotMatchesEverythingOption 允许多行匹配，backup
+    // 捕获的 div 文本会包含 BRMARKER 占位符，而 BRMARKER→<br> 替换发生在 backup
+    // 之后，还原时 ZZDV 会把字面 BRMARKER 文本放回 —— 数据损坏。div 规范仅包裹
+    // 行内内容（天然单行），故限定单行作用域即可闭合该路径。
     // 注释见后处理 ZZDV 还原步骤：还原必须先于 ZZHI 等内层占位符。
     QStringList divBackups;
     {
         QRegularExpression divRe(
-            R"(<div\b(?![^>]*\bdata-type\s*=)[^>]*>(.*?)</div>)",
-            QRegularExpression::DotMatchesEverythingOption);
+            R"(<div\b(?![^>]*\bdata-type\s*=)[^>]*>(.*?)</div>)");
         int n = 0;
         int offset = 0;
         while (true) {
