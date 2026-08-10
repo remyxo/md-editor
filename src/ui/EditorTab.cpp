@@ -212,6 +212,20 @@ void EditorTab::loadFile(const QString &path, const QString &content)
         escaped.replace("$", "\\$");
         QString js = QString("window.editorApi.setContent(`%1`);").arg(escaped);
         runJsCommand(js);
+
+        // 外部文件变更时若处于源码模式，同步刷新 textarea 内容
+        // setContent 仅更新 WYSIWYG 编辑器，源码区 <textarea> 需单独更新
+        QString mdEscaped = content;
+        mdEscaped.replace("\\", "\\\\").replace("`", "\\`");
+        mdEscaped.replace("$", "\\$");
+        runJsCommand(QString(
+            "(function(){"
+            "var a=window.editorApi;"
+            "if(!a||!a.isSourceMode)return;"
+            "var sv=document.getElementById('source-view');"
+            "if(!sv)return;"
+            "sv.value=`%1`;a._sourceValue=`%1`;"
+            "})()").arg(mdEscaped));
     }
 }
 
