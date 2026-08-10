@@ -9,6 +9,7 @@
 #include <QGridLayout>
 #include <QPushButton>
 #include <QColorDialog>
+#include <QCursor>
 #include <QRegularExpression>
 
 ToolBar::ToolBar(QWidget *parent)

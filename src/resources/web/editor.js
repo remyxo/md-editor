@@ -910,12 +910,14 @@ window.editorApi = {
     // === 内联颜色（colorSpan mark 的样式合并命令） ===
     applyTextColor: function(color) {
         if (!this.editor) return;
+        if (!color) { this.clearTextColor(); return; }
         var cur = _parseColorStyle(this.editor.getAttributes('colorSpan').style || '');
         cur.color = color;
         this.editor.commands.setMark('colorSpan', { style: _stringifyColorStyle(cur) });
     },
     applyBgColor: function(color) {
         if (!this.editor) return;
+        if (!color) { this.clearBgColor(); return; }
         var cur = _parseColorStyle(this.editor.getAttributes('colorSpan').style || '');
         cur.bg = color;
         this.editor.commands.setMark('colorSpan', { style: _stringifyColorStyle(cur) });
