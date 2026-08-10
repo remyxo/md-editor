@@ -60,7 +60,6 @@ private:
     QAction *m_alignLeftAction;
     QAction *m_alignCenterAction;
     QAction *m_alignRightAction;
-    QAction *m_alignJustifyAction;
     QActionGroup *m_alignGroup;
     QAction *m_bulletListAction;
     QAction *m_orderedListAction;

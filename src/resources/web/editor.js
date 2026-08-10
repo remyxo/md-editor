@@ -672,8 +672,9 @@ window.editorApi = {
         if (TipTapSuperscript)
             exts.push(TipTapSuperscript);
         // 文字对齐：作用于段落与标题（对齐信息不在 .md 中保存，往返有损）
+        // 工具栏已移除两端对齐按钮，这里限定 alignments 防御性禁用 justify
         if (TipTapTextAlign)
-            exts.push(TipTapTextAlign.configure({ types: ['heading', 'paragraph'] }));
+            exts.push(TipTapTextAlign.configure({ types: ['heading', 'paragraph'], alignments: ['left', 'center', 'right'] }));
         // Emoji 短代码 InputRule（:shortcode: → Unicode 字符）
         if (TipTapExtension && TipTapInputRule)
             exts.push(buildEmojiExtension());

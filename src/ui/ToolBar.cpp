@@ -22,7 +22,6 @@ ToolBar::ToolBar(QWidget *parent)
     , m_alignLeftAction(nullptr)
     , m_alignCenterAction(nullptr)
     , m_alignRightAction(nullptr)
-    , m_alignJustifyAction(nullptr)
     , m_alignGroup(nullptr)
     , m_bulletListAction(nullptr)
     , m_orderedListAction(nullptr)
@@ -131,13 +130,9 @@ void ToolBar::setupUi()
     m_alignRightAction = makeAction(this, &m_iconPaths, "alignRightAction",
         "右对齐 (Ctrl+Shift+R)", ":/icons/light/align-right.svg");
     m_alignRightAction->setCheckable(true);
-    m_alignJustifyAction = makeAction(this, &m_iconPaths, "alignJustifyAction",
-        "两端对齐 (Ctrl+Shift+J)", ":/icons/light/align-justify.svg");
-    m_alignJustifyAction->setCheckable(true);
     m_alignGroup->addAction(m_alignLeftAction);
     m_alignGroup->addAction(m_alignCenterAction);
     m_alignGroup->addAction(m_alignRightAction);
-    m_alignGroup->addAction(m_alignJustifyAction);
     m_alignLeftAction->setChecked(true);
 
     addSeparator();
@@ -207,7 +202,6 @@ void ToolBar::setupUi()
     connect(m_alignLeftAction, &QAction::triggered, this, [this]{ emit alignSelected("left"); });
     connect(m_alignCenterAction, &QAction::triggered, this, [this]{ emit alignSelected("center"); });
     connect(m_alignRightAction, &QAction::triggered, this, [this]{ emit alignSelected("right"); });
-    connect(m_alignJustifyAction, &QAction::triggered, this, [this]{ emit alignSelected("justify"); });
     connect(m_bulletListAction, &QAction::triggered, this, &ToolBar::bulletListClicked);
     connect(m_orderedListAction, &QAction::triggered, this, &ToolBar::orderedListClicked);
     connect(m_taskListAction, &QAction::triggered, this, &ToolBar::taskListClicked);
@@ -312,15 +306,12 @@ void ToolBar::updateFormatState(const QJsonObject &f)
         m_alignLeftAction->blockSignals(true);
         m_alignCenterAction->blockSignals(true);
         m_alignRightAction->blockSignals(true);
-        m_alignJustifyAction->blockSignals(true);
         m_alignLeftAction->setChecked(a == "left");
         m_alignCenterAction->setChecked(a == "center");
         m_alignRightAction->setChecked(a == "right");
-        m_alignJustifyAction->setChecked(a == "justify");
         m_alignLeftAction->blockSignals(false);
         m_alignCenterAction->blockSignals(false);
         m_alignRightAction->blockSignals(false);
-        m_alignJustifyAction->blockSignals(false);
     }
 }
 
