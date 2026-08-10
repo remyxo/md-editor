@@ -1094,8 +1094,8 @@ window.editorApi = {
     insertImage: function(path) { if (this.editor) this.editor.commands.setImage({ src: path }); },
     insertHorizontalRule: function() { if (this.editor) this.editor.commands.setHorizontalRule(); },
 
-    // 清除样式：选中文字（或无选中时光标所在段落）→ 剥离所有 inline marks、
-    // 重置为正文段落、恢复左对齐，得到最干净的"正文"状态
+    // 清除样式：选中文字（或无选中时光标所在段落）→ 剥离所有 inline marks 及
+    // 自定义 block 节点（divBlock 等），重置为正文段落、左对齐，得到最干净的"正文"
     clearFormatting: function() {
         if (!this.editor) return;
         var ed = this.editor;
@@ -1112,12 +1112,31 @@ window.editorApi = {
             }
         }
 
+        // 阶段 1: 链式清除标准 marks + block → paragraph + 左对齐
         ed.chain()
             .setTextSelection({ from: from, to: to })
-            .unsetAllMarks()        // 剥离 bold/italic/colorSpan/link/code 等所有 mark
-            .clearNodes()           // heading/blockquote → paragraph
-            .setTextAlign('left')   // 重置对齐
+            .unsetAllMarks()
+            .clearNodes()
+            .setTextAlign('left')
             .run();
+
+        // 阶段 2: clearNodes 仅处理标准 block（heading/blockquote/
+        // codeBlock），不处理自定义 divBlock。直接用 ProseMirror 事务
+        // 把选中范围内的 divBlock 替换为 paragraph，保留内联内容。
+        var tr = ed.state.tr;
+        var changed = false;
+        ed.state.doc.nodesBetween(from, to, function(node, pos) {
+            if (node.type.name === 'divBlock') {
+                var pType = ed.state.schema.nodes.paragraph;
+                if (pType) {
+                    tr.setBlockType(pos, pos + node.nodeSize, pType);
+                    changed = true;
+                }
+                return false; // 不深入 divBlock 内部
+            }
+        });
+        if (changed) ed.view.dispatch(tr);
+
         this._markDirty();
     },
 
