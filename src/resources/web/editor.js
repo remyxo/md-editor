@@ -1095,7 +1095,7 @@ window.editorApi = {
     insertHorizontalRule: function() { if (this.editor) this.editor.commands.setHorizontalRule(); },
 
     // 清除样式：选中文字（或无选中时光标所在段落）→ 剥离所有 inline marks 及
-    // 自定义 block 节点（divBlock 等），重置为正文段落、左对齐，得到最干净的"正文"
+    // 自定义 block 节点（divBlock 等），重置为正文段落，得到最干净的"正文"
     clearFormatting: function() {
         if (!this.editor) return;
         var ed = this.editor;
@@ -1113,18 +1113,18 @@ window.editorApi = {
             }
         }
 
-        // 阶段 1: 链式清除标准 marks + block → paragraph + 左对齐
+        // 阶段 1: 链式清除 marks + block → paragraph。
+        // 不调用 setTextAlign：clearNodes 内部的 setBlockType(paragraph)
+        // 已重置节点属性为默认值；显式 setTextAlign('left') 反而给 paragraph
+        // 加上 text-align:left，触发 fromHtml ZZA 机制重包为 <div align="left">。
         ed.chain()
             .setTextSelection({ from: from, to: to })
             .unsetAllMarks()
             .clearNodes()
-            .setTextAlign('left')
             .run();
 
-        // 阶段 2: clearNodes 仅处理标准 block（heading/blockquote/
-        // codeBlock），不处理自定义 divBlock。Phase 1 的 dispatch 可能改变
-        // 文档结构使旧 from/to 失效，故从新 state 重新计算选区。
-        // 用 tr.replaceWith 直接替换节点，绕过 setBlockType 的 isTextblock 守卫。
+        // 阶段 2: clearNodes 仅处理标准 block（heading/blockquote/codeBlock），
+        // 不处理自定义 divBlock。用 tr.replaceWith 替换 divBlock → paragraph。
         state = ed.state;
         sel = state.selection;
         from = sel.from;
@@ -1143,7 +1143,6 @@ window.editorApi = {
         if (pType) {
             state.doc.nodesBetween(from, to, function(node, pos) {
                 if (node.type.name === 'divBlock') {
-                    // 用 paragraph 包裹 divBlock 的内联内容，剥离 div 包装
                     tr.replaceWith(pos, pos + node.nodeSize,
                                   pType.create(null, node.content));
                     changed = true;
