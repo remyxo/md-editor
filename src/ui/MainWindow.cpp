@@ -105,7 +105,8 @@ void MainWindow::setupUi()
     connect(escShortcut, &QShortcut::activated, this, [this]() {
         if (m_modalDialogOpen) {
             // 关闭 JS 侧的模态面板（Mermaid 或数学公式编辑器）
-            runEditorCommand("window.editorApi._mermaidEditor.close();"
+            runEditorCommand("window.editorApi._linkEditor.close();"
+                             "window.editorApi._mermaidEditor.close();"
                              "window.editorApi._mathEditor.close();"
                              "window.editorApi._emojiPicker.close();");
         } else {
@@ -435,6 +436,7 @@ void MainWindow::onTabChanged(int tabId)
     if (m_sourceMode) {
         m_sourceMode = false;
         m_toolBar->setSourceMode(false);
+        m_statusBar->setSourceMode(false);
         if (QAction *act = m_menuBar->findChild<QAction *>(
                 QStringLiteral("sourceModeAction")))
             act->setChecked(false);
@@ -549,6 +551,7 @@ void MainWindow::onToggleSourceMode()
                     QString("window.editorApi.enterSourceMode(`%1`);").arg(escaped));
                 m_sourceMode = true;
                 m_toolBar->setSourceMode(true);
+                m_statusBar->setSourceMode(true);
                 if (QAction *act = m_menuBar->findChild<QAction *>(
                         QStringLiteral("sourceModeAction")))
                     act->setChecked(true);
@@ -566,6 +569,7 @@ void MainWindow::onToggleSourceMode()
                     QString("window.editorApi.exitSourceMode(`%1`);").arg(escaped));
                 m_sourceMode = false;
                 m_toolBar->setSourceMode(false);
+                m_statusBar->setSourceMode(false);
                 if (QAction *act = m_menuBar->findChild<QAction *>(
                         QStringLiteral("sourceModeAction")))
                     act->setChecked(false);

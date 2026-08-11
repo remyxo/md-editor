@@ -66,6 +66,24 @@ static QString extractSubscripts(QString line, QStringList &out)
     return line;
 }
 
+// 提取转义等号 \= → ZZES 占位符（后处理还原为纯文本 =）。
+// QTextDocument 将 \= 解释为转义序列 → 输出字面 =，导致 == 成对后
+// 被 ==highlight== 正则误捕获；提前保护使 ==text== 转换在占位符间不受干扰。
+static QString extractEscapedEquals(QString line, QStringList &out)
+{
+    QRegularExpression re("\\\\=");
+    int offset = 0;
+    while (true) {
+        auto m = re.match(line, offset);
+        if (!m.hasMatch()) break;
+        out << "=";
+        QString ph = "ZZES" + QString::number(out.size() - 1) + "ZZ";
+        line.replace(m.capturedStart(), m.capturedLength(), ph);
+        offset = m.capturedStart() + ph.length();
+    }
+    return line;
+}
+
 // 提取 markdown 行中的原始 HTML 内联标签（<span style>/<u>），
 // 替换为占位符 ZZHI{n}ZZ。这些标签无法用 Markdown 语法表达，
 // 需保护后直通 Qt setMarkdown，后处理时还原为原始 HTML。
@@ -487,6 +505,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList footnoteRefs;   // 脚注引用 <sup> HTML（后处理还原）
     QStringList footnoteDefs;   // 脚注定义 def HTML（按 id 去重，首次定义顺序）
     QStringList footnoteDefIds; // 已收集的定义 id（去重用）
+    QStringList escapedEqBackups;  // 转义等号 \= → ZZES 保护
     QStringList htmlInlineBackups; // 原始 HTML 内联标签（<span style> / <u>）
 
     QStringList mathBlocks;  // 收集 $$ 块的内容
@@ -583,6 +602,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             // 后续 sub/footnote 转换器无法识别，往返数据丢失。先替换为占位符后，
             // 内层占位符随外层 <span>/<u> 一起被 ZZHI 包裹，还原时先开外层再开内层。
             QString cl = line;
+            cl = extractEscapedEquals(cl, escapedEqBackups);
             cl = extractSubscripts(cl, subContents);
             cl = extractFootnoteRefs(cl, footnoteRefs);
             cl = extractHtmlInlineElements(cl, htmlInlineBackups);
@@ -597,6 +617,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             if (isListItemLine(line) && lastBlock == BT_PARA)
                 processed += '\n';
             QString cl = line;
+            cl = extractEscapedEquals(cl, escapedEqBackups);
             cl = extractSubscripts(cl, subContents);
             cl = extractFootnoteRefs(cl, footnoteRefs);
             cl = extractHtmlInlineElements(cl, htmlInlineBackups);
@@ -722,11 +743,6 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             R"(<span[^>]*font-family:\s*'monospace'[^>]*>(.*?)</span>)");
         html.replace(re, "<code>\\1</code>");
     }
-    //    ==highlight== → <mark>（QTextDocument 不识别此语法，== 留存为纯文本）
-    {
-        QRegularExpression re("==([^=\n]+?)==");
-        html.replace(re, "<mark>\\1</mark>");
-    }
     // 行内公式 $...$ → <span data-type="inline-math">；上下标 Pandoc → <sub>/<sup>
     // 此块统一保护 <code>/<pre>：$、~、^ 在代码内均不应被转换
     {
@@ -773,6 +789,15 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         // 恢复 math span
         for (int i = 0; i < mathSpans.size(); ++i)
             html.replace(QString("__IMATH%1__").arg(i), mathSpans[i]);
+        // ==highlight== → <mark>（code/math 已受占位符保护，== 在
+        // 非代码文本中高亮，代码内的 == 不受影响）
+        {
+            QRegularExpression re("==([^=\n]+?)==");
+            html.replace(re, "<mark>\\1</mark>");
+        }
+        // 还原转义等号 ZZES → =（在 ==→<mark> 之后，避免还原的 = 参与匹配）
+        for (int i = 0; i < escapedEqBackups.size(); ++i)
+            html.replace("ZZES" + QString::number(i) + "ZZ", escapedEqBackups[i]);
         // 恢复 <code>/<pre>
         for (int i = 0; i < codeBlocks.size(); ++i)
             html.replace(QString("__CODE%1__").arg(i), codeBlocks[i]);
@@ -825,6 +850,97 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             QString hAttrs = m.captured(2);
             QString content = m.captured(3);
             QString replacement = QString("<%1%2>%3</%1>").arg(hTag, hAttrs, content);
+            html.replace(m.capturedStart(), m.capturedLength(), replacement);
+            off = m.capturedStart() + replacement.length();
+        }
+    }
+
+    // 剥离表头内 QTextDocument 注入的 font-weight span。
+    // QTextDocument 对表格首行（表头行）不使用 <th>，而是输出
+    // <td><p><span style="font-weight:700;">text</span></p></td>。
+    // 标题表头已由上方 fallback 处理；此处处理表格首行。
+    // 与标题同理：未被剥离的 font-weight:700 会被 TipTap Bold parseHTML
+    // 解析为 <strong> mark，后续往返持续污染。
+    {
+        // 匹配每个 <table> 后首个 <tr>（表头行），剥离其内 font-weight span
+        static const QRegularExpression tableFirstRowRe(
+            QStringLiteral("(<table\\b[^>]*>\\s*<tr\\b[^>]*>)(.*?)(</tr>)"),
+            QRegularExpression::DotMatchesEverythingOption);
+        int off = 0;
+        while (true) {
+            auto m = tableFirstRowRe.match(html, off);
+            if (!m.hasMatch()) break;
+            QString rowContent = m.captured(2);
+            static const QRegularExpression fwSpanRe(
+                QStringLiteral("<span\\b[^>]*\\bfont-weight\\s*:\\s*700[^>]*>(.*?)</span>"),
+                QRegularExpression::DotMatchesEverythingOption);
+            rowContent.replace(fwSpanRe, "\\1");
+            QString replacement = m.captured(1) + rowContent + m.captured(3);
+            html.replace(m.capturedStart(), m.capturedLength(), replacement);
+            off = m.capturedStart() + replacement.length();
+        }
+    }
+
+    // 将 QTextDocument 注入的纯字体 span 统一转为语义标签。
+    // QTextDocument::setMarkdown 对所有内联格式（**粗体** / *斜体*）输出
+    // <span style="font-weight:700;"> / <span style="font-style:italic;">
+    // 而非 <strong> / <em>。这些 span 除被 Bold/Italic/colorSpan parseHTML
+    // 三重捕获外，colorSpan 更会将其 style 原样重输出到 getHTML()，导致
+    // 往返污染：**<span style="font-weight:700;">text</span>**。
+    // 此处将仅含字体样式（无 color/background-color 等用户样式）的 span
+    // 转为语义标签，从源头阻断污染链。
+    {
+        QRegularExpression spanStyleRe(
+            QStringLiteral("<span\\b[^>]*\\bstyle\\s*=\\s*\"([^\"]*)\"[^>]*>(.*?)</span>"),
+            QRegularExpression::DotMatchesEverythingOption);
+        int off = 0;
+        while (true) {
+            auto m = spanStyleRe.match(html, off);
+            if (!m.hasMatch()) break;
+            QString style = m.captured(1);
+            QString content = m.captured(2);
+            int len = m.capturedLength();
+
+            bool hasBold = style.contains(QRegularExpression("\\bfont-weight\\s*:\\s*700\\b"));
+            bool hasItalic = style.contains(QRegularExpression("\\bfont-style\\s*:\\s*italic\\b"));
+            bool hasColor = style.contains(QRegularExpression("\\bcolor\\s*:"));
+            bool hasBg = style.contains(QRegularExpression("\\bbackground-color\\s*:"));
+
+            if ((hasBold || hasItalic) && !hasColor && !hasBg) {
+                QString replacement = content;
+                if (hasBold && hasItalic)
+                    replacement = QStringLiteral("<strong><em>%1</em></strong>").arg(content);
+                else if (hasBold)
+                    replacement = QStringLiteral("<strong>%1</strong>").arg(content);
+                else
+                    replacement = QStringLiteral("<em>%1</em>").arg(content);
+                html.replace(m.capturedStart(), len, replacement);
+                off = m.capturedStart() + replacement.length();
+            } else {
+                off = m.capturedStart() + len;
+            }
+        }
+    }
+
+    // 剥离 QTextDocument 在 <a> 标签内注入的链接样式 span。
+    // QTextDocument::setMarkdown 将链接文字渲染为蓝色+下划线，产出
+    // <a href="..."><span style="color:#0000ff;text-decoration:underline;">text</span></a>。
+    // 这些 span 会被 TipTap colorSpan parseHTML 捕获为额外颜色标记，
+    // 导致往返污染——链接中未着色的文字也被迫带上蓝色 <span style>。
+    // 此时用户手写的 <span> 已由 ZZHI 占位符保护为纯文本，残留的均为
+    // Qt 渲染伪影，直接剥离标签保留内容即可。
+    {
+        static const QRegularExpression linkTagRe(
+            "<a\\b([^>]*>)(.*?)</a>",
+            QRegularExpression::DotMatchesEverythingOption);
+        int off = 0;
+        while (true) {
+            auto m = linkTagRe.match(html, off);
+            if (!m.hasMatch()) break;
+            QString inner = m.captured(2);
+            inner.remove(QRegularExpression("<span\\b[^>]*>"));
+            inner.remove("</span>");
+            QString replacement = "<a" + m.captured(1) + inner + "</a>";
             html.replace(m.capturedStart(), m.capturedLength(), replacement);
             off = m.capturedStart() + replacement.length();
         }
@@ -1008,9 +1124,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             // 块级标签 → 换行，保留段落边界
             inner.replace(QRegularExpression("</?p[^>]*>"), "\n");
             inner.replace(QRegularExpression("</?div[^>]*>"), "\n");
-            inner.replace("<br>", "\n");
-            inner.replace("<br/>", "\n");
-            inner.replace("<br />", "\n");
+            inner.replace(QRegularExpression("<br\\b[^>]*>"), "\n");
             inner.remove(QRegularExpression("<[^>]*>"));
             inner = inner.trimmed();
             QStringList lines = inner.split('\n');
@@ -1036,9 +1150,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             auto m = bqRe.match(processed, offset);
             if (!m.hasMatch()) break;
             QString text = m.captured(1);
-            text.replace("<br>", "\n");
-            text.replace("<br/>", "\n");
-            text.replace("<br />", "\n");
+            text.replace(QRegularExpression("<br\\b[^>]*>"), "\n");
             text.remove(QRegularExpression("<[^>]*>"));
             text = text.trimmed();
             QStringList lines = text.split('\n');
@@ -1256,6 +1368,48 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
     }
 
+    // X) 剥离表头 <th> 内的 font-span 与 <strong> 冗余标记。
+    //    toHtml 端已剥离 QTextDocument 注入的 <span style="font-weight:700;">，
+    //    此处作为 fromHtml 侧的防御层处理两类残余：
+    //    a) toHtml 兜底漏过的 font-weight span（含 QTextDocument 注入及
+    //       TipTap colorSpan mark 重输出的字面 span）；
+    //    b) TipTap Bold mark 解析后生成的 <strong> 标签（二者视觉均冗余——
+    //       <th> 自身即为粗体）。
+    //    剥离后 th 内仅保留文本/内联占位符，避免字面 span 或多余 **...**
+    //    语法泄漏到 .md 表头行。置于 N) 之前：其他占位符（行内代码/上下标/
+    //    高亮等）已先行保护；先剥离 th 级冗余标记，N) 再保护用户手写的
+    //    <span style>（如颜色/字体等非 font-weight 样式），互不覆盖。
+    {
+        int off = 0;
+        // 模式 a: <th...><span ...font-weight:700...>text</span></th>
+        static const QRegularExpression thFontSpanRe(
+            QStringLiteral("<(th)(\\b[^>]*)>\\s*<span\\b[^>]*\\bfont-weight\\s*:\\s*700[^>]*>(.*?)</span>\\s*</\\1>"),
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = thFontSpanRe.match(processed, off);
+            if (!m.hasMatch()) break;
+            QString thAttrs = m.captured(2);
+            QString content = m.captured(3);
+            QString replacement = QString("<th%1>%2</th>").arg(thAttrs, content);
+            processed.replace(m.capturedStart(), m.capturedLength(), replacement);
+            off = m.capturedStart() + replacement.length();
+        }
+        // 模式 b: <th...><strong>text</strong></th>（TipTap Bold mark 产物）
+        off = 0;
+        static const QRegularExpression thStrongRe(
+            QStringLiteral("<(th)(\\b[^>]*)>\\s*<strong\\b[^>]*>(.*?)</strong>\\s*</\\1>"),
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = thStrongRe.match(processed, off);
+            if (!m.hasMatch()) break;
+            QString thAttrs = m.captured(2);
+            QString content = m.captured(3);
+            QString replacement = QString("<th%1>%2</th>").arg(thAttrs, content);
+            processed.replace(m.capturedStart(), m.capturedLength(), replacement);
+            off = m.capturedStart() + replacement.length();
+        }
+    }
+
     // N) 保护 Markdown 无法表达的 HTML 内联元素 → 占位符
     //    QTextDocument::toMarkdown() 会丢弃内联 CSS 样式和下划线标签，
     //    占位符保护后还原为原始 HTML，与 toHtml() 形成对称往返。
@@ -1383,6 +1537,64 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
     }
 
+    // D) 保护字面 **、==、&lt;、&gt; 不被 toMarkdown() 重新解释为 Markdown 语法。
+    //    用户通过 \*\*、\=\=、\<、\> 转义写入的字面符号，经 toHtml 已转为
+    //    纯文本/HTML 实体；QTextDocument::toMarkdown() 不会反转为转义形式，
+    //    直接输出裸 **/==，且 &lt;→\< 但 &gt;→>（不加反斜杠），不对称。
+    //    此处用简易状态机识别 HTML 标签外的字面符号/实体并替换为占位符，
+    //    还原时输出为转义形式，保证 \<、\> 往返保真。
+    {
+        QString result;
+        result.reserve(processed.size());
+        bool inTag = false;
+        int nDs = 0; // ** 计数
+        int nEq = 0; // == 计数
+        int nLt = 0; // &lt; 计数
+        int nGt = 0; // &gt; 计数
+        for (int i = 0; i < processed.size(); ++i) {
+            QChar c = processed[i];
+            if (c == '<')
+                inTag = true;
+            else if (c == '>')
+                inTag = false;
+
+            if (!inTag && c == '*' && i + 1 < processed.size()
+                && processed[i + 1] == '*') {
+                QString ph = QString("ZZDS%1ZZ").arg(nDs++);
+                placeholders << ph;
+                backups << QStringLiteral("\\*\\*");
+                result += ph;
+                ++i;
+            } else if (!inTag && c == '=' && i + 1 < processed.size()
+                       && processed[i + 1] == '=') {
+                QString ph = QString("ZZEQ%1ZZ").arg(nEq++);
+                placeholders << ph;
+                backups << QStringLiteral("\\=\\=");
+                result += ph;
+                ++i;
+            } else if (!inTag && c == '&' && i + 3 < processed.size()
+                       && processed[i + 1] == 'l' && processed[i + 2] == 't'
+                       && processed[i + 3] == ';') {
+                QString ph = QString("ZZLT%1ZZ").arg(nLt++);
+                placeholders << ph;
+                backups << QStringLiteral("\\<");
+                result += ph;
+                i += 3;
+            } else if (!inTag && c == '&' && i + 3 < processed.size()
+                       && processed[i + 1] == 'g' && processed[i + 2] == 't'
+                       && processed[i + 3] == ';') {
+                QString ph = QString("ZZGT%1ZZ").arg(nGt++);
+                placeholders << ph;
+                backups << QStringLiteral("\\>");
+                result += ph;
+                i += 3;
+            } else {
+                result += c;
+            }
+        }
+        if (nDs > 0 || nEq > 0 || nLt > 0 || nGt > 0) processed = result;
+    }
+
     QTextDocument doc;
     doc.setHtml(processed);
     QString md = doc.toMarkdown();
@@ -1486,6 +1698,47 @@ QString MarkdownHandler::fromHtml(const QString &html)
             process(bareStrongSpan);
             process(bareSpan);
         }
+    }
+
+    // 6) 规范化表格格式：QTextDocument::toMarkdown（md4c）对表格输出
+    //    |cell|（无空格）且数据行尾部用空格做列对齐，非标准 GFM 风格。
+    //    统一为 | cell |（单元格内容前后各一个空格），分隔行统一为 | --- |。
+    {
+        QStringList lines = md.split('\n');
+        for (int i = 0; i < lines.size(); ++i) {
+            QString line = lines[i];
+            QString t = line.trimmed();
+            // 仅处理表格行（以 | 开头且以 | 结尾，非 blockquote 前缀 > |）
+            if (!t.startsWith('|') || !t.endsWith('|')) continue;
+
+            // 去掉首尾 | → 拆分为单元格
+            QString inner = t.mid(1, t.length() - 2);
+            QStringList cells;
+            // 简单拆分（不处理行内代码含 | 的极端情况——极少见且拆分会破坏）
+            if (inner.contains('`'))
+                continue;
+            cells = inner.split('|');
+            bool isSep = false;
+            for (auto &cell : cells) {
+                cell = cell.trimmed();
+                if (QRegularExpression("^:?-{3,}:?$").match(cell).hasMatch())
+                    isSep = true;
+            }
+            if (isSep) {
+                // 分隔行：每格统一为 ---
+                QStringList sepCells;
+                for (int k = 0; k < cells.size(); ++k)
+                    sepCells << "---";
+                lines[i] = "| " + sepCells.join(" | ") + " |";
+            } else {
+                // 数据/表头行：每格 trim + 前后各一个空格
+                QStringList padded;
+                for (const auto &cell : cells)
+                    padded << (" " + cell + " ");
+                lines[i] = "|" + padded.join('|') + "|";
+            }
+        }
+        md = lines.join('\n');
     }
 
     while (md.endsWith('\n'))

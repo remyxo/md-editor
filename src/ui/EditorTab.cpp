@@ -91,6 +91,11 @@ void EditorWebView::setupContextMenu()
         connect(visitLink, &QAction::triggered, [this]() {
             QDesktopServices::openUrl(QUrl(m_linkUrl));
         });
+        QAction *editLink = m_contextMenu->addAction(
+            QStringLiteral("编辑超链接"));
+        connect(editLink, &QAction::triggered, [this]() {
+            page()->runJavaScript("window.editorApi._linkEditor.open();");
+        });
     }
 
     // 表格操作子菜单 — 仅光标在表格内时显示

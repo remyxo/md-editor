@@ -336,7 +336,11 @@ function buildColorSpanExtension() {
             return [{
                 tag: 'span',
                 getAttrs: function(el) {
-                    return el.getAttribute('style') ? {} : false;
+                    var s = el.getAttribute('style') || '';
+                    // 仅匹配含颜色或背景色的 span，纯字体样式（font-weight /
+                    // font-style / font-size）是 QTextDocument 的内联渲染，
+                    // 应由 Bold / Italic mark 处理，而非 colorSpan。
+                    return (/\bcolor\s*:/.test(s) || /\bbackground-color\s*:/.test(s)) ? {} : false;
                 }
             }];
         },
@@ -413,7 +417,12 @@ function buildDivBlockExtension() {
                 tag: 'div',
                 getAttrs: function(el) {
                     // 排除内部结构的 div（脚注/数学块等已有专属扩展）
-                    return el.hasAttribute('data-type') ? false : {};
+                    if (el.hasAttribute('data-type')) return false;
+                    // 排除任务项内的 div 包装器：taskItem 渲染为
+                    // <li><label>checkbox</label><div>content</div></li>，
+                    // 该 div 是 taskItem 的内容容器，不应被 divBlock 截获。
+                    if (el.closest && el.closest('li[data-type="taskItem"]')) return false;
+                    return {};
                 }
             }];
         },
@@ -1936,6 +1945,209 @@ window.editorApi = {
                 document.documentElement.scrollTop = this._bodyScrollTop;
                 document.body.scrollTop = this._bodyScrollTop;
             }
+            if (!this._confirmed) {
+                window.editorApi._dirty = this._dirtyBefore;
+                if (window.editorApi.bridge) {
+                    window.editorApi.bridge.contentChanged(!!this._dirtyBefore);
+                }
+            }
+            var self = this;
+            setTimeout(function() {
+                var ed = window.editorApi.editor;
+                if (ed) ed.view.focus();
+                setTimeout(function() {
+                    window.editorApi._mathEditing = false;
+                    if (!self._confirmed) {
+                        window.editorApi._dirty = self._dirtyBefore;
+                        if (window.editorApi.bridge) {
+                            window.editorApi.bridge.contentChanged(!!self._dirtyBefore);
+                        }
+                    }
+                }, 150);
+            }, 50);
+        }
+    },
+
+    // ===== 超链接编辑面板（模态：遮罩覆盖编辑区） =====
+    _linkEditor: {
+        overlay: null,
+        popover: null,
+        textInput: null,
+        urlInput: null,
+        okBtn: null,
+        cancelBtn: null,
+        removeBtn: null,
+        _href: '',
+        _linkFrom: 0,
+        _linkTo: 0,
+        _dirtyBefore: false,
+        _confirmed: false,
+        _bodyOverflow: '',
+
+        // 右键菜单触发（编辑模式）
+        open: function() {
+            var ed = window.editorApi.editor;
+            if (!ed) return;
+            if (!ed.isActive('link')) return;
+            var attrs = ed.getAttributes('link');
+            if (!attrs || !attrs.href) return;
+            this._href = attrs.href;
+            // 使用 extendMarkRange 将选区扩展到链接标记覆盖范围
+            // （命令会修改 selection，但模态遮罩下不可见，关闭后恢复）
+            ed.chain().extendMarkRange('link').run();
+            this._linkFrom = ed.state.selection.from;
+            this._linkTo = ed.state.selection.to;
+            this._dirtyBefore = window.editorApi._dirty;
+            this._confirmed = false;
+            window.editorApi._mathEditing = true;
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
+            this._bodyOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+            this.buildDom();
+            this.show();
+            ed.view.dom.blur();
+        },
+
+        buildDom: function() {
+            this.cleanupDom();
+            var self = this;
+            this.overlay = document.createElement('div');
+            this.overlay.className = 'math-editor-overlay';
+
+            this.popover = document.createElement('div');
+            this.popover.className = 'math-editor-popover link-editor-popover';
+
+            // 标题栏
+            var titleBar = document.createElement('div');
+            titleBar.className = 'math-editor-titlebar';
+            var tag = document.createElement('span');
+            tag.className = 'math-editor-type-tag';
+            tag.textContent = '编辑超链接';
+            titleBar.appendChild(tag);
+            var closeBtn = document.createElement('button');
+            closeBtn.className = 'math-editor-close-btn';
+            closeBtn.textContent = '×';
+            closeBtn.title = '关闭';
+            closeBtn.addEventListener('click', function(e) { e.stopPropagation(); self.close(); });
+            titleBar.appendChild(closeBtn);
+            this.popover.appendChild(titleBar);
+
+            // 链接文字（可编辑）
+            var textLabel = document.createElement('div');
+            textLabel.className = 'math-editor-label';
+            textLabel.textContent = '链接文字';
+            this.popover.appendChild(textLabel);
+            this.textInput = document.createElement('input');
+            this.textInput.type = 'text';
+            this.textInput.className = 'math-editor-input';
+            this.textInput.spellcheck = false;
+            this.popover.appendChild(this.textInput);
+
+            // URL 输入
+            var urlLabel = document.createElement('div');
+            urlLabel.className = 'math-editor-label';
+            urlLabel.textContent = '链接地址';
+            this.popover.appendChild(urlLabel);
+            this.urlInput = document.createElement('input');
+            this.urlInput.type = 'url';
+            this.urlInput.className = 'math-editor-input';
+            this.urlInput.spellcheck = false;
+            this.urlInput.placeholder = 'https://...';
+            this.popover.appendChild(this.urlInput);
+
+            // 按钮行（删除链接 | 取消 | 确定）
+            var actions = document.createElement('div');
+            actions.className = 'link-editor-actions';
+            this.removeBtn = document.createElement('button');
+            this.removeBtn.className = 'link-editor-remove-btn';
+            this.removeBtn.textContent = '删除链接';
+            this.removeBtn.addEventListener('click', function() { self.removeLink(); });
+            actions.appendChild(this.removeBtn);
+            var spacer = document.createElement('span');
+            spacer.style.flex = '1';
+            actions.appendChild(spacer);
+            this.cancelBtn = document.createElement('button');
+            this.cancelBtn.textContent = '取消';
+            this.cancelBtn.addEventListener('click', function() { self.close(); });
+            actions.appendChild(this.cancelBtn);
+            this.okBtn = document.createElement('button');
+            this.okBtn.className = 'primary';
+            this.okBtn.textContent = '确定';
+            this.okBtn.addEventListener('click', function() { self.confirm(); });
+            actions.appendChild(this.okBtn);
+            this.popover.appendChild(actions);
+
+            // 键盘处理
+            var inputKeydown = function(e) {
+                if (e.key === 'Escape') { e.preventDefault(); self.close(); return; }
+                if (e.key === 'Enter') { e.preventDefault(); self.confirm(); }
+            };
+            this.textInput.addEventListener('keydown', inputKeydown);
+            this.urlInput.addEventListener('keydown', inputKeydown);
+            this.popover.addEventListener('click', function(e) { e.stopPropagation(); });
+            this.popover.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') { e.preventDefault(); self.close(); }
+            });
+
+            document.body.appendChild(this.overlay);
+            document.body.appendChild(this.popover);
+        },
+
+        show: function() {
+            var ed = window.editorApi.editor;
+            if (ed) {
+                this.textInput.value = ed.state.doc.textBetween(this._linkFrom, this._linkTo);
+            }
+            this.urlInput.value = this._href;
+            this.urlInput.focus();
+            this.urlInput.select();
+        },
+
+        confirm: function() {
+            var newUrl = this.urlInput.value.trim();
+            var newText = this.textInput.value.trim();
+            if (!newUrl) { this.close(); return; }
+            var ed = window.editorApi.editor;
+            if (!ed) { this.close(); return; }
+            this._confirmed = true;
+            window.editorApi._forceDirty();
+            var state = ed.state;
+            var linkMark = state.schema.marks.link.create({ href: newUrl });
+            if (newText) {
+                // 替换链接文字（可能发生了变化）
+                var textNode = state.schema.text(newText, [linkMark]);
+                ed.view.dispatch(state.tr.replaceWith(this._linkFrom, this._linkTo, textNode));
+            } else {
+                ed.commands.setLink({ href: newUrl });
+            }
+            this.close();
+        },
+
+        removeLink: function() {
+            var ed = window.editorApi.editor;
+            if (!ed) { this.close(); return; }
+            this._confirmed = true;
+            window.editorApi._forceDirty();
+            ed.commands.unsetLink();
+            this.close();
+        },
+
+        cleanupDom: function() {
+            if (this.overlay && this.overlay.parentNode) this.overlay.parentNode.removeChild(this.overlay);
+            if (this.popover && this.popover.parentNode) this.popover.parentNode.removeChild(this.popover);
+            this.overlay = null;
+            this.popover = null;
+            this.textInput = null;
+            this.urlInput = null;
+            this.okBtn = null;
+            this.cancelBtn = null;
+            this.removeBtn = null;
+        },
+
+        close: function() {
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(false);
+            this.cleanupDom();
+            document.body.style.overflow = this._bodyOverflow || '';
             if (!this._confirmed) {
                 window.editorApi._dirty = this._dirtyBefore;
                 if (window.editorApi.bridge) {

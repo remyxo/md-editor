@@ -4,10 +4,14 @@ StatusBar::StatusBar(QWidget *parent)
     : QStatusBar(parent)
 {
     m_cursorLabel = new QLabel("行 1, 列 1", this);
+    m_sourceModeLabel = new QLabel("源码模式", this);
     m_filePathLabel = new QLabel("", this);
     m_wordLabel = new QLabel("字符: 0 / 词: 0", this);
 
+    m_sourceModeLabel->setVisible(false);
+
     addWidget(m_cursorLabel);
+    addWidget(m_sourceModeLabel);
     addWidget(m_filePathLabel, 1);
     addPermanentWidget(m_wordLabel);
 }
@@ -25,5 +29,10 @@ void StatusBar::updateFilePath(const QString &path)
 void StatusBar::updateWordCount(int chars, int words, int /*tabId*/)
 {
     m_wordLabel->setText(QString("字符: %1 / 词: %2").arg(chars).arg(words));
+}
+
+void StatusBar::setSourceMode(bool on)
+{
+    m_sourceModeLabel->setVisible(on);
 }
 

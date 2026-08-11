@@ -2,6 +2,24 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.9] — 2026-08-11
+
+### 新增
+
+- **编辑超链接** — 右键链接菜单新增「编辑超链接」选项，弹出模态对话框可修改链接 URL 和文字，支持删除链接
+- **源码模式状态栏提示** — 切换源码模式时状态栏行/列值右侧显示「源码模式」
+
+### 修复
+
+- **任务列表源码模式 `div` 泄漏** — 修复 divBlock parseHTML 捕获 taskItem 内部 `<div>` 导致源码模式出现 `<div></div>` 伪影
+- **QTextDocument 链接蓝色污染** — 修复 toHtml 中 QTextDocument 给所有链接文字注入蓝色 `<span style="color:...">` 导致往返污染
+- **colorSpan 误捕获字体样式** — colorSpan parseHTML 现仅匹配含 color/background-color 的 span，避免 QTextDocument 的 font-weight/font-style span 被误解析
+- **粗体/斜体往返污染** — toHtml 将 QTextDocument 注入的纯字体 span 统一转为语义标签 `<strong>`/`<em>`
+- **表格表头粗体残留** — toHtml 输出中表格首行不再含 font-weight span
+- **转义等号 `\=` 被高亮误捕获** — 新增 extractEscapedEquals 保护转义等号免受 `==highlight==` 正则干扰
+- **标题中 `div align` 字体污染防御** — fromHtml 侧新增防御步骤剥离残留的 heading font-span + strong
+- **表格格式规范化** — fromHtml 统一输出 GFM 风格 `| cell |` 格式
+
 ## [0.3.8] — 2026-08-11
 
 ### 移除

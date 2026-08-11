@@ -469,6 +469,67 @@ body.dark .math-editor-actions button.primary {
     color: #fff;
 }
 
+/* ============ 超链接编辑面板 ============ */
+.link-editor-popover {
+    max-width: 520px;
+}
+.link-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+}
+.link-editor-actions button {
+    padding: 8px 24px;
+    border-radius: 5px;
+    border: 1px solid #c0c0c0;
+    font-size: 15px;
+    cursor: pointer;
+    background: #f0f0f0;
+    color: #333;
+}
+.link-editor-actions button:hover {
+    background: #e0e0e0;
+}
+.link-editor-actions button.primary {
+    background: #0078d4;
+    border-color: #0078d4;
+    color: #fff;
+}
+.link-editor-actions button.primary:hover {
+    background: #005a9e;
+}
+.link-editor-remove-btn {
+    background: transparent !important;
+    border: none !important;
+    color: #d32f2f !important;
+    font-size: 14px !important;
+    padding: 8px 12px !important;
+    cursor: pointer;
+}
+.link-editor-remove-btn:hover {
+    background: rgba(211, 47, 47, 0.08) !important;
+}
+body.dark .link-editor-actions button {
+    background: #3d3d3d;
+    border-color: #555;
+    color: #ddd;
+}
+body.dark .link-editor-actions button:hover {
+    background: #505050;
+}
+body.dark .link-editor-actions button.primary {
+    background: #0078d4;
+    border-color: #0078d4;
+    color: #fff;
+}
+body.dark .link-editor-remove-btn {
+    color: #f28b82 !important;
+}
+body.dark .link-editor-remove-btn:hover {
+    background: rgba(242, 139, 130, 0.12) !important;
+}
+
 /* ============ Mermaid 图表 ============ */
 /* 渲染容器：居中、可选中边框 */
 .ProseMirror .mermaid-block {

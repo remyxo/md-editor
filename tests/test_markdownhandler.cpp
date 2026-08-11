@@ -495,6 +495,111 @@ private slots:
         QString html = MarkdownHandler::toHtml(md1);
         QString md2 = MarkdownHandler::fromHtml(html);
         QCOMPARE(md2, md1);
+
+        // 用户报告：任务列表含中文括号及多条目
+        QString md3 = QStringLiteral("- [ ] 任务列表1\n- [x] 任务列表2（已完成）\n- [ ] 任务列表3");
+        QString html3 = MarkdownHandler::toHtml(md3);
+        QString md4 = MarkdownHandler::fromHtml(html3);
+        QVERIFY2(!md4.contains("<div>"),
+                 qPrintable("任务列表往返不应出现裸 <div>，md=[" + md4 + "]"));
+        QVERIFY2(md4.contains("- [ ] 任务列表1"),
+                 qPrintable("任务1 应保留，md=[" + md4 + "]"));
+        QVERIFY2(md4.contains("- [x] 任务列表2"),
+                 qPrintable("任务2 应保留，md=[" + md4 + "]"));
+        QVERIFY2(md4.contains("- [ ] 任务列表3"),
+                 qPrintable("任务3 应保留，md=[" + md4 + "]"));
+
+        // 仅传入 body 内容（模拟 TipTap getHTML 输出）→ 不应退化
+        {
+            int bsi = html3.indexOf("<body");
+            int bei = html3.indexOf("</body>");
+            bsi = html3.indexOf('>', bsi) + 1;
+            QString bodyOnly = html3.mid(bsi, bei - bsi).trimmed();
+            QString mdBody = MarkdownHandler::fromHtml(bodyOnly);
+            QVERIFY2(!mdBody.contains("<div>"),
+                     qPrintable("body-only 往返不应出现裸 <div>，md=[" + mdBody + "]"));
+            QVERIFY2(mdBody.contains("- [ ] 任务列表1"),
+                     qPrintable("body-only: 任务1 应保留，md=[" + mdBody + "]"));
+            QVERIFY2(mdBody.contains("- [x] 任务列表2"),
+                     qPrintable("body-only: 任务2 应保留，md=[" + mdBody + "]"));
+            QVERIFY2(mdBody.contains("- [ ] 任务列表3"),
+                     qPrintable("body-only: 任务3 应保留，md=[" + mdBody + "]"));
+        }
+
+        // 模拟 TipTap getHTML 的带缩进/换行格式化输出
+        {
+            QString tipTapStyle =
+                QStringLiteral("<ul data-type=\"taskList\">\n")
+                + QStringLiteral("  <li data-type=\"taskItem\" data-checked=\"false\">\n")
+                + QStringLiteral("    <label contenteditable=\"false\"><input type=\"checkbox\"><span></span></label>\n")
+                + QStringLiteral("    <div>\n")
+                + QStringLiteral("      <p>任务列表1</p>\n")
+                + QStringLiteral("    </div>\n")
+                + QStringLiteral("  </li>\n")
+                + QStringLiteral("  <li data-type=\"taskItem\" data-checked=\"true\">\n")
+                + QStringLiteral("    <label contenteditable=\"false\"><input type=\"checkbox\" checked><span></span></label>\n")
+                + QStringLiteral("    <div>\n")
+                + QStringLiteral("      <p>任务列表2（已完成）</p>\n")
+                + QStringLiteral("    </div>\n")
+                + QStringLiteral("  </li>\n")
+                + QStringLiteral("  <li data-type=\"taskItem\" data-checked=\"false\">\n")
+                + QStringLiteral("    <label contenteditable=\"false\"><input type=\"checkbox\"><span></span></label>\n")
+                + QStringLiteral("    <div>\n")
+                + QStringLiteral("      <p>任务列表3</p>\n")
+                + QStringLiteral("    </div>\n")
+                + QStringLiteral("  </li>\n")
+                + QStringLiteral("</ul>");
+            QString mdTipTap = MarkdownHandler::fromHtml(tipTapStyle);
+            QVERIFY2(!mdTipTap.contains("<div>"),
+                     qPrintable("TipTap 格式化输出不应出现裸 <div>，md=[" + mdTipTap + "]"));
+            QVERIFY2(mdTipTap.contains("- [ ] 任务列表1"),
+                     qPrintable("TipTap fmt: 任务1 应保留，md=[" + mdTipTap + "]"));
+            QVERIFY2(mdTipTap.contains("- [x] 任务列表2"),
+                     qPrintable("TipTap fmt: 任务2 应保留，md=[" + mdTipTap + "]"));
+            QVERIFY2(mdTipTap.contains("- [ ] 任务列表3"),
+                     qPrintable("TipTap fmt: 任务3 应保留，md=[" + mdTipTap + "]"));
+        }
+
+        // 模拟 divBlock 截获 taskItem 内 <div> 后的双重 <div> 退化 HTML
+        // （未修复前：divBlock parseHTML 无 closest('li[data-type="taskItem"]') 排除，
+        //  taskItem renderHTML 输出外层 <div>，divBlock renderHTML 再输出内层 <div>，
+        //  导致 <div><div></div><p>text</p></div> 结构——<p> 是 block 不能被 inline-only
+        //  divBlock 容纳，故被踢到外层与空 divBlock 并列）
+        {
+            QString degradedWithDoubleDiv =
+                QStringLiteral("<ul data-type=\"taskList\">\n")
+                + QStringLiteral("  <li data-type=\"taskItem\" data-checked=\"false\">\n")
+                + QStringLiteral("    <label contenteditable=\"false\"><input type=\"checkbox\"><span></span></label>\n")
+                + QStringLiteral("    <div>\n")
+                + QStringLiteral("      <div></div>\n")
+                + QStringLiteral("      <p>任务列表1</p>\n")
+                + QStringLiteral("    </div>\n")
+                + QStringLiteral("  </li>\n")
+                + QStringLiteral("  <li data-type=\"taskItem\" data-checked=\"true\">\n")
+                + QStringLiteral("    <label contenteditable=\"false\"><input type=\"checkbox\" checked><span></span></label>\n")
+                + QStringLiteral("    <div>\n")
+                + QStringLiteral("      <div></div>\n")
+                + QStringLiteral("      <p>任务列表2（已完成）</p>\n")
+                + QStringLiteral("    </div>\n")
+                + QStringLiteral("  </li>\n")
+                + QStringLiteral("  <li data-type=\"taskItem\" data-checked=\"false\">\n")
+                + QStringLiteral("    <label contenteditable=\"false\"><input type=\"checkbox\"><span></span></label>\n")
+                + QStringLiteral("    <div>\n")
+                + QStringLiteral("      <div></div>\n")
+                + QStringLiteral("      <p>任务列表3</p>\n")
+                + QStringLiteral("    </div>\n")
+                + QStringLiteral("  </li>\n")
+                + QStringLiteral("</ul>");
+            QString mdDegraded = MarkdownHandler::fromHtml(degradedWithDoubleDiv);
+            QVERIFY2(!mdDegraded.contains("<div>"),
+                     qPrintable("双重 div 退化不应出现裸 <div>，md=[" + mdDegraded + "]"));
+            QVERIFY2(mdDegraded.contains("- [ ] 任务列表1"),
+                     qPrintable("双重div: 任务1 应保留，md=[" + mdDegraded + "]"));
+            QVERIFY2(mdDegraded.contains("- [x] 任务列表2"),
+                     qPrintable("双重div: 任务2 应保留，md=[" + mdDegraded + "]"));
+            QVERIFY2(mdDegraded.contains("- [ ] 任务列表3"),
+                     qPrintable("双重div: 任务3 应保留，md=[" + mdDegraded + "]"));
+        }
     }
 
     void testTaskListHtmlRoundTrip() {
@@ -616,11 +721,10 @@ private slots:
         QVERIFY(md.contains("<span style=\"color: red;\">红色</span>"));
         // 往返
         QString html2 = MarkdownHandler::toHtml(md);
-        // 粗体在 toHtml 侧由 QTextDocument 输出为 font-weight 加粗 span
-        // （Qt 不输出 <strong>/<b>，而是 <span style=" font-weight:6xx/7xx;">）
-        QVERIFY2(QRegularExpression("font-weight:\\s*[67]00").match(html2).hasMatch(),
-                 qPrintable("粗体应以 font-weight 加粗样式保留，实际: " + html2));
-        QVERIFY(html2.contains("粗体"));
+        // 粗体在 toHtml 侧由 QTextDocument 输出为 font-weight span，经通用
+        // 转换步骤统一转为 <strong>（阻断 colorSpan 误捕获导致的往返污染）
+        QVERIFY2(html2.contains("<strong>粗体</strong>"),
+                 qPrintable("粗体应转为 <strong>，实际: " + html2));
         QVERIFY(html2.contains("span style=\"color: red;\""));
     }
 
@@ -777,13 +881,20 @@ private slots:
     void testColorSpanWithBoldRoundTrip()
     {
         // 粗体包裹颜色 span（编辑器内 <strong><span style>…</span></strong> 的 .md 形态）
-        // 注：Qt QTextDocument 把 ** 粗体渲染为 <span style=" font-weight:700;">（非 <strong>），
-        // 见同文件 testMixedFormatRoundTrip 的同样约定；此处验证粗体包裹下颜色 span 保留
+        // 通用转换步骤将 QTextDocument 的 font-weight span 统一转为 <strong>，
+        // 阻断 colorSpan 误捕获导致的往返污染
         QString md = QStringLiteral("**<span style=\"color:red\">粗红</span>**");
         QString html = MarkdownHandler::toHtml(md);
-        QVERIFY2(QRegularExpression("font-weight:\\s*700").match(html).hasMatch()
-                     && html.contains("<span style=\"color:red\">粗红</span>"),
-                 qPrintable("粗体+颜色 span 往返异常，实际: " + html));
+        // 提取 body，排除 <body> 标签自身的 font-weight:400 样式
+        int bsi = html.indexOf("<body");
+        int bei = html.indexOf("</body>");
+        bsi = html.indexOf('>', bsi) + 1;
+        QString body = html.mid(bsi, bei - bsi).trimmed();
+        QVERIFY2(body.contains("<strong>")
+                     && body.contains("<span style=\"color:red\">粗红</span>"),
+                 qPrintable("粗体+颜色 span 应保留，body=[" + body + "]"));
+        QVERIFY2(!body.contains("font-weight"),
+                 qPrintable("body 内不应残留 font-weight span，body=[" + body + "]"));
     }
 
     // ===== 标题行首列表标记不应被过度转义（md4c 转义修复）=====
@@ -1186,6 +1297,375 @@ private slots:
                  qPrintable("5 轮降解恢复失败，md=[" + degraded + "]"));
         QVERIFY2(!degraded.contains("font-size") && !degraded.contains("<strong>"),
                  qPrintable("5 轮后残留污染，md=[" + degraded + "]"));
+    }
+
+    void testTableHeaderFontSpanStripped()
+    {
+        // toHtml：MD 表格首行（表头）不应含 font-weight:700 span
+        // QTextDocument 对表头输出 <td><p><span style="font-weight:700;"> 而非 <th>
+        {
+            QString md = QStringLiteral(
+                "| 显示 | md语法 | html语法 |\n"
+                "|------|--------|----------|\n"
+                "| a    | b      | c        |\n");
+            QString html = MarkdownHandler::toHtml(md);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            QVERIFY2(body.contains("<table"), qPrintable("应含 <table>，body=[" + body + "]"));
+            QVERIFY2(body.contains("显示") && body.contains("md语法"),
+                     qPrintable("表头文字应保留"));
+            QVERIFY2(!body.contains("font-weight:700"),
+                     qPrintable("表格内不应含 font-weight:700 span，body=[" + body + "]"));
+            // 非表头行（数据行）文字也应保留
+            QVERIFY2(body.contains("a</p>") || body.contains(">a<"),
+                     qPrintable("数据行文字应保留，body=[" + body + "]"));
+        }
+
+        // fromHtml：含 font-weight span 的 <th> → 剥离 span，洁净 MD
+        {
+            QString html = QStringLiteral(
+                "<table><thead><tr>"
+                "<th><span style=\"font-weight:700;\">显示</span></th>"
+                "<th><span style=\"font-weight:700;\">md语法</span></th>"
+                "</tr></thead><tbody><tr>"
+                "<td>a</td><td>b</td>"
+                "</tr></tbody></table>");
+            QString md = MarkdownHandler::fromHtml(html);
+            QVERIFY2(md.contains("显示") && md.contains("md语法"),
+                     qPrintable("表头文字应保留，md=[" + md + "]"));
+            QVERIFY2(!md.contains("font-weight"),
+                     qPrintable("不应残留 font-weight 样式，md=[" + md + "]"));
+            QVERIFY2(!md.contains("span style"),
+                     qPrintable("不应残留 span 标签，md=[" + md + "]"));
+        }
+
+        // fromHtml：含 <strong> 的 <th>（TipTap Bold mark 产物）→ 剥离 strong
+        {
+            QString html = QStringLiteral(
+                "<table><thead><tr>"
+                "<th><strong>重要</strong></th>"
+                "<th><strong>标题</strong></th>"
+                "</tr></thead><tbody><tr>"
+                "<td>a</td><td>b</td>"
+                "</tr></tbody></table>");
+            QString md = MarkdownHandler::fromHtml(html);
+            QVERIFY2(md.contains("重要") && md.contains("标题"),
+                     qPrintable("表头文字应保留，md=[" + md + "]"));
+            // 不应输出 **重要** 或 <strong> 等粗体语法/标签
+            QVERIFY2(!md.contains("**重要**") && !md.contains("<strong>"),
+                     qPrintable("不应含粗体标记/标签，md=[" + md + "]"));
+        }
+
+        // 完整往返：MD 表格 → toHtml → fromHtml，表头保持洁净（无多余 ** 或 span）
+        {
+            QString md1 = QStringLiteral(
+                "| 列A | 列B |\n"
+                "|-----|-----|\n"
+                "| 1   | 2   |\n");
+            QString html = MarkdownHandler::toHtml(md1);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            QString md2 = MarkdownHandler::fromHtml(body);
+            QVERIFY2(md2.contains("列A") && md2.contains("列B"),
+                     qPrintable("表头应保留，md=[" + md2 + "]"));
+            QVERIFY2(!md2.contains("font-weight") && !md2.contains("<span"),
+                     qPrintable("不应残留 span/font-weight，md=[" + md2 + "]"));
+        }
+    }
+
+    void testFontSpanToSemanticRoundTrip()
+    {
+        // toHtml：**粗体**、*斜体*、***粗斜体*** 的 QTextDocument font-span
+        // 应被通用步骤转为 <strong>/<em>，不残留 font-weight/font-style span
+        {
+            QString md = QStringLiteral("这是**粗体**和*斜体*以及***粗斜体***文字");
+            QString html = MarkdownHandler::toHtml(md);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+
+            // 粗体 → <strong>
+            QVERIFY2(body.contains("<strong>粗体</strong>"),
+                     qPrintable("**粗体** 应转为 <strong>，body=[" + body + "]"));
+            // 斜体 → <em>
+            QVERIFY2(body.contains("<em>斜体</em>"),
+                     qPrintable("*斜体* 应转为 <em>，body=[" + body + "]"));
+            // 粗斜体 → <strong><em>（次序不定）
+            QVERIFY2(body.contains("粗斜体"),
+                     qPrintable("***粗斜体*** 文本应保留，body=[" + body + "]"));
+            QVERIFY2(body.contains("<strong>") && body.contains("<em>"),
+                     qPrintable("***粗斜体*** 应含 <strong> 和 <em>，body=[" + body + "]"));
+            // 不应残留 font-weight 或 font-style span
+            QVERIFY2(!body.contains("font-weight:") && !body.contains("font-style:"),
+                     qPrintable("不应残留 font-weight/font-style span，body=[" + body + "]"));
+        }
+
+        // 往返：粗体+颜色混排 → fromHtml 产出的 MD → toHtml 再次转换仍洁净
+        {
+            QString md1 = QStringLiteral("这是**粗体**和<span style=\"color:red\">红色</span>文字");
+            QString html = MarkdownHandler::toHtml(md1);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+
+            // 粗体 → <strong>，颜色 span 保留
+            QVERIFY2(body.contains("<strong>粗体</strong>"),
+                     qPrintable("粗体应转 <strong>，body=[" + body + "]"));
+            QVERIFY2(body.contains("color:red"),
+                     qPrintable("颜色 span 应保留，body=[" + body + "]"));
+            QVERIFY2(!body.contains("font-weight:700"),
+                     qPrintable("不应残留 font-weight，body=[" + body + "]"));
+
+            // 往返：body → fromHtml → toHtml → 仍然洁净
+            QString md2 = MarkdownHandler::fromHtml(body);
+            QVERIFY2(md2.contains("**粗体**"),
+                     qPrintable("粗体应往返为 **...**，md=[" + md2 + "]"));
+            QVERIFY2(!md2.contains("font-weight") && !md2.contains("font-style"),
+                     qPrintable("MD 不应残留 font-weight/style，md=[" + md2 + "]"));
+        }
+    }
+
+    void testLiteralDoubleStarRoundTrip()
+    {
+        // 用户通过 \*\* 写入的字面星号，往返后不应丢失反斜杠转义
+        // （QTextDocument::toMarkdown 不自动转义 **，需手动保护）
+
+        // 场景 1：toHtml 正确处理 \*\* → 字面 **
+        {
+            // C++ 字符串中 \\*\\* 表示字面 \*\*（用户实际输入 markdown 的内容）
+            // 注意：传递给 toHtml 的参数是 markdown 源码，其中 \* 表示转义星号
+            QString md = QStringLiteral("这是\\*\\*黑体\\*\\*展示");
+            QString html = MarkdownHandler::toHtml(md);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            // toHtml 应输出字面 **（在 HTML 中以纯文本形式存在）
+            QVERIFY2(body.contains("**"),
+                     qPrintable("字面 ** 应保留在 HTML 中，body=[" + body + "]"));
+            // 不应渲染为粗体（QTextDocument 应识别转义）
+            QVERIFY2(!body.contains("<strong>黑体</strong>"),
+                     qPrintable("转义星号不应渲染为粗体，body=[" + body + "]"));
+        }
+
+        // 场景 2：HTML 中字面 ** → fromHtml 输出 \*\*
+        {
+            // 模拟 TipTap getHTML 中字面 ** 文本
+            QString md = MarkdownHandler::fromHtml(
+                QStringLiteral("<p>这是**黑体**展示</p>"));
+            QVERIFY2(md.contains("\\*\\*黑体\\*\\*"),
+                     qPrintable("字面 ** 应转为 \\*\\*，md=[" + md + "]"));
+            QVERIFY2(!md.contains("**黑体**"),
+                     qPrintable("不应残留未转义 **（会被误解释为粗体），md=[" + md + "]"));
+        }
+
+        // 场景 3：完整往返：\*\* → HTML → \*\*
+        {
+            QString md1 = QStringLiteral("教程：用\\*\\*粗体\\*\\*强调文字");
+            QString html = MarkdownHandler::toHtml(md1);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            QString md2 = MarkdownHandler::fromHtml(body);
+            // 往返后 ** 应保持转义
+            QVERIFY2(md2.contains("\\*\\*") && md2.contains("粗体"),
+                     qPrintable("往返应保留 \\*\\* 转义，md=[" + md2 + "]"));
+        }
+    }
+
+    void testHighlightRoundTrip()
+    {
+        // ==text== 高亮语法 → toHtml → <mark>
+        {
+            QString md = QStringLiteral("这是==高亮==文字");
+            QString html = MarkdownHandler::toHtml(md);
+            QVERIFY2(html.contains("<mark>高亮</mark>"),
+                     qPrintable("==高亮== 应转为 <mark>，实际: " + html));
+        }
+
+        // 转义 \=\= → 字面 ==，不触发高亮
+        {
+            QString md = QStringLiteral("显示\\=\\=这是高亮\\=\\=");
+            QString html = MarkdownHandler::toHtml(md);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            // 转义等号应显示为字面 ==，不应转为 <mark>
+            QVERIFY2(body.contains("=="),
+                     qPrintable("字面 == 应保留，body=[" + body + "]"));
+            QVERIFY2(!body.contains("<mark>"),
+                     qPrintable("转义 == 不应转为 <mark>，body=[" + body + "]"));
+        }
+
+        // 内联代码内的 == 不应被转换
+        {
+            QString md = QStringLiteral("语法：`==这是高亮==`");
+            QString html = MarkdownHandler::toHtml(md);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            // <code> 内应保留 ==，不应出现 <mark>
+            QVERIFY2(body.contains("=="),
+                     qPrintable("内联代码内的 == 应保留，body=[" + body + "]"));
+            QVERIFY2(!body.contains("<mark>"),
+                     qPrintable("内联代码内的 == 不应转为 <mark>，body=[" + body + "]"));
+        }
+
+        // 往返：MD ==text== → HTML → MD
+        {
+            QString md1 = QStringLiteral("这是==高亮==文字");
+            QString html = MarkdownHandler::toHtml(md1);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            QString md2 = MarkdownHandler::fromHtml(body);
+            QVERIFY2(md2.contains("==高亮=="),
+                     qPrintable("往返应保留 ==text== 高亮语法，md=[" + md2 + "]"));
+        }
+
+        // 往返：转义 \=\= → HTML 字面 == → fromHtml 反转义回 \=\=
+        {
+            QString md1 = QStringLiteral("显示\\=\\=这是高亮\\=\\=");
+            QString html = MarkdownHandler::toHtml(md1);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            // HTML 中应显为字面 ==
+            QVERIFY2(body.contains("=="),
+                     qPrintable("HTML 中应保留字面 ==，body=[" + body + "]"));
+            QString md2 = MarkdownHandler::fromHtml(body);
+            // 往返后应恢复转义
+            QVERIFY2(md2.contains("\\=\\="),
+                     qPrintable("往返应恢复 \\=\\= 转义，md=[" + md2 + "]"));
+            QVERIFY2(!md2.contains("=="),
+                     qPrintable("不应有未转义的 ==，md=[" + md2 + "]"));
+        }
+    }
+
+    void testBlockquoteMultilineRoundTrip()
+    {
+        // 多行引用往返后不应合并为一行
+        QString md1 = QStringLiteral("> 引用1\n> 引用-2\n> 最后引用行\n");
+        QString html = MarkdownHandler::toHtml(md1);
+        int bsi = html.indexOf("<body");
+        int bei = html.indexOf("</body>");
+        bsi = html.indexOf('>', bsi) + 1;
+        QString body = html.mid(bsi, bei - bsi).trimmed();
+        QString md2 = MarkdownHandler::fromHtml(body);
+        QVERIFY2(md2.contains("> 引用1\n") || md2.contains("> 引用1\r"),
+                 qPrintable("第一行引用应保留，md=[" + md2 + "]"));
+        QVERIFY2(md2.contains("> 引用-2"),
+                 qPrintable("第二行引用应保留，md=[" + md2 + "]"));
+        QVERIFY2(md2.contains("> 最后引用行"),
+                 qPrintable("最后行引用应保留，md=[" + md2 + "]"));
+        // 不应合并为一行
+        QVERIFY2(!md2.contains("引用1 引用-2 最后引用行"),
+                 qPrintable("多行引用不应合并为一行，md=[" + md2 + "]"));
+    }
+
+    void testBrMixedWithSoftBreaks()
+    {
+        // 软换行（BRMARKER）+ 硬换行（<br>）混排，往返后 <br> 不应丢失
+        QString md1 = QStringLiteral("这是新行。 \n这是新行。 <br>\n这是新行。 \n这是新行。\n");
+        QString html = MarkdownHandler::toHtml(md1);
+        int bsi = html.indexOf("<body");
+        int bei = html.indexOf("</body>");
+        bsi = html.indexOf('>', bsi) + 1;
+        QString body = html.mid(bsi, bei - bsi).trimmed();
+        // toHtml 应正确区分 BRMARKER（<br data-brk>）和用户 <br>
+        QVERIFY2(body.contains("<br data-brk>"),
+                 qPrintable("软换行应有 data-brk，body=[" + body + "]"));
+        QVERIFY2(body.contains("<br>"),
+                 qPrintable("用户 <br> 应保留，body=[" + body + "]"));
+
+        QString md2 = MarkdownHandler::fromHtml(body);
+        // <br> 必须保留
+        QVERIFY2(md2.contains("<br>"),
+                 qPrintable("<br> 不应丢失，md=[" + md2 + "]"));
+        // 所有文本应保留
+        QVERIFY2(md2.contains("这是新行。"),
+                 qPrintable("文本内容应保留，md=[" + md2 + "]"));
+    }
+
+    void testEscapedAngleBracketRoundTrip()
+    {
+        // 场景 1: \<mark\>text\</mark\> 往返后转义符不应丢失
+        {
+            QString md1 = QStringLiteral("\\<mark\\>这是文字\\</mark\\>\n");
+            QString html = MarkdownHandler::toHtml(md1);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+
+            // toHtml 后 \< → &lt; 实体
+            QVERIFY2(body.contains("&lt;mark&gt;"),
+                     qPrintable("\\<mark\\> 应转义为实体，body=[" + body + "]"));
+            QVERIFY2(body.contains("&lt;/mark&gt;"),
+                     qPrintable("\\</mark\\> 应转义为实体，body=[" + body + "]"));
+
+            QString md2 = MarkdownHandler::fromHtml(body);
+            // fromHtml 后应还原为 \< 和 \>
+            QVERIFY2(md2.contains("\\<mark\\>"),
+                     qPrintable("\\< 和 \\> 不应丢失，md=[" + md2 + "]"));
+            QVERIFY2(md2.contains("\\</mark\\>"),
+                     qPrintable("\\< 和 \\> 不应丢失（关闭标签），md=[" + md2 + "]"));
+            // 不应出现裸 HTML 标签
+            QVERIFY2(!md2.contains("<mark>"),
+                     qPrintable("不应出现裸 <mark> 标签，md=[" + md2 + "]"));
+        }
+
+        // 场景 2: 完整往返 — 再次加载不污染
+        {
+            QString md1 = QStringLiteral("转义\\<span\\>文字\\</span\\>测试\n");
+            QString html1 = MarkdownHandler::toHtml(md1);
+            int bsi = html1.indexOf("<body");
+            int bei = html1.indexOf("</body>");
+            bsi = html1.indexOf('>', bsi) + 1;
+            QString body1 = html1.mid(bsi, bei - bsi).trimmed();
+            QString md2 = MarkdownHandler::fromHtml(body1);
+
+            // 第二次往返
+            QString html2 = MarkdownHandler::toHtml(md2 + "\n");
+            bsi = html2.indexOf("<body");
+            bei = html2.indexOf("</body>");
+            bsi = html2.indexOf('>', bsi) + 1;
+            QString body2 = html2.mid(bsi, bei - bsi).trimmed();
+            QString md3 = MarkdownHandler::fromHtml(body2);
+
+            // 不应退化为高亮/样式
+            QVERIFY2(!md3.contains("=="),
+                     qPrintable("二次往返不应出现高亮 ==，md=[" + md3 + "]"));
+            QVERIFY2(md3.contains("\\<span\\>"),
+                     qPrintable("二次往返转义不应丢失，md=[" + md3 + "]"));
+        }
+
+        // 场景 3: 普通文本中的字面 < 和 >（非 HTML 标签）
+        {
+            QString md1 = QStringLiteral("a\\<b 且 c\\>d\n");
+            QString html = MarkdownHandler::toHtml(md1);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            QString md2 = MarkdownHandler::fromHtml(body);
+
+            QVERIFY2(md2.contains("\\<b"),
+                     qPrintable("\\< 不应丢失，md=[" + md2 + "]"));
+            QVERIFY2(md2.contains("\\>d"),
+                     qPrintable("\\> 不应丢失，md=[" + md2 + "]"));
+        }
     }
 };
 

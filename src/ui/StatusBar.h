@@ -13,9 +13,11 @@ public slots:
     void updateCursorPosition(int line, int col, int /*tabId*/);
     void updateFilePath(const QString &path);
     void updateWordCount(int chars, int words, int /*tabId*/);
+    void setSourceMode(bool on);
 
 private:
     QLabel *m_cursorLabel;
+    QLabel *m_sourceModeLabel;
     QLabel *m_filePathLabel;
     QLabel *m_wordLabel;
 };
