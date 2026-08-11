@@ -14,7 +14,6 @@ public:
     void updateFormatState(const QJsonObject &format);
     void updateHistoryState(bool canUndo, bool canRedo);
     void refreshThemeIcons(const QString &theme);
-    void setReadMode(bool readMode);
     void setSourceMode(bool on);
 
 signals:
@@ -48,7 +47,6 @@ signals:
     void clearFormatClicked();
     void sourceToggleClicked();
     void pdfExportClicked();
-    void toggleReadModeClicked();
 
 private:
     void setupUi();
@@ -77,7 +75,6 @@ private:
     QAction *m_orderedListAction;
     QAction *m_taskListAction;
     QAction *m_blockquoteAction;
-    QAction *m_readModeAction;
     QAction *m_footnoteAction = nullptr;
     QAction *m_clearFormatAction = nullptr;
     QList<QAction*> m_allActions;

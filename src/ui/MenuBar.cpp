@@ -83,12 +83,6 @@ void MenuBar::setupUi()
     sourceAct->setObjectName("sourceModeAction");
     connect(sourceAct, &QAction::triggered, this, &MenuBar::toggleSourceMode);
 
-    QAction *readModeAct = m_viewMenu->addAction("阅读模式");
-    readModeAct->setShortcut(QKeySequence("Ctrl+R"));
-    readModeAct->setCheckable(true);
-    readModeAct->setObjectName("readModeAction");
-    connect(readModeAct, &QAction::triggered, this, &MenuBar::toggleReadMode);
-
     QAction *fullscreenAct = m_viewMenu->addAction("全屏");
     fullscreenAct->setShortcut(QKeySequence("F11"));
     connect(fullscreenAct, &QAction::triggered, this, &MenuBar::toggleFullscreen);

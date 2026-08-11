@@ -11,20 +11,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-// ===== EditorWebPage — 拦截链接点击（阅读模式） =====
+// ===== EditorWebPage — 过滤 Mermaid SVG 引擎级报错 =====
 
 class EditorWebPage : public QWebEnginePage {
 public:
-    EditorWebPage(QObject *parent, bool *readOnlyFlag)
-        : QWebEnginePage(parent), m_readOnly(readOnlyFlag) {}
+    using QWebEnginePage::QWebEnginePage;
 protected:
-    bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool) override {
-        if (type == NavigationTypeLinkClicked && m_readOnly && *m_readOnly) {
-            QDesktopServices::openUrl(url);
-            return false;
-        }
-        return true;
-    }
     void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level,
         const QString &msg, int line, const QString &src) override {
         Q_UNUSED(level); Q_UNUSED(line); Q_UNUSED(src);
@@ -35,23 +27,20 @@ protected:
             return;
         qDebug() << "[JS]" << msg;
     }
-private:
-    bool *m_readOnly;
 };
 
 // ===== EditorWebView — 中文上下文菜单 =====
 
 EditorWebView::EditorWebView(QWidget *parent)
     : QWebEngineView(parent), m_contextMenu(nullptr),
-      m_inTable(false), m_hasSelection(false), m_readOnly(false)
+      m_inTable(false), m_hasSelection(false)
 {
-    setPage(new EditorWebPage(this, &m_readOnly));
+    setPage(new EditorWebPage(this));
 }
 
 void EditorWebView::setInTable(bool inTable) { m_inTable = inTable; }
 void EditorWebView::setHasSelection(bool has) { m_hasSelection = has; }
 void EditorWebView::setLinkUrl(const QString &url) { m_linkUrl = url; }
-void EditorWebView::setReadOnly(bool ro) { m_readOnly = ro; }
 
 void EditorWebView::setupContextMenu()
 {
@@ -269,16 +258,9 @@ void EditorTab::setHasSelection(bool has)
     m_webView->setHasSelection(has);
 }
 
-void EditorTab::setReadOnly(bool ro)
-{
-    m_webView->setReadOnly(m_permanentReadOnly ? true : ro);
-}
-
 void EditorTab::setPermanentReadOnly(bool permanent)
 {
     m_permanentReadOnly = permanent;
-    if (permanent)
-        m_webView->setReadOnly(true);
 }
 
 bool EditorTab::isPermanentReadOnly() const

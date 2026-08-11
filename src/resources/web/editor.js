@@ -765,7 +765,8 @@ window.editorApi = {
             TipTapStarterKit.configure({
                 codeBlock: false,
                 hardBreak: false,
-                heading: { levels: [1, 2, 3, 4, 5, 6] }
+                heading: { levels: [1, 2, 3, 4, 5, 6] },
+                link: { openOnClick: false }
             }),
             TipTapTableKit.configure({ resizable: true }),
             TipTapTaskList,
@@ -898,6 +899,7 @@ window.editorApi = {
         if (this.editor) {
             this.notifyHeadings();
             this._attachMathClickHandler(this.editor.view.dom);
+            this._syncLinkHandlers();
         }
     },
 
@@ -1016,6 +1018,7 @@ window.editorApi = {
             this.notifyWordCount();
         }
         this._attachMathClickHandler(this.editor.view.dom);
+        this._syncLinkHandlers();
     },
 
     // === 格式命令 ===
@@ -1235,38 +1238,125 @@ window.editorApi = {
         this.notifyWordCount();
     },
 
+    // 确保链接悬浮提示 DOM 存在
+    _ensureLinkTooltip: function() {
+        if (this._linkTooltip) return;
+        var tip = document.createElement('div');
+        tip.className = 'link-tooltip';
+        document.body.appendChild(tip);
+        this._linkTooltip = tip;
+    },
+
+    // 根据当前 _readOnly 状态安装或移除链接处理器
+    _syncLinkHandlers: function() {
+        if (!this.editor) return;
+        var el = this.editor.view.dom;
+        // 先清理旧处理器
+        if (this._ctrlLinkHandler) {
+            el.removeEventListener('mousedown', this._ctrlLinkHandler, true);
+            this._ctrlLinkHandler = null;
+        }
+        if (this._linkHandler) {
+            el.removeEventListener('mousedown', this._linkHandler, true);
+            this._linkHandler = null;
+        }
+        if (this._linkHoverIn) {
+            el.removeEventListener('mouseover', this._linkHoverIn, true);
+            this._linkHoverIn = null;
+        }
+        if (this._linkHoverMove) {
+            el.removeEventListener('mousemove', this._linkHoverMove, true);
+            this._linkHoverMove = null;
+        }
+        if (this._linkHoverOut) {
+            el.removeEventListener('mouseout', this._linkHoverOut, true);
+            this._linkHoverOut = null;
+        }
+        this._ensureLinkTooltip();
+        var tip = this._linkTooltip;
+        // 查找事件目标是否在链接内
+        function findLink(target, root) {
+            var t = target;
+            while (t && t !== root) {
+                if (t.tagName === 'A' && t.href) return t;
+                t = t.parentElement;
+            }
+            return null;
+        }
+        // 显示提示（编辑模式提示 Ctrl+点击，只读模式提示直接点击）
+        var readOnly = this._readOnly;
+        var showTip = function(link, x, y) {
+            if (!link || !link.href) return;
+            var label = readOnly ? '点击访问' : 'Ctrl+点击访问';
+            tip.innerHTML = '<span class="tip-label">' + label + '</span>' +
+                '<span class="tip-url">' + _escapeText(link.href) + '</span>';
+            tip.style.display = 'block';
+            tip.style.left = (x + 12) + 'px';
+            tip.style.top = (y + 16) + 'px';
+        };
+        var hideTip = function() {
+            tip.style.display = 'none';
+        };
+        // 悬浮提示：mouseover 显示，mousemove 跟随，mouseout 隐藏
+        this._linkHoverIn = function(e) {
+            var link = findLink(e.target, el);
+            if (link) showTip(link, e.clientX, e.clientY);
+        };
+        this._linkHoverMove = function(e) {
+            var link = findLink(e.target, el);
+            if (link) showTip(link, e.clientX, e.clientY);
+            else hideTip();
+        };
+        this._linkHoverOut = function(e) {
+            var link = findLink(e.relatedTarget || e.toElement, el);
+            if (!link) hideTip();
+        };
+        el.addEventListener('mouseover', this._linkHoverIn, true);
+        el.addEventListener('mousemove', this._linkHoverMove, true);
+        el.addEventListener('mouseout', this._linkHoverOut, true);
+
+        if (this._readOnly) {
+            // 阅读模式：mousedown 拦截任意链接点击，通知 C++ 打开
+            this._linkHandler = function(e) {
+                var link = findLink(e.target, el);
+                if (link) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (window.editorApi.bridge)
+                        window.editorApi.bridge.openUrl(link.href);
+                }
+            };
+            el.addEventListener('mousedown', this._linkHandler, true);
+        } else {
+            // 编辑模式：Ctrl+左键点击链接 → 浏览器打开
+            this._ctrlLinkHandler = function(e) {
+                if (!(e.ctrlKey || e.metaKey)) return;
+                if (e.button !== 0) return;
+                var link = findLink(e.target, el);
+                if (link) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (window.editorApi.bridge)
+                        window.editorApi.bridge.openUrl(link.href);
+                }
+            };
+            el.addEventListener('mousedown', this._ctrlLinkHandler, true);
+        }
+    },
+
     setEditable: function(editable) {
         if (!this.editor) return;
         this._loading = true;
         this.editor.setEditable(!!editable);
         this._loading = false;
         this._readOnly = !editable;
-        var el = this.editor.view.dom;
         var sv = document.getElementById('source-view');
         if (!editable) {
             if (sv) sv.setAttribute('readonly', '');
-            // 阅读模式：mousedown 拦截链接点击，通知 C++ 打开
-            this._linkHandler = function(e) {
-                var t = e.target;
-                while (t && t !== el) {
-                    if (t.tagName === 'A' && t.href) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (window.editorApi.bridge)
-                            window.editorApi.bridge.openUrl(t.href);
-                        return;
-                    }
-                    t = t.parentElement;
-                }
-            };
-            el.addEventListener('mousedown', this._linkHandler, true);
         } else {
             if (sv) sv.removeAttribute('readonly');
-            if (this._linkHandler) {
-                el.removeEventListener('mousedown', this._linkHandler, true);
-                this._linkHandler = null;
-            }
         }
+        this._syncLinkHandlers();
     },
 
     setWidth: function(percent) {

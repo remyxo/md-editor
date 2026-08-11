@@ -36,15 +36,12 @@ ToolBar::ToolBar(QWidget *parent)
     , m_orderedListAction(nullptr)
     , m_taskListAction(nullptr)
     , m_blockquoteAction(nullptr)
-    , m_readModeAction(nullptr)
     , m_isDark(false)
 {
     setObjectName("mainToolBar");
     setMovable(false);
     setIconSize(QSize(20, 20));
     setupUi();
-    // 默认编辑模式，图标应为阅读图标（提示可切换）
-    setReadMode(false);
 }
 
 // 注：m_iconPaths 在 setupUi 后由外部填充
@@ -205,8 +202,6 @@ void ToolBar::setupUi()
     // === 视图 / 导出 ===
     makeAction(this, &m_iconPaths, "sourceAction",
         "切换源码模式", ":/icons/light/source-code.svg");
-    m_readModeAction = makeAction(this, &m_iconPaths, "readModeAction",
-        "切换成阅读模式", ":/icons/light/edit-mode.svg");
     makeAction(this, &m_iconPaths, "pdfAction",
         "导出 PDF", ":/icons/light/pdf.svg");
 
@@ -257,11 +252,9 @@ void ToolBar::setupUi()
             connect(a, &QAction::triggered, this, &ToolBar::emojiClicked);
         else if (a->objectName() == "footnoteAction")
             connect(a, &QAction::triggered, this, &ToolBar::footnoteClicked);
-        else if (a->objectName() == "readModeAction")
-            connect(a, &QAction::triggered, this, &ToolBar::toggleReadModeClicked);
     }
 
-    // 收集所有 action，用于阅读模式禁用
+    // 收集所有 action，用于源码模式禁用
     m_allActions = findChildren<QAction *>().toList();
 }
 
@@ -329,29 +322,11 @@ QMenu *ToolBar::buildColorMenu(bool forText)
     return menu;
 }
 
-void ToolBar::setReadMode(bool readMode)
-{
-    QString prefix = m_isDark ? ":/icons/dark/" : ":/icons/light/";
-    if (readMode) {
-        m_readModeAction->setToolTip("切换成编辑模式");
-        m_readModeAction->setIcon(QIcon(prefix + "edit-mode.svg"));
-    } else {
-        m_readModeAction->setToolTip("切换成阅读模式");
-        m_readModeAction->setIcon(QIcon(prefix + "read-mode.svg"));
-    }
-    for (QAction *a : m_allActions) {
-        if (a != m_readModeAction)
-            a->setVisible(!readMode);
-    }
-    m_headingCombo->setVisible(!readMode);
-}
-
 void ToolBar::setSourceMode(bool on)
 {
-    // 源码模式下灰化所有编辑/格式化按钮，保留源码切换和阅读模式可用
+    // 源码模式下灰化所有编辑/格式化按钮，保留源码切换和 PDF 导出可用
     for (QAction *a : m_allActions) {
         if (a->objectName() != QStringLiteral("sourceAction")
-            && a->objectName() != QStringLiteral("readModeAction")
             && a->objectName() != QStringLiteral("pdfAction")) {
             a->setEnabled(!on);
         }

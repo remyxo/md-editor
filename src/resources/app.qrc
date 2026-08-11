@@ -29,8 +29,6 @@
         <file>icons/light/pdf.svg</file>
         <file>icons/light/portrait.svg</file>
         <file>icons/light/landscape.svg</file>
-        <file>icons/light/edit-mode.svg</file>
-        <file>icons/light/read-mode.svg</file>
         <file>icons/light/math.svg</file>
         <file>icons/light/diagram.svg</file>
         <file>icons/light/emoji.svg</file>
@@ -64,8 +62,6 @@
         <file>icons/dark/pdf.svg</file>
         <file>icons/dark/portrait.svg</file>
         <file>icons/dark/landscape.svg</file>
-        <file>icons/dark/edit-mode.svg</file>
-        <file>icons/dark/read-mode.svg</file>
         <file>icons/dark/math.svg</file>
         <file>icons/dark/diagram.svg</file>
         <file>icons/dark/emoji.svg</file>

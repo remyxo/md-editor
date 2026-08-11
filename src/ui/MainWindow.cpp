@@ -27,7 +27,6 @@
 #include <QWebEnginePage>
 #include <QTextStream>
 #include <QSettings>
-#include <QTimer>
 #include <QShortcut>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -36,7 +35,6 @@
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
-    , m_readMode(false)
 {
     m_fileManager = new FileManager(this);
 
@@ -131,19 +129,14 @@ void MainWindow::setupUi()
     QString savedTheme = settings.value("appearance/theme", "light").toString();
     Application::instance()->themeManager()->switchTheme(savedTheme);
     m_toolBar->refreshThemeIcons(savedTheme);
-    m_toolBar->setReadMode(false);
 }
 
 void MainWindow::connectSignals()
 {
-    // 主题变更 → 刷新图标 + 保持阅读模式状态
+    // 主题变更 → 刷新图标
     connect(Application::instance()->themeManager(), &ThemeManager::themeChanged,
             this, [this](const QString &theme) {
         m_toolBar->refreshThemeIcons(theme);
-        QTimer::singleShot(0, this, [this]() {
-            m_toolBar->setReadMode(m_readMode);
-            m_statusBar->setReadMode(m_readMode);
-        });
     });
 
     // === 菜单栏信号 ===
@@ -162,20 +155,6 @@ void MainWindow::connectSignals()
         m_sideBar->setCollapsed(!m_sideBar->isCollapsed());
     });
     connect(m_menuBar, &MenuBar::toggleSourceMode, this, &MainWindow::onToggleSourceMode);
-    auto toggleReadMode = [this]() {
-        EditorTab *tab = m_tabWidget->currentEditorTab();
-        if (tab && tab->isPermanentReadOnly()) return;
-        m_readMode = !m_readMode;
-        m_menuBar->findChild<QAction *>("readModeAction")->setChecked(m_readMode);
-        m_toolBar->setReadMode(m_readMode);
-        m_statusBar->setReadMode(m_readMode);
-        if (tab) {
-            tab->runJsCommand(QString("window.editorApi.setEditable(%1);").arg(m_readMode ? "false" : "true"));
-            tab->setReadOnly(m_readMode);
-        }
-    };
-    connect(m_menuBar, &MenuBar::toggleReadMode, this, toggleReadMode);
-    connect(m_toolBar, &ToolBar::toggleReadModeClicked, this, toggleReadMode);
     connect(m_menuBar, &MenuBar::insertLink, this, &MainWindow::onInsertLink);
     connect(m_menuBar, &MenuBar::insertImage, this, &MainWindow::onInsertImage);
     connect(m_menuBar, &MenuBar::insertTable, this, &MainWindow::onInsertTable);
@@ -526,7 +505,6 @@ void MainWindow::onInsertEmoji()
 {
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (!tab) return;
-    if (tab->isPermanentReadOnly()) return;  // 只读模式不弹选择器
 
     // 锚点：工具栏 emoji 按钮左下角；菜单触发时无按钮，用光标位置兜底
     QAction *a = m_toolBar->findChild<QAction *>("emojiAction");
