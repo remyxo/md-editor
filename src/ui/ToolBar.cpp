@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QIcon>
 #include <QMenu>
+#include <QToolButton>
 #include <QWidgetAction>
 #include <QGridLayout>
 #include <QPushButton>
@@ -208,6 +209,9 @@ void ToolBar::setupUi()
     exportMenu->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
     exportMenu->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
     pdfAction->setMenu(exportMenu);
+    // 设为 InstantPopup：点击按钮直接弹出菜单，不执行 action 自身
+    QToolButton *btn = qobject_cast<QToolButton*>(widgetForAction(pdfAction));
+    if (btn) btn->setPopupMode(QToolButton::InstantPopup);
 
     // === 信号连接 ===
     connect(m_boldAction, &QAction::triggered, this, &ToolBar::boldClicked);

@@ -2,9 +2,8 @@
 #include <QDir>
 #include <QFile>
 #include <QProcess>
-#include <QTemporaryDir>
-#include <QXmlStreamWriter>
 #include <QRegularExpression>
+#include <QTemporaryDir>
 #include <QTextDocument>
 
 DocxExporter::DocxExporter(QObject *parent)
@@ -21,11 +20,11 @@ void DocxExporter::exportToDocx(const QString &html, const QString &outputPath)
     }
 }
 
-// 提取 <body> 中的纯文本，按段落分割，生成简单 OOXML
+// 从 HTML 提取纯文本，按块级元素分割为段落
 static QString bodyToParagraphs(const QString &html)
 {
     QString body = html;
-    // 提取 <body> ... </body> 内容（若存在）
+    // 提取 <body> 内容（若存在）
     int bs = body.indexOf("<body");
     int be = body.indexOf("</body>");
     if (bs >= 0 && be > bs) {
@@ -33,33 +32,37 @@ static QString bodyToParagraphs(const QString &html)
         body = body.mid(bs, be - bs);
     }
 
-    // 把常见块级标签替换为换行分隔
-    body.replace(QRegularExpression("<br\\s*/?>", QRegularExpression::CaseInsensitiveOption), "\n");
-    body.replace(QRegularExpression("</?(p|h[1-6]|pre|li|div|blockquote|table|tr|hr)[^>]*>",
-                                    QRegularExpression::CaseInsensitiveOption), "\n");
-    body.replace(QRegularExpression("<[/]?(ul|ol|thead|tbody)[^>]*>",
-                                    QRegularExpression::CaseInsensitiveOption), "");
-    body.replace(QRegularExpression("<td[^>]*>", QRegularExpression::CaseInsensitiveOption), "\t");
-    body.replace(QRegularExpression("</t[dh]>", QRegularExpression::CaseInsensitiveOption), "");
-
-    // 剥离剩余的行内标签，只留文本
-    body.replace(QRegularExpression("<[^>]*>"), "");
-
-    // 解码常见 HTML 实体（QTextDocument 的 toPlainText 也能处理，但这里使用字符串替换）
+    // 解码常见 HTML 实体
     body.replace("&lt;", "<");
     body.replace("&gt;", ">");
     body.replace("&amp;", "&");
     body.replace("&quot;", "\"");
     body.replace("&#39;", "'");
 
-    // 按行分割，去除空行拼合
-    QStringList lines = body.split('\n');
+    // 用 QTextDocument 来提取纯文本（可靠地剥离所有 HTML 标签）
+    // 但会丢失段落分隔。因此先用换行替代块级标签，再用 QTextDocument 提取文本
+    body.replace(QRegularExpression("<br\\s*/?>", QRegularExpression::CaseInsensitiveOption), "\n");
+    body.replace(QRegularExpression("</?(p|h[1-6]|pre|li|div|blockquote|tr|hr)[^>]*>",
+                                    QRegularExpression::CaseInsensitiveOption), "\n");
+    body.replace(QRegularExpression("</?(ul|ol|thead|tbody|table)[^>]*>",
+                                    QRegularExpression::CaseInsensitiveOption), "");
+    body.replace(QRegularExpression("<t[dh][^>]*>", QRegularExpression::CaseInsensitiveOption), "\t");
+
+    // 用 QTextDocument 剥离所有残留 HTML 标签
+    QTextDocument doc;
+    doc.setHtml(body);
+    QString text = doc.toPlainText();
+
+    // 按行分割，过滤空行
+    QStringList lines = text.split('\n');
     QString result;
     for (const QString &line : lines) {
         QString trimmed = line.trimmed();
         if (trimmed.isEmpty()) continue;
+        // XML 转义 & 保留空格
+        QString escaped = trimmed.toHtmlEscaped();
         result += "<w:p><w:r><w:t xml:space=\"preserve\">"
-                + trimmed.toHtmlEscaped()
+                + escaped
                 + "</w:t></w:r></w:p>\n";
     }
 
@@ -84,11 +87,11 @@ bool DocxExporter::writeDocx(const QString &html, const QString &outputPath)
     {
         QFile f(base + "/[Content_Types].xml");
         if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return false;
-        f.write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
-                "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\n"
-                "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\n"
-                "<Default Extension=\"xml\" ContentType=\"application/xml\"/>\n"
-                "</Types>\n");
+        f.write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+        f.write("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\n");
+        f.write("<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\n");
+        f.write("<Default Extension=\"xml\" ContentType=\"application/xml\"/>\n");
+        f.write("</Types>\n");
         f.close();
     }
 
@@ -96,10 +99,10 @@ bool DocxExporter::writeDocx(const QString &html, const QString &outputPath)
     {
         QFile f(base + "/_rels/.rels");
         if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return false;
-        f.write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
-                "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n"
-                "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>\n"
-                "</Relationships>\n");
+        f.write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+        f.write("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+        f.write("<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>\n");
+        f.write("</Relationships>\n");
         f.close();
     }
 
@@ -107,29 +110,33 @@ bool DocxExporter::writeDocx(const QString &html, const QString &outputPath)
     {
         QFile f(base + "/word/_rels/document.xml.rels");
         if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return false;
-        f.write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
-                "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n"
-                "</Relationships>\n");
+        f.write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+        f.write("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+        f.write("</Relationships>\n");
         f.close();
     }
 
-    // 6. 写入 word/document.xml（简单纯文本段落）
+    // 6. 写入 word/document.xml（纯文本段落）
     {
         QFile f(base + "/word/document.xml");
         if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return false;
-        f.write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
-                "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n"
-                "<w:body>\n");
+        f.write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+        f.write("<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n");
+        f.write("<w:body>\n");
         f.write(bodyToParagraphs(html).toUtf8());
-        f.write("</w:body>\n</w:document>\n");
+        f.write("</w:body>\n");
+        f.write("</w:document>\n");
         f.close();
     }
 
-    // 7. 使用 zip 打包为 .docx
+    // 7. 删除可能已存在的输出文件（zip 会追加而非覆盖）
+    QFile::remove(outputPath);
+
+    // 8. 使用 zip 打包（-j 不保留目录结构？不对，需要保留相对路径）
     QProcess zipProc;
     zipProc.setWorkingDirectory(base);
     QStringList args;
-    args << "-r" << outputPath << ".";
+    args << "-r" << outputPath << "." << "-x" << "*.docx";
     zipProc.start("zip", args);
     if (!zipProc.waitForFinished(15000)) return false;
     return zipProc.exitCode() == 0;
