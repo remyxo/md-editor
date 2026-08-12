@@ -47,6 +47,7 @@ signals:
     void clearFormatClicked();
     void sourceToggleClicked();
     void pdfExportClicked();
+    void docxExportClicked();
 
 private:
     void setupUi();

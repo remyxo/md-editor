@@ -202,8 +202,12 @@ void ToolBar::setupUi()
     // === 视图 / 导出 ===
     makeAction(this, &m_iconPaths, "sourceAction",
         "切换源码模式", ":/icons/light/source-code.svg");
-    makeAction(this, &m_iconPaths, "pdfAction",
-        "导出 PDF", ":/icons/light/pdf.svg");
+    QAction *pdfAction = makeAction(this, &m_iconPaths, "pdfAction",
+        "导出", ":/icons/light/pdf.svg");
+    QMenu *exportMenu = new QMenu(this);
+    exportMenu->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
+    exportMenu->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
+    pdfAction->setMenu(exportMenu);
 
     // === 信号连接 ===
     connect(m_boldAction, &QAction::triggered, this, &ToolBar::boldClicked);

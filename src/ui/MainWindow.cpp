@@ -269,6 +269,7 @@ void MainWindow::connectSignals()
     });
     connect(m_toolBar, &ToolBar::sourceToggleClicked, this, &MainWindow::onToggleSourceMode);
     connect(m_toolBar, &ToolBar::pdfExportClicked, this, &MainWindow::onExportPdf);
+    connect(m_toolBar, &ToolBar::docxExportClicked, this, &MainWindow::onExportDocx);
 
     // === 标签页管理 ===
     connect(m_tabWidget, &TabWidget::editorBridgeCreated,
