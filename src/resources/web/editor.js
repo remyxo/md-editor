@@ -747,24 +747,32 @@ function _syncHighlightTheme() {
     if (darkEl) darkEl.disabled = !dark;
 }
 
-// 复制文本到剪贴板：navigator.clipboard 优先，隐藏 textarea + execCommand 兜底
+// 复制文本到剪贴板：execCommand('copy') 优先（QWebEngineView 兼容性好），
+// navigator.clipboard.writeText 兜底（需要安全上下文）
 function _copyText(text, done) {
     done = done || function(){};
-    function fallback() {
-        try {
-            var ta = document.createElement('textarea');
-            ta.value = text;
-            ta.style.position = 'fixed'; ta.style.opacity = '0';
-            document.body.appendChild(ta);
-            ta.select();
-            var ok = document.execCommand('copy');
-            document.body.removeChild(ta);
-            done(ok);
-        } catch (e) { console.warn('复制失败:', e); done(false); }
-    }
+    try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        ta.style.left = '-9999px'; ta.style.top = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) { done(true); return; }
+    } catch (e) { /* execCommand 失败，尝试 clipboard API */ }
+    // 兜底：navigator.clipboard（需要安全上下文）
     if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function(){ done(true); }, fallback);
-    } else { fallback(); }
+        navigator.clipboard.writeText(text).then(
+            function(){ done(true); },
+            function(){ console.warn('clipboard.writeText 失败'); done(false); }
+        );
+    } else {
+        console.warn('复制失败：execCommand 和 clipboard API 均不可用');
+        done(false);
+    }
 }
 
 // 代码块 NodeView：外壳 DOM + 工具栏交互；语法高亮由 CodeBlockLowlight decorations 插件负责
@@ -2393,6 +2401,9 @@ window.editorApi = {
             this.list = document.createElement('div');
             this.list.className = 'code-lang-picker-list';
             this.root.appendChild(this.list);
+
+            // 阻止滚轮事件冒泡到编辑器
+            this.root.addEventListener('wheel', function(e){ e.stopPropagation(); });
 
             document.body.appendChild(this.root);
         },

@@ -807,21 +807,21 @@ body.dark .ProseMirror .code-block {
 }
 .ProseMirror .code-block pre code { color: inherit; }
 
-/* 工具栏：始终显示，颜色偏灰不抢眼 */
+/* 工具栏：始终显示，偏灰但不影响辨识 */
 .ProseMirror .code-block .code-block-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 3px 10px;
     font-size: 12px;
-    color: #999;
+    color: #777;
     background: #f0f1f3;
     border-bottom: 1px solid #e8eaed;
     user-select: none;
 }
 body.dark .ProseMirror .code-block .code-block-toolbar {
     background: #262b31;
-    color: #7a828a;
+    color: #8d94a0;
     border-bottom-color: #33383f;
 }
 
@@ -830,26 +830,26 @@ body.dark .ProseMirror .code-block .code-block-toolbar {
     font-family: "Cascadia Code","Fira Code","JetBrains Mono",monospace;
     font-size: 11px;
     text-transform: lowercase;
-    color: #999;
+    color: #888;
     padding: 1px 6px;
     border-radius: 3px;
 }
 .ProseMirror .code-block .code-lang-label:hover {
     background: rgba(0,0,0,0.06);
-    color: #666;
+    color: #555;
 }
 body.dark .ProseMirror .code-block .code-lang-label {
-    color: #7a828a;
+    color: #8d94a0;
 }
 body.dark .ProseMirror .code-block .code-lang-label:hover {
     background: rgba(255,255,255,0.08);
-    color: #abb2bf;
+    color: #bcc3cd;
 }
 
 .ProseMirror .code-block .code-copy-btn {
     border: 1px solid #e0e0e0;
     background: #f7f8fa;
-    color: #999;
+    color: #777;
     font-size: 12px;
     padding: 2px 8px;
     border-radius: 4px;
@@ -858,12 +858,12 @@ body.dark .ProseMirror .code-block .code-lang-label:hover {
 }
 .ProseMirror .code-block .code-copy-btn:hover {
     background: #e8eaed;
-    color: #555;
+    color: #444;
 }
 body.dark .ProseMirror .code-block .code-copy-btn {
     border-color: #3d3d3d;
     background: #2a2e35;
-    color: #7a828a;
+    color: #8d94a0;
 }
 body.dark .ProseMirror .code-block .code-copy-btn:hover {
     background: #3d434a;
