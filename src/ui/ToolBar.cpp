@@ -203,18 +203,14 @@ void ToolBar::setupUi()
     // === 视图 / 导出 ===
     makeAction(this, &m_iconPaths, "sourceAction",
         "切换源码模式", ":/icons/light/source-code.svg");
-    // 导出下拉按钮：用 QToolButton + addWidget，不依赖 QAction setMenu
+    // 导出下拉按钮：QAction + setMenu，用 InstantPopup 禁用默认行为
     {
-        QToolButton *exportBtn = new QToolButton(this);
-        exportBtn->setIcon(QIcon(":/icons/light/pdf.svg"));
-        exportBtn->setToolTip("导出");
-        exportBtn->setObjectName("exportBtn");
-        QMenu *m = new QMenu(exportBtn);
-        m->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
-        m->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
-        exportBtn->setMenu(m);
-        exportBtn->setPopupMode(QToolButton::InstantPopup);
-        addWidget(exportBtn);
+        QAction *expAct = makeAction(this, &m_iconPaths, "pdfAction",
+            "导出", ":/icons/light/pdf.svg");
+        QMenu *exportMenu = new QMenu(this);
+        exportMenu->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
+        exportMenu->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
+        expAct->setMenu(exportMenu);
     }
 
     // === 信号连接 ===
@@ -255,7 +251,7 @@ void ToolBar::setupUi()
         else if (a->objectName() == "sourceAction")
             connect(a, &QAction::triggered, this, &ToolBar::sourceToggleClicked);
         else if (a->objectName() == "pdfAction")
-            connect(a, &QAction::triggered, this, &ToolBar::pdfExportClicked);
+            ; // 下拉菜单：不连接 triggered，由子菜单项触发
         else if (a->objectName() == "mathAction")
             connect(a, &QAction::triggered, this, &ToolBar::mathClicked);
         else if (a->objectName() == "diagramAction")
@@ -264,6 +260,12 @@ void ToolBar::setupUi()
             connect(a, &QAction::triggered, this, &ToolBar::emojiClicked);
         else if (a->objectName() == "footnoteAction")
             connect(a, &QAction::triggered, this, &ToolBar::footnoteClicked);
+    }
+
+    // 设置导出按钮为 InstantPopup（点击弹出菜单，不执行 action 自身）
+    if (QAction *expAct = findChild<QAction*>("pdfAction")) {
+        if (QToolButton *btn = qobject_cast<QToolButton*>(widgetForAction(expAct)))
+            btn->setPopupMode(QToolButton::InstantPopup);
     }
 
     // 收集所有 action，用于源码模式禁用
@@ -414,13 +416,6 @@ void ToolBar::updateHistoryState(bool canUndo, bool canRedo)
 void ToolBar::refreshThemeIcons(const QString &theme)
 {
     applyIconTheme(theme);
-    // 导出下拉按钮（QToolButton，不走 QAction 图标注册机制）
-    QToolButton *exportBtn = findChild<QToolButton*>("exportBtn");
-    if (exportBtn) {
-        QString iconPath = (theme == "dark") ? ":/icons/dark/pdf.svg"
-                                             : ":/icons/light/pdf.svg";
-        exportBtn->setIcon(QIcon(iconPath));
-    }
 }
 
 void ToolBar::applyIconTheme(const QString &theme)
