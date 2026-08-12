@@ -9,6 +9,10 @@ var TipTapHighlight = window.TipTapExtensionHighlight;
 var TipTapImage = window.TipTapExtensionImage;
 var TipTapPlaceholder = window.TipTapExtensionPlaceholder;
 var TipTapCodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
+// 扩展 CodeBlockLowlight，附加自定义 NodeView（语言标签 + 复制按钮 + 语言切换）
+var CodeBlockLowlightWithNodeView = TipTapCodeBlockLowlight && TipTapCodeBlockLowlight.extend({
+    addNodeView: function() { return codeBlockNodeView; }
+});
 var TipTapMathematics = window.TipTapExtensionMathematics;
 var TipTapSubscript = window.TipTapExtensionSubscript;
 var TipTapSuperscript = window.TipTapExtensionSuperscript;
@@ -734,6 +738,126 @@ function _repaintMermaidViews() {
     });
 }
 
+// 代码块高亮主题同步：亮色用 hljs-light.css，暗色用 hljs-dark.css
+function _syncHighlightTheme() {
+    var dark = document.body.classList.contains('dark');
+    var light = document.getElementById('hljs-light');
+    var darkEl = document.getElementById('hljs-dark');
+    if (light) light.disabled = dark;
+    if (darkEl) darkEl.disabled = !dark;
+}
+
+// 复制文本到剪贴板：navigator.clipboard 优先，隐藏 textarea + execCommand 兜底
+function _copyText(text, done) {
+    done = done || function(){};
+    function fallback() {
+        try {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            done(ok);
+        } catch (e) { console.warn('复制失败:', e); done(false); }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function(){ done(true); }, fallback);
+    } else { fallback(); }
+}
+
+// 代码块 NodeView：外壳 DOM + 工具栏交互；语法高亮由 CodeBlockLowlight decorations 插件负责
+function codeBlockNodeView(ref) {
+    var node = ref.node, getPos = ref.getPos;
+
+    var dom = document.createElement('div');
+    dom.className = 'code-block';
+
+    // 工具栏（contenteditable=false，ProseMirror 不管理其内容）
+    var toolbar = document.createElement('div');
+    toolbar.className = 'code-block-toolbar';
+    toolbar.setAttribute('contenteditable', 'false');
+
+    var label = document.createElement('span');
+    label.className = 'code-lang-label';
+    label.textContent = 'auto';
+    label.title = '双击修改语言';
+
+    var copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'code-copy-btn';
+    copyBtn.textContent = '复制';
+    copyBtn.title = '复制代码';
+
+    toolbar.appendChild(label);
+    toolbar.appendChild(copyBtn);
+    dom.appendChild(toolbar);
+
+    var pre = document.createElement('pre');
+    var code = document.createElement('code');
+    pre.appendChild(code);
+    dom.appendChild(pre);
+
+    function renderLabel() {
+        label.textContent = node.attrs.language || 'auto';
+    }
+    renderLabel();
+
+    // 复制按钮：阻止 ProseMirror 抢焦点，点击执行复制
+    copyBtn.addEventListener('mousedown', function(e){ e.preventDefault(); e.stopPropagation(); });
+    copyBtn.addEventListener('click', function(e){
+        e.preventDefault(); e.stopPropagation();
+        var text = node.textContent;
+        _copyText(text, function(ok){
+            if (!ok) return;
+            copyBtn.textContent = '✓ 已复制';
+            setTimeout(function(){ copyBtn.textContent = '复制'; }, 1500);
+        });
+    });
+
+    // 双击语言标签 → 打开语言选择浮层
+    label.addEventListener('mousedown', function(e){ e.preventDefault(); e.stopPropagation(); });
+    label.addEventListener('dblclick', function(e){
+        e.preventDefault(); e.stopPropagation();
+        var api = window.editorApi;
+        if (api && api._readOnly) return;
+        if (window.editorApi && window.editorApi._codeLangPicker) {
+            window.editorApi._codeLangPicker.open(label, node.attrs.language || null, applyLanguage);
+        }
+    });
+
+    function applyLanguage(lang) {
+        var ed = window.editorApi && window.editorApi.editor;
+        if (!ed || !getPos) return;
+        try {
+            var pos = getPos();
+            if (typeof pos !== 'number') return;
+            ed.view.dispatch(ed.state.tr.setNodeMarkup(pos, undefined, { language: lang || null }));
+        } catch (err) { console.warn('设置代码块语言失败:', err); }
+        ed.commands.focus();
+    }
+
+    return {
+        dom: dom,
+        contentDOM: code,
+        update: function(newNode) {
+            if (newNode.type !== node.type) return false;
+            node = newNode;
+            renderLabel();
+            return true;
+        },
+        selectNode: function(){ dom.classList.add('ProseMirror-selectednode'); },
+        deselectNode: function(){ dom.classList.remove('ProseMirror-selectednode'); },
+        stopEvent: function(ev){
+            return !!(ev.target && ev.target.closest && ev.target.closest('.code-block-toolbar'));
+        },
+        ignoreMutation: function(mut){
+            return !this.contentDOM || !this.contentDOM.contains(mut.target);
+        }
+    };
+}
+
 // 全局编辑器 API 对象（C++ 侧通过 QWebChannel 调用其中的命令方法）
 window.editorApi = {
     editor: null,
@@ -784,8 +908,8 @@ window.editorApi = {
             TipTapImage.configure({ allowBase64: true }),
             TipTapPlaceholder.configure({ placeholder: '开始编写 Markdown...' }),
         ];
-        if (TipTapCodeBlockLowlight && window.lowlight)
-            exts.push(TipTapCodeBlockLowlight.configure({ lowlight: window.lowlight }));
+        if (CodeBlockLowlightWithNodeView && window.lowlight)
+            exts.push(CodeBlockLowlightWithNodeView.configure({ lowlight: window.lowlight }));
         if (TipTapMathematics)
             exts.push(TipTapMathematics);
         if (TipTapSubscript)
@@ -905,6 +1029,7 @@ window.editorApi = {
         this._loading = true;
         this.editor = this._createEditor(el);
         this._loading = false;
+        _syncHighlightTheme();  // 初始化时同步代码块高亮主题
         if (this.editor) {
             this.notifyHeadings();
             this._attachMathClickHandler(this.editor.view.dom);
@@ -1086,8 +1211,10 @@ window.editorApi = {
     insertTable: function(rows, cols) {
         if (this.editor) this.editor.commands.insertTable({ rows: rows || 3, cols: cols || 3, withHeaderRow: true });
     },
-    insertCodeBlock: function() {
-        if (this.editor) this.editor.commands.toggleCodeBlock();
+    insertCodeBlock: function(language) {
+        if (!this.editor) return;
+        var attrs = language ? { language: language } : undefined;
+        this.editor.commands.toggleCodeBlock(attrs);
     },
     addRowBefore: function() { if (this.editor) this.editor.commands.addRowBefore(); },
     addRowAfter: function() { if (this.editor) this.editor.commands.addRowAfter(); },
@@ -1228,6 +1355,7 @@ window.editorApi = {
     setTheme: function(theme) {
         if (theme === 'dark') document.body.classList.add('dark');
         else document.body.classList.remove('dark');
+        _syncHighlightTheme();
         // 重置 mermaid 初始化标记，使后续渲染采用新主题；并重绘已存在的图表
         window.__mermaidInited = false;
         try { _repaintMermaidViews(); } catch (e) { /* 主题切换不应被图表渲染阻断 */ }
@@ -2184,6 +2312,136 @@ window.editorApi = {
                     }
                 }, 150);
             }, 50);
+        }
+    },
+
+    // ===== 代码块语言选择浮层（非模态，锚定语言标签下方，点外部/Esc 关闭） =====
+    _codeLangPicker: {
+        root: null, searchInput: null, list: null,
+        _current: null, _onSelect: null, _outsideHandler: null,
+
+        open: function(anchorEl, currentLang, onSelect) {
+            this.close();
+            this._current = currentLang;
+            this._onSelect = onSelect;
+            this.buildDom();
+            this._position(anchorEl);
+            this._registerOutside();
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
+            var self = this;
+            setTimeout(function(){ if (self.searchInput) self.searchInput.focus(); }, 0);
+        },
+
+        _position: function(anchorEl) {
+            var rect = anchorEl.getBoundingClientRect();
+            var W = window.innerWidth, H = window.innerHeight;
+            this.root.style.left = '0px'; this.root.style.top = '0px';
+            var w = this.root.offsetWidth || 240;
+            var h = this.root.offsetHeight || 300;
+            var px = rect.left, py = rect.bottom + 4;
+            if (px + w > W - 8) px = Math.max(8, W - w - 8);
+            if (py + h > H - 8) py = Math.max(8, rect.top - h - 4);
+            px = Math.max(8, px);
+            py = Math.max(8, py);
+            this.root.style.left = px + 'px';
+            this.root.style.top = py + 'px';
+        },
+
+        buildDom: function() {
+            this._cleanupDom();
+            var self = this;
+            this.root = document.createElement('div');
+            this.root.className = 'code-lang-picker';
+
+            // 搜索框
+            this.searchInput = document.createElement('input');
+            this.searchInput.type = 'text';
+            this.searchInput.className = 'code-lang-picker-search';
+            this.searchInput.placeholder = '搜索语言...';
+            this.searchInput.addEventListener('input', function(){
+                self.render(this.value.trim().toLowerCase());
+            });
+            this.searchInput.addEventListener('keydown', function(e){
+                if (e.key === 'Escape') { e.preventDefault(); self.close(); }
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    var btns = self.list.querySelectorAll('button');
+                    var idx = e.key === 'ArrowDown' ? 0 : btns.length - 1;
+                    if (btns[idx]) btns[idx].focus();
+                }
+            });
+            this.root.appendChild(this.searchInput);
+
+            // 选项列表（滚动）
+            this.list = document.createElement('div');
+            this.list.className = 'code-lang-picker-list';
+            this.root.appendChild(this.list);
+
+            document.body.appendChild(this.root);
+        },
+
+        render: function(filter) {
+            if (!this.list) return;
+            this.list.innerHTML = '';
+            var langs = window.lowlight ? window.lowlight.listLanguages() : [];
+            var options = [{ value: null, label: '自动检测' }];
+            // 若当前语言不在列表中（如用户输入的别名），追加到选项前
+            if (this._current && langs.indexOf(this._current) < 0) {
+                options.push({ value: this._current, label: this._current + ' (当前)' });
+            }
+            var f = filter || '';
+            langs.sort();
+            for (var i = 0; i < langs.length; i++) {
+                if (!f || langs[i].toLowerCase().indexOf(f) >= 0) {
+                    options.push({ value: langs[i], label: langs[i] });
+                }
+            }
+            var self = this;
+            for (var j = 0; j < options.length; j++) {
+                var o = options[j];
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'code-lang-option';
+                btn.textContent = o.label;
+                btn.addEventListener('click', function(val, lbl){
+                    return function(e){ e.stopPropagation(); self._apply(val, lbl); };
+                }(o.value, o.label));
+                if (o.value === this._current) btn.classList.add('active');
+                this.list.appendChild(btn);
+            }
+        },
+
+        _apply: function(value, label) {
+            if (this._onSelect) this._onSelect(value);
+            this.close();
+        },
+
+        _registerOutside: function() {
+            var self = this;
+            this._outsideHandler = function(e) {
+                if (self.root && !self.root.contains(e.target)) {
+                    e.preventDefault();
+                    self.close();
+                }
+            };
+            document.addEventListener('mousedown', this._outsideHandler, true);
+        },
+
+        _cleanupDom: function() {
+            if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
+            this.root = null;
+            this.searchInput = null;
+            this.list = null;
+        },
+
+        close: function() {
+            if (this._outsideHandler) {
+                document.removeEventListener('mousedown', this._outsideHandler, true);
+                this._outsideHandler = null;
+            }
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(false);
+            this._cleanupDom();
+            this._onSelect = null;
         }
     },
 

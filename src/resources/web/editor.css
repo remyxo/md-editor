@@ -782,3 +782,166 @@ body.dark .link-tooltip {
     background: #3a3a3a;
     color: #e0e0e0;
 }
+
+/* ============ 代码块 NodeView（工具栏/语言标签/复制按钮/语言选择器） ============ */
+
+.ProseMirror .code-block {
+    position: relative;
+    margin: 1em 0;
+    border: 1px solid #e0e3e7;
+    border-radius: 8px;
+    background: #f4f5f7;
+    overflow: hidden;
+}
+body.dark .ProseMirror .code-block {
+    background: #1e2228;
+    border-color: #2e3238;
+}
+
+.ProseMirror .code-block pre {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent !important;
+    padding: 12px 16px;
+}
+.ProseMirror .code-block pre code { color: inherit; }
+
+/* 工具栏：悬停时显示 */
+.ProseMirror .code-block .code-block-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: #888;
+    background: #eceef1;
+    border-bottom: 1px solid #e0e3e7;
+    user-select: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.ProseMirror .code-block:hover .code-block-toolbar,
+.ProseMirror .code-block.ProseMirror-selectednode .code-block-toolbar {
+    opacity: 1;
+}
+body.dark .ProseMirror .code-block .code-block-toolbar {
+    background: #262b31;
+    color: #9aa2ab;
+    border-bottom-color: #33383f;
+}
+
+.ProseMirror .code-block .code-lang-label {
+    cursor: pointer;
+    font-family: "Cascadia Code","Fira Code","JetBrains Mono",monospace;
+    font-size: 11px;
+    text-transform: lowercase;
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+.ProseMirror .code-block .code-lang-label:hover {
+    background: rgba(0,0,0,0.08);
+}
+body.dark .ProseMirror .code-block .code-lang-label:hover {
+    background: rgba(255,255,255,0.1);
+}
+
+.ProseMirror .code-block .code-copy-btn {
+    border: 1px solid #d0d0d0;
+    background: #fff;
+    color: #555;
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.ProseMirror .code-block .code-copy-btn:hover {
+    background: #f0f0f0;
+    color: #222;
+}
+body.dark .ProseMirror .code-block .code-copy-btn {
+    border-color: #444;
+    background: #33383f;
+    color: #ccc;
+}
+body.dark .ProseMirror .code-block .code-copy-btn:hover {
+    background: #3d434a;
+    color: #fff;
+}
+
+/* 高亮 token 背景透明 — 容器背景由 .code-block 提供 */
+.ProseMirror .code-block .hljs { background: transparent !important; }
+
+/* ============ 语言选择器浮层 ============ */
+
+.code-lang-picker {
+    position: fixed;
+    z-index: 1100;
+    width: 240px;
+    max-height: 320px;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+    overflow: hidden;
+}
+body.dark .code-lang-picker {
+    background: #2d2d2d;
+    border-color: #3d3d3d;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+.code-lang-picker-search {
+    margin: 6px;
+    padding: 6px 8px;
+    border: 1px solid #d0d0d0;
+    border-radius: 6px;
+    font-size: 13px;
+    outline: none;
+    color: #222;
+    background: #fafafa;
+}
+.code-lang-picker-search:focus { border-color: #0078d4; }
+body.dark .code-lang-picker-search {
+    background: #1a1a1a;
+    color: #e0e0e0;
+    border-color: #555;
+}
+body.dark .code-lang-picker-search:focus { border-color: #8ab4f8; }
+
+.code-lang-picker-list {
+    overflow-y: auto;
+    flex: 1;
+    padding: 0 6px 6px;
+}
+
+.code-lang-option {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 8px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 13px;
+    color: #333;
+    border-radius: 5px;
+    font-family: "Cascadia Code","Fira Code","JetBrains Mono",monospace;
+}
+.code-lang-option:hover { background: #eef3fb; }
+.code-lang-option:focus { background: #eef3fb; outline: none; }
+.code-lang-option.active {
+    background: #dde9f7;
+    color: #0078d4;
+    font-weight: 600;
+}
+body.dark .code-lang-option { color: #ccc; }
+body.dark .code-lang-option:hover { background: #3a4a5a; }
+body.dark .code-lang-option:focus { background: #3a4a5a; }
+body.dark .code-lang-option.active {
+    background: #2a3f5f;
+    color: #8ab4f8;
+}

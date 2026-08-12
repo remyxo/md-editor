@@ -138,5 +138,7 @@
         <file>web/qwebchannel.js</file>
         <file>web/markdown-guide.md</file>
         <file>web/tiptap-all.js</file>
+        <file>web/hljs-light.css</file>
+        <file>web/hljs-dark.css</file>
     </qresource>
 </RCC>
