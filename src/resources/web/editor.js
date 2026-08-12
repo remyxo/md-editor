@@ -2343,7 +2343,7 @@ window.editorApi = {
     // ===== 代码块语言选择浮层（非模态，锚定语言标签下方，点外部/Esc 关闭） =====
     _codeLangPicker: {
         root: null, searchInput: null, list: null,
-        _current: null, _onSelect: null, _outsideHandler: null,
+        _current: null, _onSelect: null, _outsideHandler: null, _bodyOverflow: '',
 
         open: function(anchorEl, currentLang, onSelect) {
             this.close();
@@ -2352,6 +2352,9 @@ window.editorApi = {
             this.buildDom();
             this._position(anchorEl);
             this._registerOutside();
+            // 锁定 body 滚动，防止滚轮穿透到编辑区（与 _linkEditor 同模式）
+            this._bodyOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
             if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
             var self = this;
             setTimeout(function(){ if (self.searchInput) self.searchInput.focus(); }, 0);
@@ -2395,20 +2398,12 @@ window.editorApi = {
                     if (btns[idx]) btns[idx].focus();
                 }
             });
-            // 搜索框滚轮不冒泡到编辑器
-            this.searchInput.addEventListener('wheel', function(e){ e.stopPropagation(); });
             this.root.appendChild(this.searchInput);
 
             // 选项列表（滚动）
             this.list = document.createElement('div');
             this.list.className = 'code-lang-picker-list';
             this.root.appendChild(this.list);
-
-            // 整个对话框作为防线：任何未被子元素拦截的滚轮到此为止
-            // （list 可正常滚动，searchInput 自行拦截，root 兜底拦截空白区）
-            // 全部使用冒泡阶段，不阻止浏览器默认滚动行为
-            this.root.addEventListener('wheel', function(e){ e.stopPropagation(); });
-            this.list.addEventListener('wheel', function(e){ e.stopPropagation(); });
 
             document.body.appendChild(this.root);
         },
@@ -2472,6 +2467,7 @@ window.editorApi = {
                 document.removeEventListener('mousedown', this._outsideHandler, true);
                 this._outsideHandler = null;
             }
+            document.body.style.overflow = this._bodyOverflow || '';
             if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(false);
             this._cleanupDom();
             this._onSelect = null;
