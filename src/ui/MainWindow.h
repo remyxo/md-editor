@@ -34,6 +34,7 @@ private slots:
     void onInsertEmoji();
     void onToggleSourceMode();
     void onExportPdf();
+    void onExportDocx();
     void onThemeSwitch(const QString &theme);
 
     // 文件操作

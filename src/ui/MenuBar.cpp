@@ -40,9 +40,12 @@ void MenuBar::setupUi()
 
     m_fileMenu->addSeparator();
 
-    QAction *exportAct = m_fileMenu->addAction("导出 PDF...");
-    exportAct->setShortcut(QKeySequence("Ctrl+P"));
-    connect(exportAct, &QAction::triggered, this, &MenuBar::exportPdf);
+    QMenu *exportMenu = m_fileMenu->addMenu("导出");
+    QAction *exportPdfAct = exportMenu->addAction("导出 PDF...");
+    exportPdfAct->setShortcut(QKeySequence("Ctrl+P"));
+    connect(exportPdfAct, &QAction::triggered, this, &MenuBar::exportPdf);
+    QAction *exportDocxAct = exportMenu->addAction("导出 DOCX...");
+    connect(exportDocxAct, &QAction::triggered, this, &MenuBar::exportDocx);
 
     m_fileMenu->addSeparator();
 

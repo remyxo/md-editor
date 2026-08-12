@@ -15,6 +15,7 @@
 #include "../core/FileManager.h"
 #include "../core/MarkdownHandler.h"
 #include "../core/PdfExporter.h"
+#include "../core/DocxExporter.h"
 #include "../app/Application.h"
 #include "../app/ThemeManager.h"
 
@@ -152,6 +153,7 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::openRecentFile, this,
             &MainWindow::onFileDoubleClicked);
     connect(m_menuBar, &MenuBar::exportPdf, this, &MainWindow::onExportPdf);
+    connect(m_menuBar, &MenuBar::exportDocx, this, &MainWindow::onExportDocx);
     connect(m_menuBar, &MenuBar::switchTheme, this, &MainWindow::onThemeSwitch);
     connect(m_menuBar, &MenuBar::toggleSidebar, this, [this]() {
         m_sideBar->setCollapsed(!m_sideBar->isCollapsed());
@@ -596,6 +598,30 @@ void MainWindow::onExportPdf()
                 exporter->deleteLater();
             });
             exporter->exportToPdf(html, path);
+        });
+}
+
+void MainWindow::onExportDocx()
+{
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    if (!tab) return;
+
+    QString path = QFileDialog::getSaveFileName(this, "导出 DOCX", "document.docx",
+                                                 "Word 文档 (*.docx)");
+    if (path.isEmpty()) return;
+
+    // 异步获取编辑器 HTML 内容
+    tab->webView()->page()->runJavaScript(
+        "window.editorApi.getContent();",
+        [this, path](const QVariant &result) {
+            QString html = result.toString();
+            auto *exporter = new DocxExporter(this);
+            connect(exporter, &DocxExporter::exportFinished, this,
+                    [this, exporter](bool ok, const QString &out) {
+                m_statusBar->showMessage(ok ? QString("已导出: %1").arg(out) : "导出失败", 3000);
+                exporter->deleteLater();
+            });
+            exporter->exportToDocx(html, path);
         });
 }
 

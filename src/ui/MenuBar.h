@@ -20,6 +20,7 @@ signals:
     void saveFileAs();
     void closeTab();
     void exportPdf();
+    void exportDocx();
     void quit();
 
     void undo();
