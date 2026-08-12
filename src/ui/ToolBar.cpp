@@ -203,15 +203,19 @@ void ToolBar::setupUi()
     // === 视图 / 导出 ===
     makeAction(this, &m_iconPaths, "sourceAction",
         "切换源码模式", ":/icons/light/source-code.svg");
-    QAction *pdfAction = makeAction(this, &m_iconPaths, "pdfAction",
-        "导出", ":/icons/light/pdf.svg");
-    QMenu *exportMenu = new QMenu(this);
-    exportMenu->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
-    exportMenu->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
-    pdfAction->setMenu(exportMenu);
-    // 设为 InstantPopup：点击按钮直接弹出菜单，不执行 action 自身
-    QToolButton *btn = qobject_cast<QToolButton*>(widgetForAction(pdfAction));
-    if (btn) btn->setPopupMode(QToolButton::InstantPopup);
+    // 导出下拉按钮：用 QToolButton + addWidget，不依赖 QAction setMenu
+    {
+        QToolButton *exportBtn = new QToolButton(this);
+        exportBtn->setIcon(QIcon(":/icons/light/pdf.svg"));
+        exportBtn->setToolTip("导出");
+        exportBtn->setPopupMode(QToolButton::InstantPopup);
+        exportBtn->setObjectName("exportBtn");
+        QMenu *m = new QMenu(exportBtn);
+        m->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
+        m->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
+        exportBtn->setMenu(m);
+        addWidget(exportBtn);
+    }
 
     // === 信号连接 ===
     connect(m_boldAction, &QAction::triggered, this, &ToolBar::boldClicked);
@@ -410,6 +414,13 @@ void ToolBar::updateHistoryState(bool canUndo, bool canRedo)
 void ToolBar::refreshThemeIcons(const QString &theme)
 {
     applyIconTheme(theme);
+    // 导出下拉按钮（QToolButton，不走 QAction 图标注册机制）
+    QToolButton *exportBtn = findChild<QToolButton*>("exportBtn");
+    if (exportBtn) {
+        QString iconPath = (theme == "dark") ? ":/icons/dark/pdf.svg"
+                                             : ":/icons/light/pdf.svg";
+        exportBtn->setIcon(QIcon(iconPath));
+    }
 }
 
 void ToolBar::applyIconTheme(const QString &theme)
