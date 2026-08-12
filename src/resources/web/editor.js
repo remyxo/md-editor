@@ -2395,7 +2395,7 @@ window.editorApi = {
                     if (btns[idx]) btns[idx].focus();
                 }
             });
-            // 搜索框上的滚轮也不冒泡到编辑器
+            // 搜索框滚轮不冒泡到编辑器
             this.searchInput.addEventListener('wheel', function(e){ e.stopPropagation(); });
             this.root.appendChild(this.searchInput);
 
@@ -2404,9 +2404,11 @@ window.editorApi = {
             this.list.className = 'code-lang-picker-list';
             this.root.appendChild(this.list);
 
-            // 阻止滚轮事件穿透到编辑器（capture 捕获阶段优先拦截）
-            this.root.addEventListener('wheel', function(e){ e.stopPropagation(); }, true);
-            this.list.addEventListener('wheel', function(e){ e.stopPropagation(); }, true);
+            // 整个对话框作为防线：任何未被子元素拦截的滚轮到此为止
+            // （list 可正常滚动，searchInput 自行拦截，root 兜底拦截空白区）
+            // 全部使用冒泡阶段，不阻止浏览器默认滚动行为
+            this.root.addEventListener('wheel', function(e){ e.stopPropagation(); });
+            this.list.addEventListener('wheel', function(e){ e.stopPropagation(); });
 
             document.body.appendChild(this.root);
         },
