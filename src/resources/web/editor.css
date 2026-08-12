@@ -807,27 +807,21 @@ body.dark .ProseMirror .code-block {
 }
 .ProseMirror .code-block pre code { color: inherit; }
 
-/* 工具栏：悬停时显示 */
+/* 工具栏：始终显示，颜色偏灰不抢眼 */
 .ProseMirror .code-block .code-block-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 4px 10px;
+    padding: 3px 10px;
     font-size: 12px;
-    color: #888;
-    background: #eceef1;
-    border-bottom: 1px solid #e0e3e7;
+    color: #999;
+    background: #f0f1f3;
+    border-bottom: 1px solid #e8eaed;
     user-select: none;
-    opacity: 0;
-    transition: opacity 0.15s;
-}
-.ProseMirror .code-block:hover .code-block-toolbar,
-.ProseMirror .code-block.ProseMirror-selectednode .code-block-toolbar {
-    opacity: 1;
 }
 body.dark .ProseMirror .code-block .code-block-toolbar {
     background: #262b31;
-    color: #9aa2ab;
+    color: #7a828a;
     border-bottom-color: #33383f;
 }
 
@@ -836,34 +830,40 @@ body.dark .ProseMirror .code-block .code-block-toolbar {
     font-family: "Cascadia Code","Fira Code","JetBrains Mono",monospace;
     font-size: 11px;
     text-transform: lowercase;
+    color: #999;
     padding: 1px 6px;
     border-radius: 3px;
 }
 .ProseMirror .code-block .code-lang-label:hover {
-    background: rgba(0,0,0,0.08);
+    background: rgba(0,0,0,0.06);
+    color: #666;
+}
+body.dark .ProseMirror .code-block .code-lang-label {
+    color: #7a828a;
 }
 body.dark .ProseMirror .code-block .code-lang-label:hover {
-    background: rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.08);
+    color: #abb2bf;
 }
 
 .ProseMirror .code-block .code-copy-btn {
-    border: 1px solid #d0d0d0;
-    background: #fff;
-    color: #555;
+    border: 1px solid #e0e0e0;
+    background: #f7f8fa;
+    color: #999;
     font-size: 12px;
-    padding: 2px 10px;
+    padding: 2px 8px;
     border-radius: 4px;
     cursor: pointer;
     transition: background 0.15s;
 }
 .ProseMirror .code-block .code-copy-btn:hover {
-    background: #f0f0f0;
-    color: #222;
+    background: #e8eaed;
+    color: #555;
 }
 body.dark .ProseMirror .code-block .code-copy-btn {
-    border-color: #444;
-    background: #33383f;
-    color: #ccc;
+    border-color: #3d3d3d;
+    background: #2a2e35;
+    color: #7a828a;
 }
 body.dark .ProseMirror .code-block .code-copy-btn:hover {
     background: #3d434a;

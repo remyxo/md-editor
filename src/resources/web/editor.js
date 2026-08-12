@@ -787,8 +787,14 @@ function codeBlockNodeView(ref) {
     var copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'code-copy-btn';
-    copyBtn.textContent = '复制';
     copyBtn.title = '复制代码';
+    // 双层方块复制图标（内联 SVG）
+    copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+        'style="vertical-align:middle;margin-right:2px">' +
+        '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
+        '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' +
+        '</svg>复制';
 
     toolbar.appendChild(label);
     toolbar.appendChild(copyBtn);
@@ -804,15 +810,26 @@ function codeBlockNodeView(ref) {
     }
     renderLabel();
 
-    // 复制按钮：阻止 ProseMirror 抢焦点，点击执行复制
+    // 复制按钮：阻止 ProseMirror 抢焦点，获取 code.textContent 执行复制
     copyBtn.addEventListener('mousedown', function(e){ e.preventDefault(); e.stopPropagation(); });
     copyBtn.addEventListener('click', function(e){
         e.preventDefault(); e.stopPropagation();
-        var text = node.textContent;
+        var text = code.textContent;
         _copyText(text, function(ok){
             if (!ok) return;
-            copyBtn.textContent = '✓ 已复制';
-            setTimeout(function(){ copyBtn.textContent = '复制'; }, 1500);
+            copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+                'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+                'style="vertical-align:middle;margin-right:2px">' +
+                '<polyline points="20 6 9 17 4 12"/>' +
+                '</svg>已复制';
+            setTimeout(function(){
+                copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+                    'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+                    'style="vertical-align:middle;margin-right:2px">' +
+                    '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
+                    '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' +
+                    '</svg>复制';
+            }, 1500);
         });
     });
 
