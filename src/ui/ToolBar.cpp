@@ -208,12 +208,12 @@ void ToolBar::setupUi()
         QToolButton *exportBtn = new QToolButton(this);
         exportBtn->setIcon(QIcon(":/icons/light/pdf.svg"));
         exportBtn->setToolTip("导出");
-        exportBtn->setPopupMode(QToolButton::InstantPopup);
         exportBtn->setObjectName("exportBtn");
         QMenu *m = new QMenu(exportBtn);
         m->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
         m->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
         exportBtn->setMenu(m);
+        exportBtn->setPopupMode(QToolButton::InstantPopup);
         addWidget(exportBtn);
     }
 
