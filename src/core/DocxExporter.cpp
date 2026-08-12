@@ -310,7 +310,7 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                 out += "<w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r>";
             }
             // 内联数学
-            else if (tag == "span" && r.attributes().value("data-type") == "inline-math") {
+            else if (tag == "span" && r.attributes().value("data-type").toString() == "inline-math") {
                 flushRun();
                 QString latex = r.attributes().value("data-latex").toString();
                 out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
