@@ -814,14 +814,14 @@ body.dark .ProseMirror .code-block {
     justify-content: space-between;
     padding: 3px 10px;
     font-size: 12px;
-    color: #555;
+    color: #444;
     background: #f0f1f3;
     border-bottom: 1px solid #e8eaed;
     user-select: none;
 }
 body.dark .ProseMirror .code-block .code-block-toolbar {
     background: #262b31;
-    color: #a2aab5;
+    color: #bcc3cd;
     border-bottom-color: #33383f;
 }
 
@@ -830,26 +830,26 @@ body.dark .ProseMirror .code-block .code-block-toolbar {
     font-family: "Cascadia Code","Fira Code","JetBrains Mono",monospace;
     font-size: 11px;
     text-transform: lowercase;
-    color: #666;
+    color: #555;
     padding: 1px 6px;
     border-radius: 3px;
 }
 .ProseMirror .code-block .code-lang-label:hover {
     background: rgba(0,0,0,0.06);
-    color: #333;
+    color: #222;
 }
 body.dark .ProseMirror .code-block .code-lang-label {
-    color: #a2aab5;
+    color: #bcc3cd;
 }
 body.dark .ProseMirror .code-block .code-lang-label:hover {
     background: rgba(255,255,255,0.08);
-    color: #ccd3dc;
+    color: #e0e5ec;
 }
 
 .ProseMirror .code-block .code-copy-btn {
-    border: 1px solid #d5d5d5;
-    background: #f7f8fa;
-    color: #555;
+    border: 1px solid #d0d0d0;
+    background: #f0f1f3;
+    color: #444;
     font-size: 12px;
     padding: 2px 8px;
     border-radius: 4px;
@@ -863,7 +863,7 @@ body.dark .ProseMirror .code-block .code-lang-label:hover {
 body.dark .ProseMirror .code-block .code-copy-btn {
     border-color: #3d3d3d;
     background: #2a2e35;
-    color: #a2aab5;
+    color: #bcc3cd;
 }
 body.dark .ProseMirror .code-block .code-copy-btn:hover {
     background: #3d434a;
@@ -887,6 +887,7 @@ body.dark .ProseMirror .code-block .code-copy-btn:hover {
     border-radius: 8px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.15);
     overflow: hidden;
+    padding: 6px;
 }
 body.dark .code-lang-picker {
     background: #2d2d2d;
@@ -895,7 +896,6 @@ body.dark .code-lang-picker {
 }
 
 .code-lang-picker-search {
-    margin: 6px;
     padding: 6px 8px;
     border: 1px solid #d0d0d0;
     border-radius: 6px;
@@ -903,6 +903,7 @@ body.dark .code-lang-picker {
     outline: none;
     color: #222;
     background: #fafafa;
+    flex-shrink: 0;
 }
 .code-lang-picker-search:focus { border-color: #0078d4; }
 body.dark .code-lang-picker-search {
@@ -915,7 +916,7 @@ body.dark .code-lang-picker-search:focus { border-color: #8ab4f8; }
 .code-lang-picker-list {
     overflow-y: auto;
     flex: 1;
-    padding: 0 6px 6px;
+    margin-top: 2px;
 }
 
 .code-lang-option {

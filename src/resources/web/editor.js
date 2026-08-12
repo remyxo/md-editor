@@ -2404,8 +2404,9 @@ window.editorApi = {
             this.list.className = 'code-lang-picker-list';
             this.root.appendChild(this.list);
 
-            // 阻止滚轮事件冒泡到编辑器
-            this.root.addEventListener('wheel', function(e){ e.stopPropagation(); });
+            // 阻止滚轮事件穿透到编辑器（capture 捕获阶段优先拦截）
+            this.root.addEventListener('wheel', function(e){ e.stopPropagation(); }, true);
+            this.list.addEventListener('wheel', function(e){ e.stopPropagation(); }, true);
 
             document.body.appendChild(this.root);
         },
