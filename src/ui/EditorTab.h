@@ -45,6 +45,8 @@ public:
     void setLinkUrl(const QString &url);
     void setPermanentReadOnly(bool permanent);
     bool isPermanentReadOnly() const;
+    void setSourceMode(bool on);
+    bool isSourceMode() const;
     void runJsCommand(const QString &js);
 
 signals:
@@ -61,6 +63,7 @@ private:
     EditorBridge *m_bridge;
     bool m_pageLoaded;
     bool m_permanentReadOnly = false;
+    bool m_sourceMode = false;
 };
 
 #endif // MD_EDITOR_EDITORTAB_H

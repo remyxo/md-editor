@@ -1983,20 +1983,33 @@ window.editorApi = {
         _dirtyBefore: false,
         _confirmed: false,
         _bodyOverflow: '',
+        _isNew: false,  // 是否从选中文字创建（非编辑已有链接）
 
-        // 右键菜单触发（编辑模式）
+        // 右键菜单触发（选中文字或已有链接 → 统一入口）
         open: function() {
             var ed = window.editorApi.editor;
             if (!ed) return;
-            if (!ed.isActive('link')) return;
-            var attrs = ed.getAttributes('link');
-            if (!attrs || !attrs.href) return;
-            this._href = attrs.href;
-            // 使用 extendMarkRange 将选区扩展到链接标记覆盖范围
-            // （命令会修改 selection，但模态遮罩下不可见，关闭后恢复）
-            ed.chain().extendMarkRange('link').run();
-            this._linkFrom = ed.state.selection.from;
-            this._linkTo = ed.state.selection.to;
+
+            var isLink = ed.isActive('link');
+            var attrs = isLink ? ed.getAttributes('link') : null;
+
+            if (isLink && attrs && attrs.href) {
+                // 编辑已有链接：扩选到链接范围，预填 URL
+                this._href = attrs.href;
+                ed.chain().extendMarkRange('link').run();
+                this._linkFrom = ed.state.selection.from;
+                this._linkTo = ed.state.selection.to;
+                this._isNew = false;
+            } else {
+                // 选中文字创建新链接
+                var sel = ed.state.selection;
+                if (sel.empty) return;
+                this._href = '';
+                this._linkFrom = sel.from;
+                this._linkTo = sel.to;
+                this._isNew = true;
+            }
+
             this._dirtyBefore = window.editorApi._dirty;
             this._confirmed = false;
             window.editorApi._mathEditing = true;
@@ -2058,11 +2071,14 @@ window.editorApi = {
             // 按钮行（删除链接 | 取消 | 确定）
             var actions = document.createElement('div');
             actions.className = 'link-editor-actions';
-            this.removeBtn = document.createElement('button');
-            this.removeBtn.className = 'link-editor-remove-btn';
-            this.removeBtn.textContent = '删除链接';
-            this.removeBtn.addEventListener('click', function() { self.removeLink(); });
-            actions.appendChild(this.removeBtn);
+            // 仅在编辑已有链接时显示"删除链接"按钮
+            if (!this._isNew) {
+                this.removeBtn = document.createElement('button');
+                this.removeBtn.className = 'link-editor-remove-btn';
+                this.removeBtn.textContent = '删除链接';
+                this.removeBtn.addEventListener('click', function() { self.removeLink(); });
+                actions.appendChild(this.removeBtn);
+            }
             var spacer = document.createElement('span');
             spacer.style.flex = '1';
             actions.appendChild(spacer);
@@ -2100,7 +2116,7 @@ window.editorApi = {
             }
             this.urlInput.value = this._href;
             this.urlInput.focus();
-            this.urlInput.select();
+            if (this._href) this.urlInput.select();
         },
 
         confirm: function() {

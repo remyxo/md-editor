@@ -83,18 +83,22 @@ void EditorWebView::setupContextMenu()
         page()->triggerAction(QWebEnginePage::SelectAll);
     });
 
+    // 选中文字或在已有链接上 → 编辑超链接
+    if (m_hasSelection || !m_linkUrl.isEmpty()) {
+        m_contextMenu->addSeparator();
+        QAction *createLink = m_contextMenu->addAction(
+            QStringLiteral("编辑超链接..."));
+        connect(createLink, &QAction::triggered, [this]() {
+            page()->runJavaScript("window.editorApi._linkEditor.open();");
+        });
+    }
+
     // 链接访问 — 仅光标在链接上时显示
     if (!m_linkUrl.isEmpty()) {
-        m_contextMenu->addSeparator();
         QAction *visitLink = m_contextMenu->addAction(
             QString::fromUtf8("访问 %1").arg(m_linkUrl));
         connect(visitLink, &QAction::triggered, [this]() {
             QDesktopServices::openUrl(QUrl(m_linkUrl));
-        });
-        QAction *editLink = m_contextMenu->addAction(
-            QStringLiteral("编辑超链接"));
-        connect(editLink, &QAction::triggered, [this]() {
-            page()->runJavaScript("window.editorApi._linkEditor.open();");
         });
     }
 
@@ -271,6 +275,16 @@ void EditorTab::setPermanentReadOnly(bool permanent)
 bool EditorTab::isPermanentReadOnly() const
 {
     return m_permanentReadOnly;
+}
+
+void EditorTab::setSourceMode(bool on)
+{
+    m_sourceMode = on;
+}
+
+bool EditorTab::isSourceMode() const
+{
+    return m_sourceMode;
 }
 
 void EditorTab::setLinkUrl(const QString &url)
