@@ -5,6 +5,7 @@
 #include <QComboBox>
 
 class QMenu;
+class QToolButton;
 
 class ToolBar : public QToolBar {
     Q_OBJECT
@@ -49,6 +50,9 @@ signals:
     void pdfExportClicked();
     void docxExportClicked();
 
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
 private:
     void setupUi();
     QComboBox *m_headingCombo;
@@ -78,6 +82,7 @@ private:
     QAction *m_blockquoteAction;
     QAction *m_footnoteAction = nullptr;
     QAction *m_clearFormatAction = nullptr;
+    QToolButton *m_exportButton = nullptr;
     QList<QAction*> m_allActions;
     bool m_isDark;
     QMap<QAction*, QString> m_iconPaths; // action → 亮色图标路径

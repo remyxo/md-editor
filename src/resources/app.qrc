@@ -27,6 +27,7 @@
         <file>icons/light/horizontal-rule.svg</file>
         <file>icons/light/source-code.svg</file>
         <file>icons/light/pdf.svg</file>
+        <file>icons/light/chevron-down.svg</file>
         <file>icons/light/portrait.svg</file>
         <file>icons/light/landscape.svg</file>
         <file>icons/light/math.svg</file>
@@ -60,6 +61,7 @@
         <file>icons/dark/horizontal-rule.svg</file>
         <file>icons/dark/source-code.svg</file>
         <file>icons/dark/pdf.svg</file>
+        <file>icons/dark/chevron-down.svg</file>
         <file>icons/dark/portrait.svg</file>
         <file>icons/dark/landscape.svg</file>
         <file>icons/dark/math.svg</file>

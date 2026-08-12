@@ -38,6 +38,11 @@ body.dark {
     margin-top: 0.75em;
 }
 
+/* divBlock 对齐：HTML <div align="..."> 的视觉渲染 */
+.ProseMirror div[align="left"] { text-align: left; }
+.ProseMirror div[align="center"] { text-align: center; }
+.ProseMirror div[align="right"] { text-align: right; }
+
 /* 标题 */
 .ProseMirror h1 { font-size: 2em; font-weight: 700; margin-top: 1.5em; margin-bottom: 0.5em; }
 .ProseMirror h2 { font-size: 1.5em; font-weight: 700; margin-top: 1.4em; margin-bottom: 0.4em; }

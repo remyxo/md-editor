@@ -11,6 +11,7 @@
 #include <QPushButton>
 #include <QColorDialog>
 #include <QCursor>
+#include <QEvent>
 #include <QRegularExpression>
 
 ToolBar::ToolBar(QWidget *parent)
@@ -203,14 +204,20 @@ void ToolBar::setupUi()
     // === 视图 / 导出 ===
     makeAction(this, &m_iconPaths, "sourceAction",
         "切换源码模式", ":/icons/light/source-code.svg");
-    // 导出下拉按钮：QAction + setMenu，用 InstantPopup 禁用默认行为
+    // 导出下拉按钮：直接用 QToolButton + InstantPopup
     {
-        QAction *expAct = makeAction(this, &m_iconPaths, "pdfAction",
-            "导出", ":/icons/light/pdf.svg");
-        QMenu *exportMenu = new QMenu(this);
+        m_exportButton = new QToolButton(this);
+        m_exportButton->setObjectName("pdfAction");
+        m_exportButton->setIcon(QIcon(":/icons/light/pdf.svg"));
+        m_exportButton->setToolTip("导出");
+        m_exportButton->setCheckable(false);
+        m_exportButton->setArrowType(Qt::NoArrow); // 用自己的 chevron-down
+        QMenu *exportMenu = new QMenu(m_exportButton);
         exportMenu->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
         exportMenu->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
-        expAct->setMenu(exportMenu);
+        m_exportButton->setMenu(exportMenu);
+        m_exportButton->installEventFilter(this);
+        addWidget(m_exportButton);
     }
 
     // === 信号连接 ===
@@ -260,12 +267,6 @@ void ToolBar::setupUi()
             connect(a, &QAction::triggered, this, &ToolBar::emojiClicked);
         else if (a->objectName() == "footnoteAction")
             connect(a, &QAction::triggered, this, &ToolBar::footnoteClicked);
-    }
-
-    // 设置导出按钮为 InstantPopup（点击弹出菜单，不执行 action 自身）
-    if (QAction *expAct = findChild<QAction*>("pdfAction")) {
-        if (QToolButton *btn = qobject_cast<QToolButton*>(widgetForAction(expAct)))
-            btn->setPopupMode(QToolButton::InstantPopup);
     }
 
     // 收集所有 action，用于源码模式禁用
@@ -338,20 +339,21 @@ QMenu *ToolBar::buildColorMenu(bool forText)
 
 void ToolBar::setSourceMode(bool on)
 {
-    // 源码模式下灰化所有编辑/格式化按钮，保留源码切换和 PDF 导出可用
+    // 源码模式下灰化所有编辑/格式化按钮，保留源码切换和导出按钮可用
     for (QAction *a : m_allActions) {
-        if (a->objectName() != QStringLiteral("sourceAction")
-            && a->objectName() != QStringLiteral("pdfAction")) {
+        if (a->objectName() != QStringLiteral("sourceAction")) {
             a->setEnabled(!on);
         }
     }
-    // 恢复时根据格式状态重新设置按钮可用性（disabled 可能残留）
     if (!on) {
         for (QAction *a : m_allActions) {
             a->setEnabled(true);
         }
     }
     m_headingCombo->setEnabled(!on);
+    // 导出按钮是 QToolButton widget，单独控制
+    if (m_exportButton)
+        m_exportButton->setEnabled(true);
 }
 
 void ToolBar::updateFormatState(const QJsonObject &f)
@@ -428,4 +430,21 @@ void ToolBar::applyIconTheme(const QString &theme)
             path.replace("/light/", "/dark/");
         action->setIcon(QIcon(path));
     }
+    // 导出按钮是 QToolButton widget，单独处理图标主题
+    if (m_exportButton) {
+        QString iconPath = m_isDark ? ":/icons/dark/pdf.svg" : ":/icons/light/pdf.svg";
+        m_exportButton->setIcon(QIcon(iconPath));
+    }
+}
+
+bool ToolBar::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj == m_exportButton && event->type() == QEvent::MouseButtonPress) {
+        if (m_exportButton->menu()) {
+            m_exportButton->menu()->popup(
+                m_exportButton->mapToGlobal(QPoint(0, m_exportButton->height())));
+        }
+        return true;
+    }
+    return QToolBar::eventFilter(obj, event);
 }

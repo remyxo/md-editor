@@ -1096,9 +1096,12 @@ window.editorApi = {
         format.highlight = !!ed.isActive('highlight');
         format.subscript = !!ed.isActive('subscript');
         format.superscript = !!ed.isActive('superscript');
-        // 文字对齐（未显式设置时属性为 null，工具栏按左对齐高亮）
+        // 文字对齐：优先检查 paragraph/heading 的 textAlign（TipTap TextAlign 扩展设置），
+        // 其次检查 divBlock 的 align 属性（手写 HTML <div align="..."> 解析），
+        // 未显式设置时默认左对齐
         format.textAlign = ed.getAttributes('paragraph').textAlign
             || ed.getAttributes('heading').textAlign
+            || ed.getAttributes('divBlock').align
             || 'left';
         // 颜色 span 的 style 字符串（文字色/背景色回显）
         format.colorSpanStyle = ed.getAttributes('colorSpan').style || '';
@@ -1191,7 +1194,19 @@ window.editorApi = {
     toggleSubscript: function() { if (this.editor) this.editor.commands.toggleSubscript(); },
     toggleSuperscript: function() { if (this.editor) this.editor.commands.toggleSuperscript(); },
     setTextAlign: function(alignment) {
-        if (this.editor) this.editor.commands.setTextAlign(alignment);
+        if (!this.editor) return;
+        // 光标在 divBlock 内 → 更新 divBlock 的 align 属性
+        // （TipTap TextAlign 扩展仅作用于 paragraph/heading，不处理 divBlock）
+        var divAttrs = this.editor.getAttributes('divBlock');
+        if (divAttrs.align !== undefined) {
+            var newAlign = (alignment === 'left') ? null : alignment;
+            this.editor.chain().updateAttributes('divBlock', {align: newAlign}).run();
+        } else {
+            this.editor.commands.setTextAlign(alignment);
+        }
+        // updateAttributes 只触发 onUpdate（不触发 onSelectionUpdate），
+        // 而 onUpdate 内部不调用 notifyFormat，因此手动通知确保工具栏立即同步
+        this.notifyFormat();
     },
     // === 内联颜色（colorSpan mark 的样式合并命令） ===
     applyTextColor: function(color) {

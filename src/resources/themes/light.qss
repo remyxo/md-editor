@@ -111,6 +111,15 @@ QToolButton#footnoteAction { color: #1967d2; }
 /* 视图/导出 */
 QToolButton#sourceAction { color: #5f6368; }
 QToolButton#pdfAction    { color: #d93025; }
+QToolButton#pdfAction::menu-indicator {
+    image: url(:/icons/light/chevron-down.svg);
+    subcontrol-position: right bottom;
+    subcontrol-origin: margin;
+    bottom: 4px;
+    right: 2px;
+    width: 8px;
+    height: 5px;
+}
 
 /* checked 状态：背景高亮，保留彩色图标 */
 QToolButton:checked {
