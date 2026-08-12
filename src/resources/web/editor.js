@@ -2395,6 +2395,8 @@ window.editorApi = {
                     if (btns[idx]) btns[idx].focus();
                 }
             });
+            // 搜索框上的滚轮也不冒泡到编辑器
+            this.searchInput.addEventListener('wheel', function(e){ e.stopPropagation(); });
             this.root.appendChild(this.searchInput);
 
             // 选项列表（滚动）
