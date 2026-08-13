@@ -1405,12 +1405,12 @@ window.editorApi = {
         }
     },
 
-    // 相对路径 → file://<文档目录>/<相对>；占位 marker / 绝对路径 / 网络 URL 原样返回
+    // 相对路径 → file://<文档目录>/<相对>；Unix 绝对路径 → file://<路径>；占位 marker / 网络 URL 原样返回
     _resolveImageSrc: function(raw) {
         if (!raw) return '';
         if (raw.indexOf('__pending_') === 0) return raw;              // 占位图 marker
         if (/^(data:|blob:|https?:|file:|qrc:)/i.test(raw)) return raw; // 带协议的 URL
-        if (raw.charAt(0) === '/') return raw;                         // 绝对路径：保持既有 insertImage 行为
+        if (raw.charAt(0) === '/') return 'file://' + raw;             // Unix 绝对路径 → file:// 渲染（attrs.src 仍存原始绝对路径，保往返保真）
         var base = this._docDir || '';
         if (!base) return raw;                                         // 文档目录未知（未保存）：原样返回
         return 'file://' + base.replace(/[\\/]+$/, '') + '/' + raw.replace(/^[\\/]+/, '');
