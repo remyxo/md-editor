@@ -13,6 +13,12 @@ var TipTapCodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
 var CodeBlockLowlightWithNodeView = TipTapCodeBlockLowlight && TipTapCodeBlockLowlight.extend({
     addNodeView: function() { return codeBlockNodeView; }
 });
+// 扩展 Image，附加自定义 NodeView（attrs.src 存原始路径保往返保真，渲染时经 _resolveImageSrc 解析为 file://）
+// 必须用 addNodeView 而非 editorProps.nodeViews：TipTap 会用各扩展的 addNodeView 生成 nodeViews
+// 并传给 EditorView，覆盖 editorProps.nodeViews（实测 image 不会进入 view.props.nodeViews）
+var ImageWithNodeView = TipTapImage && TipTapImage.extend({
+    addNodeView: function() { return imageNodeView; }
+});
 var TipTapMathematics = window.TipTapExtensionMathematics;
 var TipTapSubscript = window.TipTapExtensionSubscript;
 var TipTapSuperscript = window.TipTapExtensionSuperscript;
@@ -776,6 +782,34 @@ function _copyText(text, done) {
 }
 
 // 代码块 NodeView：外壳 DOM + 工具栏交互；语法高亮由 CodeBlockLowlight decorations 插件负责
+// 图片 NodeView：attrs.src 存原始路径（相对或绝对，保往返保真），渲染 <img>.src 经 _resolveImageSrc
+// 解析为 localimg://，由 C++ LocalImageSchemeHandler 读盘返回字节（绕过 qrc 页面加载 file:// 的限制）。
+// data-src 标记原始路径，供 setDocDir 在文档目录变更时重新解析已渲染图片。
+function imageNodeView(ref) {
+    var node = ref.node;
+    var raw = node.attrs.src || '';
+    var img = document.createElement('img');
+    img.setAttribute('data-src', raw);
+    img.src = window.editorApi._resolveImageSrc(raw);
+    img.alt = node.attrs.alt || '';
+    if (node.attrs.title) img.title = node.attrs.title;
+    return {
+        dom: img,
+        update: function(n) {
+            if (n.type.name !== 'image') return false;
+            var nr = n.attrs.src || '';
+            if (img.getAttribute('data-src') !== nr) {
+                img.setAttribute('data-src', nr);
+                img.src = window.editorApi._resolveImageSrc(nr);
+            }
+            img.alt = n.attrs.alt || '';
+            if (n.attrs.title) img.title = n.attrs.title;
+            else img.removeAttribute('title');
+            return true;
+        }
+    };
+}
+
 function codeBlockNodeView(ref) {
     var node = ref.node, getPos = ref.getPos;
 
@@ -933,7 +967,7 @@ window.editorApi = {
             TipTapTaskList,
             TipTapTaskItem.configure({ nested: true }),
             TipTapHighlight,
-            TipTapImage.configure({ allowBase64: true }),
+            ImageWithNodeView.configure({ allowBase64: true }),
             TipTapPlaceholder.configure({ placeholder: '开始编写 Markdown...' }),
         ];
         if (CodeBlockLowlightWithNodeView && window.lowlight)
@@ -993,32 +1027,6 @@ window.editorApi = {
                 },
                 handleDrop: function(view, event) {
                     return window.editorApi._handleImageClipboard(view, event, true);
-                },
-                // 自定义图片 NodeView：attrs.src 存相对路径（保往返保真），渲染时解析为 file://
-                nodeViews: {
-                    image: function(node) {
-                        var raw = node.attrs.src || '';
-                        var img = document.createElement('img');
-                        img.setAttribute('data-src', raw);
-                        img.src = window.editorApi._resolveImageSrc(raw);
-                        img.alt = node.attrs.alt || '';
-                        if (node.attrs.title) img.title = node.attrs.title;
-                        return {
-                            dom: img,
-                            update: function(n) {
-                                if (n.type.name !== 'image') return false;
-                                var nr = n.attrs.src || '';
-                                if (img.getAttribute('data-src') !== nr) {
-                                    img.setAttribute('data-src', nr);
-                                    img.src = window.editorApi._resolveImageSrc(nr);
-                                }
-                                img.alt = n.attrs.alt || '';
-                                if (n.attrs.title) img.title = n.attrs.title;
-                                else img.removeAttribute('title');
-                                return true;
-                            }
-                        };
-                    }
                 }
             },
             onUpdate: function(args) {
@@ -1050,7 +1058,8 @@ window.editorApi = {
             },
         };
         if (content !== undefined) config.content = content;
-        return new TipTapEditor(config);
+        var editor = new TipTapEditor(config);
+        return editor;
     },
 
     _attachMathClickHandler: function(dom) {
@@ -1307,7 +1316,9 @@ window.editorApi = {
         var u = prompt('输入链接地址:');
         if (u) this.editor.commands.setLink({ href: u });
     },
-    insertImage: function(path) { if (this.editor) this.editor.commands.setImage({ src: path }); },
+    insertImage: function(path) {
+        if (this.editor) this.editor.commands.setImage({ src: path });
+    },
     insertHorizontalRule: function() { if (this.editor) this.editor.commands.setHorizontalRule(); },
 
     // === 图片粘贴/拖拽落盘 ===
@@ -1405,15 +1416,17 @@ window.editorApi = {
         }
     },
 
-    // 相对路径 → file://<文档目录>/<相对>；Unix 绝对路径 → file://<路径>；占位 marker / 网络 URL 原样返回
+    // 相对路径 → localimg://<文档目录>/<相对>；Unix 绝对路径 → localimg://<路径>；
+    // 由 C++ LocalImageSchemeHandler 读盘返回字节（绕过 qrc 页面加载 file:// 的限制）；
+    // 占位 marker / 网络 URL 原样返回。attrs.src 始终存原始路径，保往返保真。
     _resolveImageSrc: function(raw) {
-        if (!raw) return '';
-        if (raw.indexOf('__pending_') === 0) return raw;              // 占位图 marker
-        if (/^(data:|blob:|https?:|file:|qrc:)/i.test(raw)) return raw; // 带协议的 URL
-        if (raw.charAt(0) === '/') return 'file://' + raw;             // Unix 绝对路径 → file:// 渲染（attrs.src 仍存原始绝对路径，保往返保真）
-        var base = this._docDir || '';
-        if (!base) return raw;                                         // 文档目录未知（未保存）：原样返回
-        return 'file://' + base.replace(/[\\/]+$/, '') + '/' + raw.replace(/^[\\/]+/, '');
+        var out;
+        if (!raw) out = '';
+        else if (raw.indexOf('__pending_') === 0) out = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'; // 占位图 marker：渲染为透明 1x1，避免被浏览器当作相对 URL 去 qrc:/web/ 加载而报 "QResource not found"（落盘回调后 attrs.src 被替换为真实路径，nodeView 重新解析为 localimg://）
+        else if (/^(data:|blob:|https?:|file:|qrc:)/i.test(raw)) out = raw; // 带协议的 URL
+        else if (raw.charAt(0) === '/') out = 'localimg://' + raw;    // Unix 绝对路径 → localimg://（Handler 读盘；attrs.src 仍存原始绝对路径保往返保真）
+        else { var base = this._docDir || ''; out = base ? ('localimg://' + base.replace(/[\\/]+$/, '') + '/' + raw.replace(/^[\\/]+/, '')) : raw; } // 相对路径 / 文档目录未知：原样返回
+        return out;
     },
 
 

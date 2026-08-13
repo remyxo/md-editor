@@ -5,6 +5,7 @@ set(SOURCES
     core/EditorBridge.cpp
     core/FileManager.cpp
     core/ImageManager.cpp
+    core/LocalImageSchemeHandler.cpp
     core/MarkdownHandler.cpp
     core/PdfExporter.cpp
     core/DocxExporter.cpp
@@ -29,6 +30,7 @@ set(HEADERS
     core/EditorBridge.h
     core/FileManager.h
     core/ImageManager.h
+    core/LocalImageSchemeHandler.h
     core/MarkdownHandler.h
     core/PdfExporter.h
     core/DocxExporter.h
