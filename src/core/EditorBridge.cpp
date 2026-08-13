@@ -21,6 +21,12 @@ void EditorBridge::cursorChanged(int line, int col)
     emit cursorPositionChanged(line, col, m_tabId);
 }
 
+void EditorBridge::requestImageSave(const QString &requestId, const QString &base64,
+                                    const QString &ext, const QString &suggestedName)
+{
+    emit imageSaveRequested(requestId, base64, ext, suggestedName, m_tabId);
+}
+
 void EditorBridge::contentChanged(bool dirty)
 {
     emit dirtyStateChanged(dirty, m_tabId);

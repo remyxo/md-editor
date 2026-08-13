@@ -103,6 +103,20 @@ private slots:
 
         QCOMPARE(spy.count(), 0);  // 无效 JSON 不触发信号
     }
+
+    void testRequestImageSave() {
+        EditorBridge bridge(7);
+        QSignalSpy spy(&bridge, &EditorBridge::imageSaveRequested);
+
+        bridge.requestImageSave("r1", "BASE64DATA", "png", "photo.png");
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy[0][0].toString(), QStringLiteral("r1"));        // requestId
+        QCOMPARE(spy[0][1].toString(), QStringLiteral("BASE64DATA")); // base64
+        QCOMPARE(spy[0][2].toString(), QStringLiteral("png"));       // ext
+        QCOMPARE(spy[0][3].toString(), QStringLiteral("photo.png")); // suggestedName
+        QCOMPARE(spy[0][4].toInt(), 7);                              // tabId
+    }
 };
 
 QTEST_MAIN(TestEditorBridge)
