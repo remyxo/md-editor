@@ -14,6 +14,7 @@
 #include "../core/EditorBridge.h"
 #include "../core/FileManager.h"
 #include "../core/MarkdownHandler.h"
+#include "../core/ImageManager.h"
 #include "../core/PdfExporter.h"
 #include "../core/DocxExporter.h"
 #include "../app/Application.h"
@@ -420,6 +421,15 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
                 m_modalDialogOpen = open;
             });
 
+    // 图片落盘请求（粘贴/拖拽）：落盘后回调 JS 把占位图 src 替换为相对路径
+    connect(bridge, &EditorBridge::imageSaveRequested, this,
+            [this, bridge](const QString &requestId, const QString &base64,
+                           const QString &ext, const QString &suggestedName, int /*tabId*/) {
+        // bridge 的 parent 即拥有它的 EditorTab（见 EditorTab 构造 m_bridge(new EditorBridge(tabId, this))）
+        EditorTab *tab = qobject_cast<EditorTab *>(bridge->parent());
+        if (tab) onImageSaveRequested(tab, requestId, base64, ext, suggestedName);
+    });
+
     // 页面加载完成后应用字体设置
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (tab) {
@@ -520,6 +530,54 @@ void MainWindow::onInsertEmoji()
 void MainWindow::onInsertLink()
 {
     runEditorCommand("window.editorApi.insertLink();");
+}
+
+// 转义为单引号 JS 字符串字面量内容（不含外层引号）
+static QString jsEscape(const QString &s)
+{
+    QString out = s;
+    out.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    out.replace(QLatin1Char('\''), QStringLiteral("\\'"));
+    out.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    out.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
+    return out;
+}
+
+// 构造图片落盘结果回调 JS：成功 {ok:true,path}；失败 {ok:false,err}
+static QString jsImageSaveResult(const QString &requestId, bool ok,
+                                 const QString &path, const QString &err)
+{
+    if (ok)
+        return QStringLiteral("window.editorApi._onImageSaveResult('%1',{ok:true,path:'%2'});")
+            .arg(jsEscape(requestId), jsEscape(path));
+    return QStringLiteral("window.editorApi._onImageSaveResult('%1',{ok:false,err:'%2'});")
+        .arg(jsEscape(requestId), jsEscape(err));
+}
+
+void MainWindow::onImageSaveRequested(EditorTab *tab, const QString &requestId,
+                                      const QString &base64, const QString &ext,
+                                      const QString &suggestedName)
+{
+    QString filePath = tab->webView()->property("filePath").toString();
+    if (filePath.isEmpty() || !QFile::exists(filePath)) {
+        m_statusBar->showMessage("请先保存文档再插入图片", 3000);
+        tab->runJsCommand(jsImageSaveResult(requestId, false, QString(), QStringLiteral("unsaved")));
+        return;
+    }
+    QByteArray bytes = QByteArray::fromBase64(base64.toUtf8());
+    if (bytes.isEmpty()) {
+        m_statusBar->showMessage("图片数据为空", 3000);
+        tab->runJsCommand(jsImageSaveResult(requestId, false, QString(), QStringLiteral("io")));
+        return;
+    }
+    QString rel = ImageManager::saveImage(filePath, bytes, suggestedName, ext);
+    if (rel.isEmpty()) {
+        m_statusBar->showMessage("图片保存失败", 3000);
+        tab->runJsCommand(jsImageSaveResult(requestId, false, QString(), QStringLiteral("io")));
+        return;
+    }
+    m_statusBar->showMessage("已插入图片", 1500);
+    tab->runJsCommand(jsImageSaveResult(requestId, true, rel, QString()));
 }
 
 void MainWindow::onInsertImage()

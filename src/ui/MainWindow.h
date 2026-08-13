@@ -9,6 +9,7 @@ class MenuBar;
 class ToolBar;
 class SideBar;
 class TabWidget;
+class EditorTab;
 class StatusBar;
 class SearchBar;
 class EditorBridge;
@@ -63,6 +64,9 @@ private:
     void setupUi();
     void connectSignals();
     void runEditorCommand(const QString &js);
+    void onImageSaveRequested(EditorTab *tab, const QString &requestId,
+                              const QString &base64, const QString &ext,
+                              const QString &suggestedName);
     EditorBridge *currentBridge() const;
 
     // 会话恢复
