@@ -1354,6 +1354,10 @@ window.editorApi = {
                 delete self._imagePending[requestId];
             }
         };
+        reader.onerror = function() {                               // 读取失败：清理占位图
+            self._removeImageBySrc(marker);
+            delete self._imagePending[requestId];
+        };
         reader.readAsDataURL(file);
     },
 
