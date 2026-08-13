@@ -4,6 +4,7 @@ set(SOURCES
     app/ThemeManager.cpp
     core/EditorBridge.cpp
     core/FileManager.cpp
+    core/ImageManager.cpp
     core/MarkdownHandler.cpp
     core/PdfExporter.cpp
     core/DocxExporter.cpp
@@ -27,6 +28,7 @@ set(HEADERS
     app/ThemeManager.h
     core/EditorBridge.h
     core/FileManager.h
+    core/ImageManager.h
     core/MarkdownHandler.h
     core/PdfExporter.h
     core/DocxExporter.h
