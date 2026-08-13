@@ -951,3 +951,13 @@ body.dark .code-lang-option.active {
     background: #2a3f5f;
     color: #8ab4f8;
 }
+
+/* 图片粘贴/拖拽落盘：落盘回调期间的占位图（marker src） */
+.ProseMirror img[src^="__pending_"] {
+    display: inline-block;
+    min-width: 96px;
+    min-height: 96px;
+    background: rgba(128, 128, 128, 0.15);
+    border: 1px dashed #999;
+    vertical-align: middle;
+}

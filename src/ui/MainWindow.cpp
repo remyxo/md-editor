@@ -723,7 +723,7 @@ void MainWindow::onFileDoubleClicked(const QString &path)
     file.close();
 
     EditorTab *tab = m_tabWidget->openFileTab(path, content);
-    tab->webView()->setProperty("filePath", path);
+    tab->setFilePath(path);
     m_fileManager->watchFile(path);
     m_menuBar->addRecentFile(path);
     m_statusBar->updateFilePath(path);
@@ -782,7 +782,7 @@ void MainWindow::onSaveFileAs()
             if (m_fileManager->writeFile(path, md)) {
                 m_statusBar->showMessage("已保存", 2000);
                 tab->runJsCommand("window.editorApi.markClean();");
-                tab->webView()->setProperty("filePath", path);
+                tab->setFilePath(path);
                 int idx = m_tabWidget->indexOf(tab);
                 if (idx >= 0) {
                     m_tabWidget->markTabSaved(idx, path);
@@ -964,7 +964,7 @@ void MainWindow::restoreSession()
         } else if (QFile::exists(path)) {
             QString content = m_fileManager->readFile(path);
             EditorTab *tab = m_tabWidget->openFileTab(path, content);
-            tab->webView()->setProperty("filePath", path);
+            tab->setFilePath(path);
             m_fileManager->watchFile(path);
             m_menuBar->addRecentFile(path);
         }

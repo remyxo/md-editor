@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QFileInfo>
 
 // ===== EditorWebPage — 过滤 Mermaid SVG 引擎级报错 =====
 
@@ -227,6 +228,22 @@ void EditorTab::loadFile(const QString &path, const QString &content)
     }
 }
 
+void EditorTab::setFilePath(const QString &path)
+{
+    m_webView->setProperty("filePath", path);
+    pushDocDir();   // 页面已就绪则立即推送；否则由 onPageLoadFinished 补推
+}
+
+void EditorTab::pushDocDir()
+{
+    QString path = m_webView->property("filePath").toString();
+    if (path.isEmpty() || !m_pageLoaded) return;
+    QString dir = QFileInfo(path).absolutePath();
+    QString esc = dir;
+    esc.replace("\\", "\\\\").replace("'", "\\'");
+    runJsCommand(QString("window.editorApi.setDocDir('%1');").arg(esc));
+}
+
 void EditorTab::setEditorTheme(const QString &theme)
 {
     if (m_pageLoaded) {
@@ -308,5 +325,7 @@ void EditorTab::onPageLoadFinished(bool ok)
     m_pageLoaded = ok;
     // QWebChannel JS 端初始化已由 editor.js 中的 DOMContentLoaded 处理
     // setupWebChannel() 在 load() 之前调用，确保 qt.webChannelTransport 可用
+    // 新标签页加载完成：补推文档目录（先于 TabWidget 的 setContent，图片首渲即用对目录）
+    if (ok) pushDocDir();
     emit pageLoadFinished(ok);
 }

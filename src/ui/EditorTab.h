@@ -36,6 +36,7 @@ public:
     QWebEngineView *webView() const;
 
     void loadFile(const QString &path, const QString &content);
+    void setFilePath(const QString &path);
     void setEditorTheme(const QString &theme);
     void setEditorFont(const QString &family, int size);
     void setEditorWidth(int width);
@@ -57,6 +58,7 @@ private slots:
 
 private:
     void setupWebChannel();
+    void pushDocDir();
     int m_tabId;
     EditorWebView *m_webView;
     QWebChannel *m_webChannel;

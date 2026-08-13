@@ -894,6 +894,9 @@ window.editorApi = {
     _sourceValue: null,
     _onSourceInput: null,
     _readOnly: false,
+    _imageSeq: 0,            // 占位图 requestId 自增计数
+    _imagePending: {},       // requestId -> marker（占位图 src，回调时据此定位节点）
+    _docDir: '',             // 当前文档目录（绝对路径），把相对图片 src 解析为 file://
 
     // === 内部辅助方法 ===
 
@@ -984,6 +987,40 @@ window.editorApi = {
         var config = {
             element: container,
             extensions: this._buildExtensions(),
+            editorProps: {
+                handlePaste: function(view, event) {
+                    return window.editorApi._handleImageClipboard(view, event, false);
+                },
+                handleDrop: function(view, event) {
+                    return window.editorApi._handleImageClipboard(view, event, true);
+                },
+                // 自定义图片 NodeView：attrs.src 存相对路径（保往返保真），渲染时解析为 file://
+                nodeViews: {
+                    image: function(node) {
+                        var raw = node.attrs.src || '';
+                        var img = document.createElement('img');
+                        img.setAttribute('data-src', raw);
+                        img.src = window.editorApi._resolveImageSrc(raw);
+                        img.alt = node.attrs.alt || '';
+                        if (node.attrs.title) img.title = node.attrs.title;
+                        return {
+                            dom: img,
+                            update: function(n) {
+                                if (n.type.name !== 'image') return false;
+                                var nr = n.attrs.src || '';
+                                if (img.getAttribute('data-src') !== nr) {
+                                    img.setAttribute('data-src', nr);
+                                    img.src = window.editorApi._resolveImageSrc(nr);
+                                }
+                                img.alt = n.attrs.alt || '';
+                                if (n.attrs.title) img.title = n.attrs.title;
+                                else img.removeAttribute('title');
+                                return true;
+                            }
+                        };
+                    }
+                }
+            },
             onUpdate: function(args) {
                 if (self._shouldIgnoreUpdate()) return;
                 // 仅内容变更事务标记脏状态（Focus 等插件会派发 meta-only 事务）
@@ -1272,6 +1309,109 @@ window.editorApi = {
     },
     insertImage: function(path) { if (this.editor) this.editor.commands.setImage({ src: path }); },
     insertHorizontalRule: function() { if (this.editor) this.editor.commands.setHorizontalRule(); },
+
+    // === 图片粘贴/拖拽落盘 ===
+    _mimeToExt: function(mime) {
+        var map = { 'image/png':'png', 'image/jpeg':'jpg', 'image/jpg':'jpg',
+                    'image/gif':'gif', 'image/webp':'webp', 'image/bmp':'bmp',
+                    'image/svg+xml':'svg', 'image/x-icon':'ico', 'image/tiff':'tiff' };
+        return map[mime] || 'png';
+    },
+
+    // ProseMirror handlePaste/handleDrop 共用入口
+    _handleImageClipboard: function(view, event, isDrop) {
+        if (!this.bridge) return false;                       // 桥未就绪，交默认
+        var dt = isDrop ? event.dataTransfer : event.clipboardData;
+        if (!dt || !dt.files || !dt.files.length) return false;
+        var handled = false;
+        for (var i = 0; i < dt.files.length; ++i) {
+            var f = dt.files[i];
+            if (!f.type || f.type.indexOf('image/') !== 0) continue;  // 仅图片
+            handled = true;
+            this._ingestImageFile(f);
+        }
+        if (handled) event.preventDefault();
+        return handled;
+    },
+
+    _ingestImageFile: function(file) {
+        var requestId = 'img_' + (++this._imageSeq);
+        var marker = '__pending_' + requestId + '__';
+        // 同步插入占位图（位置正确 + 即时反馈）
+        if (this.editor) this.editor.chain().focus().setImage({ src: marker, alt: file.name || '' }).run();
+        this._imagePending[requestId] = marker;
+
+        var self = this;
+        var reader = new FileReader();
+        reader.onload = function() {
+            var dataURL = reader.result || '';
+            var base64 = dataURL.split(',')[1] || '';
+            var ext = self._mimeToExt(file.type);
+            try {
+                self.bridge.requestImageSave(requestId, base64, ext, file.name || '');
+            } catch (e) {                                 // 桥异常：清理占位图
+                self._removeImageBySrc(marker);
+                delete self._imagePending[requestId];
+            }
+        };
+        reader.readAsDataURL(file);
+    },
+
+    _removeImageBySrc: function(src) {
+        if (!this.editor) return;
+        var pos = null, size = 0;
+        this.editor.state.doc.descendants(function(node, p) {
+            if (pos !== null) return false;
+            if (node.type.name === 'image' && node.attrs.src === src) { pos = p; size = node.nodeSize; return false; }
+            return true;
+        });
+        if (pos !== null) this.editor.view.dispatch(this.editor.state.tr.delete(pos, pos + size));
+    },
+
+    // C++ 回调：成功替换占位图 src；失败删除占位图
+    _onImageSaveResult: function(requestId, result) {
+        var marker = this._imagePending[requestId];
+        delete this._imagePending[requestId];
+        if (!this.editor || !marker) return;
+
+        var pos = null, node = null;
+        this.editor.state.doc.descendants(function(n, p) {
+            if (node) return false;
+            if (n.type.name === 'image' && n.attrs.src === marker) { node = n; pos = p; return false; }
+            return true;
+        });
+        if (!node) return;
+
+        if (result && result.ok && result.path) {
+            var attrs = Object.assign({}, node.attrs, { src: result.path });
+            this.editor.view.dispatch(this.editor.state.tr.setNodeMarkup(pos, null, attrs));
+        } else {
+            this.editor.view.dispatch(this.editor.state.tr.delete(pos, pos + node.nodeSize));
+        }
+    },
+
+    // C++ 在打开/保存/会话恢复时注入文档目录；并刷新已渲染图片的显示 src
+    setDocDir: function(dir) {
+        this._docDir = dir || '';
+        var root = this.editor && this.editor.view && this.editor.view.dom;
+        if (!root) return;
+        var imgs = root.querySelectorAll('img[data-src]');
+        for (var i = 0; i < imgs.length; ++i) {
+            imgs[i].src = this._resolveImageSrc(imgs[i].getAttribute('data-src'));
+        }
+    },
+
+    // 相对路径 → file://<文档目录>/<相对>；占位 marker / 绝对路径 / 网络 URL 原样返回
+    _resolveImageSrc: function(raw) {
+        if (!raw) return '';
+        if (raw.indexOf('__pending_') === 0) return raw;              // 占位图 marker
+        if (/^(data:|blob:|https?:|file:|qrc:)/i.test(raw)) return raw; // 带协议的 URL
+        if (raw.charAt(0) === '/') return raw;                         // 绝对路径：保持既有 insertImage 行为
+        var base = this._docDir || '';
+        if (!base) return raw;                                         // 文档目录未知（未保存）：原样返回
+        return 'file://' + base.replace(/[\\/]+$/, '') + '/' + raw.replace(/^[\\/]+/, '');
+    },
+
 
     // 清除样式：选中文字（或无选中时光标所在段落）→ 剥离所有 inline marks 及
     // 自定义 block 节点（divBlock 等），重置为正文段落，得到最干净的"正文"
