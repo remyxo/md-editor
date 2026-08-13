@@ -28,10 +28,10 @@ set(CPACK_GENERATOR "DEB")
 # DEB 特定设置
 set(CPACK_DEBIAN_PACKAGE_NAME "md-editor")
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
-set(CPACK_DEBIAN_PACKAGE_MAINTAINER "daijd")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "remyxo")
 set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "基于 Qt6 + TipTap 的 Markdown 所见即所得编辑器。
-支持标准 Markdown 语法、文件树管理、多标签页、
-PDF 导出和亮色/暗色主题。")
+支持标准 Markdown 语法、HTML标签、文件树管理、多标签页、
+PDF/DOCX 导出和亮色/暗色主题。")
 set(CPACK_DEBIAN_PACKAGE_SECTION "editors")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 # 运行时依赖 (去掉 -dev 后缀，只保留运行时库)
