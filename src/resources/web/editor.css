@@ -961,3 +961,19 @@ body.dark .code-lang-option.active {
     border: 1px dashed #999;
     vertical-align: middle;
 }
+
+/* 搜索高亮 */
+.ProseMirror .search-match {
+    background-color: rgba(255, 213, 79, 0.45);   /* 淡黄 */
+    border-radius: 2px;
+}
+.ProseMirror .search-match-current {
+    background-color: rgba(255, 152, 0, 0.7);     /* 橙：当前匹配 */
+    border-radius: 2px;
+}
+body.dark .ProseMirror .search-match {
+    background-color: rgba(255, 213, 79, 0.35);
+}
+body.dark .ProseMirror .search-match-current {
+    background-color: rgba(255, 152, 0, 0.8);
+}

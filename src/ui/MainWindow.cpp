@@ -93,13 +93,32 @@ void MainWindow::setupUi()
     m_statusBar = new StatusBar(this);
     setStatusBar(m_statusBar);
 
-    // Ctrl+F 显示/隐藏搜索栏
+    // Ctrl+F 显示/隐藏搜索栏（仅查找模式）
     QShortcut *findShortcut = new QShortcut(QKeySequence::Find, this);
     connect(findShortcut, &QShortcut::activated, this, [this]() {
         m_searchBar->setVisible(!m_searchBar->isVisible());
         if (m_searchBar->isVisible()) {
+            m_searchBar->setReplaceMode(false);
             m_searchBar->focusFindField();
         }
+    });
+
+    // Ctrl+H：显示搜索栏 + 展开替换行
+    QShortcut *replaceShortcut = new QShortcut(QKeySequence("Ctrl+H"), this);
+    connect(replaceShortcut, &QShortcut::activated, this, [this]() {
+        m_searchBar->setVisible(true);
+        m_searchBar->setReplaceMode(true);
+        m_searchBar->focusFindField();
+    });
+
+    // F3 / Shift+F3：下一个 / 上一个（仅搜索栏可见时生效）
+    QShortcut *nextSc = new QShortcut(QKeySequence("F3"), this);
+    connect(nextSc, &QShortcut::activated, this, [this]() {
+        if (m_searchBar->isVisible()) runEditorCommand("window.editorApi.searchNext();");
+    });
+    QShortcut *prevSc = new QShortcut(QKeySequence("Shift+F3"), this);
+    connect(prevSc, &QShortcut::activated, this, [this]() {
+        if (m_searchBar->isVisible()) runEditorCommand("window.editorApi.searchPrev();");
     });
 
     // Esc：优先关闭模态编辑面板，否则隐藏搜索栏
@@ -323,61 +342,33 @@ void MainWindow::connectSignals()
     });
 
     // === 搜索栏 ===
-    connect(m_searchBar, &SearchBar::closeRequested, this, [this]() {
+    // JS 字符串字面量转义（query / rep 嵌入 runJavaScript）
+    auto jsStr = [](const QString &s) {
+        QString t(s);
+        t.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
+        return t;
+    };
+    auto runSearchJs = [this](const QString &jsBody) {
+        EditorTab *tab = m_tabWidget->currentEditorTab();
+        if (tab) tab->runJsCommand("(function(){var ed=window.editorApi;if(!ed||!ed.editor)return;" + jsBody + "})();");
+    };
+
+    connect(m_searchBar, &SearchBar::searchParamsChanged, this,
+            [this, &jsStr, &runSearchJs](const QString &text, bool cs, bool rx, bool ww) {
+        runSearchJs(QStringLiteral("ed.startSearch('%1',%2,%3,%4);")
+                    .arg(jsStr(text)).arg(cs).arg(rx).arg(ww));
+    });
+    connect(m_searchBar, &SearchBar::findNextRequested, this, [this, &runSearchJs]() { runSearchJs("ed.searchNext();"); });
+    connect(m_searchBar, &SearchBar::findPrevRequested, this, [this, &runSearchJs]() { runSearchJs("ed.searchPrev();"); });
+    connect(m_searchBar, &SearchBar::replaceRequested, this, [this, &jsStr, &runSearchJs](const QString &rep) {
+        runSearchJs(QStringLiteral("ed.replaceOne('%1');").arg(jsStr(rep)));
+    });
+    connect(m_searchBar, &SearchBar::replaceAllRequested, this, [this, &jsStr, &runSearchJs](const QString &rep) {
+        runSearchJs(QStringLiteral("ed.replaceAll('%1');").arg(jsStr(rep)));
+    });
+    connect(m_searchBar, &SearchBar::closeRequested, this, [this, &runSearchJs]() {
         m_searchBar->setVisible(false);
-        EditorTab *tab = m_tabWidget->currentEditorTab();
-        if (tab) tab->webView()->findText("");
-    });
-    connect(m_searchBar, &SearchBar::findRequested, this, [this](
-            const QString &text, bool caseSensitive) {
-        EditorTab *tab = m_tabWidget->currentEditorTab();
-        if (tab && !text.isEmpty()) {
-            QWebEnginePage::FindFlags flags;
-            if (caseSensitive) flags |= QWebEnginePage::FindCaseSensitively;
-            tab->webView()->findText(text, flags);
-        }
-    });
-    connect(m_searchBar, &SearchBar::replaceRequested, this, [this](
-            const QString &find, const QString &replace) {
-        EditorTab *tab = m_tabWidget->currentEditorTab();
-        if (tab && !find.isEmpty()) {
-            QString f(find), r(replace);
-            f.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
-            r.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
-            tab->webView()->findText(find);
-            tab->runJsCommand(QStringLiteral(
-                "(function(){"
-                "var ed=window.editorApi;if(!ed||!ed.editor)return;"
-                "var f='%1',r='%2',done=false;"
-                "ed.editor.state.doc.descendants(function(n,pos){"
-                "if(done||!n.isText)return;var i=n.text.indexOf(f);"
-                "if(i>=0){var s=pos+i;ed.editor.chain()"
-                ".setTextSelection({from:s,to:s+f.length})"
-                ".insertContent(r).run();done=true;}"
-                "});"
-                "})();"
-            ).arg(f, r));
-        }
-    });
-    connect(m_searchBar, &SearchBar::replaceAllRequested, this, [this](
-            const QString &find, const QString &replace) {
-        EditorTab *tab = m_tabWidget->currentEditorTab();
-        if (tab && !find.isEmpty()) {
-            QString f(find), r(replace);
-            f.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
-            r.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
-            tab->runJsCommand(QStringLiteral(
-                "(function(){"
-                "var ed=window.editorApi;if(!ed||!ed.editor)return;"
-                "var f='%1',r='%2',c=0,tr=ed.editor.state.tr;"
-                "ed.editor.state.doc.descendants(function(n,pos){"
-                "if(!n.isText)return;var t=n.text,i=t.indexOf(f);"
-                "while(i>=0){tr.replaceWith(pos+i,pos+i+f.length,"
-                "ed.editor.schema.text(r));c++;i=t.indexOf(f,i+1);}"
-                "});if(c>0)ed.editor.view.dispatch(tr);"
-                "})();"
-            ).arg(f, r));
-        }
+        runSearchJs("ed.stopSearch();");
     });
 }
 
@@ -413,6 +404,14 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
     connect(bridge, &EditorBridge::historyStateChanged, this,
             [this](bool canUndo, bool canRedo, int /*tabId*/) {
                 m_toolBar->updateHistoryState(canUndo, canRedo);
+            });
+
+    // 搜索计数回传 → 仅更新当前 tab 的搜索栏
+    connect(bridge, &EditorBridge::searchMatchUpdated, this,
+            [this, bridge](int total, int current, int /*tabId*/) {
+                EditorTab *cur = m_tabWidget->currentEditorTab();
+                if (cur && cur->bridge() == bridge)
+                    m_searchBar->setCount(total, current);
             });
 
     // 跟踪模态编辑面板（Mermaid/数学公式）打开/关闭状态 → Esc 快捷键优先级
@@ -454,6 +453,11 @@ void MainWindow::onTabChanged(int tabId)
         tab->setInTable(false);
         // 同步新标签页的格式状态到工具栏
         tab->runJsCommand("if(window.editorApi && window.editorApi.syncFormatState) window.editorApi.syncFormatState();");
+    }
+    // 切 tab：搜索栏计数重置为新当前 tab 的状态（JS 侧异步回传实际计数）
+    if (m_searchBar->isVisible()) {
+        m_searchBar->setCount(0, 0);
+        runEditorCommand("if(window.editorApi && window.editorApi._notifySearchCount) window.editorApi._notifySearchCount();");
     }
 }
 
@@ -609,6 +613,9 @@ void MainWindow::onToggleSourceMode()
                 tab->setSourceMode(true);
                 m_toolBar->setSourceMode(true);
                 m_statusBar->setSourceMode(true);
+                // 源码模式下 editorApi 搜索方法直接 return，给用户提示
+                if (m_searchBar->isVisible())
+                    m_statusBar->showMessage("源码模式暂不支持搜索", 3000);
                 if (QAction *act = m_menuBar->findChild<QAction *>(
                         QStringLiteral("sourceModeAction")))
                     act->setChecked(true);
