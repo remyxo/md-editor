@@ -285,3 +285,8 @@ QLineEdit {
 QLineEdit:focus { border-color: #8ab4f8; }
 
 /* kbd 键盘按键（web 编辑器内样式见 editor.css） */
+
+/* 搜索栏：导航/关闭等小按钮（全局 QPushButton padding 6px 16px 会挤爆窄按钮） */
+#searchBar QPushButton {
+    padding: 4px 6px;
+}
