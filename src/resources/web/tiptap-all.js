@@ -58034,7 +58034,7 @@ ${prefix}
     return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
   function isWordChar(ch2) {
-    return !!ch2 && /[\p{L}\p{N}_]/u.test(ch2);
+    return !!ch2 && /[\p{L}\p{N}_]/u.test(ch2) && !/\p{Script=Han}/u.test(ch2);
   }
   function searchMatcher(text2, query, options) {
     var opts = options || {};

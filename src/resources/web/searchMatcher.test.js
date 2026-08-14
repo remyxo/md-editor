@@ -22,8 +22,9 @@ describe('searchMatcher', () => {
   it('全词 Unicode：中文逗号边界算全词', () => {
     expect(searchMatcher('你好，世界', '你好', { wholeWord: true })).toEqual([{ start: 0, end: 2 }]);
   });
-  it('全词 Unicode：紧邻汉字不算全词', () => {
-    expect(searchMatcher('你好世界', '你好', { wholeWord: true })).toEqual([]);
+  it('全词 Unicode：紧邻汉字仍算全词（CJK 不阻断边界）', () => {
+    // 中文无空格分词，汉字不参与 word boundary 判定
+    expect(searchMatcher('你好世界', '你好', { wholeWord: true })).toEqual([{ start: 0, end: 2 }]);
   });
   it('全词 ASCII：嵌入更长单词不算', () => {
     expect(searchMatcher('foo bar foobar', 'foo', { wholeWord: true })).toEqual([{ start: 0, end: 3 }]);
@@ -46,7 +47,7 @@ describe('searchMatcher', () => {
 
 describe('escapeRegExp / isWordChar', () => {
   it('转义元字符', () => { expect(escapeRegExp('a.b*')).toBe('a\\.b\\*'); });
-  it('汉字是词字符', () => { expect(isWordChar('你')).toBe(true); });
+  it('汉字不是词字符（CJK 不参与 word boundary）', () => { expect(isWordChar('你')).toBe(false); });
   it('标点不是词字符', () => { expect(isWordChar('，')).toBe(false); });
   it('\\u0000 不是词字符', () => { expect(isWordChar('\u0000')).toBe(false); });
 });
