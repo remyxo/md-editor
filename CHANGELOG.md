@@ -2,6 +2,21 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] — 2026-08-14
+
+本次为搜索增强大版本：用自写 TipTap 扩展 + ProseMirror plugin（`Decoration.inline` 高亮）替换 Chromium `findText`，查找/替换全面增强。
+
+### 新增
+
+- **搜索增强** — 正则 / 全词（Unicode 词边界）/ 大小写 toggle、匹配计数 `n/m`、上下导航（回绕）、替换与全部替换（正则反向引用 `$1/$2/$&`），统一走自写 ProseMirror `Decoration.inline` 高亮（替换 Chromium `findText`）
+- **搜索 UI 重构** — SearchBar 两行折叠布局（Ctrl+F 仅查找 / Ctrl+H 展开替换行）、F3 / Shift+F3 导航、Enter / Shift+Enter 导航、150ms 去抖
+- **JS 测试基建** — 接入 vitest + jsdom，`npm test` 覆盖 searchMatcher（16 用例）与 searchPlugin（11 用例），CI 运行 JS 测试
+
+### 修复
+
+- **全部替换位置漂移** — 改为从尾向前替换，不同长度替换不再错位
+- 替换与查找的大小写/正则脱节（现共用同一 matcher）
+
 ## [0.5.0] — 2026-08-14
 
 本次为图片功能大版本，集中落地粘贴/拖拽图片落盘与本地图片渲染，并修复块级图片的往返保真问题。

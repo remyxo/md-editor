@@ -30,6 +30,12 @@ jobs:
           qt6-webchannel-dev \
           qmake6
 
+    - name: JS 测试 (vitest)
+      working-directory: src/resources/web
+      run: |
+        npm ci
+        npm test
+
     - name: 配置 CMake (Release)
       run: |
         cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
