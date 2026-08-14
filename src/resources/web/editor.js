@@ -1573,11 +1573,13 @@ window.editorApi = {
     searchNext: function () {
         if (!this.editor || this.isSourceMode) return;
         window.searchPlugin.searchNext(this.editor.view);
+        this.editor.commands.focus();   // 焦点移入编辑器，显示匹配处选区
         this._notifySearchCount();
     },
     searchPrev: function () {
         if (!this.editor || this.isSourceMode) return;
         window.searchPlugin.searchPrev(this.editor.view);
+        this.editor.commands.focus();   // 焦点移入编辑器，显示匹配处选区
         this._notifySearchCount();
     },
     replaceOne: function (rep) {
