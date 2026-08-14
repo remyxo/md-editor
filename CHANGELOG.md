@@ -10,11 +10,18 @@
 
 - **搜索增强** — 正则 / 全词（Unicode 词边界）/ 大小写 toggle、匹配计数 `n/m`、上下导航（回绕）、替换与全部替换（正则反向引用 `$1/$2/$&`），统一走自写 ProseMirror `Decoration.inline` 高亮（替换 Chromium `findText`）
 - **搜索 UI 重构** — SearchBar 两行折叠布局（Ctrl+F 仅查找 / Ctrl+H 展开替换行）、F3 / Shift+F3 导航、Enter / Shift+Enter 导航、150ms 去抖
+- **编辑菜单搜索/替换项** — 菜单入口与快捷键统一由 QAction 携带
+- **标签页搜索会话** — 切换标签页自动按当前查询词重新搜索；查询参数未变时恢复上次匹配位置（3/4 不回退 1/4）
 - **JS 测试基建** — 接入 vitest + jsdom，`npm test` 覆盖 searchMatcher（16 用例）与 searchPlugin（11 用例），CI 运行 JS 测试
 
 ### 修复
 
 - **全部替换位置漂移** — 改为从尾向前替换，不同长度替换不再错位
+- **搜索栏信号悬空引用崩溃** — lambda 按引用捕获栈局部变量，输入触发信号时 core dump，改按值捕获
+- **全词匹配中文失效** — CJK 不参与词边界判定，「异常路径」等中文短语全词搜索不再只剩标点边界一处
+- **搜索导航焦点** — 点 ↓/↑ 后焦点移入编辑器，匹配处选区可见
+- **搜索栏 ✕ 按钮显示不清** — 全局 QPushButton padding 挤压窄按钮，`#searchBar` 收紧 padding
+- **Ctrl+F/Ctrl+H 歧义重载** — 删除与菜单 QAction 重复的 QShortcut
 - 替换与查找的大小写/正则脱节（现共用同一 matcher）
 
 ## [0.5.0] — 2026-08-14
