@@ -93,20 +93,8 @@ void MainWindow::setupUi()
     m_statusBar = new StatusBar(this);
     setStatusBar(m_statusBar);
 
-    // Ctrl+F 显示/隐藏搜索栏（仅查找模式）
-    QShortcut *findShortcut = new QShortcut(QKeySequence::Find, this);
-    connect(findShortcut, &QShortcut::activated, this, [this]() {
-        if (m_searchBar->isVisible() && !m_searchBar->replaceModeActive())
-            m_searchBar->setVisible(false);
-        else
-            showSearchBar(false);
-    });
-
-    // Ctrl+H：显示搜索栏 + 展开替换行
-    QShortcut *replaceShortcut = new QShortcut(QKeySequence("Ctrl+H"), this);
-    connect(replaceShortcut, &QShortcut::activated, this, [this]() {
-        showSearchBar(true);
-    });
+    // Ctrl+F / Ctrl+H 的快捷键由编辑菜单 QAction 携带（见 MenuBar），
+    // 此处不再建 QShortcut，避免 Ambiguous shortcut overload。
 
     // F3 / Shift+F3：下一个 / 上一个（仅搜索栏可见时生效）
     QShortcut *nextSc = new QShortcut(QKeySequence("F3"), this);
@@ -193,7 +181,13 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::saveFileAs, this, &MainWindow::onSaveFileAs);
     connect(m_menuBar, &MenuBar::undo, this, [this]() { runEditorCommand("window.editorApi.undo();"); });
     connect(m_menuBar, &MenuBar::redo, this, [this]() { runEditorCommand("window.editorApi.redo();"); });
-    connect(m_menuBar, &MenuBar::findRequested, this, [this]() { showSearchBar(false); });
+    connect(m_menuBar, &MenuBar::findRequested, this, [this]() {
+        // 仅查找模式下 Ctrl+F 切换显隐；替换模式时切回仅查找
+        if (m_searchBar->isVisible() && !m_searchBar->replaceModeActive())
+            m_searchBar->setVisible(false);
+        else
+            showSearchBar(false);
+    });
     connect(m_menuBar, &MenuBar::replaceRequested, this, [this]() { showSearchBar(true); });
     // 工具栏撤销/重做按钮
     QAction *toolUndo = m_toolBar->findChild<QAction *>("undoAction");
