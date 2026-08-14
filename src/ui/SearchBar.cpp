@@ -101,6 +101,12 @@ void SearchBar::emitParamsNow()
                              m_regexBtn->isChecked(), m_wordBtn->isChecked());
 }
 
+void SearchBar::emitResumeNow()
+{
+    emit searchResumeRequested(m_findEdit->text(), m_caseBtn->isChecked(),
+                               m_regexBtn->isChecked(), m_wordBtn->isChecked());
+}
+
 void SearchBar::focusFindField()
 {
     m_findEdit->setFocus();

@@ -351,6 +351,11 @@ void MainWindow::connectSignals()
         runSearchJs(QStringLiteral("ed.startSearch('%1',%2,%3,%4);")
                     .arg(jsStr(text)).arg(cs).arg(rx).arg(ww));
     });
+    connect(m_searchBar, &SearchBar::searchResumeRequested, this,
+            [this, jsStr, runSearchJs](const QString &text, bool cs, bool rx, bool ww) {
+        runSearchJs(QStringLiteral("ed.resumeSearch('%1',%2,%3,%4);")
+                    .arg(jsStr(text)).arg(cs).arg(rx).arg(ww));
+    });
     connect(m_searchBar, &SearchBar::findNextRequested, this, [this, runSearchJs]() { runSearchJs("ed.searchNext();"); });
     connect(m_searchBar, &SearchBar::findPrevRequested, this, [this, runSearchJs]() { runSearchJs("ed.searchPrev();"); });
     connect(m_searchBar, &SearchBar::replaceRequested, this, [this, jsStr, runSearchJs](const QString &rep) {
@@ -447,10 +452,11 @@ void MainWindow::onTabChanged(int tabId)
         // 同步新标签页的格式状态到工具栏
         tab->runJsCommand("if(window.editorApi && window.editorApi.syncFormatState) window.editorApi.syncFormatState();");
     }
-    // 切 tab：用搜索栏当前查询参数在新标签页重新执行搜索（查询词会话级、匹配文档级）
+    // 切 tab：恢复搜索（查询词会话级、匹配与位置文档级——插件 state 逐 tab 独立，
+    // 参数未变时保留当前匹配位置，参数变了才重新搜索）
     if (m_searchBar->isVisible() && tab) {
         m_searchBar->setCount(0, 0);   // 先清零，等新 tab 异步回传实际计数
-        m_searchBar->emitParamsNow();
+        m_searchBar->emitResumeNow();
     }
 }
 

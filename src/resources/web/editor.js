@@ -1570,6 +1570,23 @@ window.editorApi = {
         });
         this._notifySearchCount();
     },
+    // 切回标签页恢复搜索：插件 state 逐 tab 独立，若查询参数未变则保留
+    // 当前匹配位置（current），仅刷新计数；参数变了才重新搜索。
+    resumeSearch: function (query, caseSensitive, regex, wholeWord) {
+        if (!this.editor || this.isSourceMode) return;
+        var sp = window.searchPlugin; if (!sp) return;
+        var st = sp.searchKey.getState(this.editor.state);
+        var same = st && st.query === (query || '')
+            && !!st.flags.regex === !!regex
+            && !!st.flags.wholeWord === !!wholeWord
+            && !!st.flags.caseSensitive === !!caseSensitive;
+        if (!same) {
+            sp.requestSearch(this.editor.view, query || '', {
+                regex: !!regex, wholeWord: !!wholeWord, caseSensitive: !!caseSensitive
+            });
+        }
+        this._notifySearchCount();
+    },
     searchNext: function () {
         if (!this.editor || this.isSourceMode) return;
         window.searchPlugin.searchNext(this.editor.view);
