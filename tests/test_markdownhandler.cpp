@@ -1667,6 +1667,99 @@ private slots:
                      qPrintable("\\> 不应丢失，md=[" + md2 + "]"));
         }
     }
+
+    // ===== 块级图片分隔（TipTap 块级 Image 节点 → 独立块）=====
+
+    void testBlockImageAfterHeading()
+    {
+        // Bug：TipTap Image 是块级原子节点（inline:false），getHTML() 输出裸 <img>
+        // 顶层元素。fromHtml 若不处理，QTextDocument::setHtml 会把游离 <img> 并入
+        // 前一个标题块，toMarkdown 产出 "# 标题![](...)"，块边界丢失。
+        QString html = QStringLiteral("<h1>标题</h1><img src=\"x.jpg\">");
+        QString md = MarkdownHandler::fromHtml(html);
+        // 图片不应粘在标题同一行
+        QVERIFY2(!md.contains("标题!["),
+                 qPrintable("图片不应粘在标题后，md=[" + md + "]"));
+        // 标题与图片间的空行应保留（往返保真：不删用户写入的块间空行）。
+        // 该空行不影响 TipTap 渲染，且与"段落→图片需空行"保持一致。
+        QVERIFY2(md.contains("# 标题\n\n!["),
+                 qPrintable("标题与图片间应保留空行，md=[" + md + "]"));
+    }
+
+    void testBlockImageAfterParagraph()
+    {
+        // 普通文本回车后插入图片：图片应与段落分开
+        QString html = QStringLiteral("<p>普通文本</p><img src=\"x.jpg\">");
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(!md.contains("普通文本!["),
+                 qPrintable("图片不应粘在段落文本后，md=[" + md + "]"));
+        int p = md.indexOf("普通文本");
+        int img = md.indexOf("](x.jpg)");
+        QVERIFY2(p >= 0 && img > p,
+                 qPrintable("段落与图片均应存在，md=[" + md + "]"));
+        QVERIFY2(md.mid(p, img - p).contains("\n\n"),
+                 qPrintable("段落与图片间应有空行，md=[" + md + "]"));
+    }
+
+    void testBlockImageTipTapExact()
+    {
+        // 用户实际复现输入：标题 + 裸 <img> + 尾随空 <p></p>（光标行）
+        QString html = QStringLiteral(
+            "<h1>这是标题1</h1>"
+            "<img src=\"/home/daijd/Desktop/464-640x480.jpg\">"
+            "<p></p>");
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(!md.contains("这是标题1!["),
+                 qPrintable("图片不应粘在标题后，md=[" + md + "]"));
+        QVERIFY2(md.contains("# 这是标题1"),
+                 qPrintable("标题应保留，md=[" + md + "]"));
+        // 标题与图片间空行保留（往返保真，见 testBlockImageAfterHeading）
+        QVERIFY2(md.contains("# 这是标题1\n\n!["),
+                 qPrintable("标题与图片间应保留空行，md=[" + md + "]"));
+    }
+
+    void testBlockImageAtStart()
+    {
+        // 图片作为文档首块：应为独立块，不与后续文本合并
+        QString html = QStringLiteral("<img src=\"x.jpg\"><p>正文</p>");
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(!md.contains("![") || md.indexOf("](x.jpg)") < md.indexOf("正文"),
+                 qPrintable("图片应在正文之前为独立块，md=[" + md + "]"));
+        int img = md.indexOf("](x.jpg)");
+        int t = md.indexOf("正文");
+        QVERIFY2(img >= 0 && t > img,
+                 qPrintable("图片与正文均应存在，md=[" + md + "]"));
+        QVERIFY2(md.mid(img, t - img).contains("\n\n"),
+                 qPrintable("图片与正文间应有空行，md=[" + md + "]"));
+    }
+
+    void testInlineImageInParagraphUnchanged()
+    {
+        // 回归保护：已在 <p> 内的内联图片应留在段落内，不被提升为独立块
+        QString html = QStringLiteral("<p>前文<img src=\"x.jpg\">后文</p>");
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(!md.contains("\n\n!["),
+                 qPrintable("内联图片不应被拆成独立块，md=[" + md + "]"));
+        QVERIFY2(md.contains("前文") && md.contains("后文"),
+                 qPrintable("前后文应保留，md=[" + md + "]"));
+    }
+
+    // 加载方向：标题后的块级图片必须渲染为裸 <img>，不得包在 <p> 里。
+    // TipTap 的 Image 节点为块级原子节点，若传入 <p><img></p>，TipTap 会把图片
+    // 提升为块、却把空 <p> 壳留在原处 —— 渲染成标题与图片之间的空行。
+    // （与 fromHtml 的步骤 E 互为对偶：保存方向 Qt 需 <p> 才认块，加载方向 TipTap 需裸 <img>）
+    void testToHtmlUnwrapsBlockImageFromParagraph()
+    {
+        const QString md = QStringLiteral(
+            "# 这是标题1\n![464-640x480.jpg](images/464-640x480.jpg)");
+        const QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("<img"),
+                 qPrintable("应含图片，html=[" + html + "]"));
+        // 图片若包在 <p> 里，TipTap 提升后会留空 <p> 渲染成空行
+        bool wrapped = QRegularExpression("<p[^>]*>\\s*<img\\b").match(html).hasMatch();
+        QVERIFY2(!wrapped,
+                 qPrintable("块级图片不应包在 <p> 里（会致渲染空行），html=[" + html + "]"));
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)

@@ -1,6 +1,7 @@
 #include "MarkdownHandler.h"
 #include <QTextDocument>
 #include <QRegularExpression>
+#include <QSet>
 
 // 行是否仅为 <br> 等硬换行标签（含属性及自闭合写法）
 // 用于 BRMARKER 逻辑：<br> 本身即是换行，其前后 \n 不应再触发 BRMARKER
@@ -985,6 +986,16 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     html.replace(QRegularExpression(
         "(</div>)\\s*<p[^>]*>(<br[^>]*>)?</p>"), "\\1");
 
+    // 块级图片解包：<p><img/></p> → 裸 <img>。
+    // TipTap 的 Image 节点为块级原子节点（inline:false）。setMarkdown 把独立行图片
+    // 渲染为 <p><img/></p>；若原样喂给 TipTap，解析器会把块级图片提升出 <p>、却把
+    // 空 <p> 壳留在原位 —— 渲染成图片与相邻块（标题/段落）之间的空行。此处把"仅含
+    // 一张图片（可有空白）"的 <p> 解开，使 TipTap 直接得到裸块级 <img>。
+    // （与 fromHtml 步骤 E 互为对偶：保存方向 Qt 需 <p> 才认块；加载方向 TipTap 需裸 <img>）
+    html.replace(QRegularExpression(
+        QStringLiteral("<p[^>]*>\\s*(<img\\b[^>]*>)\\s*</p>")),
+        QStringLiteral("\\1"));
+
     return html;
 }
 
@@ -1595,6 +1606,53 @@ QString MarkdownHandler::fromHtml(const QString &html)
         if (nDs > 0 || nEq > 0 || nLt > 0 || nGt > 0) processed = result;
     }
 
+    // E) 裸顶层 <img> 强制为独立块。
+    //    TipTap 的 Image 节点为块级原子节点（inline:false），getHTML() 将其序列化
+    //    为不包 <p> 的裸 <img> 顶层元素。QTextDocument::setHtml 会把这种游离的内联
+    //    <img> 并入前一个块（标题/段落），导致 toMarkdown 输出 "# 标题![](...)"、
+    //    块边界丢失。此处用轻量深度扫描，把"文档直接子节点"（深度 0）的 <img> 包进
+    //    <p>，使其成为独立块；已在 <p>/<a>/<hN> 等容器内的内联图片不受影响。
+    {
+        static const QRegularExpression tagRe(QStringLiteral(
+            "<(/?)([a-zA-Z][a-zA-Z0-9]*)((?:[^>\"']|\"[^\"]*\"|'[^']*')*)>"));
+        // HTML void 元素：无结束标签，不改变深度
+        static const QSet<QString> voidTags = {
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "keygen", "link", "meta", "param", "source", "track", "wbr"
+        };
+        QString result;
+        result.reserve(processed.size());
+        int depth = 0;          // 当前所在块/内联容器的嵌套层数
+        int pos = 0;
+        bool changed = false;
+        for (auto m = tagRe.match(processed, pos); m.hasMatch();
+             m = tagRe.match(processed, pos)) {
+            result += processed.mid(pos, m.capturedStart() - pos);
+            const QString full = m.captured(0);
+            const bool isClosing = !m.captured(1).isEmpty();
+            const QString name = m.captured(2).toLower();
+            const QString attrs = m.captured(3);
+            const bool selfClosed = attrs.trimmed().endsWith('/');
+
+            if (isClosing) {
+                if (depth > 0) --depth;
+                result += full;
+            } else if (name == "img" && depth == 0) {
+                // 裸顶层图片 → 包进 <p>，强制独立块（img 为 void，深度不变）
+                result += "<p>" + full + "</p>";
+                changed = true;
+            } else if (voidTags.contains(name) || selfClosed) {
+                result += full;   // void / 自闭合标签，深度不变
+            } else {
+                ++depth;
+                result += full;
+            }
+            pos = m.capturedStart() + m.capturedLength();
+        }
+        result += processed.mid(pos);   // 末尾剩余文本
+        if (changed) processed = result;
+    }
+
     QTextDocument doc;
     doc.setHtml(processed);
     QString md = doc.toMarkdown();
@@ -1740,6 +1798,13 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
         md = lines.join('\n');
     }
+
+    // 7) 标题与图片之间的空行：保留（往返保真）。
+    //    toMarkdown 在块间默认输出空行，标题→图片亦然。曾在此折叠为单换行，但那会
+    //    删掉用户外部编辑插入的空行（违反往返保真核心原则），且该空行不影响 TipTap
+    //    渲染（toHtml 已把 <p><img/></p> 解包为裸 <img>，渲染为紧邻块）。故不再折叠，
+    //    与"段落→图片需空行"保持一致。
+    //    （注：段落→图片的空行是结构必需，否则图片被并入段落成内联图片。）
 
     while (md.endsWith('\n'))
         md.chop(1);
