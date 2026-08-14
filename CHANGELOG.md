@@ -2,6 +2,28 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] — 2026-08-14
+
+本次为图片功能大版本，集中落地粘贴/拖拽图片落盘与本地图片渲染，并修复块级图片的往返保真问题。
+
+### 新增
+
+- **粘贴/拖拽图片落盘** — 粘贴或拖拽图片时自动保存到文档同目录 `images/` 文件夹，markdown 中存为相对路径（`ImageManager` 落盘工具 + `EditorBridge.requestImageSave` 通信 + `MainWindow` 编排 + 占位图回调替换）
+- **图片自定义 NodeView** — `attrs.src` 存储原始路径保往返保真，渲染时经 `_resolveImageSrc` 解析；新增 `localimg://` 自定义 URL scheme（`LocalImageSchemeHandler` 读盘返回字节），绕过 qrc 页面无法加载 `file://` 本地图片的限制
+- **CI 运行测试** — GitHub Actions 开启 `BUILD_TESTS` 并运行 `ctest`
+
+### 修复
+
+- **块级图片粘在标题/正文上** — `fromHtml` 把 TipTap 裸顶层 `<img>` 包进 `<p>`，使 `QTextDocument` 正确识别为独立块（不再产出 `# 标题![image]`）
+- **标题/正文后图片渲染多余空行** — `toHtml` 把 `<p><img/></p>` 解包为裸 `<img>`，消除 TipTap 提升块级图片后残留的空 `<p>`
+- **标题→图片空行往返丢失** — 不再折叠标题与图片之间的空行，保留用户写入的块间空行（往返保真）
+- **绝对路径图片无法显示** — `_resolveImageSrc` 补 `file://` 前缀
+- **图片读取失败占位图残留** — `FileReader` 补 `onerror` 清理占位图
+
+### 修改
+
+- **DEB 包元数据** — maintainer 改为 remyxo，描述补充 HTML 标签 / DOCX
+
 ## [0.3.10] — 2026-08-12
 
 ### 新增
