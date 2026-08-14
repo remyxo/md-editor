@@ -69,3 +69,8 @@ void EditorBridge::formatChanged(const QString &json)
         emit formatStateChanged(doc.object(), m_tabId);
     }
 }
+
+void EditorBridge::searchMatchChanged(int total, int current)
+{
+    emit searchMatchUpdated(total, current, m_tabId);
+}

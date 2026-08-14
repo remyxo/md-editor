@@ -117,6 +117,18 @@ private slots:
         QCOMPARE(spy[0][3].toString(), QStringLiteral("photo.png")); // suggestedName
         QCOMPARE(spy[0][4].toInt(), 7);                              // tabId
     }
+
+    void testSearchMatchForwarding() {
+        EditorBridge bridge(7);
+        QSignalSpy spy(&bridge, &EditorBridge::searchMatchUpdated);
+
+        bridge.searchMatchChanged(12, 3);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy[0][0].toInt(), 12);  // total
+        QCOMPARE(spy[0][1].toInt(), 3);   // current
+        QCOMPARE(spy[0][2].toInt(), 7);   // tabId
+    }
 };
 
 QTEST_MAIN(TestEditorBridge)

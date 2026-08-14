@@ -25,6 +25,8 @@ public slots:
     // JS → C++：请求把粘贴/拖拽的图片字节落盘（requestId 用于回调定位占位图）
     void requestImageSave(const QString &requestId, const QString &base64,
                           const QString &ext, const QString &suggestedName);
+    // JS → C++：搜索匹配计数（total 总数，current 当前第几个，1 基；0 表示无匹配）
+    void searchMatchChanged(int total, int current);
 
 signals:
     // 通知 C++ UI 组件
@@ -37,6 +39,7 @@ signals:
     void modalDialogStateChanged(bool open, int tabId);
     void imageSaveRequested(const QString &requestId, const QString &base64,
                             const QString &ext, const QString &suggestedName, int tabId);
+    void searchMatchUpdated(int total, int current, int tabId);
 
 private:
     int m_tabId;
