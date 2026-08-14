@@ -1,6 +1,6 @@
 # 图片落盘 + 图片缩放 + 搜索增强
 
-> 状态：已确认，待写实现计划
+> 状态：搜索增强（P3）已确认并决议落地，待写实现计划；图片（P1/P2）已于 0.5.0 落地
 > 日期：2026-08-13
 > 范围：三个相对独立的功能合为一个阶段，分 P0–P3 四期实施，每期独立可测可提交
 > 版本基线：`0.3.10`（`CMakeLists.txt`）
@@ -18,6 +18,8 @@
 | 搜索架构 | 自写 TipTap 扩展（ProseMirror `Decoration.inline`），彻底替换 Chromium `findText` |
 | 搜索匹配逻辑 | 纯函数 `searchMatcher`，vitest 测 |
 | 正则替换 | 支持 `$1/$2/$&` 反向引用 |
+| 全词匹配 | Unicode 词边界后置过滤（中文友好），非 ASCII `\b` |
+| 源码模式搜索 | 本阶段不纳入（仅 WYSIWYG） |
 | 替换栏 UI | 可折叠；Ctrl+F 仅查找，Ctrl+H 展开替换行 |
 | 自动测试 | JS 加 vitest；C++ 加 QtTest；CI 启用 `BUILD_TESTS=ON` 并跑 vitest |
 
@@ -181,7 +183,7 @@ MarkdownHandler 新增 `ZZIMG` 占位符路径（与现有 `ZZHI`/`ZZBR` 同机�
 searchMatcher(text, query, { regex, wholeWord, caseSensitive }) → [{ start, end }]
 ```
 
-正则模式按 flags 构建 `RegExp`（`g` + 可选 `i`）；wholeWord 用 `\b...\b` 包裹；纯文本模式先转义。**纯函数、无 ProseMirror 依赖、vitest 重点覆盖。**
+正则模式按 flags 构建 `RegExp`（`g` + 可选 `i`），非法正则返回 `[]`；纯文本模式先转义。**全词用 Unicode 词边界后置过滤**（非 `\b` 包裹）：`isWordChar = /[\p{L}\p{N}_]/u`，匹配 `[s,e)` 需两侧均非词字符；字面/正则模式统一此后置过滤（不破坏正则的 `|`/锚点）。**纯函数、无 ProseMirror 依赖、vitest 重点覆盖。**
 
 ### 4.3 replaceOne / replaceAll（含反向引用）
 
@@ -263,9 +265,10 @@ searchMatcher(text, query, { regex, wholeWord, caseSensitive }) → [{ start, en
 
 ---
 
-## 8. 未决项（实现时再定，不阻塞）
+## 8. 决议落地（2026-08-14 确认；图片相关未决项随 P1/P2 已落地，从略）
 
-- 大图阈值（暂定 20MB）与提示文案最终措辞。
-- NodeView 是否在 vitest/jsdom 下测拖拽，还是仅手动验证。
-- SearchBar 折叠动画细节。
-- 提示文本插入 vs 状态栏 toast 的最终选择（未保存/失败场景）。
+- ✅ **全词匹配 = Unicode 词边界后置过滤**（中文友好），非 ASCII `\b`。
+- ✅ **替换纳入本阶段**：查找/替换统一走新引擎，修复全部替换位置漂移，支持 `$1/$2/$&`。
+- ✅ **vitest 纳入本阶段**：devDep + jsdom + CI npm test；searchMatcher/Decoration 走 TDD。
+- ⬜ **源码模式搜索本阶段不纳入**：仅作用于 WYSIWYG 文档；源码模式打开搜索栏给状态栏提示。
+- 去抖 150ms、导航回绕 + 选区 + scrollIntoView、Ctrl+F 仅查找 / Ctrl+H 展开替换行（设计 §4.6）。
