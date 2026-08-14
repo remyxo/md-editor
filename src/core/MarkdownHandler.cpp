@@ -1548,17 +1548,22 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
     }
 
-    // D) 保护字面 **、==、&lt;、&gt; 不被 toMarkdown() 重新解释为 Markdown 语法。
+    // D) 保护字面 **、*、==、&lt;、&gt; 不被 toMarkdown() 重新解释为 Markdown 语法。
     //    用户通过 \*\*、\=\=、\<、\> 转义写入的字面符号，经 toHtml 已转为
     //    纯文本/HTML 实体；QTextDocument::toMarkdown() 不会反转为转义形式，
     //    直接输出裸 **/==，且 &lt;→\< 但 &gt;→>（不加反斜杠），不对称。
     //    此处用简易状态机识别 HTML 标签外的字面符号/实体并替换为占位符，
     //    还原时输出为转义形式，保证 \<、\> 往返保真。
+    //    孤立字面 *（非 **）同样需保护：Qt 6.4.2 的 toMarkdown 不会为标题/正文
+    //    内联文本中的 * 添加转义，重载时 *A* 会被误解析为强调，破坏往返保真。
+    //    注意：强调语法 * 来自 <em> 标签、在 setHtml 之后由 Qt 生成，本步在
+    //    setHtml 之前运行，故只命中真正的字面 *，不影响 <em>→* 的正常转换。
     {
         QString result;
         result.reserve(processed.size());
         bool inTag = false;
         int nDs = 0; // ** 计数
+        int nSt = 0; // 孤立 * 计数
         int nEq = 0; // == 计数
         int nLt = 0; // &lt; 计数
         int nGt = 0; // &gt; 计数
@@ -1576,6 +1581,13 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 backups << QStringLiteral("\\*\\*");
                 result += ph;
                 ++i;
+            } else if (!inTag && c == '*') {
+                // 孤立字面 *（已被上面的 ** 分支排除）：还原为 \*，
+                // 使转义与 Qt 版本无关（6.4.2 不转义、6.8.2 转义，统一为转义）。
+                QString ph = QString("ZZST%1ZZ").arg(nSt++);
+                placeholders << ph;
+                backups << QStringLiteral("\\*");
+                result += ph;
             } else if (!inTag && c == '=' && i + 1 < processed.size()
                        && processed[i + 1] == '=') {
                 QString ph = QString("ZZEQ%1ZZ").arg(nEq++);
@@ -1603,7 +1615,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 result += c;
             }
         }
-        if (nDs > 0 || nEq > 0 || nLt > 0 || nGt > 0) processed = result;
+        if (nDs > 0 || nSt > 0 || nEq > 0 || nLt > 0 || nGt > 0) processed = result;
     }
 
     // E) 裸顶层 <img> 强制为独立块。
@@ -1651,6 +1663,35 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
         result += processed.mid(pos);   // 末尾剩余文本
         if (changed) processed = result;
+    }
+
+    // F) 保护 <p> 行首的字面列表标记（数字./数字)/-/+），避免 toMarkdown 在
+    //    Qt 6.4.2 上不转义，导致重载时 "1. xxx" 被误解析为有序/无序列表
+    //    （违反往返保真：用户写入的段落须保持段落）。真正的列表为 <ol>/<ul>/<li>，
+    //    由 Qt 正常转换为列表语法，此处只处理 <p> 文本开头的字面标记。
+    //    标记用占位符保护后穿过 setHtml/toMarkdown（占位符为字母数字，无列表形态），
+    //    逆序还原阶段还原为转义形式（1\. / 1\) / \- / \+）。
+    {
+        QRegularExpression pListMarkerRe(
+            R"((<p\b[^>]*>)\s*(\d{1,9}[.)]|[+\-])(?=\s))");
+        int n = 0;
+        int offset = 0;
+        while (true) {
+            auto m = pListMarkerRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString marker = m.captured(2);
+            // 转义标记中的标点字符：1.→1\. / 1)→1\) / -→\- / +→\+
+            QString escaped;
+            if (marker.size() == 2)
+                escaped = marker.left(1) + QStringLiteral("\\") + marker.right(1);
+            else
+                escaped = QStringLiteral("\\") + marker;
+            QString ph = QString("ZZLM%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << escaped;
+            processed.replace(m.capturedStart(2), m.capturedLength(2), ph);
+            offset = m.capturedStart(2) + ph.length();
+        }
     }
 
     QTextDocument doc;
@@ -1702,7 +1743,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //    toHtml 重组可能因 Toolbar 反复操作后 TipTap getHTML() 的非常规格式
     //    而漏过；未剥离的 font-weight:700 被 TipTap Bold parseHTML 解析为
     //    <strong> mark，后续往返持续污染。此处检测并剥离两种模式：
-    //    a) 已有标题前缀：仅剥离 span/strong，保留 # 和 <div>
+    //    a) 已有标题前缀：剥离 span/strong，并按 font-size 重新定级前缀
     //    b) 无标题前缀：剥离后按 font-size 恢复标题前缀（xx-large→#, x-large→##, large→###）
     {
         // 匹配 <span style="...font-size:(xx-large|x-large|large)...font-weight:700...">text</span>
@@ -1717,16 +1758,38 @@ QString MarkdownHandler::fromHtml(const QString &html)
             return "### ";
         };
 
-        // 模式 a：已有标题前缀 — 仅剥离 span+strong
+        // 模式 a：已有标题前缀 — 剥离 span/strong，并按 font-size 重新定级前缀。
+        //    降解输入的前缀 # 可能与 font-size 隐含级别不符（如 "# <div>..x-large..>"
+        //    实为 h2）；font-size 是渲染时真正使用的级别，以其为准重新定级，
+        //    使结果与 Qt 版本无关（6.4.2 不转义前导 #，6.8.2 会转义为 \#）。
+        //    捕获组：1=旧前缀(丢弃) 2=div 属性 3=font-size 4=内容
         {
+            auto processPrefixed = [&](const QRegularExpression &re) {
+                int pos = 0;
+                while (true) {
+                    auto m = re.match(md, pos);
+                    if (!m.hasMatch()) break;
+                    QString divAttrs = m.captured(2).trimmed();
+                    QString fontSize = m.captured(3);
+                    QString content = m.captured(4);
+                    QString prefix = headingForSize(fontSize);
+                    QString replacement;
+                    if (divAttrs.isEmpty())
+                        replacement = prefix + content;
+                    else
+                        replacement = prefix + "<div " + divAttrs + ">" + content + "</div>";
+                    md.replace(m.capturedStart(), m.capturedLength(), replacement);
+                    pos = m.capturedStart() + replacement.length();
+                }
+            };
             static const QRegularExpression prefixedStrongSpan(
                 R"re(^(#{1,6}\s+)<div\b([^>]*)>\s*<strong>\s*<span\s+style\s*=\s*"(?=.*\bfont-size\s*:\s*(xx-large|x-large|large)\b)(?=.*\bfont-weight\s*:\s*700\b)[^"]*"[^>]*>(.*?)</span>\s*</strong>\s*</div>)re",
                 QRegularExpression::MultilineOption);
             static const QRegularExpression prefixedSpan(
                 R"re(^(#{1,6}\s+)<div\b([^>]*)>\s*<span\s+style\s*=\s*"(?=.*\bfont-size\s*:\s*(xx-large|x-large|large)\b)(?=.*\bfont-weight\s*:\s*700\b)[^"]*"[^>]*>(.*?)</span>\s*</div>)re",
                 QRegularExpression::MultilineOption);
-            md.replace(prefixedStrongSpan, "\\1<div\\2>\\4</div>");
-            md.replace(prefixedSpan, "\\1<div\\2>\\4</div>");
+            processPrefixed(prefixedStrongSpan);
+            processPrefixed(prefixedSpan);
         }
 
         // 模式 b：无标题前缀 — 剥离后恢复 # 前缀
