@@ -64,6 +64,7 @@ private:
     void setupUi();
     void connectSignals();
     void runEditorCommand(const QString &js);
+    void showSearchBar(bool withReplace);   // 显示搜索栏（withReplace: 展开替换行）
     void onImageSaveRequested(EditorTab *tab, const QString &requestId,
                               const QString &base64, const QString &ext,
                               const QString &suggestedName);

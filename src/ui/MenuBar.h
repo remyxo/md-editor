@@ -25,6 +25,8 @@ signals:
 
     void undo();
     void redo();
+    void findRequested();
+    void replaceRequested();
 
     void toggleSidebar();
     void toggleOutline();

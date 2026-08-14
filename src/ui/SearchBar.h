@@ -17,6 +17,7 @@ public:
     void setCount(int total, int current);      // bridge 回传：显示 n/m、禁用态
     void setReplaceMode(bool on);                // Ctrl+H 展开/收起替换行
     void emitParamsNow();                        // 立即触发一次（去抖 flush）
+    bool replaceModeActive() const { return m_replaceRow->isVisible(); }
 
 signals:
     void searchParamsChanged(const QString &text, bool caseSensitive, bool regex, bool wholeWord);

@@ -64,6 +64,14 @@ void MenuBar::setupUi()
     redoAct->setShortcut(QKeySequence::Redo);
     connect(redoAct, &QAction::triggered, this, &MenuBar::redo);
 
+    QAction *findAct = m_editMenu->addAction("搜索(&F)");
+    findAct->setShortcut(QKeySequence::Find);
+    connect(findAct, &QAction::triggered, this, &MenuBar::findRequested);
+
+    QAction *replaceAct = m_editMenu->addAction("替换(&H)");
+    replaceAct->setShortcut(QKeySequence("Ctrl+H"));
+    connect(replaceAct, &QAction::triggered, this, &MenuBar::replaceRequested);
+
     // === 视图菜单 ===
     m_viewMenu = addMenu("视图(&V)");
 
