@@ -497,6 +497,16 @@ function buildEmojiExtension() {
     });
 }
 
+// 构造搜索扩展：包装自写 ProseMirror plugin（见 searchPlugin.js）
+function buildSearchExtension() {
+    return TipTapExtension.create({
+        name: 'search',
+        addProseMirrorPlugins: function () {
+            return [window.searchPlugin.createSearchPlugin()];
+        }
+    });
+}
+
 // 构造 Mermaid 块节点（原子节点，源码存于 source 属性）
 // - parseHTML 抢先匹配 <pre><code class="language-mermaid">（priority 1000，优先于 codeBlock）
 // - renderHTML 输出相同的 <pre><code class="language-mermaid">，与 MarkdownHandler 往返一致
@@ -1008,6 +1018,9 @@ window.editorApi = {
             exts.push(buildFootnoteContainer());
             exts.push(buildFootnoteDef());
         }
+        // 搜索高亮（自写 ProseMirror plugin，TipTap Extension 包装）
+        if (TipTapExtension && window.searchPlugin)
+            exts.push(buildSearchExtension());
         return exts;
     },
 
@@ -1038,6 +1051,7 @@ window.editorApi = {
                 self.notifyHeadings();
                 self.notifyWordCount();
                 self.notifyHistory();
+                self._notifySearchCount();
             },
             onSelectionUpdate: function(args) {
                 var ed = args.editor;
@@ -1546,6 +1560,46 @@ window.editorApi = {
             var el = dom.node.nodeType === 3 ? dom.node.parentElement : dom.node;
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
+    },
+    // === 搜索 ===
+    startSearch: function (query, caseSensitive, regex, wholeWord) {
+        if (!this.editor || this.isSourceMode) return;
+        var sp = window.searchPlugin; if (!sp) return;
+        sp.requestSearch(this.editor.view, query || '', {
+            regex: !!regex, wholeWord: !!wholeWord, caseSensitive: !!caseSensitive
+        });
+        this._notifySearchCount();
+    },
+    searchNext: function () {
+        if (!this.editor || this.isSourceMode) return;
+        window.searchPlugin.searchNext(this.editor.view);
+        this._notifySearchCount();
+    },
+    searchPrev: function () {
+        if (!this.editor || this.isSourceMode) return;
+        window.searchPlugin.searchPrev(this.editor.view);
+        this._notifySearchCount();
+    },
+    replaceOne: function (rep) {
+        if (!this.editor || this.isSourceMode) return;
+        window.searchPlugin.replaceOne(this.editor.view, rep || '');
+        this._notifySearchCount();
+    },
+    replaceAll: function (rep) {
+        if (!this.editor || this.isSourceMode) return;
+        window.searchPlugin.replaceAll(this.editor.view, rep || '');
+        this._notifySearchCount();
+    },
+    stopSearch: function () {
+        if (!this.editor) return;
+        if (window.searchPlugin) window.searchPlugin.clearSearch(this.editor.view);
+        this._notifySearchCount();
+    },
+    _notifySearchCount: function () {
+        if (!this.editor || !this.bridge) return;
+        var sp = window.searchPlugin;
+        var st = sp ? sp.searchCurrent(this.editor.state) : { total: 0, current: 0 };
+        this.bridge.searchMatchChanged(st.total, st.current);
     },
     undo: function() { if (this.editor) this.editor.commands.undo(); },
     redo: function() { if (this.editor) this.editor.commands.redo(); },

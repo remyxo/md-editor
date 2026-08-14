@@ -58029,6 +58029,211 @@ ${prefix}
     }
   });
 
+  // searchMatcher.js
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function isWordChar(ch2) {
+    return !!ch2 && /[\p{L}\p{N}_]/u.test(ch2);
+  }
+  function searchMatcher(text2, query, options) {
+    var opts = options || {};
+    var regex = !!opts.regex, wholeWord = !!opts.wholeWord, caseSensitive = !!opts.caseSensitive;
+    if (!query) return [];
+    var pattern;
+    try {
+      var src = regex ? query : escapeRegExp(query);
+      pattern = new RegExp(src, "g" + (caseSensitive ? "" : "i"));
+    } catch (e) {
+      return [];
+    }
+    var result = [], m;
+    while ((m = pattern.exec(text2)) !== null) {
+      if (m[0] === "") {
+        pattern.lastIndex++;
+        continue;
+      }
+      var start = m.index, end = start + m[0].length;
+      if (wholeWord) {
+        var before = start > 0 ? text2[start - 1] : "";
+        var after = end < text2.length ? text2[end] : "";
+        if (isWordChar(before) || isWordChar(after)) continue;
+      }
+      result.push({ start, end });
+    }
+    return result;
+  }
+  var init_searchMatcher = __esm({
+    "searchMatcher.js"() {
+    }
+  });
+
+  // searchPlugin.js
+  function flattenDoc(doc3) {
+    var text2 = "", mapping = [];
+    doc3.descendants(function(node, pos) {
+      if (node.isText) {
+        var s = node.text;
+        for (var i3 = 0; i3 < s.length; i3++) {
+          mapping.push(pos + i3);
+          text2 += s[i3];
+        }
+      } else if (node.isBlock) {
+        if (text2.length && text2[text2.length - 1] !== "\0") {
+          mapping.push(-1);
+          text2 += "\0";
+        }
+      }
+      return true;
+    });
+    return { text: text2, mapping };
+  }
+  function toDocRanges(matches2, mapping) {
+    var out = [];
+    for (var i3 = 0; i3 < matches2.length; i3++) {
+      var s = matches2[i3].start, e = matches2[i3].end;
+      if (mapping[s] === -1 || mapping[e - 1] === -1) continue;
+      out.push({ from: mapping[s], to: mapping[e - 1] + 1 });
+    }
+    return out;
+  }
+  function recompute(doc3, query, flags) {
+    if (!query) return { query: "", flags, matches: [], current: -1, text: "", mapping: [] };
+    var flat = flattenDoc(doc3);
+    var matches2 = toDocRanges(searchMatcher(flat.text, query, flags), flat.mapping);
+    return { query, flags, matches: matches2, current: matches2.length ? 0 : -1, text: flat.text, mapping: flat.mapping };
+  }
+  function rangeText(doc3, from2, to) {
+    return doc3.textBetween(from2, to, "");
+  }
+  function resolveReplacement(matchedText, rep, flags, query) {
+    if (flags.regex) {
+      try {
+        var single = new RegExp(query, flags.caseSensitive ? "" : "i");
+        return matchedText.replace(single, rep);
+      } catch (e) {
+        return rep;
+      }
+    }
+    return rep;
+  }
+  function setCurrentAndSelect(view, idx) {
+    var st = searchKey.getState(view.state);
+    if (idx < 0 || idx >= st.matches.length) return;
+    var m = st.matches[idx];
+    var tr2 = view.state.tr.setMeta(searchKey, { type: "setCurrent", idx });
+    tr2.setSelection(TextSelection.create(view.state.doc, m.from, m.to));
+    tr2.scrollIntoView();
+    view.dispatch(tr2);
+  }
+  function createSearchPlugin() {
+    return new Plugin({
+      key: searchKey,
+      state: {
+        init: function() {
+          return { query: "", flags: { regex: false, wholeWord: false, caseSensitive: false }, matches: [], current: -1, text: "", mapping: [] };
+        },
+        apply: function(tr2, value, oldState, newState) {
+          var meta = tr2.getMeta(searchKey);
+          if (meta && meta.type === "search") {
+            return recompute(newState.doc, meta.query, meta.flags);
+          }
+          if (meta && meta.type === "setCurrent") {
+            return Object.assign({}, value, { current: meta.idx });
+          }
+          if (tr2.docChanged && value.query) {
+            var oldFrom = (value.matches[value.current] || { from: 0 }).from;
+            var next = recompute(newState.doc, value.query, value.flags);
+            var idx = 0;
+            for (var i3 = 0; i3 < next.matches.length; i3++) {
+              if (next.matches[i3].from >= oldFrom) {
+                idx = i3;
+                break;
+              }
+            }
+            next.current = next.matches.length ? Math.min(idx, next.matches.length - 1) : -1;
+            return next;
+          }
+          return value;
+        }
+      },
+      props: {
+        decorations: function(state) {
+          var v = searchKey.getState(state);
+          if (!v || !v.matches.length) return Decoration.empty;
+          var decos = v.matches.map(function(m, i3) {
+            return Decoration.inline(m.from, m.to, { class: i3 === v.current ? "search-match-current" : "search-match" });
+          });
+          return DecorationSet.create(state.doc, decos);
+        }
+      }
+    });
+  }
+  function requestSearch(view, query, flags) {
+    view.dispatch(view.state.tr.setMeta(searchKey, { type: "search", query: query || "", flags }));
+  }
+  function searchNext(view) {
+    var st = searchKey.getState(view.state);
+    if (!st || !st.matches.length) return;
+    setCurrentAndSelect(view, (st.current + 1) % st.matches.length);
+  }
+  function searchPrev(view) {
+    var st = searchKey.getState(view.state);
+    if (!st || !st.matches.length) return;
+    setCurrentAndSelect(view, (st.current - 1 + st.matches.length) % st.matches.length);
+  }
+  function replaceOne(view, rep) {
+    var st = searchKey.getState(view.state);
+    if (!st || !st.query || !st.matches.length) return;
+    var m = st.matches[st.current];
+    var resolved = resolveReplacement(rangeText(view.state.doc, m.from, m.to), rep, st.flags, st.query);
+    view.dispatch(view.state.tr.insertText(resolved, m.from, m.to));
+    var st2 = searchKey.getState(view.state);
+    if (st2.matches.length) {
+      var idx = 0;
+      for (var i3 = 0; i3 < st2.matches.length; i3++) {
+        if (st2.matches[i3].from >= m.from) {
+          idx = i3;
+          break;
+        }
+      }
+      setCurrentAndSelect(view, Math.min(idx, st2.matches.length - 1));
+    }
+  }
+  function replaceAll(view, rep) {
+    var st = searchKey.getState(view.state);
+    if (!st || !st.query || !st.matches.length) return 0;
+    var sorted = st.matches.slice().sort(function(a, b) {
+      return b.from - a.from;
+    });
+    var tr2 = view.state.tr, count = 0;
+    for (var i3 = 0; i3 < sorted.length; i3++) {
+      var m = sorted[i3];
+      var orig = rangeText(tr2.doc, m.from, m.to);
+      tr2.insertText(resolveReplacement(orig, rep, st.flags, st.query), m.from, m.to);
+      count++;
+    }
+    view.dispatch(tr2);
+    return count;
+  }
+  function clearSearch(view) {
+    view.dispatch(view.state.tr.setMeta(searchKey, { type: "search", query: "", flags: {} }));
+  }
+  function searchCurrent(state) {
+    var v = searchKey.getState(state);
+    if (!v) return { total: 0, current: 0 };
+    return { total: v.matches.length, current: v.matches.length ? (v.current < 0 ? 0 : v.current) + 1 : 0 };
+  }
+  var searchKey;
+  var init_searchPlugin = __esm({
+    "searchPlugin.js"() {
+      init_state();
+      init_view();
+      init_searchMatcher();
+      searchKey = new PluginKey("search");
+    }
+  });
+
   // tiptap-entry.js
   var require_tiptap_entry = __commonJS({
     "tiptap-entry.js"() {
@@ -58046,6 +58251,8 @@ ${prefix}
       init_dist41();
       init_dist42();
       init_lowlight();
+      init_searchMatcher();
+      init_searchPlugin();
       window.TipTap = { Editor };
       window.TipTapExtension = Extension;
       window.TipTapInputRule = InputRule;
@@ -58065,6 +58272,18 @@ ${prefix}
       window.TipTapExtensionTextAlign = index_default10;
       window.TipTapMigrateMathStrings = migrateMathStrings;
       window.lowlight = createLowlight(grammars);
+      window.searchMatcher = searchMatcher;
+      window.searchPlugin = {
+        createSearchPlugin,
+        searchKey,
+        requestSearch,
+        searchNext,
+        searchPrev,
+        replaceOne,
+        replaceAll,
+        clearSearch,
+        searchCurrent
+      };
     }
   });
   require_tiptap_entry();

@@ -21,6 +21,13 @@ import Superscript from '@tiptap/extension-superscript';
 import TextAlign from '@tiptap/extension-text-align';
 import { createLowlight, common } from 'lowlight';
 
+// 搜索（纯函数 matcher + ProseMirror plugin）
+import { searchMatcher, isWordChar, escapeRegExp } from './searchMatcher.js';
+import {
+  createSearchPlugin, searchKey, requestSearch,
+  searchNext, searchPrev, replaceOne, replaceAll, clearSearch, searchCurrent
+} from './searchPlugin.js';
+
 // v3 StarterKit 已包含 Link 和 Underline，不需要单独导入
 
 // 供 editor.js 使用的全局对象
@@ -46,3 +53,15 @@ window.TipTapExtensionSuperscript = Superscript;
 window.TipTapExtensionTextAlign = TextAlign;
 window.TipTapMigrateMathStrings = migrateMathStrings;
 window.lowlight = createLowlight(common);
+window.searchMatcher = searchMatcher;
+window.searchPlugin = {
+  createSearchPlugin: createSearchPlugin,
+  searchKey: searchKey,
+  requestSearch: requestSearch,
+  searchNext: searchNext,
+  searchPrev: searchPrev,
+  replaceOne: replaceOne,
+  replaceAll: replaceAll,
+  clearSearch: clearSearch,
+  searchCurrent: searchCurrent
+};
