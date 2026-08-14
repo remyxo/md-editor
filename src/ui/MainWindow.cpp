@@ -354,19 +354,19 @@ void MainWindow::connectSignals()
     };
 
     connect(m_searchBar, &SearchBar::searchParamsChanged, this,
-            [this, &jsStr, &runSearchJs](const QString &text, bool cs, bool rx, bool ww) {
+            [this, jsStr, runSearchJs](const QString &text, bool cs, bool rx, bool ww) {
         runSearchJs(QStringLiteral("ed.startSearch('%1',%2,%3,%4);")
                     .arg(jsStr(text)).arg(cs).arg(rx).arg(ww));
     });
-    connect(m_searchBar, &SearchBar::findNextRequested, this, [this, &runSearchJs]() { runSearchJs("ed.searchNext();"); });
-    connect(m_searchBar, &SearchBar::findPrevRequested, this, [this, &runSearchJs]() { runSearchJs("ed.searchPrev();"); });
-    connect(m_searchBar, &SearchBar::replaceRequested, this, [this, &jsStr, &runSearchJs](const QString &rep) {
+    connect(m_searchBar, &SearchBar::findNextRequested, this, [this, runSearchJs]() { runSearchJs("ed.searchNext();"); });
+    connect(m_searchBar, &SearchBar::findPrevRequested, this, [this, runSearchJs]() { runSearchJs("ed.searchPrev();"); });
+    connect(m_searchBar, &SearchBar::replaceRequested, this, [this, jsStr, runSearchJs](const QString &rep) {
         runSearchJs(QStringLiteral("ed.replaceOne('%1');").arg(jsStr(rep)));
     });
-    connect(m_searchBar, &SearchBar::replaceAllRequested, this, [this, &jsStr, &runSearchJs](const QString &rep) {
+    connect(m_searchBar, &SearchBar::replaceAllRequested, this, [this, jsStr, runSearchJs](const QString &rep) {
         runSearchJs(QStringLiteral("ed.replaceAll('%1');").arg(jsStr(rep)));
     });
-    connect(m_searchBar, &SearchBar::closeRequested, this, [this, &runSearchJs]() {
+    connect(m_searchBar, &SearchBar::closeRequested, this, [this, runSearchJs]() {
         m_searchBar->setVisible(false);
         runSearchJs("ed.stopSearch();");
     });
