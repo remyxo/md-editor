@@ -13,6 +13,7 @@
 5. **编辑区内部存储 HTML**：读文件时 MD→HTML，写文件时 HTML→MD，通过 `MarkdownHandler` 转换
 6. **先讨论设计再编码**：不确定的地方先和用户确认
 7. **往返保真（Round-Trip Fidelity）**：MD→HTML→MD 转换必须保证信息不丢失。详见下方「往返保真规则」
+8. **兼容基准为 Qt 6.4.2**：CI/发布 DEB 在 `ubuntu-24.04`（Qt 6.4.2）构建，本地开发机为 6.8.x，二者行为有差异。新增任何依赖 Qt `toMarkdown()`/`setHtml()` 行为的逻辑，必须以 **6.4.2 的行为为基准设计与验证，不得依赖 6.8.x 独有的更激进转义**。详见 [`docs/qt-642-escaping-compat.md`](docs/qt-642-escaping-compat.md)
 
 ## 架构
 
@@ -98,9 +99,9 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 
 ## 环境要求
 
-- **开发环境**：Debian 13，Qt6 系统安装 (`apt install qt6-base-dev qt6-webengine-dev qt6-webchannel-dev`)
+- **开发环境**：Debian 13，Qt6 系统安装 (`apt install qt6-base-dev qt6-webengine-dev qt6-webchannel-dev`)，本地为 Qt 6.8.x
 - **运行方式**：`./scripts/run-editor.sh` 或直接 `build/src/md-editor`
-- **GitHub Actions**：`ubuntu-24.04`，Qt 6.4.2
+- **GitHub Actions**：`ubuntu-24.04`，Qt 6.4.2（**兼容基准**，本地 6.8.x 通过不等于出厂正确，差异见 `docs/qt-642-escaping-compat.md`）
 
 ## 构建命令
 
@@ -125,3 +126,4 @@ ctest --output-on-failure
 - **[Mermaid SVG 渲染问题](docs/mermaid-svg-rendering.md)** — 负宽度 rect 报错 / 字体缩放 / 甘特图缩块 / `_sanitizeMermaidSvg` 设计规范
 - **[模态对话框 ESC 关闭机制](docs/modal-dialog-esc-handling.md)** — Qt QShortcut 拦截 Esc → Bridge 通知 → 分流处理
 - **[\<br\> 与软换行往返机制](docs/br-and-softbreak-roundtrip.md)** — BRMARKER/data-brk 标记 / 双 TipTap 节点 / toHtml/fromHtml 三层分离架构
+- **[Qt 6.4.2 转义兼容](docs/qt-642-escaping-compat.md)** — 6.4.2 与 6.8.x 的 toMarkdown 转义差异 / 占位符保护范式 / Docker 容器验证法
