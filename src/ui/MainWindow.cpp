@@ -447,10 +447,10 @@ void MainWindow::onTabChanged(int tabId)
         // 同步新标签页的格式状态到工具栏
         tab->runJsCommand("if(window.editorApi && window.editorApi.syncFormatState) window.editorApi.syncFormatState();");
     }
-    // 切 tab：搜索栏计数重置为新当前 tab 的状态（JS 侧异步回传实际计数）
-    if (m_searchBar->isVisible()) {
-        m_searchBar->setCount(0, 0);
-        runEditorCommand("if(window.editorApi && window.editorApi._notifySearchCount) window.editorApi._notifySearchCount();");
+    // 切 tab：用搜索栏当前查询参数在新标签页重新执行搜索（查询词会话级、匹配文档级）
+    if (m_searchBar->isVisible() && tab) {
+        m_searchBar->setCount(0, 0);   // 先清零，等新 tab 异步回传实际计数
+        m_searchBar->emitParamsNow();
     }
 }
 
