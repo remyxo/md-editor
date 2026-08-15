@@ -1327,11 +1327,11 @@ window.editorApi = {
     deleteColumn: function() { if (this.editor) this.editor.commands.deleteColumn(); },
     deleteTable: function() { if (this.editor) this.editor.commands.deleteTable(); },
     isInTable: function() { return this.editor ? this.editor.isActive('table') : false; },
-    insertLink: function(url) {
+    insertLink: function() {
+        // 工具栏/菜单「插入链接」：与双击编辑链接共用 _linkEditor 对话框
+        // （链接文字 + 链接地址两字段），确认后在光标处插入 [文字](URL)
         if (!this.editor) return;
-        if (url) { this.editor.commands.setLink({ href: url }); return; }
-        var u = prompt('输入链接地址:');
-        if (u) this.editor.commands.setLink({ href: u });
+        this._linkEditor.open();
     },
     insertImage: function(path) {
         if (this.editor) this.editor.commands.setImage({ src: path });
@@ -1701,6 +1701,10 @@ window.editorApi = {
             el.removeEventListener('mouseout', this._linkHoverOut, true);
             this._linkHoverOut = null;
         }
+        if (this._linkDblClick) {
+            el.removeEventListener('dblclick', this._linkDblClick, true);
+            this._linkDblClick = null;
+        }
         this._ensureLinkTooltip();
         var tip = this._linkTooltip;
         // 查找事件目标是否在链接内
@@ -1770,6 +1774,27 @@ window.editorApi = {
                 }
             };
             el.addEventListener('mousedown', this._ctrlLinkHandler, true);
+
+            // 双击链接 → 打开编辑超链接对话框
+            this._linkDblClick = function(e) {
+                var link = findLink(e.target, el);
+                if (!link) return;
+                e.preventDefault();
+                e.stopPropagation();
+                var ed = window.editorApi.editor;
+                if (!ed) return;
+                // 将选区定位到链接文本内并扩选 link mark，确保 _linkEditor.open()
+                // 以 isActive('link') 识别为「编辑已有链接」而非「新建」
+                var pos = ed.view.posAtDOM(link, 0);
+                if (typeof pos === 'number') {
+                    var inner = pos + 1;
+                    var max = ed.state.doc.content.size;
+                    if (inner > max) inner = max;
+                    ed.chain().focus().setTextSelection(inner).extendMarkRange('link').run();
+                }
+                window.editorApi._linkEditor.open();
+            };
+            el.addEventListener('dblclick', this._linkDblClick, true);
         }
     },
 
@@ -2421,9 +2446,9 @@ window.editorApi = {
                 this._linkTo = ed.state.selection.to;
                 this._isNew = false;
             } else {
-                // 选中文字创建新链接
+                // 选中文字创建新链接；或光标处（无选区）直接插入新链接——
+                // 无选区时 from==to==光标位置，confirm 阶段用 replaceWith 插入
                 var sel = ed.state.selection;
-                if (sel.empty) return;
                 this._href = '';
                 this._linkFrom = sel.from;
                 this._linkTo = sel.to;
@@ -2520,6 +2545,10 @@ window.editorApi = {
             };
             this.textInput.addEventListener('keydown', inputKeydown);
             this.urlInput.addEventListener('keydown', inputKeydown);
+            // 输入时清除必填错误标红
+            var clearError = function(e) { e.target.classList.remove('error'); };
+            this.textInput.addEventListener('input', clearError);
+            this.urlInput.addEventListener('input', clearError);
             this.popover.addEventListener('click', function(e) { e.stopPropagation(); });
             this.popover.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape') { e.preventDefault(); self.close(); }
@@ -2535,27 +2564,37 @@ window.editorApi = {
                 this.textInput.value = ed.state.doc.textBetween(this._linkFrom, this._linkTo);
             }
             this.urlInput.value = this._href;
-            this.urlInput.focus();
-            if (this._href) this.urlInput.select();
+            // 文字为空（光标处新建）先聚焦文字输入；否则聚焦 URL（编辑/选中文字已有文字）
+            if (this.textInput.value) {
+                this.urlInput.focus();
+                if (this._href) this.urlInput.select();
+            } else {
+                this.textInput.focus();
+            }
         },
 
         confirm: function() {
             var newUrl = this.urlInput.value.trim();
             var newText = this.textInput.value.trim();
-            if (!newUrl) { this.close(); return; }
+            // 文字与 URL 均必填：为空则标红并聚焦，保持对话框打开
+            // （仅 Esc/取消/X 可关闭）
+            if (!newText || !newUrl) {
+                if (this.textInput) this.textInput.classList.toggle('error', !newText);
+                if (this.urlInput) this.urlInput.classList.toggle('error', !newUrl);
+                if (!newText) this.textInput.focus();
+                else this.urlInput.focus();
+                return;
+            }
             var ed = window.editorApi.editor;
             if (!ed) { this.close(); return; }
             this._confirmed = true;
             window.editorApi._forceDirty();
             var state = ed.state;
             var linkMark = state.schema.marks.link.create({ href: newUrl });
-            if (newText) {
-                // 替换链接文字（可能发生了变化）
-                var textNode = state.schema.text(newText, [linkMark]);
-                ed.view.dispatch(state.tr.replaceWith(this._linkFrom, this._linkTo, textNode));
-            } else {
-                ed.commands.setLink({ href: newUrl });
-            }
+            // 统一用 replaceWith：编辑已有链接时替换原文（含新 href）；
+            // 新建时（含光标处无选区）from==to，即插入 [文字](URL)
+            var textNode = state.schema.text(newText, [linkMark]);
+            ed.view.dispatch(state.tr.replaceWith(this._linkFrom, this._linkTo, textNode));
             this.close();
         },
 
