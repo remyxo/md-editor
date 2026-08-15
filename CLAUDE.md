@@ -96,7 +96,9 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 | `src/resources/themes/light.qss` | 亮色主题 QSS |
 | `src/resources/themes/dark.qss` | 暗色主题 QSS |
 | `src/core/MarkdownHandler.cpp` | MD↔HTML 转换（基于 QTextDocument） |
-| `src/core/FileManager.cpp` | 文件 I/O + 自动保存 + 文件监控 |
+| `src/core/FileManager.cpp` | 文件 I/O + 文件监控 |
+| `src/core/DocxExporter.cpp` | DOCX 导出（基于 QTextDocument + zip） |
+| `src/core/HtmlExporter.cpp` | 自包含 HTML 导出（资源 base64 内联） |
 
 ## 环境要求
 
@@ -115,9 +117,11 @@ ctest --output-on-failure
 
 ## 已知问题 & 待完善
 
-- PDF 导出尚未完整集成到 MainWindow（`PdfExporter` 已实现，需接线）
-- 搜索栏的查找/替换功能需对接编辑器
-- 数学公式（LaTeX） → 二阶段
+- PDF 导出页眉页脚/页码尚未实现（`PdfExporter` 已支持页边距与方向）
+- 自动保存已被移除（0.2.1，因未完整接线；会话恢复仍可用）
+- 标签页交互待补全：中键关闭、Ctrl+1~9 跳转、右键批量关闭
+- 大纲光标自动高亮待实现（当前仅点击跳转）
+- 界面语言 English 为占位（设置已有下拉，未接入 QTranslator）
 - `tiptap-all.js` 更新需在 `src/resources/web/` 下运行 `npx esbuild tiptap-entry.js --bundle --outfile=tiptap-all.js --format=iife`
 
 ## 专题文档
