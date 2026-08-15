@@ -50,6 +50,18 @@ private slots:
         QVERIFY(out.contains("src=\"nope.png\"")); // 读不到时原样保留
     }
 
+    void testInlineImagesHandlesSingleQuotedSrc() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QFile f(dir.path() + "/b.png");
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("PNG2"); f.close();
+
+        QString html = "<p><img src='b.png'></p>";
+        QString out = HtmlExporter::inlineImages(html, dir.path());
+        QVERIFY(out.contains("data:image/png;base64,"));
+        QVERIFY(!out.contains("src='b.png'"));
+    }
+
     void testBodyCssDiffersByTheme() {
         QVERIFY(HtmlExporter::bodyCss("light").contains("background:"));
         QVERIFY(HtmlExporter::bodyCss("light") != HtmlExporter::bodyCss("dark"));

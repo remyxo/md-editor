@@ -706,7 +706,7 @@ void MainWindow::onExportHtml()
                                                  "HTML 文件 (*.html)");
     if (path.isEmpty()) return;
 
-    // 文档目录（解析相对图片路径）；未保存文档时为空字符串
+    // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
     QString docDir = QFileInfo(tab->webView()->property("filePath").toString()).absolutePath();
     QString theme = Application::instance()->themeManager()->currentTheme();
 

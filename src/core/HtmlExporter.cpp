@@ -54,7 +54,7 @@ QString HtmlExporter::inlineCssFonts(const QString &css, const QString &fontDir)
 
 QString HtmlExporter::inlineImages(const QString &html, const QString &docDir)
 {
-    QRegularExpression re("<img\\b[^>]*src=\"([^\"]+)\"");
+    QRegularExpression re("<img\\b[^>]*src\\s*=\\s*[\"']([^\"']+)[\"']");
     QString out = html;
     int offset = 0;
     QRegularExpressionMatchIterator it = re.globalMatch(html);
