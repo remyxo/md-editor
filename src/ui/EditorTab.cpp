@@ -265,6 +265,15 @@ void EditorTab::setEditorWidth(int width)
     }
 }
 
+void EditorTab::applyCustomCss(const QString &css)
+{
+    if (m_pageLoaded) {
+        QString esc = css;
+        esc.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r");
+        runJsCommand(QString("window.editorApi.applyCustomCss('%1');").arg(esc));
+    }
+}
+
 void EditorTab::setEditorSettings(const QJsonObject &settings)
 {
     if (m_pageLoaded) {

@@ -1652,6 +1652,19 @@ window.editorApi = {
         window.__mermaidInited = false;
         try { _repaintMermaidViews(); } catch (e) { /* 主题切换不应被图表渲染阻断 */ }
     },
+    applyCustomCss: function(css) {
+        var style = document.getElementById('custom-css');
+        if (css) {
+            if (!style) {
+                style = document.createElement('style');
+                style.id = 'custom-css';
+                document.head.appendChild(style);
+            }
+            style.textContent = css;
+        } else if (style) {
+            style.parentNode.removeChild(style);
+        }
+    },
     setFont: function(family, size) {
         if (family) document.body.style.fontFamily = family;
         if (size) {

@@ -431,7 +431,7 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (tab) {
         connect(tab, &EditorTab::pageLoadFinished, this,
-                [this](bool ok) { if (ok) { applyEditorFont(); applyEditorWidth(); applyEditorSettings(); } });
+                [this](bool ok) { if (ok) { applyEditorFont(); applyEditorWidth(); applyEditorSettings(); applyCustomCss(); } });
     }
 }
 
@@ -855,6 +855,7 @@ void MainWindow::onShowSettings()
     applyEditorFont();
     applyEditorWidth();
     applyEditorSettings();
+    applyCustomCss();
 }
 
 void MainWindow::onShowMarkdownGuide()
@@ -906,6 +907,16 @@ void MainWindow::applyEditorSettings()
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);
         if (tab) tab->setEditorSettings(s);
+    }
+}
+
+void MainWindow::applyCustomCss()
+{
+    QSettings settings("md-editor", "md-editor");
+    QString css = settings.value("editor/customCss").toString();
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        EditorTab *tab = m_tabWidget->tabAt(i);
+        if (tab) tab->applyCustomCss(css);
     }
 }
 

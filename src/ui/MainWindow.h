@@ -55,6 +55,7 @@ private slots:
     void applyEditorFont();
     void applyEditorWidth();
     void applyEditorSettings();
+    void applyCustomCss();
 
 protected:
     void closeEvent(QCloseEvent *event) override;

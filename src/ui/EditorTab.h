@@ -40,6 +40,7 @@ public:
     void setEditorTheme(const QString &theme);
     void setEditorFont(const QString &family, int size);
     void setEditorWidth(int width);
+    void applyCustomCss(const QString &css);
     void setEditorSettings(const QJsonObject &settings);
     void setInTable(bool inTable);
     void setHasSelection(bool has);
