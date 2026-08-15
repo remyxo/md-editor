@@ -119,7 +119,7 @@ QToolButton#pdfAction::menu-indicator {
     height: 5px;
 }
 
-/* 对齐/上下标下拉按钮 — 深灰图标，chevron 同导出规格 */
+/* 对齐/上下标下拉按钮 — 浅灰图标，chevron 同导出规格 */
 QToolButton#alignButton,
 QToolButton#subsupButton { color: #c4c9ce; }
 QToolButton#alignButton::menu-indicator,
