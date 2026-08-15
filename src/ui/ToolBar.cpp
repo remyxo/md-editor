@@ -26,14 +26,8 @@ ToolBar::ToolBar(QWidget *parent)
     , m_codeBlockAction(nullptr)
     , m_underlineAction(nullptr)
     , m_highlightAction(nullptr)
-    , m_subscriptAction(nullptr)
-    , m_superscriptAction(nullptr)
     , m_textColorAction(nullptr)
     , m_bgColorAction(nullptr)
-    , m_alignLeftAction(nullptr)
-    , m_alignCenterAction(nullptr)
-    , m_alignRightAction(nullptr)
-    , m_alignGroup(nullptr)
     , m_bulletListAction(nullptr)
     , m_orderedListAction(nullptr)
     , m_taskListAction(nullptr)
@@ -116,14 +110,6 @@ void ToolBar::setupUi()
         "高亮", ":/icons/light/highlight.svg");
     m_highlightAction->setCheckable(true);
 
-    m_subscriptAction = makeAction(this, &m_iconPaths, "subscriptAction",
-        "下标", ":/icons/light/subscript.svg");
-    m_subscriptAction->setCheckable(true);
-
-    m_superscriptAction = makeAction(this, &m_iconPaths, "superscriptAction",
-        "上标", ":/icons/light/superscript.svg");
-    m_superscriptAction->setCheckable(true);
-
     m_clearFormatAction = makeAction(this, &m_iconPaths, "clearFormatAction",
         "清除样式", ":/icons/light/clear-format.svg");
 
@@ -137,22 +123,68 @@ void ToolBar::setupUi()
 
     addSeparator();
 
-    // === 文字对齐（互斥按钮组） ===
-    m_alignGroup = new QActionGroup(this);
-    m_alignGroup->setExclusive(true);
-    m_alignLeftAction = makeAction(this, &m_iconPaths, "alignLeftAction",
-        "左对齐 (Ctrl+Shift+L)", ":/icons/light/align-left.svg");
-    m_alignLeftAction->setCheckable(true);
-    m_alignCenterAction = makeAction(this, &m_iconPaths, "alignCenterAction",
-        "居中对齐 (Ctrl+Shift+E)", ":/icons/light/align-center.svg");
-    m_alignCenterAction->setCheckable(true);
-    m_alignRightAction = makeAction(this, &m_iconPaths, "alignRightAction",
-        "右对齐 (Ctrl+Shift+R)", ":/icons/light/align-right.svg");
-    m_alignRightAction->setCheckable(true);
-    m_alignGroup->addAction(m_alignLeftAction);
-    m_alignGroup->addAction(m_alignCenterAction);
-    m_alignGroup->addAction(m_alignRightAction);
-    m_alignLeftAction->setChecked(true);
+    // === 文字对齐（下拉折叠：左/中/右） ===
+    {
+        m_alignButton = new QToolButton(this);
+        m_alignButton->setObjectName("alignButton");
+        m_alignButton->setToolTip("段落对齐");
+        m_alignButton->setCheckable(false);
+        m_alignButton->setArrowType(Qt::NoArrow); // 用自己的 chevron-down
+        m_alignMenu = new QMenu(m_alignButton);
+        auto addAlignItem = [this](const QString &objName, const QString &text,
+                                   const QString &shortcut, const QString &icon) {
+            QAction *a = new QAction(QIcon(icon), text, m_alignMenu);
+            a->setObjectName(objName);
+            a->setShortcut(QKeySequence(shortcut));  // 仅显示文字，菜单不抢键（见下）
+            a->setCheckable(true);
+            m_alignMenu->addAction(a);
+            return a;
+        };
+        addAlignItem("alignLeftItem", "左对齐(&L)", "Ctrl+Shift+L",
+                     ":/icons/light/align-left.svg");
+        addAlignItem("alignCenterItem", "居中对齐(&E)", "Ctrl+Shift+E",
+                     ":/icons/light/align-center.svg");
+        addAlignItem("alignRightItem", "右对齐(&R)", "Ctrl+Shift+R",
+                     ":/icons/light/align-right.svg");
+        m_alignButton->setMenu(m_alignMenu);
+        // 快捷键仅作显示：绑定到菜单自身上下文，避免抢 WebEngine 按键
+        for (QAction *a : m_alignMenu->actions())
+            a->setShortcutContext(Qt::WidgetShortcut);
+        m_alignButton->installEventFilter(this);
+        addWidget(m_alignButton);
+        setAlignIcon("left");
+        rebuildAlignMenuChecks("left");
+    }
+
+    // === 上下标（下拉折叠：上标/下标） ===
+    {
+        m_subsupButton = new QToolButton(this);
+        m_subsupButton->setObjectName("subsupButton");
+        m_subsupButton->setToolTip("上标/下标");
+        m_subsupButton->setCheckable(true);  // 光标处于上下标内容时高亮
+        m_subsupButton->setArrowType(Qt::NoArrow);
+        m_subsupMenu = new QMenu(m_subsupButton);
+        auto addSubsupItem = [this](const QString &objName, const QString &text,
+                                    const QString &shortcut, const QString &icon) {
+            QAction *a = new QAction(QIcon(icon), text, m_subsupMenu);
+            a->setObjectName(objName);
+            a->setShortcut(QKeySequence(shortcut));
+            a->setCheckable(true);
+            m_subsupMenu->addAction(a);
+            return a;
+        };
+        addSubsupItem("superscriptItem", "上标(&P)", "Ctrl+.",
+                      ":/icons/light/superscript.svg");
+        addSubsupItem("subscriptItem", "下标(&B)", "Ctrl+,",
+                      ":/icons/light/subscript.svg");
+        m_subsupButton->setMenu(m_subsupMenu);
+        for (QAction *a : m_subsupMenu->actions())
+            a->setShortcutContext(Qt::WidgetShortcut);
+        m_subsupButton->installEventFilter(this);
+        addWidget(m_subsupButton);
+        setSubsupIcon(false, false);
+        rebuildSubsupMenuChecks(false, false);
+    }
 
     addSeparator();
 
@@ -227,12 +259,17 @@ void ToolBar::setupUi()
     connect(m_codeAction, &QAction::triggered, this, &ToolBar::codeClicked);
     connect(m_underlineAction, &QAction::triggered, this, &ToolBar::underlineClicked);
     connect(m_highlightAction, &QAction::triggered, this, &ToolBar::highlightClicked);
-    connect(m_subscriptAction, &QAction::triggered, this, &ToolBar::subscriptClicked);
-    connect(m_superscriptAction, &QAction::triggered, this, &ToolBar::superscriptClicked);
     connect(m_clearFormatAction, &QAction::triggered, this, &ToolBar::clearFormatClicked);
-    connect(m_alignLeftAction, &QAction::triggered, this, [this]{ emit alignSelected("left"); });
-    connect(m_alignCenterAction, &QAction::triggered, this, [this]{ emit alignSelected("center"); });
-    connect(m_alignRightAction, &QAction::triggered, this, [this]{ emit alignSelected("right"); });
+    // 对齐/上下标下拉菜单项 → 复用原信号，MainWindow 零改动
+    for (QAction *a : m_alignMenu->actions()) {
+        QString align = (a->objectName() == "alignLeftItem") ? "left"
+                      : (a->objectName() == "alignCenterItem") ? "center" : "right";
+        connect(a, &QAction::triggered, this, [this, align]{ emit alignSelected(align); });
+    }
+    connect(m_subsupMenu->findChild<QAction*>("superscriptItem"),
+            &QAction::triggered, this, &ToolBar::superscriptClicked);
+    connect(m_subsupMenu->findChild<QAction*>("subscriptItem"),
+            &QAction::triggered, this, &ToolBar::subscriptClicked);
     connect(m_textColorAction, &QAction::triggered, this, [this]{
         buildColorMenu(true)->exec(QCursor::pos());
     });
@@ -271,6 +308,42 @@ void ToolBar::setupUi()
 
     // 收集所有 action，用于源码模式禁用
     m_allActions = findChildren<QAction *>().toList();
+}
+
+// 按对齐状态切换按钮图标（跟随光标回显）
+void ToolBar::setAlignIcon(const QString &alignment)
+{
+    m_currentAlign = alignment;
+    QString theme = m_isDark ? "dark" : "light";
+    QString icon = (alignment == "center") ? "align-center"
+                 : (alignment == "right") ? "align-right" : "align-left";
+    m_alignButton->setIcon(QIcon(QString(":/icons/%1/%2.svg").arg(theme, icon)));
+}
+
+// 按上下标激活状态切换按钮图标与 checked 高亮（默认下标图标）
+void ToolBar::setSubsupIcon(bool sub, bool sup)
+{
+    QString theme = m_isDark ? "dark" : "light";
+    QString icon = sup ? "superscript" : "subscript";
+    m_subsupButton->setIcon(QIcon(QString(":/icons/%1/%2.svg").arg(theme, icon)));
+    m_subsupButton->setChecked(sub || sup);
+}
+
+void ToolBar::rebuildAlignMenuChecks(const QString &alignment)
+{
+    for (QAction *a : m_alignMenu->actions()) {
+        QString align = (a->objectName() == "alignLeftItem") ? "left"
+                      : (a->objectName() == "alignCenterItem") ? "center" : "right";
+        a->setChecked(align == alignment);
+    }
+}
+
+void ToolBar::rebuildSubsupMenuChecks(bool sub, bool sup)
+{
+    if (QAction *a = m_subsupMenu->findChild<QAction*>("superscriptItem"))
+        a->setChecked(sup);
+    if (QAction *a = m_subsupMenu->findChild<QAction*>("subscriptItem"))
+        a->setChecked(sub);
 }
 
 // 构建颜色选择弹出菜单：无颜色 + 12 预设色网格 + 更多颜色（QColorDialog）。
@@ -374,26 +447,24 @@ void ToolBar::updateFormatState(const QJsonObject &f)
     TOGGLE_CHECK(m_codeAction, "code");
     TOGGLE_CHECK(m_underlineAction, "underline");
     TOGGLE_CHECK(m_highlightAction, "highlight");
-    TOGGLE_CHECK(m_subscriptAction, "subscript");
-    TOGGLE_CHECK(m_superscriptAction, "superscript");
+    // 上下标回显：图标切换 + 菜单项勾选（旧 subscript/superscript 单按钮已折叠为下拉）
+    if (f.contains("subscript") || f.contains("superscript")) {
+        bool sub = f.contains("subscript") ? f["subscript"].toBool() : false;
+        bool sup = f.contains("superscript") ? f["superscript"].toBool() : false;
+        setSubsupIcon(sub, sup);
+        rebuildSubsupMenuChecks(sub, sup);
+    }
     TOGGLE_CHECK(m_bulletListAction, "bulletList");
     TOGGLE_CHECK(m_orderedListAction, "orderedList");
     TOGGLE_CHECK(m_taskListAction, "taskList");
     TOGGLE_CHECK(m_blockquoteAction, "blockquote");
     TOGGLE_CHECK(m_codeBlockAction, "codeBlock");
 #undef TOGGLE_CHECK
-    // 文字对齐互斥同步（无对应属性时默认左对齐）
+    // 文字对齐回显：切换按钮图标 + 同步菜单项勾选（无对应属性时默认左对齐）
     if (f.contains("textAlign")) {
         QString a = f["textAlign"].toString();
-        m_alignLeftAction->blockSignals(true);
-        m_alignCenterAction->blockSignals(true);
-        m_alignRightAction->blockSignals(true);
-        m_alignLeftAction->setChecked(a == "left");
-        m_alignCenterAction->setChecked(a == "center");
-        m_alignRightAction->setChecked(a == "right");
-        m_alignLeftAction->blockSignals(false);
-        m_alignCenterAction->blockSignals(false);
-        m_alignRightAction->blockSignals(false);
+        setAlignIcon(a);
+        rebuildAlignMenuChecks(a);
     }
     // 颜色 span 回显：解析当前 colorSpanStyle 缓存 color / background-color
     if (f.contains("colorSpanStyle")) {

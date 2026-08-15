@@ -65,17 +65,23 @@ private:
     QAction *m_codeBlockAction;
     QAction *m_underlineAction;
     QAction *m_highlightAction;
-    QAction *m_subscriptAction;
-    QAction *m_superscriptAction;
     QAction *m_textColorAction;
     QAction *m_bgColorAction;
     QMenu *buildColorMenu(bool forText);
     QString m_currentTextColor;   // 回显：当前光标处 colorSpan 的文字色
     QString m_currentBgColor;     // 回显：当前光标处 colorSpan 的背景色
-    QAction *m_alignLeftAction;
-    QAction *m_alignCenterAction;
-    QAction *m_alignRightAction;
-    QActionGroup *m_alignGroup;
+    QToolButton *m_alignButton = nullptr;   // 对齐下拉按钮（左/中/右折叠）
+    QToolButton *m_subsupButton = nullptr;  // 上下标下拉按钮（上标/下标折叠）
+    QMenu *m_alignMenu = nullptr;
+    QMenu *m_subsupMenu = nullptr;
+    QString m_currentAlign = QStringLiteral("left");  // 当前对齐状态，主题切换时重选图标
+    // 按对齐状态设置按钮图标（light/dark 由 m_isDark 决定）
+    void setAlignIcon(const QString &alignment);
+    // 按上下标激活状态设置按钮图标与 checked 高亮
+    void setSubsupIcon(bool sub, bool sup);
+    // 同步菜单项勾选状态
+    void rebuildAlignMenuChecks(const QString &alignment);
+    void rebuildSubsupMenuChecks(bool sub, bool sup);
     QAction *m_bulletListAction;
     QAction *m_orderedListAction;
     QAction *m_taskListAction;
