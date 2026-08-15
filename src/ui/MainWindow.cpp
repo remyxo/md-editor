@@ -121,12 +121,8 @@ void MainWindow::setupUi()
         }
     });
 
-    // Ctrl+M 插入行内公式
-    QShortcut *mathInlineShortcut = new QShortcut(QKeySequence("Ctrl+M"), this);
-    connect(mathInlineShortcut, &QShortcut::activated, this, [this]() {
-        runEditorCommand("window.editorApi.insertMath('inline');");
-    });
-    // Ctrl+Shift+M 插入块级公式
+    // Ctrl+Shift+M 插入块级公式（Ctrl+M 行内公式由菜单「插入公式」QAction 携带，
+    // 此处不再重复注册 QShortcut，否则与菜单快捷键冲突报 "Ambiguous shortcut"）
     QShortcut *mathBlockShortcut = new QShortcut(QKeySequence("Ctrl+Shift+M"), this);
     connect(mathBlockShortcut, &QShortcut::activated, this, [this]() {
         runEditorCommand("window.editorApi.insertMath('block');");
