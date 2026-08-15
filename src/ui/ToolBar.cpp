@@ -255,6 +255,7 @@ void ToolBar::setupUi()
         QMenu *exportMenu = new QMenu(m_exportButton);
         exportMenu->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
         exportMenu->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
+        exportMenu->addAction("导出 HTML...", this, &ToolBar::htmlExportClicked);
         m_exportButton->setMenu(exportMenu);
         m_exportButton->installEventFilter(this);
         addWidget(m_exportButton);

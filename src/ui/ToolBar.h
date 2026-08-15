@@ -49,6 +49,7 @@ signals:
     void sourceToggleClicked();
     void pdfExportClicked();
     void docxExportClicked();
+    void htmlExportClicked();
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;

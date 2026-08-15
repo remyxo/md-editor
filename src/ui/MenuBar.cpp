@@ -46,6 +46,8 @@ void MenuBar::setupUi()
     connect(exportPdfAct, &QAction::triggered, this, &MenuBar::exportPdf);
     QAction *exportDocxAct = exportMenu->addAction("导出 DOCX...");
     connect(exportDocxAct, &QAction::triggered, this, &MenuBar::exportDocx);
+    QAction *exportHtmlAct = exportMenu->addAction("导出 HTML...");
+    connect(exportHtmlAct, &QAction::triggered, this, &MenuBar::exportHtml);
 
     m_fileMenu->addSeparator();
 

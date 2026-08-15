@@ -36,6 +36,7 @@ private slots:
     void onToggleSourceMode();
     void onExportPdf();
     void onExportDocx();
+    void onExportHtml();
     void onThemeSwitch(const QString &theme);
 
     // 文件操作

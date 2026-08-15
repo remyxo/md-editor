@@ -17,6 +17,7 @@
 #include "../core/ImageManager.h"
 #include "../core/PdfExporter.h"
 #include "../core/DocxExporter.h"
+#include "../core/HtmlExporter.h"
 #include "../app/Application.h"
 #include "../app/ThemeManager.h"
 
@@ -24,6 +25,7 @@
 #include <QIcon>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QMessageBox>
 #include <QJsonObject>
 #include <QWebEnginePage>
@@ -155,6 +157,7 @@ void MainWindow::connectSignals()
             &MainWindow::onFileDoubleClicked);
     connect(m_menuBar, &MenuBar::exportPdf, this, &MainWindow::onExportPdf);
     connect(m_menuBar, &MenuBar::exportDocx, this, &MainWindow::onExportDocx);
+    connect(m_menuBar, &MenuBar::exportHtml, this, &MainWindow::onExportHtml);
     connect(m_menuBar, &MenuBar::switchTheme, this, &MainWindow::onThemeSwitch);
     connect(m_menuBar, &MenuBar::toggleSidebar, this, [this]() {
         m_sideBar->setCollapsed(!m_sideBar->isCollapsed());
@@ -279,6 +282,7 @@ void MainWindow::connectSignals()
     connect(m_toolBar, &ToolBar::sourceToggleClicked, this, &MainWindow::onToggleSourceMode);
     connect(m_toolBar, &ToolBar::pdfExportClicked, this, &MainWindow::onExportPdf);
     connect(m_toolBar, &ToolBar::docxExportClicked, this, &MainWindow::onExportDocx);
+    connect(m_toolBar, &ToolBar::htmlExportClicked, this, &MainWindow::onExportHtml);
 
     // === 标签页管理 ===
     connect(m_tabWidget, &TabWidget::editorBridgeCreated,
@@ -690,6 +694,33 @@ void MainWindow::onExportDocx()
                 exporter->deleteLater();
             });
             exporter->exportToDocx(html, path);
+        });
+}
+
+void MainWindow::onExportHtml()
+{
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    if (!tab) return;
+
+    QString path = QFileDialog::getSaveFileName(this, "导出 HTML", "document.html",
+                                                 "HTML 文件 (*.html)");
+    if (path.isEmpty()) return;
+
+    // 文档目录（解析相对图片路径）；未保存文档时为空字符串
+    QString docDir = QFileInfo(tab->webView()->property("filePath").toString()).absolutePath();
+    QString theme = Application::instance()->themeManager()->currentTheme();
+
+    tab->webView()->page()->runJavaScript(
+        "window.editorApi.getContent();",
+        [this, path, docDir, theme](const QVariant &result) {
+            QString html = result.toString();
+            auto *exporter = new HtmlExporter(this);
+            connect(exporter, &HtmlExporter::exportFinished, this,
+                    [this, exporter](bool ok, const QString &out) {
+                m_statusBar->showMessage(ok ? QString("已导出: %1").arg(out) : "导出失败", 3000);
+                exporter->deleteLater();
+            });
+            exporter->exportToHtml(html, docDir, path, theme);
         });
 }
 

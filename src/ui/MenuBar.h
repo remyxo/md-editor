@@ -21,6 +21,7 @@ signals:
     void closeTab();
     void exportPdf();
     void exportDocx();
+    void exportHtml();
     void quit();
 
     void undo();
