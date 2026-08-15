@@ -52,8 +52,23 @@ static QString unescapeHtmlEntities(const QString &s)
 // Qt 的 markdown 解析器把单个 ~x~ 当作删除线（text-decoration:line-through），
 // 必须在 setMarkdown 前替换为占位符，后处理时再还原为 <sub>。
 // 负向断言 (?<!~)~(?!~) 排除删除线 ~~x~~；内容存入 out，后处理时 HTML 转义还原。
+// 行内代码 `...` 内的 ~x~ 是字面文本（如 `H~2~O` 展示写法），先暂存代码段
+// 再转换（与 extractFootnoteRefs 的 \x01CODE 保护一致），避免被误转为下标。
 static QString extractSubscripts(QString line, QStringList &out)
 {
+    // 1) 暂存行内代码片段（反引号内的 ~x~ 原样保留）
+    QStringList codes;
+    QRegularExpression codeSpanRe("`([^`]+)`");
+    int off = 0;
+    while (true) {
+        auto m = codeSpanRe.match(line, off);
+        if (!m.hasMatch()) break;
+        codes << m.captured(0);
+        QString cph = "\x01CODE" + QString::number(codes.size() - 1) + "\x01";
+        line.replace(m.capturedStart(), m.capturedLength(), cph);
+        off = m.capturedStart() + cph.length();
+    }
+    // 2) 转换 ~x~
     QRegularExpression re("(?<!~)~(?!~)([^~\\n]+?)(?<!~)~(?!~)");
     int offset = 0;
     while (true) {
@@ -64,6 +79,9 @@ static QString extractSubscripts(QString line, QStringList &out)
         line.replace(m.capturedStart(), m.capturedLength(), ph);
         offset = m.capturedStart() + ph.length();
     }
+    // 3) 还原行内代码
+    for (int i = 0; i < codes.size(); ++i)
+        line.replace("\x01CODE" + QString::number(i) + "\x01", codes[i]);
     return line;
 }
 
@@ -90,10 +108,24 @@ static QString extractEscapedEquals(QString line, QStringList &out)
 // 需保护后直通 Qt setMarkdown，后处理时还原为原始 HTML。
 // 不用 DotMatchesEverythingOption——markdown 源码逐行处理，<span>/<u>
 // 作为内联元素不会跨行（与 fromHtml() 侧不同，那里处理的是完整 HTML 文档）。
+// 行内代码 `...` 内的标签是字面文本（如 `H<sub>2</sub>O` 展示写法），
+// 先暂存代码段再提取（与 extractFootnoteRefs 的 \x01CODE 保护一致）。
 static QString extractHtmlInlineElements(const QString &line,
                                          QStringList &backups)
 {
     QString r = line;
+    // 1) 暂存行内代码片段（反引号内的 HTML 标签原样保留）
+    QStringList codes;
+    QRegularExpression codeSpanRe("`([^`]+)`");
+    int codeOff = 0;
+    while (true) {
+        auto m = codeSpanRe.match(r, codeOff);
+        if (!m.hasMatch()) break;
+        codes << m.captured(0);
+        QString cph = "\x01CODE" + QString::number(codes.size() - 1) + "\x01";
+        r.replace(m.capturedStart(), m.capturedLength(), cph);
+        codeOff = m.capturedStart() + cph.length();
+    }
     int n = backups.size();
     // <span style="...">text</span>
     {
@@ -200,6 +232,9 @@ static QString extractHtmlInlineElements(const QString &line,
             offset = m.capturedStart() + ph.length();
         }
     }
+    // 还原行内代码
+    for (int i = 0; i < codes.size(); ++i)
+        r.replace("\x01CODE" + QString::number(i) + "\x01", codes[i]);
     return r;
 }
 
@@ -498,9 +533,11 @@ QString MarkdownHandler::toHtml(const QString &markdown)
 
     QStringList lines = markdown.split('\n');
     QString processed;
-    bool inCodeBlock = false;
+    int codeFenceLen = 0; // 当前代码块开启围栏的反引号数（0 = 不在代码块）
     bool inMathBlock = false;
-    QStringList codeLangs; // 跟踪每个代码块的语言
+    QStringList codeBlocks;  // 每个代码块的最终 HTML（<pre><code class="language-X">…</code></pre>）
+    QString codeFenceLang;   // 当前代码块的语言（围栏信息串）
+    QStringList codeContent; // 当前代码块的内容行
     QStringList subContents; // 下标内容（~x~），后处理还原为 <sub>
     QStringList taskLists; // 任务列表 HTML（TipTap taskList 契约），后处理还原
     QStringList footnoteRefs;   // 脚注引用 <sup> HTML（后处理还原）
@@ -525,9 +562,9 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         // 脚注定义行 [^id]: 内容（非代码块）—— 抽取归集到文末容器，从正文流移除
         static const QRegularExpression footnoteDefRe("^\\[\\^([^\\]]+)\\]\\s*:\\s*(.*)$");
         auto footnoteDefMatch = footnoteDefRe.match(line);
-        bool isFootnoteDef = !inCodeBlock && footnoteDefMatch.hasMatch();
+        bool isFootnoteDef = codeFenceLen == 0 && footnoteDefMatch.hasMatch();
 
-        if (line.startsWith("$$")) {
+        if (codeFenceLen == 0 && line.startsWith("$$")) {
             if (!inMathBlock) {
                 mathLines.clear();
                 inMathBlock = true;
@@ -553,18 +590,32 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         } else if (inMathBlock) {
             mathLines << line;
         } else if (line.startsWith("```")) {
-            if (!inCodeBlock) {
-                // 进入代码块，提取语言
-                QString lang = line.mid(3).trimmed();
-                codeLangs << (lang.isEmpty() ? QString() : lang);
-                processed += "```\n"; // 去掉语言标记避免干扰 setMarkdown
+            // 统计本行前导反引号数量（围栏长度）
+            int fenceLen = 0;
+            while (fenceLen < line.size() && line[fenceLen] == QLatin1Char('`'))
+                ++fenceLen;
+            if (codeFenceLen == 0) {
+                // 开启新代码块：提取语言（信息串为围栏后的文本），整块用占位符保护，
+                // 内容不经 setMarkdown（其围栏解析同样朴素，嵌套围栏会二次错乱）
+                codeFenceLang = line.mid(fenceLen).trimmed();
+                codeFenceLen = fenceLen;
+                codeContent.clear();
+                processed += "ZZCB" + QString::number(codeBlocks.size()) + "ZZ\n";
+            } else if (fenceLen >= codeFenceLen && line.mid(fenceLen).trimmed().isEmpty()) {
+                // 闭合代码块：本行为纯反引号且长度 >= 开启围栏
+                QString content = codeContent.join('\n');
+                QString codeOpen = codeFenceLang.isEmpty()
+                    ? QStringLiteral("<code>")
+                    : QStringLiteral("<code class=\"language-") + codeFenceLang + "\">";
+                codeBlocks << "<pre>" + codeOpen + content.toHtmlEscaped() + "</code></pre>";
+                codeFenceLen = 0;
             } else {
-                processed += line + '\n';
+                // 代码块内容（含以 ``` 开头但不足以闭合的嵌套围栏行）
+                codeContent << line;
             }
-            inCodeBlock = !inCodeBlock;
             lastBlock = BT_NONE;
-        } else if (inCodeBlock) {
-            processed += line + '\n';
+        } else if (codeFenceLen > 0) {
+            codeContent << line;
         } else if (isFootnoteDef) {
             // 脚注定义行 [^id]: 内容（非代码块）—— 抽取归集到文末容器，从正文流移除
             QString fid = footnoteDefMatch.captured(1).trimmed();
@@ -635,9 +686,31 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     // 捕获的 div 文本会包含 BRMARKER 占位符，而 BRMARKER→<br> 替换发生在 backup
     // 之后，还原时 ZZDV 会把字面 BRMARKER 文本放回 —— 数据损坏。div 规范仅包裹
     // 行内内容（天然单行），故限定单行作用域即可闭合该路径。
+    // 行内代码 `...` 内的 <div> 是字面文本，须先暂存（\x01CODE 保护，与
+    // extractFootnoteRefs 一致）——否则被 ZZDV 捕获后还原为原始 HTML 插入
+    // <code> 内，浏览器把 <div> 当结构元素解析，字面标签即"被过滤"。
     // 注释见后处理 ZZDV 还原步骤：还原必须先于 ZZHI 等内层占位符。
     QStringList divBackups;
     {
+        // 1) 暂存行内代码片段。注意：processed 是多行 buffer，正则必须排除
+        // \n（[^`\n]）——若允许跨行配对，双反引号写法（`` `x` ``）会与后续
+        // 行的反引号误配对，把多行文本吞成一个"代码段"，替换占位符后多行
+        // 被压成一行，后续还原与解析全部错乱。
+        QStringList codes;
+        QRegularExpression codeSpanRe("`([^`\n]+)`");
+        int codeOff = 0;
+        while (true) {
+            auto m = codeSpanRe.match(processed, codeOff);
+            if (!m.hasMatch()) break;
+            codes << m.captured(0);
+            QString cph = "\x01CODE" + QString::number(codes.size() - 1) + "\x01";
+            processed.replace(m.capturedStart(), m.capturedLength(), cph);
+            codeOff = m.capturedStart() + cph.length();
+        }
+        // 2) 保护 <div>。捕获文本含 \x01（行内代码占位符）时跳过——说明该
+        // <div> 与 </div> 之间的配对不可靠（占位符还原后才是真实文本），
+        // 此时不能备份，否则占位符被吞进 divBackups、步骤 3 还原不到，
+        // 最终 \x01 泄漏进 HTML。
         QRegularExpression divRe(
             R"(<div\b(?![^>]*\bdata-type\s*=)[^>]*>(.*?)</div>)");
         int n = 0;
@@ -645,76 +718,31 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         while (true) {
             auto m = divRe.match(processed, offset);
             if (!m.hasMatch()) break;
+            if (m.captured().contains(QChar(1))) {
+                offset = m.capturedStart() + 1;
+                continue;
+            }
             divBackups << m.captured();
             QString ph = QString("ZZDV%1ZZ").arg(n++);
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }
+        // 3) 还原行内代码
+        for (int i = 0; i < codes.size(); ++i)
+            processed.replace("\x01CODE" + QString::number(i) + "\x01", codes[i]);
     }
 
     QTextDocument doc;
     doc.setMarkdown(processed);
     QString html = doc.toHtml();
 
-    // 后处理 1: 合并连续 <pre> 块（QTextDocument 每行一个 <pre>）
-    {
-        QRegularExpression preRe(
-            R"(<pre[^>]*>(.*?)</pre>)",
-            QRegularExpression::DotMatchesEverythingOption);
-        int searchFrom = 0;
-        while (true) {
-            auto m = preRe.match(html, searchFrom);
-            if (!m.hasMatch()) break;
-            int blockStart = m.capturedStart();
-            int blockEnd = blockStart + m.capturedLength();
-            QStringList lines;
-            lines << m.captured(1);
-            searchFrom = blockEnd;
-            // 收集连续 <pre>
-            while (true) {
-                auto next = preRe.match(html, searchFrom);
-                if (!next.hasMatch()) break;
-                QString between = html.mid(blockEnd,
-                    next.capturedStart() - blockEnd);
-                if (between.trimmed().isEmpty()) {
-                    lines << next.captured(1);
-                    blockEnd = next.capturedStart() + next.capturedLength();
-                    searchFrom = blockEnd;
-                } else break;
-            }
-            if (lines.size() > 1) {
-                // 合并为一个 <pre>，内部文本用 \n 分隔
-                QString merged = lines.join('\n');
-                merged.replace(QRegularExpression("<[^>]*>"), "");
-                QString replacement = "<pre>" + merged + "</pre>";
-                html.replace(blockStart, blockEnd - blockStart, replacement);
-                searchFrom = blockStart + replacement.length();
-            }
-        }
-    }
-
-    // 后处理 1.5: 统一代码块为 TipTap codeBlock 契约 <pre><code class="language-L">
-    //   TipTap 从 <pre> 的 firstElementChild(<code>) 的 language- class 读取语言；
-    //   合并后的 <pre> 为纯文本，单行 <pre> 可能带 style 属性与 <code> 子节点，统一重建。
-    if (!codeLangs.isEmpty()) {
-        QRegularExpression preBlockRe("<pre[^>]*>(.*?)</pre>",
-            QRegularExpression::DotMatchesEverythingOption);
-        int langIdx = 0;
-        int offset = 0;
-        while (langIdx < codeLangs.size()) {
-            auto m = preBlockRe.match(html, offset);
-            if (!m.hasMatch()) break;
-            QString inner = m.captured(1);
-            inner.remove(QRegularExpression("<[^>]*>")); // 去掉 <code> 等内部标签，保留实体
-            const QString &lang = codeLangs[langIdx];
-            QString codeOpen = lang.isEmpty()
-                ? QStringLiteral("<code>")
-                : QStringLiteral("<code class=\"language-") + lang + "\">";
-            QString replacement = "<pre>" + codeOpen + inner + "</code></pre>";
-            html.replace(m.capturedStart(), m.capturedLength(), replacement);
-            offset = m.capturedStart() + replacement.length();
-            langIdx++;
-        }
+    // 后处理 1: 还原代码块占位符 ZZCB → <pre><code class="language-X">…</code></pre>
+    //   代码块内容在预处理阶段已整体收集并 HTML 转义，未经过 setMarkdown，
+    //   因此可正确保留嵌套围栏（如 ```markdown 内嵌 ```mermaid）。
+    for (int i = 0; i < codeBlocks.size(); ++i) {
+        QString ph = QString("ZZCB%1ZZ").arg(i);
+        html.replace(QRegularExpression("<p[^>]*>" + ph + "</p>"), codeBlocks[i]);
+        html.replace(ph, codeBlocks[i]); // fallback：占位符未独立成段时
     }
 
     // 后处理 2: BRMARKER → <br data-brk>（标记以区分用户手写 <br>）
@@ -1112,8 +1140,22 @@ QString MarkdownHandler::fromHtml(const QString &html)
             code = code.trimmed();
             QString ph = QString("ZZCB%1ZZ").arg(n++);
             placeholders << ph;
-            QString fence = lang.isEmpty() ? QStringLiteral("```") : ("```" + lang);
-            backups << fence + "\n" + code + "\n```";
+            // 围栏长度取「内容中最长连续反引号序列 + 1」（至少 3），
+            // 保证嵌套围栏（如外层 markdown 内含 ```cpp）往返后仍能正确闭合。
+            // 若固定用 3 反引号，内层也是 3 反引号时外层会提前闭合，切回 WYSIWYG 即错乱。
+            int maxRun = 0, run = 0;
+            for (const QChar &c : code) {
+                if (c == QLatin1Char('`')) {
+                    ++run;
+                    if (run > maxRun) maxRun = run;
+                } else {
+                    run = 0;
+                }
+            }
+            int fenceLen = maxRun + 1;
+            if (fenceLen < 3) fenceLen = 3;
+            QString fence(fenceLen, QLatin1Char('`'));
+            backups << fence + lang + "\n" + code + "\n" + fence;
             processed.replace(blockStart, blockEnd - blockStart, ph);
             searchFrom = blockStart + ph.length();
         }
@@ -1722,7 +1764,22 @@ QString MarkdownHandler::fromHtml(const QString &html)
     // 自身不含换行；若放到还原之后，会破坏代码块/公式内用户有意保留的空行。
     md.replace(QRegularExpression("\\n{3,}"), "\n\n");
 
-    // 3) 还原占位符（逆序：后入先还原，防止嵌套占位符丢失）
+    // 3) 修复被合并进同一段落的块级占位符（必须在还原前）：
+    //    setHtml 中相邻块级元素的占位符之间 \n 是软换行，QTextDocument 将其
+    //    放入同一段落，toMarkdown 输出为同一行以空格分隔（"ZZCB0ZZ ZZBM0ZZ"）。
+    //    多行备份（代码块围栏、块级公式）还原后会与相邻内容粘连
+    //    （如闭合围栏与 $$ 粘成 "```$$"，围栏看似丢失）。
+    //    处理：备份含换行的占位符必须独占一行——前后若有同行内容，插入空行分隔。
+    for (int i = 0; i < placeholders.size(); ++i) {
+        if (!backups[i].contains('\n')) continue;
+        const QString &ph = placeholders[i];
+        // 前方有同行内容（前一字符非换行）→ 前插空行
+        md.replace(QRegularExpression("([^\\n])" + ph), "\\1\n\n" + ph);
+        // 后方有同行内容（后一字符非换行）→ 后插空行
+        md.replace(QRegularExpression(ph + "([^\\n])"), ph + "\n\n\\1");
+    }
+
+    // 4) 还原占位符（逆序：后入先还原，防止嵌套占位符丢失）
     for (int i = placeholders.size() - 1; i >= 0; --i)
         md.replace(placeholders[i], backups[i]);
 

@@ -95,6 +95,105 @@ private slots:
         QVERIFY(html.contains("printf"));
     }
 
+    void testInlineCodeSyntaxLiteralPreserved() {
+        // 行内代码内的功能符号是字面文本，不应被转换为下标/上标/高亮/标签：
+        // `H~2~O` 显示 H~2~O（不是 H₂O），`x^2^` 显示 x^2^（不是 x²）
+        QString md = "写法 `H~2~O` 与 `x^2^` 与 `==高亮==`\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("<code>H~2~O</code>"),
+                 qPrintable("`H~2~O` 应字面保留，实际: " + html));
+        QVERIFY2(html.contains("<code>x^2^</code>"),
+                 qPrintable("`x^2^` 应字面保留，实际: " + html));
+        QVERIFY2(html.contains("<code>==高亮==</code>"),
+                 qPrintable("`==高亮==` 应字面保留，实际: " + html));
+        // 对照：行内代码外的写法正常转换（代码外的 H~2~O → <sub>2</sub>）
+        QString md2 = "效果 H~2~O 与 x^2^ 与 ==高亮==\n";
+        QString html2 = MarkdownHandler::toHtml(md2);
+        QVERIFY2(html2.contains("<sub>2</sub>"),
+                 qPrintable("代码外 ~2~ 应转下标，实际: " + html2));
+        QVERIFY2(html2.contains("<sup>2</sup>"),
+                 qPrintable("代码外 ^2^ 应转上标，实际: " + html2));
+        QVERIFY2(html2.contains("<mark>高亮</mark>"),
+                 qPrintable("代码外 ==高亮== 应转高亮，实际: " + html2));
+    }
+
+    void testInlineCodeHtmlTagsLiteralPreserved() {
+        // 行内代码内的 HTML 标签是字面文本：`H<sub>2</sub>O` 显示为带标签的写法
+        // （往返后应还原 `H<sub>2</sub>O` 原文，不被解析为真下标）
+        QString md1 = "写法 `H<sub>2</sub>O` 与 `x<sup>2</sup>`\n";
+        QString html = MarkdownHandler::toHtml(md1);
+        QString code1, code2;
+        int p = html.indexOf("<code>"); p = html.indexOf("<code>", p + 1); // 跳过第一个（若无）
+        // 提取两个 code 的内容：允许 &lt; 转义形态或原文形态，但都必须是"字面展示"——
+        // 即 sub/sup 标签在 <code> 内部作为文本（转义）或成对原文，而不是渲染元素。
+        // 简化断言：code 内含 "2" 且不含未转义的 "<sub"（未被当作受保护 HTML 直通渲染）
+        QRegularExpression codeRe("<code>(.*?)</code>");
+        auto it = codeRe.globalMatch(html);
+        int n = 0;
+        while (it.hasNext()) {
+            auto m = it.next();
+            QString c = m.captured(1);
+            if (c.contains("2")) { n++; QVERIFY2(!c.contains("<sub>"), "code 内不应有真 <sub>"); }
+            if (c.contains("2")) QVERIFY(!c.contains("<sup>"));
+        }
+        QVERIFY(n >= 2);
+        // 完整往返：`H<sub>2</sub>O` 原文恢复
+        QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("`H<sub>2</sub>O`"),
+                 qPrintable("往返应还原 `H<sub>2</sub>O` 原文，实际: " + back));
+        QVERIFY2(back.contains("`x<sup>2</sup>`"),
+                 qPrintable("往返应还原 `x<sup>2</sup>` 原文，实际: " + back));
+    }
+
+    void testInlineCodeDivLiteralPreserved() {
+        // 行内代码内的 <div> 是字面文本：`<div align="center">…</div>` 应显示为
+        // 带标签的写法（HTML 转义形态），而不是被 ZZDV 当真标签保护后直通——
+        // 原始 <div> 插进 <code> 会被浏览器当结构元素解析，字面标签"被过滤"。
+        QString md = "<div align=\"center\">居中的段落</div> —— 写法：`<div align=\"center\">居中的段落</div>`\n";
+        QString html = MarkdownHandler::toHtml(md);
+        // 真 div（代码外）仍受保护、原样出现在 HTML 中
+        QVERIFY2(html.contains("<div align=\\\"center\\\">居中的段落</div> —— 写法：") ||
+                 html.contains("<div align=\"center\">居中的段落</div> —— 写法："),
+                 qPrintable("代码外真 div 应保留，实际: " + html));
+        // code 内应为 HTML 转义形态（&lt;div…），非原始标签
+        QVERIFY2(html.contains("<code>&lt;div"),
+                 qPrintable("code 内 div 应为转义字面文本，实际: " + html));
+        QVERIFY2(!html.contains("<code><div"),
+                 qPrintable("code 内不应有原始 <div> 标签，实际: " + html));
+        // 完整往返：原文精确恢复
+        QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("`<div align=\\\"center\\\">居中的段落</div>`") ||
+                 back.contains("`<div align=\"center\">居中的段落</div>`"),
+                 qPrintable("往返应还原原文，实际: " + back));
+    }
+
+    void testNoPlaceholderLeakInGuide() {
+        // 回归：ZZDV 守卫的行内代码正则若允许跨行配对（`[^`]+`），
+        // 双反引号写法（`` `x` ``）会与后续行的反引号误配对，多行文本
+        // 被吞成一个"代码段"并压成一行；随后 divRe 从裸 <div> 跨区捕获
+        // 到远处 </div>，把沿途 \x01CODE 占位符吞进 divBackups，还原
+        // 步骤扫不到 → \x01 泄漏进最终 HTML。全文渲染不得含 \x01。
+        QFile f(GUIDE_MD_PATH);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+            QSKIP("找不到 markdown-guide.md");
+        QString guide = QString::fromUtf8(f.readAll());
+        QString html = MarkdownHandler::toHtml(guide);
+        QVERIFY2(!html.contains(QChar(1)),
+                 qPrintable("HTML 中泄漏 \\x01 占位符: " +
+                            html.mid(html.indexOf(QChar(1)) - 40, 120)));
+        // 最小复现集：代码围栏 + 双反引号表格行 + 含裸 <div> 的散文 +
+        // 行内代码写法表格（曾泄漏 13 处）
+        QString mini = "```markdown\n```\n"
+                       "| `` `行内代码` `` | `行内代码` |\n"
+                       "```markdown\n```\n"
+                       "编辑器支持手写 HTML 标签，如 <div> 与 <span>。\n"
+                       "| `H~2~O` | H~2~O |\n"
+                       "| `<div align=\"center\">x</div>` | 居中 |\n";
+        QString html2 = MarkdownHandler::toHtml(mini);
+        QVERIFY2(!html2.contains(QChar(1)),
+                 qPrintable("最小复现集泄漏 \\x01: " + html2));
+    }
+
     void testCodeBlockWithDollar() {
         // 代码块内的 $ 不应被转换
         QString md = "```cpp\nint x = $value;\n```\n";
@@ -1759,6 +1858,86 @@ private slots:
         bool wrapped = QRegularExpression("<p[^>]*>\\s*<img\\b").match(html).hasMatch();
         QVERIFY2(!wrapped,
                  qPrintable("块级图片不应包在 <p> 里（会致渲染空行），html=[" + html + "]"));
+    }
+
+    void testNestedFenceCodeBlock()
+    {
+        // 嵌套围栏：```markdown 源码块内嵌 ```mermaid（展示原始 MD 源码）
+        // 修复前：朴素围栏翻转会把内层 ``` 误判为闭合，导致源码块内容错乱、
+        //         后续标题/正文被吞入代码块。
+        const QString md = QStringLiteral(
+            "````markdown\n```mermaid\ngraph TD\nA --> B\n```\n````\n\n## 标题\n\n正文\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        // 外层应识别为一个 markdown 代码块，内层 ```mermaid 作为字面内容保留
+        QVERIFY2(html.contains("class=\"language-markdown\""),
+                 qPrintable("应输出 language-markdown 代码块，实际: " + html));
+        QVERIFY2(html.contains("```mermaid"),
+                 qPrintable("内层 ```mermaid 应作为字面内容保留，实际: " + html));
+        QVERIFY(html.contains("graph TD"));
+        // 后续标题不应被吞入代码块
+        QVERIFY2(html.contains(">标题<"),
+                 qPrintable("嵌套围栏后的标题应正常渲染，实际: " + html));
+        QVERIFY(html.contains("正文"));
+        // 往返：源码应原样恢复
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("```mermaid"),
+                 qPrintable("往返后应保留 ```mermaid，实际: " + back));
+        QVERIFY(back.contains("graph TD"));
+    }
+
+    void testNestedFenceRoundTrip()
+    {
+        // 嵌套围栏完整往返：````markdown 内含 ```cpp。fromHtml 还原时外层围栏
+        // 必须长于内层（4 反引号 > 3 反引号），否则内外同长会提前闭合，
+        // 再切回 WYSIWYG 即错乱（source mode 往返 bug）。
+        const QString md = QStringLiteral(
+            "````markdown\n```cpp\n#include <iostream>\nint main() {}\n```\n````\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("````markdown"),
+                 qPrintable("外层围栏应还原为 4 反引号，实际: " + back));
+        QVERIFY(back.contains("```cpp"));
+        QVERIFY(back.contains("int main() {}"));
+        // 往返后的 MD 再次 toHtml 仍应正确识别外层 markdown、内层 ```cpp 为字面内容
+        const QString html2 = MarkdownHandler::toHtml(back);
+        QVERIFY2(html2.contains("class=\"language-markdown\""),
+                 qPrintable("往返后外层仍应是 markdown 代码块，实际: " + html2));
+        QVERIFY2(html2.contains("```cpp"),
+                 qPrintable("往返后内层 ```cpp 应作为字面内容保留，实际: " + html2));
+    }
+
+    void testCodeBlockAdjacentBlockMathRoundTrip()
+    {
+        // 源码块（含 $$ 块级公式演示）紧邻真实块级公式：
+        // fromHtml 中 setHtml 把相邻块级占位符放进同一段落，toMarkdown
+        // 输出为同一行空格分隔（"ZZCB0ZZ ZZBM0ZZ"），还原后闭合 ``` 与 $$
+        // 粘连成 "```$$"，围栏看似丢失。修复：多行备份占位符独占一行。
+        const QString md = QStringLiteral(
+            "```markdown\n$$\nE = mc^2\n$$\n```\n\n$$\nE = mc^2\n$$\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(!back.contains("```$$"),
+                 qPrintable("闭合围栏不应与 $$ 粘连，实际: " + back));
+        QVERIFY2(!back.contains("$$```"),
+                 qPrintable("$$ 不应与围栏粘连，实际: " + back));
+        QVERIFY2(back.contains("```\n\n$$\nE = mc^2\n$$"),
+                 qPrintable("闭合围栏与块级公式应以空行分隔，实际: " + back));
+    }
+
+    void testAdjacentCodeBlocksNotMerged()
+    {
+        // 相邻两个代码块（仅空行分隔）不应被合并为一个，语言各自保留
+        const QString md = QStringLiteral("```cpp\na\nb\n```\n\n```python\nc\nd\n```\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("class=\"language-cpp\""),
+                 qPrintable("应含 language-cpp，实际: " + html));
+        QVERIFY2(html.contains("class=\"language-python\""),
+                 qPrintable("应含 language-python，实际: " + html));
+        // 两个代码块应各自独立（cpp 内容不含 python 内容）
+        int cppPos = html.indexOf("class=\"language-cpp\"");
+        int pyPos = html.indexOf("class=\"language-python\"");
+        QVERIFY2(cppPos >= 0 && pyPos >= 0 && cppPos != pyPos,
+                 qPrintable("两个代码块应分别输出，实际: " + html));
     }
 };
 
