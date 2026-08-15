@@ -67,6 +67,12 @@ private slots:
         QVERIFY(HtmlExporter::bodyCss("light") != HtmlExporter::bodyCss("dark"));
     }
 
+    void testBodyCssTaskListInlineLayout() {
+        // 任务列表 checkbox 与文字需同行：li 用 flex 布局（镜像 editor.css）
+        QVERIFY(HtmlExporter::bodyCss("light").contains("ul[data-type=\"taskList\"] li{display:flex;"));
+        QVERIFY(HtmlExporter::bodyCss("dark").contains("ul[data-type=\"taskList\"] li{display:flex;"));
+    }
+
     void testRenderScriptUsesTheme() {
         QVERIFY(HtmlExporter::renderScript("dark").contains("'dark'"));
         QVERIFY(HtmlExporter::renderScript("light").contains("'default'"));
