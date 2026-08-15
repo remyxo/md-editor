@@ -32,6 +32,7 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
         static_cast<int>(orientation)).toInt();
     int paper = settings.value("export/paperSize",
         static_cast<int>(paperSize)).toInt();
+    QString customCss = settings.value("editor/customCss").toString();
 
     // 读取 KaTeX CSS 并内联（字体 url() 通过 qrc: baseUrl 解析）
     QString katexCss;
@@ -85,6 +86,11 @@ void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
         "</script>"
         "</head><body>%1</body></html>"
     ).arg(html, katexCss);
+
+    // 内联自定义 CSS（用户设置，覆盖默认导出样式）
+    if (!customCss.isEmpty()) {
+        fullHtml.replace("</head>", QString("<style>%1</style></head>").arg(customCss));
+    }
 
     m_pendingOutputPath = outputPath;
     // 设置值为 cm，QPageLayout::Millimeter 需要 mm

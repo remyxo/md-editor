@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QPushButton>
 #include <QFontComboBox>
+#include <QPlainTextEdit>
 
 class FileManager;
 
@@ -36,6 +37,7 @@ private:
     // 外观
     QComboBox *m_themeCombo;
     QComboBox *m_langCombo;
+    QPlainTextEdit *m_customCssEdit;
 
     // 导出
     QComboBox *m_paperSizeCombo;

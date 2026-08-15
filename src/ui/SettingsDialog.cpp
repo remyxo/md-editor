@@ -82,6 +82,10 @@ void SettingsDialog::setupUi()
     m_langCombo->addItem("简体中文", "zh_CN");
     m_langCombo->addItem("English", "en_US");
     appearanceForm->addRow("界面语言:", m_langCombo);
+    m_customCssEdit = new QPlainTextEdit();
+    m_customCssEdit->setPlaceholderText("/* 可选：覆盖编辑器与导出的默认样式 */");
+    m_customCssEdit->setMinimumHeight(120);
+    appearanceForm->addRow("自定义 CSS:", m_customCssEdit);
     tabs->addTab(appearanceTab, "外观");
 
     // === 导出 ===
@@ -215,6 +219,7 @@ void SettingsDialog::loadSettings()
 
     QString theme = Application::instance()->themeManager()->currentTheme();
     m_themeCombo->setCurrentIndex(m_themeCombo->findData(theme));
+    m_customCssEdit->setPlainText(settings.value("editor/customCss").toString());
 }
 
 void SettingsDialog::onAccepted()
@@ -227,6 +232,7 @@ void SettingsDialog::onAccepted()
     settings.setValue("editor/wordWrap", m_wordWrapCheck->isChecked());
     settings.setValue("editor/tabSize", m_tabSizeSpin->value());
     settings.setValue("editor/width", m_widthSpin->value());
+    settings.setValue("editor/customCss", m_customCssEdit->toPlainText());
     settings.sync();
 
     // 应用主题并持久化
