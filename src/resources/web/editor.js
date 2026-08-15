@@ -1593,14 +1593,33 @@ window.editorApi = {
     searchNext: function () {
         if (!this.editor || this.isSourceMode) return;
         window.searchPlugin.searchNext(this.editor.view);
-        this.editor.commands.focus();   // 焦点移入编辑器，显示匹配处选区
+        this._focusAfterSearchNav();
         this._notifySearchCount();
     },
     searchPrev: function () {
         if (!this.editor || this.isSourceMode) return;
         window.searchPlugin.searchPrev(this.editor.view);
-        this.editor.commands.focus();   // 焦点移入编辑器，显示匹配处选区
+        this._focusAfterSearchNav();
         this._notifySearchCount();
+    },
+    // 搜索导航后聚焦：可编辑用 focus 命令（显示选区）；
+    // 只读模式下 TipTap focus 命令内部 editable && 才聚焦、ProseMirror 选区
+    // 同步（selectionToDOM）也要求编辑器在焦点链上，均不生效——须 view.focus()
+    // 强制聚焦 DOM，选区才能写入并显示；再主动滚动到当前匹配（tr.scrollIntoView
+    // 依赖选区宿主，聚焦前已派发的事务滚动可能丢失）。
+    _focusAfterSearchNav: function () {
+        if (this._readOnly) {
+            this.editor.view.focus();
+            var st = window.searchPlugin.searchKey.getState(this.editor.state);
+            if (st && st.matches.length && st.current >= 0) {
+                var m = st.matches[st.current];
+                var pos = this.editor.view.domAtPos(m.from);
+                var el = pos.node.nodeType === 3 ? pos.node.parentElement : pos.node;
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        } else {
+            this.editor.commands.focus();   // 焦点移入编辑器，显示匹配处选区
+        }
     },
     replaceOne: function (rep) {
         if (!this.editor || this.isSourceMode) return;
