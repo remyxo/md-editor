@@ -71,6 +71,9 @@ private slots:
         // 任务列表 checkbox 与文字需同行：li 用 flex 布局（镜像 editor.css）
         QVERIFY(HtmlExporter::bodyCss("light").contains("ul[data-type=\"taskList\"] li{display:flex;"));
         QVERIFY(HtmlExporter::bodyCss("dark").contains("ul[data-type=\"taskList\"] li{display:flex;"));
+        // 内容段落 margin 归零，避免顶部 .6em 把文字压到复选框下方（对齐）
+        QVERIFY(HtmlExporter::bodyCss("light").contains("ul[data-type=\"taskList\"] li>div p{margin:0;}"));
+        QVERIFY(HtmlExporter::bodyCss("dark").contains("ul[data-type=\"taskList\"] li>div p{margin:0;}"));
     }
 
     void testRenderScriptUsesTheme() {

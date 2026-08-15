@@ -102,6 +102,7 @@ QString HtmlExporter::bodyCss(const QString &theme)
         "ul[data-type=\"taskList\"]{list-style:none;padding-left:0;}"
         "ul[data-type=\"taskList\"] li{display:flex;align-items:flex-start;gap:8px;}"
         "ul[data-type=\"taskList\"] li label{margin-top:3px;}"
+        "ul[data-type=\"taskList\"] li>div p{margin:0;}"
             "[data-type=\"block-math\"]{display:block;text-align:center;margin:1em 0;overflow-x:auto;}"
             "[data-mermaid]{text-align:center;margin:1em 0;}");
     }
@@ -125,6 +126,7 @@ QString HtmlExporter::bodyCss(const QString &theme)
         "ul[data-type=\"taskList\"]{list-style:none;padding-left:0;}"
         "ul[data-type=\"taskList\"] li{display:flex;align-items:flex-start;gap:8px;}"
         "ul[data-type=\"taskList\"] li label{margin-top:3px;}"
+        "ul[data-type=\"taskList\"] li>div p{margin:0;}"
         "[data-type=\"block-math\"]{display:block;text-align:center;margin:1em 0;overflow-x:auto;}"
         "[data-mermaid]{text-align:center;margin:1em 0;}");
 }
