@@ -119,6 +119,20 @@ QToolButton#pdfAction::menu-indicator {
     height: 5px;
 }
 
+/* 对齐/上下标下拉按钮 — 深灰图标，chevron 同导出规格 */
+QToolButton#alignButton,
+QToolButton#subsupButton { color: #c4c9ce; }
+QToolButton#alignButton::menu-indicator,
+QToolButton#subsupButton::menu-indicator {
+    image: url(:/icons/dark/chevron-down.svg);
+    subcontrol-position: right bottom;
+    subcontrol-origin: margin;
+    bottom: 4px;
+    right: 2px;
+    width: 8px;
+    height: 5px;
+}
+
 /* checked 状态：背景高亮 */
 QToolButton:checked {
     background-color: #1a3a5c;

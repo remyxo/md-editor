@@ -129,7 +129,7 @@ void ToolBar::setupUi()
         m_alignButton->setObjectName("alignButton");
         m_alignButton->setToolTip("段落对齐");
         m_alignButton->setCheckable(false);
-        m_alignButton->setArrowType(Qt::NoArrow); // 用自己的 chevron-down
+        m_alignButton->setArrowType(Qt::NoArrow); // chevron 由 QSS menu-indicator 提供（同导出按钮）
         m_alignMenu = new QMenu(m_alignButton);
         auto addAlignItem = [this](const QString &objName, const QString &text,
                                    const QString &shortcut, const QString &icon) {
