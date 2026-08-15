@@ -21,3 +21,8 @@ add_executable(test_imagemanager test_imagemanager.cpp ../src/core/ImageManager.
 target_include_directories(test_imagemanager PRIVATE ../src)
 target_link_libraries(test_imagemanager PRIVATE Qt6::Test)
 add_test(NAME test_imagemanager COMMAND test_imagemanager)
+
+add_executable(test_htmlexporter test_htmlexporter.cpp ../src/core/HtmlExporter.cpp)
+target_include_directories(test_htmlexporter PRIVATE ../src)
+target_link_libraries(test_htmlexporter PRIVATE Qt6::Test)
+add_test(NAME test_htmlexporter COMMAND test_htmlexporter)

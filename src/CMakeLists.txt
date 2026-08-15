@@ -9,6 +9,7 @@ set(SOURCES
     core/MarkdownHandler.cpp
     core/PdfExporter.cpp
     core/DocxExporter.cpp
+    core/HtmlExporter.cpp
     ui/EditorTab.cpp
     ui/TabWidget.cpp
     ui/ToolBar.cpp
@@ -34,6 +35,7 @@ set(HEADERS
     core/MarkdownHandler.h
     core/PdfExporter.h
     core/DocxExporter.h
+    core/HtmlExporter.h
     ui/EditorTab.h
     ui/TabWidget.h
     ui/ToolBar.h
