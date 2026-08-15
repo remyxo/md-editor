@@ -427,6 +427,9 @@ void ToolBar::setSourceMode(bool on)
     // 导出按钮是 QToolButton widget，单独控制
     if (m_exportButton)
         m_exportButton->setEnabled(true);
+    // 对齐/上下标下拉按钮是 QToolButton widget，随编辑按钮一起启停
+    if (m_alignButton) m_alignButton->setEnabled(!on);
+    if (m_subsupButton) m_subsupButton->setEnabled(!on);
 }
 
 void ToolBar::updateFormatState(const QJsonObject &f)
@@ -463,6 +466,7 @@ void ToolBar::updateFormatState(const QJsonObject &f)
     // 文字对齐回显：切换按钮图标 + 同步菜单项勾选（无对应属性时默认左对齐）
     if (f.contains("textAlign")) {
         QString a = f["textAlign"].toString();
+        if (a.isEmpty()) a = "left";
         setAlignIcon(a);
         rebuildAlignMenuChecks(a);
     }
@@ -506,14 +510,28 @@ void ToolBar::applyIconTheme(const QString &theme)
         QString iconPath = m_isDark ? ":/icons/dark/pdf.svg" : ":/icons/light/pdf.svg";
         m_exportButton->setIcon(QIcon(iconPath));
     }
+    // 对齐/上下标按钮：按记录的当前状态重选主题图标
+    if (m_alignButton) setAlignIcon(m_currentAlign);
+    if (m_subsupButton) {
+        // 从菜单勾选状态恢复激活态，避免另存状态成员
+        bool sup = false, sub = false;
+        if (QAction *a = m_subsupMenu->findChild<QAction*>("superscriptItem")) sup = a->isChecked();
+        if (QAction *a = m_subsupMenu->findChild<QAction*>("subscriptItem")) sub = a->isChecked();
+        setSubsupIcon(sub, sup);
+    }
 }
 
 bool ToolBar::eventFilter(QObject *obj, QEvent *event)
 {
-    if (obj == m_exportButton && event->type() == QEvent::MouseButtonPress) {
-        if (m_exportButton->menu()) {
-            m_exportButton->menu()->popup(
-                m_exportButton->mapToGlobal(QPoint(0, m_exportButton->height())));
+    // 下拉按钮统一：点击即弹出菜单（导出/对齐/上下标）
+    QToolButton *dropBtn = nullptr;
+    if (obj == m_exportButton) dropBtn = m_exportButton;
+    else if (obj == m_alignButton) dropBtn = m_alignButton;
+    else if (obj == m_subsupButton) dropBtn = m_subsupButton;
+    if (dropBtn && event->type() == QEvent::MouseButtonPress) {
+        if (dropBtn->menu()) {
+            dropBtn->menu()->popup(
+                dropBtn->mapToGlobal(QPoint(0, dropBtn->height())));
         }
         return true;
     }
