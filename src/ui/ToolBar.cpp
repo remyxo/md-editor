@@ -138,6 +138,8 @@ void ToolBar::setupUi()
             a->setShortcut(QKeySequence(shortcut));  // 仅显示文字，菜单不抢键（见下）
             a->setCheckable(true);
             m_alignMenu->addAction(a);
+            // 注册进主题注册表：applyIconTheme 切换 /light/→/dark/
+            m_iconPaths.insert(a, icon);
             return a;
         };
         addAlignItem("alignLeftItem", "左对齐(&L)", "Ctrl+Shift+L",
@@ -150,6 +152,10 @@ void ToolBar::setupUi()
         // 快捷键仅作显示：绑定到菜单自身上下文，避免抢 WebEngine 按键
         for (QAction *a : m_alignMenu->actions())
             a->setShortcutContext(Qt::WidgetShortcut);
+        // 三项互斥勾选：消除点击瞬时的双勾闪烁（rebuildAlignMenuChecks 仍可显式重设）
+        QActionGroup *alignGroup = new QActionGroup(this);
+        for (QAction *a : m_alignMenu->actions())
+            alignGroup->addAction(a);
         m_alignButton->installEventFilter(this);
         addWidget(m_alignButton);
         setAlignIcon("left");
@@ -171,6 +177,8 @@ void ToolBar::setupUi()
             a->setShortcut(QKeySequence(shortcut));
             a->setCheckable(true);
             m_subsupMenu->addAction(a);
+            // 注册进主题注册表：applyIconTheme 切换 /light/→/dark/
+            m_iconPaths.insert(a, icon);
             return a;
         };
         addSubsupItem("superscriptItem", "上标(&P)", "Ctrl+.",
@@ -243,7 +251,7 @@ void ToolBar::setupUi()
         m_exportButton->setIcon(QIcon(":/icons/light/pdf.svg"));
         m_exportButton->setToolTip("导出");
         m_exportButton->setCheckable(false);
-        m_exportButton->setArrowType(Qt::NoArrow); // 用自己的 chevron-down
+        m_exportButton->setArrowType(Qt::NoArrow); // chevron 由 QSS menu-indicator 提供（同对齐/上下标按钮）
         QMenu *exportMenu = new QMenu(m_exportButton);
         exportMenu->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
         exportMenu->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
