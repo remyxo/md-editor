@@ -128,7 +128,7 @@ void ToolBar::setupUi()
         m_alignButton = new QToolButton(this);
         m_alignButton->setObjectName("alignButton");
         m_alignButton->setToolTip("段落对齐");
-        m_alignButton->setCheckable(false);
+        m_alignButton->setCheckable(true);  // 居中/右对齐时高亮（左对齐为默认态不高亮）
         m_alignButton->setArrowType(Qt::NoArrow); // chevron 由 QSS menu-indicator 提供（同导出按钮）
         m_alignMenu = new QMenu(m_alignButton);
         auto addAlignItem = [this](const QString &objName, const QString &text,
@@ -318,7 +318,8 @@ void ToolBar::setupUi()
     m_allActions = findChildren<QAction *>().toList();
 }
 
-// 按对齐状态切换按钮图标（跟随光标回显）
+// 按对齐状态切换按钮图标与高亮（跟随光标回显）。
+// 左对齐是文档默认态，不高亮；居中/右对齐为显式设置，高亮提示。
 void ToolBar::setAlignIcon(const QString &alignment)
 {
     m_currentAlign = alignment;
@@ -326,6 +327,7 @@ void ToolBar::setAlignIcon(const QString &alignment)
     QString icon = (alignment == "center") ? "align-center"
                  : (alignment == "right") ? "align-right" : "align-left";
     m_alignButton->setIcon(QIcon(QString(":/icons/%1/%2.svg").arg(theme, icon)));
+    m_alignButton->setChecked(alignment == "center" || alignment == "right");
 }
 
 // 按上下标激活状态切换按钮图标与 checked 高亮（默认下标图标）
