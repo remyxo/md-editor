@@ -14,6 +14,7 @@
 6. **先讨论设计再编码**：不确定的地方先和用户确认
 7. **往返保真（Round-Trip Fidelity）**：MD→HTML→MD 转换必须保证信息不丢失。详见下方「往返保真规则」
 8. **兼容基准为 Qt 6.4.2**：CI/发布 DEB 在 `ubuntu-24.04`（Qt 6.4.2）构建，本地开发机为 6.8.x，二者行为有差异。新增任何依赖 Qt `toMarkdown()`/`setHtml()` 行为的逻辑，必须以 **6.4.2 的行为为基准设计与验证，不得依赖 6.8.x 独有的更激进转义**。详见 [`docs/qt-642-escaping-compat.md`](docs/qt-642-escaping-compat.md)
+9. **改资源/源码后必须重新编译**：`src/resources/` 下打进 qrc 的文件（`web/` 的 .js/.css/.md、`themes/` 的 .qss）与任何 C++ 源码，改动后必须 `cmake --build build`——qrc 打包进二进制，不重编译用户跑旧版。告知用户「已修复」前，先确认二进制时间戳新于所有改动源文件
 
 ## 架构
 
@@ -127,3 +128,4 @@ ctest --output-on-failure
 - **[模态对话框 ESC 关闭机制](docs/modal-dialog-esc-handling.md)** — Qt QShortcut 拦截 Esc → Bridge 通知 → 分流处理
 - **[\<br\> 与软换行往返机制](docs/br-and-softbreak-roundtrip.md)** — BRMARKER/data-brk 标记 / 双 TipTap 节点 / toHtml/fromHtml 三层分离架构
 - **[Qt 6.4.2 转义兼容](docs/qt-642-escaping-compat.md)** — 6.4.2 与 6.8.x 的 toMarkdown 转义差异 / 占位符保护范式 / Docker 容器验证法
+- **[代码块围栏往返机制](docs/code-fence-roundtrip.md)** — 嵌套围栏三坑：解析层围栏长度 / 序列化层反引号数推断 / 占位符段落重排粘连
