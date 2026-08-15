@@ -1238,6 +1238,9 @@ window.editorApi = {
         if (this.bridge) {
             this.bridge.contentChanged(false);
             this.notifyWordCount();
+            // setContent 在 _loading 锁内重建编辑器，onUpdate/onSelectionUpdate 均
+            // 被抑制，需在此主动通知大纲（否则要等用户点击编辑区才触发）
+            this.notifyHeadings();
         }
         this._attachMathClickHandler(this.editor.view.dom);
         this._syncLinkHandlers();
@@ -3030,6 +3033,9 @@ document.addEventListener('DOMContentLoaded', function() {
             window.editorApi.bridge = channel.objects.bridge;
             // 桥接就绪后同步脏状态（新文档始终是干净的）
             window.editorApi._notifyDirty();
+            // init() 先于 QWebChannel 异步就绪执行，其中 notifyHeadings 因
+            // bridge 未就绪而丢弃——此处补推，保证启动即显示大纲
+            window.editorApi.notifyHeadings();
         });
     } else {
         console.warn('QWebChannel 未连接：请在浏览器中独立测试时忽略此警告。');
