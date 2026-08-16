@@ -1,4 +1,5 @@
 #include "PdfExporter.h"
+#include "HtmlExporter.h"
 #include <QWebEnginePage>
 #include <QWebEngineSettings>
 #include <QUrl>
@@ -19,32 +20,12 @@ PdfExporter::~PdfExporter()
     delete m_renderView;
 }
 
-void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const QString &outputPath,
-                              QPageLayout::Orientation orientation,
-                              QPageSize::PageSizeId paperSize)
+QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
+                                     const QString &katexCss, const QString &customCss)
 {
-    Q_UNUSED(docDir);   // Task 2 使用
-    QSettings settings("md-editor", "md-editor");
-    double mt = settings.value("export/marginTop", 1.8).toDouble();
-    double mb = settings.value("export/marginBottom", 1.8).toDouble();
-    double ml = settings.value("export/marginLeft", 1.8).toDouble();
-    double mr = settings.value("export/marginRight", 1.8).toDouble();
-    int orient = settings.value("export/orientation",
-        static_cast<int>(orientation)).toInt();
-    int paper = settings.value("export/paperSize",
-        static_cast<int>(paperSize)).toInt();
-    QString customCss = settings.value("editor/customCss").toString();
+    // 图片 base64 内联（相对路径相对 docDir 解析；绝对路径原样；读不到保留 src）
+    QString body = HtmlExporter::inlineImages(html, docDir);
 
-    // 读取 KaTeX CSS 并内联（字体 url() 通过 qrc: baseUrl 解析）
-    QString katexCss;
-    QFile cssFile(":/web/katex.min.css");
-    if (cssFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        katexCss = QString::fromUtf8(cssFile.readAll());
-        cssFile.close();
-    }
-
-    // 构建 PDF 渲染页面，内联 KaTeX CSS + JS + 渲染脚本
-    // 使用 qrc:/web/ 作为 baseUrl，确保字体文件 url(fonts/...) 可解析
     QString fullHtml = QString(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
         "@media print{"
@@ -64,15 +45,12 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
         "img{max-width:100%%;}"
         "blockquote{border-left:3px solid #0078d4;padding:4px 12px;"
         "color:#555;margin:0.5em 0;}"
-        // 块级公式居中（WYSIWYG 与编辑器一致）
         "[data-type=\"block-math\"]{display:block;text-align:center;margin:1em 0;}"
         "}"
         "%2"
         "</style>"
-        // KaTeX JS 通过 qrc: baseUrl 相对路径加载
         "<script src=\"katex.min.js\"></script>"
         "<script>"
-        // 在页面加载完成后、打印前渲染所有数学公式
         "window.addEventListener('DOMContentLoaded',function(){"
         "var els=document.querySelectorAll('[data-latex]');"
         "for(var i=0;i<els.length;i++){"
@@ -86,12 +64,39 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
         "});"
         "</script>"
         "</head><body>%1</body></html>"
-    ).arg(html, katexCss);
+    ).arg(body, katexCss);
 
-    // 内联自定义 CSS（用户设置，覆盖默认导出样式）
     if (!customCss.isEmpty()) {
         fullHtml.replace("</head>", QString("<style>%1</style></head>").arg(customCss));
     }
+    return fullHtml;
+}
+
+void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const QString &outputPath,
+                              QPageLayout::Orientation orientation,
+                              QPageSize::PageSizeId paperSize)
+{
+    QSettings settings("md-editor", "md-editor");
+    double mt = settings.value("export/marginTop", 1.8).toDouble();
+    double mb = settings.value("export/marginBottom", 1.8).toDouble();
+    double ml = settings.value("export/marginLeft", 1.8).toDouble();
+    double mr = settings.value("export/marginRight", 1.8).toDouble();
+    int orient = settings.value("export/orientation",
+        static_cast<int>(orientation)).toInt();
+    int paper = settings.value("export/paperSize",
+        static_cast<int>(paperSize)).toInt();
+    QString customCss = settings.value("editor/customCss").toString();
+
+    // 读取 KaTeX CSS 并内联（字体 url() 通过 qrc: baseUrl 解析）
+    QString katexCss;
+    QFile cssFile(":/web/katex.min.css");
+    if (cssFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        katexCss = QString::fromUtf8(cssFile.readAll());
+        cssFile.close();
+    }
+
+    // 构建 PDF 渲染页面：图片 base64 内联 + 内联 KaTeX CSS + JS + 渲染脚本
+    QString fullHtml = buildRenderHtml(html, docDir, katexCss, customCss);
 
     m_pendingOutputPath = outputPath;
     // 设置值为 cm，QPageLayout::Millimeter 需要 mm
