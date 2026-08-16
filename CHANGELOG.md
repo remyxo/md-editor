@@ -4,8 +4,24 @@
 
 ## [0.8.1] — 2026-08-16
 
+### 新增
+
+- **DOCX 数学公式原生导出（OMML）** — 行内/块级公式由「导出 `$...$` 源码文本」升级为 Word 原生公式：离屏 QWebEngine 用 KaTeX 渲染为 MathML（`MathMlRenderer`），再经 `MathMlConverter` 递归转换为 `<m:oMath>`（行内）/`<m:oMathPara>`（块级，居中），渲染失败回退源码文本
+- **DOCX 导出图片** — 内嵌 PNG/JPEG/GIF（OOXML media 部件），svg/webp/bmp/tiff 及空文件回退占位；超宽图片按导出纸张/页边距等比缩小
+- **DOCX 导出 mermaid 图** — 离屏渲染 SVG 并 canvas 栅格化 PNG 嵌入
+- **PDF 导出图片/mermaid** — 图片 base64 内联，mermaid 离屏渲染异步打印
+
+### 修复
+
+- **DOCX mermaid 时序图箭头丢失** — Word/WPS 的 SVG 渲染器忽略 `<style>` 与 `<marker>`，改由 Chromium 栅格化为 PNG（箭头完整），不再挂 svgBlip
+- **DOCX 任务列表退化为普通列表/复选框丢失** — 无序列表（bullet）+ ☐/☒ 前缀，复选框 run 显式指定 Segoe UI Symbol（Calibri/黑体无 U+2610/U+2612 字形）
+- **PDF 任务列表 checkbox 与文字分行** — 任务列表用 flex 布局，checkbox 与文字同行
+- **DOCX 默认字体不适中文** — 正文由 Calibri 改为西文 Arial + 中文黑体（对齐 PDF 的 Noto Sans SC 无衬线观感）
+- **DOCX 行内公式 / emoji 范围 / 引用块 pPr 三缺陷**、**脚注往返保真**
+
 ### 变更
 
+- **导出默认文件名** — 已命名文件取文件基名（去路径与后缀）+ 导出类型后缀，未命名用 `untitled.xxx`
 - **工具栏上下标图标重绘** — 上标/下标图标改为从 MathJax 字形（x²/x₂）逐字节抽取的曲线（微加粗处理），替换原手绘线条图标，明暗两主题同步更新；下拉按钮默认图标由下标改为上标
 - **行内代码图标重绘** — 替换为 Lucide code-xml 抽取路径（尖括号 + 斜杠），明暗两主题同步更新
 - **清除样式图标重绘** — 替换为 Lucide eraser 抽取路径，并参照参考图按像素测量比例沿橡皮轴向法向压缩约 0.9（长宽比 1.41→1.57），明暗两主题同步更新
