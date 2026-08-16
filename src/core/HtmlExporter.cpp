@@ -143,11 +143,18 @@ QString HtmlExporter::renderScript(const QString &theme)
         "if(window.mermaid){mermaid.initialize({startOnLoad:false,securityLevel:'loose',theme:'%1',"
         "themeVariables:{fontSize:'16px'}});"
         "var pres=document.querySelectorAll('pre code.language-mermaid');var seq=0;"
-        "for(var j=0;j<pres.length;j++){var code=pres[j];var src=code.textContent;"
-        "var pre=code.parentNode;var holder=document.createElement('div');holder.id='mermaid-export-'+(++seq);"
+        "for(var j=0;j<pres.length;j++){(function(code){"
+        "var src=code.textContent;"
+        "var pre=code.parentNode;var holder=document.createElement('div');"
         "pre.parentNode.replaceChild(holder,pre);"
-        "try{mermaid.render(holder.id,src).then(function(res){holder.innerHTML=res.svg;});}"
-        "catch(err){holder.textContent=src;}}}"
+        // mermaid.render 无容器分支会先按 render id 删除文档中既有元素
+        //（removeExistingElements）。holder 若设同 id 会被它删掉，SVG 写入
+        // 渲染后游离的节点，页面上图表消失。因此 holder 不设 id，render id
+        // 独立生成（与 editor.js NodeView 的成熟模式一致）。IIFE 捕获每次
+        // 迭代的 code/holder，避免 var 提升导致多个 .then 共享同一 holder
+        "try{mermaid.render('mermaid-export-'+(++seq),src).then(function(res){holder.innerHTML=res.svg;})"
+        ".catch(function(err){holder.textContent=src;});}"
+        "catch(err){holder.textContent=src;}})(pres[j]);}}"
         "if(window.hljs){hljs.highlightAll();}"
         "});").arg(mermaidTheme);
 }

@@ -565,6 +565,9 @@ function buildFootnoteReference() {
         parseHTML: function() {
             return [{
                 tag: 'sup[data-type=footnoteRef]',
+                // priority 高于 StarterKit Superscript 的 tag:'sup' 规则，
+                // 否则脚注引用被解析为普通上标 mark，data-type/data-id 丢失
+                priority: 1000,
                 getAttrs: function(el) {
                     return { id: el.getAttribute('data-id') || '' };
                 }
@@ -649,7 +652,9 @@ function buildFootnoteDef() {
                 getAttrs: function(el) {
                     return { id: el.getAttribute('data-id') || '' };
                 },
-                getContentElement: function(el) {
+                // prosemirror ParseRule 字段名为 contentElement（非 getContentElement，
+                // 写错时规则被忽略，marker 文本混入正文且每次往返叠加）
+                contentElement: function(el) {
                     return el.querySelector('.footnote-content') || el;
                 }
             }];
