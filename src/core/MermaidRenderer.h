@@ -26,6 +26,10 @@ public:
 
     void renderAll(const QStringList &sources);   // 异步
 
+    // 生成渲染脚本（IIFE 必须 return Promise，runJavaScript 才会等待异步渲染完成）。
+    // 拆为静态便于单测：断言 IIFE 返回 Promise 而非 undefined。
+    static QString buildRenderScript(const QStringList &sources);
+
 signals:
     void finished(const QVector<MermaidRenderer::Result> &results);
 
@@ -33,6 +37,8 @@ private slots:
     void onLoadFinished(bool ok);
 
 private:
+    void pollResults(int n, int attempt);   // 轮询读取 window.__mermaidResults（见 .cpp 注释）
+
     QWebEngineView *m_view = nullptr;
     QStringList m_pending;
     bool m_loaded = false;
