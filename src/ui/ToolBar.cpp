@@ -331,11 +331,11 @@ void ToolBar::setAlignIcon(const QString &alignment)
     m_alignButton->setChecked(alignment == "center" || alignment == "right");
 }
 
-// 按上下标激活状态切换按钮图标与 checked 高亮（默认下标图标）
+// 按上下标激活状态切换按钮图标与 checked 高亮（默认上标图标）
 void ToolBar::setSubsupIcon(bool sub, bool sup)
 {
     QString theme = m_isDark ? "dark" : "light";
-    QString icon = sup ? "superscript" : "subscript";
+    QString icon = sub ? "subscript" : "superscript";
     m_subsupButton->setIcon(QIcon(QString(":/icons/%1/%2.svg").arg(theme, icon)));
     m_subsupButton->setChecked(sub || sup);
 }
