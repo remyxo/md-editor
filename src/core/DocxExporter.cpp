@@ -67,7 +67,8 @@ static bool isEmojiCodepoint(uint cp)
         || (cp >= 0x2122 && cp <= 0x2139)      // ™ ℠ ℹ …
         || (cp >= 0x231A && cp <= 0x2328)      // ⌚⌛…
         || (cp >= 0x23CF && cp <= 0x23F3)      // ⏏⏰…
-        || (cp >= 0x24C2 && cp <= 0x1F251);    // Ⓜ🀄…
+        || (cp == 0x24C2)                    // Ⓜ（单个 emoji 码点）
+        || (cp >= 0x1F200 && cp <= 0x1F251); // 🈯🉐🉑…（Enclosed Ideographic Supplement）
 }
 
 // HTML→XML 预处理：关闭空元素、修复实体
@@ -276,16 +277,24 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
             } else if (tag == "sup") {
                 flushRun(); fmt.superscript = true;
             }
-            // 颜色 span
+            // span（内联数学 / 颜色）
             else if (tag == "span") {
-                auto attrs = r.attributes();
-                QString sty = attrs.value("style").toString();
-                QString c = extractColor(sty, "color");
-                QString bg = extractColor(sty, "background-color");
-                if (!c.isEmpty() || !bg.isEmpty()) {
+                // 内联数学 span 内容为空（KaTeX 渲染），须取 data-latex；
+                // 此判断须先于颜色 span，否则 inline-math 被当普通 span 丢弃
+                if (r.attributes().value("data-type").toString() == "inline-math") {
                     flushRun();
-                    if (!c.isEmpty()) fmt.textColor = c;
-                    if (!bg.isEmpty()) fmt.bgColor = bg;
+                    QString latex = r.attributes().value("data-latex").toString();
+                    out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
+                } else {
+                    auto attrs = r.attributes();
+                    QString sty = attrs.value("style").toString();
+                    QString c = extractColor(sty, "color");
+                    QString bg = extractColor(sty, "background-color");
+                    if (!c.isEmpty() || !bg.isEmpty()) {
+                        flushRun();
+                        if (!c.isEmpty()) fmt.textColor = c;
+                        if (!bg.isEmpty()) fmt.bgColor = bg;
+                    }
                 }
             }
             // 链接
@@ -308,12 +317,6 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                 flushRun();
                 QString alt = r.attributes().value("alt").toString();
                 out += "<w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r>";
-            }
-            // 内联数学
-            else if (tag == "span" && r.attributes().value("data-type").toString() == "inline-math") {
-                flushRun();
-                QString latex = r.attributes().value("data-latex").toString();
-                out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
             }
             // 空元素直接跳过
             else if (tag == "input" || tag == "col") {
@@ -472,8 +475,20 @@ static QString parseBlockquote(QXmlStreamReader &r, ParseState &s)
         // 递归解析内部块
         if (tag == "p" || tag == "div") {
             QString inner = parseParagraph(r, tag, s);
-            // 包装缩进
-            inner.replace("<w:p>", "<w:p><w:pPr><w:ind w:left=\"720\" w:right=\"720\"/></w:pPr>");
+            // 缩进合并进已有 pPr（否则居中/对齐段落会产出两个 <w:pPr>，非法 OOXML）
+            const QString indent = "<w:ind w:left=\"720\" w:right=\"720\"/>";
+            if (inner.startsWith("<w:p>")) {
+                int pPrStart = inner.indexOf("<w:pPr>");
+                int pPrEnd = inner.indexOf("</w:pPr>");
+                if (pPrStart >= 0 && pPrEnd > pPrStart) {
+                    // 已有 pPr：缩进插到已有属性之前，保持单个 <w:pPr>
+                    QString existing = inner.mid(pPrStart + 7, pPrEnd - pPrStart - 7);
+                    inner = inner.left(pPrStart + 7) + indent + existing + inner.mid(pPrEnd);
+                } else {
+                    // 无 pPr：在 <w:p> 后插入
+                    inner.replace("<w:p>", "<w:p><w:pPr>" + indent + "</w:pPr>");
+                }
+            }
             result += inner;
         } else if (tag == "h1") result += parseHeading(r, 1, s);
         else if (tag == "h2") result += parseHeading(r, 2, s);

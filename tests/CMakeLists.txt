@@ -26,3 +26,8 @@ add_executable(test_htmlexporter test_htmlexporter.cpp ../src/core/HtmlExporter.
 target_include_directories(test_htmlexporter PRIVATE ../src)
 target_link_libraries(test_htmlexporter PRIVATE Qt6::Test)
 add_test(NAME test_htmlexporter COMMAND test_htmlexporter)
+
+add_executable(test_docxexporter test_docxexporter.cpp ../src/core/DocxExporter.cpp)
+target_include_directories(test_docxexporter PRIVATE ../src)
+target_link_libraries(test_docxexporter PRIVATE Qt6::Test)
+add_test(NAME test_docxexporter COMMAND test_docxexporter)
