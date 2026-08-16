@@ -100,6 +100,15 @@ private slots:
         QVERIFY(s.contains("})(pres[j]);"));
     }
 
+    void testMermaidRenderScriptIsolated() {
+        QString s = HtmlExporter::mermaidRenderScript("dark");
+        QVERIFY(s.contains("'dark'"));
+        QVERIFY(s.contains("pre code.language-mermaid"));
+        QVERIFY(s.contains("__renderAllMermaid"));
+        QVERIFY(s.contains("mermaid.render('mermaid-export-'+(++seq),src)"));
+        QVERIFY(!s.contains("<script"));   // 片段不含 script 标签，调用方自行包裹
+    }
+
     void testExportBodyPercentPlaceholdersSurvive() {
         // 组装用多参 .arg()：替换文本不会被重新扫描，正文字面 %1~%9 必须幸存
         //（若有人改成链式单参 .arg(a).arg(b) 会吞掉正文占位符，此测试拦截）

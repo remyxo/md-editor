@@ -131,32 +131,53 @@ QString HtmlExporter::bodyCss(const QString &theme)
         "[data-mermaid]{text-align:center;margin:1em 0;}");
 }
 
-QString HtmlExporter::renderScript(const QString &theme)
+QString HtmlExporter::mermaidRenderScript(const QString &theme)
 {
     const QString mermaidTheme = (theme == "dark") ? "dark" : "default";
+    // mermaid.render 无容器分支会先按 render id 删除文档中既有元素
+    //（removeExistingElements）。holder 若设同 id 会被它删掉，SVG 写入渲染后
+    // 游离的节点，页面上图表消失。因此 holder 不设 id，render id 独立生成
+    //（与 editor.js NodeView 的成熟模式一致）。IIFE 捕获每次迭代的 code/holder，
+    // 避免 var 提升导致多个 .then 共享同一 holder。返回值是 Promise，
+    // 全部渲染完成才 resolve，供 PDF 导出等异步路径等待。
+    return QStringLiteral(
+        "window.__renderAllMermaid=function(){"
+        "return new Promise(function(resolve){"
+        "if(!window.mermaid){resolve();return;}"
+        "mermaid.initialize({startOnLoad:false,securityLevel:'loose',theme:'%1',"
+        "themeVariables:{fontSize:'16px'}});"
+        "var pres=document.querySelectorAll('pre code.language-mermaid');"
+        "if(!pres.length){resolve();return;}"
+        "var seq=0,jobs=[];"
+        "for(var j=0;j<pres.length;j++){(function(code){"
+        "var src=code.textContent;var pre=code.parentNode;"
+        "var holder=document.createElement('div');"
+        "pre.parentNode.replaceChild(holder,pre);"
+        "jobs.push(mermaid.render('mermaid-export-'+(++seq),src).then(function(res){holder.innerHTML=res.svg;})"
+        ".catch(function(err){holder.textContent=src;}));"
+        "})(pres[j]);}"
+        "Promise.all(jobs).then(function(){resolve();});"
+        "});};").arg(mermaidTheme);
+}
+
+QString HtmlExporter::renderScript(const QString &theme)
+{
+    // 组合式：KaTeX 段 + mermaid helper（只定义 __renderAllMermaid，HTML 路径
+    // 在 DOMContentLoaded 内显式自调用，浏览器常驻无需等 Promise）+ hljs 段。
+    // 保持与旧版一致的执行时序（KaTeX → Mermaid → highlight）。
     return QStringLiteral(
         "window.addEventListener('DOMContentLoaded',function(){"
         "if(window.katex){var es=document.querySelectorAll('[data-latex]');"
         "for(var i=0;i<es.length;i++){var e=es[i],l=e.getAttribute('data-latex');if(!l)continue;"
         "try{katex.render(l,e,{throwOnError:false,displayMode:e.getAttribute('data-type')==='block-math'});}"
         "catch(err){e.textContent=l;}}}"
-        "if(window.mermaid){mermaid.initialize({startOnLoad:false,securityLevel:'loose',theme:'%1',"
-        "themeVariables:{fontSize:'16px'}});"
-        "var pres=document.querySelectorAll('pre code.language-mermaid');var seq=0;"
-        "for(var j=0;j<pres.length;j++){(function(code){"
-        "var src=code.textContent;"
-        "var pre=code.parentNode;var holder=document.createElement('div');"
-        "pre.parentNode.replaceChild(holder,pre);"
-        // mermaid.render 无容器分支会先按 render id 删除文档中既有元素
-        //（removeExistingElements）。holder 若设同 id 会被它删掉，SVG 写入
-        // 渲染后游离的节点，页面上图表消失。因此 holder 不设 id，render id
-        // 独立生成（与 editor.js NodeView 的成熟模式一致）。IIFE 捕获每次
-        // 迭代的 code/holder，避免 var 提升导致多个 .then 共享同一 holder
-        "try{mermaid.render('mermaid-export-'+(++seq),src).then(function(res){holder.innerHTML=res.svg;})"
-        ".catch(function(err){holder.textContent=src;});}"
-        "catch(err){holder.textContent=src;}})(pres[j]);}}"
-        "if(window.hljs){hljs.highlightAll();}"
-        "});").arg(mermaidTheme);
+        "});")
+        + mermaidRenderScript(theme)
+        + QStringLiteral(
+            "window.addEventListener('DOMContentLoaded',function(){"
+            "window.__renderAllMermaid();"
+            "if(window.hljs){hljs.highlightAll();}"
+            "});");
 }
 
 void HtmlExporter::exportToHtml(const QString &html, const QString &docDir,

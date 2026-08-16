@@ -19,6 +19,9 @@ public:
     static QString inlineImages(const QString &html, const QString &docDir);
     static QString bodyCss(const QString &theme);
     static QString renderScript(const QString &theme);
+    // 纯 mermaid 渲染 JS 片段（不含 <script> 标签），定义 window.__renderAllMermaid()
+    //（返回 Promise，全部渲染完才 resolve）。HTML 与 PDF 导出共用。
+    static QString mermaidRenderScript(const QString &theme);
 
 signals:
     void exportFinished(bool success, const QString &outputPath);
