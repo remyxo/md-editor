@@ -1,4 +1,5 @@
 #include "HtmlExporter.h"
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -63,7 +64,7 @@ QString HtmlExporter::inlineImages(const QString &html, const QString &docDir)
         QString src = m.captured(1);
         if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://"))
             continue;
-        QString path = src.startsWith('/') ? src : docDir + "/" + src;
+        QString path = QDir::isAbsolutePath(src) ? src : QDir(docDir).filePath(src);
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly)) continue;
         QByteArray bytes = f.readAll();
@@ -93,7 +94,7 @@ QString HtmlExporter::bodyCss(const QString &theme)
             "code{background:#161b22;padding:2px 5px;border-radius:4px;font-size:.9em;}"
             "pre{background:#161b22;padding:12px 16px;border-radius:6px;overflow-x:auto;line-height:1.45;}"
             "pre code{background:transparent;padding:0;}"
-            "blockquote{border-left:4px solid #30363d;color:#8b949e;padding:4px 16px;margin:.8em 0;}"
+            "blockquote{border-left:4px solid #0078d4;color:#8b949e;padding:4px 16px;margin:.8em 0;}"
             "table{border-collapse:collapse;margin:.8em 0;display:block;overflow-x:auto;}"
             "th,td{border:1px solid #30363d;padding:6px 13px;}th{background:#21262d;font-weight:600;}"
             "tr:nth-child(2n){background:#161b22;}img{max-width:100%;}"
@@ -117,7 +118,7 @@ QString HtmlExporter::bodyCss(const QString &theme)
         "code{background:#f0f1f3;padding:2px 5px;border-radius:4px;font-size:.9em;}"
         "pre{background:#f6f8fa;padding:12px 16px;border-radius:6px;overflow-x:auto;line-height:1.45;}"
         "pre code{background:transparent;padding:0;}"
-        "blockquote{border-left:4px solid #d0d7de;color:#57606a;padding:4px 16px;margin:.8em 0;}"
+        "blockquote{border-left:4px solid #0078d4;color:#57606a;padding:4px 16px;margin:.8em 0;}"
         "table{border-collapse:collapse;margin:.8em 0;display:block;overflow-x:auto;}"
         "th,td{border:1px solid #d0d7de;padding:6px 13px;}th{background:#f6f8fa;font-weight:600;}"
         "tr:nth-child(2n){background:#f6f8fa;}img{max-width:100%;}"

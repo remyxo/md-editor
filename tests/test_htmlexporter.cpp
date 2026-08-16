@@ -17,6 +17,16 @@ private slots:
         QCOMPARE(HtmlExporter::mimeForExt("svg"), QStringLiteral("image/svg+xml"));
     }
 
+    void testBlockquoteLeftBorderIsBlueInBothThemes() {
+        // 引用块左侧竖线统一为蓝色 #0078d4（与 PDF/DOCX 一致），亮暗主题均生效
+        const QStringList themes{"light", "dark"};
+        for (const QString &theme : themes) {
+            QString css = HtmlExporter::bodyCss(theme);
+            QVERIFY2(css.contains("blockquote{border-left:4px solid #0078d4"),
+                     qPrintable(theme));
+        }
+    }
+
     void testInlineCssFontsReplacesUrlWithBase64() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QString fontsDir = dir.path() + "/fonts";

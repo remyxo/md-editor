@@ -6,6 +6,8 @@
 #include <QImage>
 #include <QPageLayout>
 #include <QPageSize>
+#include <QRegularExpression>
+#include <QSet>
 #include <QSettings>
 #include "../src/core/DocxExporter.h"
 #include "../src/core/MermaidRenderer.h"
@@ -165,6 +167,42 @@ private slots:
         QVERIFY(xml.contains("2"));
     }
 
+    void testSeparateOrderedListsRestartNumbering() {
+        // 回归：两个不相邻的有序列表曾共享同一 numId，Word 把它们当作同一编号序列，
+        // 第二个列表会从上一个列表的序号续编（如 1,2 后接 3,4 而非 1,2）。
+        // 修复：每个 <ul>/<ol> 分配独立 numId，各自重新编号。
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx(
+            "<ol><li><p>一</p></li><li><p>二</p></li></ol>"
+            "<ul data-type=\"taskList\">"
+            "<li data-type=\"taskItem\"><label><input type=\"checkbox\"></label><div><p>事项</p></div></li>"
+            "</ul>"
+            "<ol><li><p>甲</p></li><li><p>乙</p></li></ol>", dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QProcess unzip; unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString docXml = QString::fromUtf8(unzip.readAllStandardOutput());
+
+        // 三个列表（有序 + 任务 + 有序）应引用三个不同的 numId
+        QRegularExpression re("<w:numId w:val=\"(\\d+)\"/>");
+        auto it = re.globalMatch(docXml);
+        QSet<QString> ids;
+        while (it.hasNext()) ids.insert(it.next().captured(1));
+        QVERIFY2(ids.size() == 3, qPrintable(docXml));
+
+        // numbering.xml：bullet + decimal 两个 abstractNum，配三个独立 <w:num> 实例；
+        // 两个有序列表须各带 startOverride 重启信号（否则 Word 按 abstractNumId 续编）。
+        unzip.start("unzip", QStringList() << "-p" << out << "word/numbering.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString numXml = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY2(numXml.count("<w:abstractNum ") == 2, qPrintable(numXml));
+        QVERIFY2(numXml.count("<w:num ") == 3, qPrintable(numXml));
+        QVERIFY2(numXml.count("<w:startOverride") == 2, qPrintable(numXml));
+    }
+
     void testTaskListCheckboxPrefix() {
         // 任务列表：无序列表（bullet）+ ☐/☒ 前缀 + 文本。复选框 run 显式指定
         // Segoe UI Symbol 字体（Calibri 无 U+2610/U+2612 字形，缺省回退不可靠）。
@@ -190,6 +228,17 @@ private slots:
         QCOMPARE(xml.count("<w:pPr>"), 1);
         QVERIFY(xml.contains("<w:ind w:left=\"720\" w:right=\"720\"/>"));
         QVERIFY(xml.contains("<w:jc w:val=\"center\"/>"));
+    }
+
+    void testBlockquoteHasLeftBorder() {
+        // 引用块须有左侧蓝色竖线（对齐 PDF/HTML 的 border-left），
+        // 且边框与缩进共存于同一个 <w:pPr>，不得拆成两个。
+        QString xml = exportDocumentXml("<blockquote><p>引用文本</p></blockquote>");
+        QVERIFY(xml.contains("引用文本"));
+        QVERIFY(xml.contains("<w:pBdr>"));
+        QVERIFY(xml.contains("<w:left w:val=\"single\""));
+        QVERIFY(xml.contains("w:color=\"0078d4\""));
+        QCOMPARE(xml.count("<w:pPr>"), 1);
     }
 
     void testCjkTextNotMisclassifiedAsEmoji() {

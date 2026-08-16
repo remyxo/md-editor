@@ -15,8 +15,14 @@ LocalImageSchemeHandler::LocalImageSchemeHandler(QObject *parent)
 
 void LocalImageSchemeHandler::requestStarted(QWebEngineUrlRequestJob *job)
 {
-    // localimg:// 的 path 部分为磁盘绝对路径（/home/.../x.jpg）
+    // localimg:// 的 path 部分为磁盘路径（URL 以 '/' 为分隔符）
     QString path = job->requestUrl().path();
+#ifdef Q_OS_WIN
+    // Windows 盘符绝对路径在 editor.js 的 toSlashPath 中前置了 '/'（规避 'C:' 被 QUrl 解析为 host）：
+    // localimg:///C:/... 的 path() 为 /C:/...，去掉前置 '/' 还原为 C:/...。
+    if (path.size() >= 3 && path[0] == QLatin1Char('/') && path[2] == QLatin1Char(':'))
+        path.remove(0, 1);
+#endif
 
     QFileInfo info(path);
     // 仅服务已存在的常规文件

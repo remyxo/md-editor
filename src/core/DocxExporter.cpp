@@ -258,7 +258,7 @@ static bool readImageFile(const QString &src, const QString &docDir,
         if (!mm.hasMatch()) return false;
         *bytes = QByteArray::fromBase64(src.mid(comma + 1).toLatin1());
     } else {
-        QString path = src.startsWith('/') ? src : docDir + "/" + src;
+        QString path = QDir::isAbsolutePath(src) ? src : QDir(docDir).filePath(src);
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly)) return false;
         *bytes = f.readAll();
@@ -395,11 +395,10 @@ struct ParseState {
     QString bodyXml;
     QString relsXml;            // document.xml.rels entries
     int nextRId = 1;
-    // 列表编号
-    int bulletNumId = 1;
-    int decimalNumId = 2;
-    int nextAbstractNum = 1;
-    QList<int> usedAbstractNums;
+    // 列表编号：每个 <ul>/<ol> 分配独立 numId（指向共享的 abstractNum：0=bullet、1=decimal），
+    // 使 Word 对每个列表各自重新开始编号；否则同一 numId 的段落会被当作同一序列续编。
+    int nextNumId = 1;
+    QList<int> numAbstractNums;   // 与 numId 一一对应（numId = 下标 + 1），值为 abstractNumId
     bool hasBulletList = false;
     bool hasDecimalList = false;
     // 图片 media 部件（Task 5：DOCX 图片嵌入 OOXML media）
@@ -753,18 +752,20 @@ static QString parseBlockquote(QXmlStreamReader &r, ParseState &s)
         // 递归解析内部块
         if (tag == "p" || tag == "div") {
             QString inner = parseParagraph(r, tag, s);
-            // 缩进合并进已有 pPr（否则居中/对齐段落会产出两个 <w:pPr>，非法 OOXML）
-            const QString indent = "<w:ind w:left=\"720\" w:right=\"720\"/>";
+            // 缩进 + 左侧蓝色竖线合并进已有 pPr（否则居中/对齐段落会产出两个 <w:pPr>，非法 OOXML）。
+            // 左侧竖线对齐 PDF/HTML 的 border-left，颜色 #0078d4 与 PdfExporter 一致。
+            const QString blockquotePr = "<w:pBdr><w:left w:val=\"single\" w:sz=\"18\" w:space=\"4\" w:color=\"0078d4\"/></w:pBdr>"
+                                         "<w:ind w:left=\"720\" w:right=\"720\"/>";
             if (inner.startsWith("<w:p>")) {
                 int pPrStart = inner.indexOf("<w:pPr>");
                 int pPrEnd = inner.indexOf("</w:pPr>");
                 if (pPrStart >= 0 && pPrEnd > pPrStart) {
-                    // 已有 pPr：缩进插到已有属性之前，保持单个 <w:pPr>
+                    // 已有 pPr：边框+缩进插到已有属性之前，保持单个 <w:pPr>
                     QString existing = inner.mid(pPrStart + 7, pPrEnd - pPrStart - 7);
-                    inner = inner.left(pPrStart + 7) + indent + existing + inner.mid(pPrEnd);
+                    inner = inner.left(pPrStart + 7) + blockquotePr + existing + inner.mid(pPrEnd);
                 } else {
                     // 无 pPr：在 <w:p> 后插入
-                    inner.replace("<w:p>", "<w:p><w:pPr>" + indent + "</w:pPr>");
+                    inner.replace("<w:p>", "<w:p><w:pPr>" + blockquotePr + "</w:pPr>");
                 }
             }
             result += inner;
@@ -789,10 +790,10 @@ static QString parseHorizontalRule()
 
 static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s)
 {
-    int numId = ordered ? s.decimalNumId : s.bulletNumId;
+    int numId = s.nextNumId++;
+    s.numAbstractNums.append(ordered ? 1 : 0);
     if (ordered) s.hasDecimalList = true;
     else s.hasBulletList = true;
-    s.usedAbstractNums.append(ordered ? 1 : 0);
 
     QString result;
     while (!r.atEnd()) {
@@ -1125,8 +1126,7 @@ static QString makeNumberingXml(const ParseState &s)
                "      <w:lvlJc w:val=\"left\"/>\n"
                "      <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\n"
                "    </w:lvl>\n"
-               "  </w:abstractNum>\n"
-               "  <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\n";
+               "  </w:abstractNum>\n";
     }
     // 有序列表（decimal）
     if (s.hasDecimalList) {
@@ -1139,8 +1139,17 @@ static QString makeNumberingXml(const ParseState &s)
                "      <w:lvlJc w:val=\"left\"/>\n"
                "      <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\n"
                "    </w:lvl>\n"
-               "  </w:abstractNum>\n"
-               "  <w:num w:numId=\"2\"><w:abstractNumId w:val=\"1\"/></w:num>\n";
+               "  </w:abstractNum>\n";
+    }
+    // 每个列表一个独立 <w:num>（numId=1..N 指向对应 abstractNum）。有序列表额外带
+    // <w:lvlOverride>/<w:startOverride>，Word/WPS 才把它当作新序列从 1 重新编号；
+    // 否则会按 abstractNumId 续编，后续不相邻列表不重启（MarkMyWord#30 同类问题）。
+    for (int i = 0; i < s.numAbstractNums.size(); ++i) {
+        const bool ordered = (s.numAbstractNums[i] == 1);
+        xml += QString("  <w:num w:numId=\"%1\"><w:abstractNumId w:val=\"%2\"/>%3</w:num>\n")
+                   .arg(i + 1)
+                   .arg(s.numAbstractNums[i])
+                   .arg(ordered ? "<w:lvlOverride w:ilvl=\"0\"><w:startOverride w:val=\"1\"/></w:lvlOverride>" : QString());
     }
     xml += "</w:numbering>\n";
     return xml;

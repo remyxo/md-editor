@@ -1860,6 +1860,23 @@ private slots:
                  qPrintable("块级图片不应包在 <p> 里（会致渲染空行），html=[" + html + "]"));
     }
 
+    void testToHtmlImageAfterParagraphIsBlock()
+    {
+        // 段落紧跟图片（无空行）：图片应为独立块级，不被 lazy-continuation 并入
+        // 段落成内联图片（否则 TipTap 块级 Image 提升图片后留空段落，渲染成空行）。
+        const QString html = MarkdownHandler::toHtml(
+            QStringLiteral("插入的图片（相对路径）\n![image](580-640x480.jpg)"));
+        // 图片应位于文本段结束之后（块级），而非内联在文本段内
+        int textEnd = html.indexOf(QStringLiteral("插入的图片（相对路径）</p>"));
+        int imgPos = html.indexOf("<img");
+        QVERIFY2(textEnd >= 0 && imgPos > textEnd,
+                 qPrintable("图片应在文本段之后为块级，html=[" + html + "]"));
+        // 图片不应包在 <p> 里
+        bool wrapped = QRegularExpression("<p[^>]*>\\s*<img\\b").match(html).hasMatch();
+        QVERIFY2(!wrapped,
+                 qPrintable("块级图片不应包在 <p> 里，html=[" + html + "]"));
+    }
+
     void testNestedFenceCodeBlock()
     {
         // 嵌套围栏：```markdown 源码块内嵌 ```mermaid（展示原始 MD 源码）

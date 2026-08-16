@@ -32,6 +32,15 @@ static bool isParagraphLine(const QString &line)
                 && trimmed[1] == '.');
 }
 
+// 图片独占行（![alt](src)，可带 title 与首尾空白）：视为块级图片行。
+// 用于隔离：避免 md4c 的 lazy-continuation 把图片并入相邻段落成内联图片。
+static bool isImageOnlyLine(const QString &line)
+{
+    static const QRegularExpression re(
+        R"(^\s*!\[[^\]]*\]\([^)\n]*\)\s*$)");
+    return re.match(line).hasMatch();
+}
+
 // 反转义代码块 / 行内代码内容中的 HTML 实体。
 // 代码内容以占位符形式绕过了 QTextDocument::setHtml 的实体解码，需手动还原，
 // 否则保存到 .md 时会残留 &gt; / &lt; / &amp;（影响 Mermaid 源码 A-->B 等）。
@@ -642,9 +651,27 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             taskLists << buildTaskListHtml(taskLines, subContents);
             processed += "ZZTL" + QString::number(taskLists.size() - 1) + "ZZ\n";
             lastBlock = BT_LIST;
+        } else if (isImageOnlyLine(line)) {
+            // 图片独占行 → 强制独立块级图片（前后空行隔离），使 setMarkdown 产出
+            // <p><img/></p>（后处理解包为裸 <img>）。否则 md4c 的 lazy-continuation
+            // 会把图片并入相邻段落成内联图片，TipTap（Image 块级节点）解析时提升
+            // 图片却留空段落，渲染成图片与正文之间的空行。
+            if (!processed.isEmpty() && !processed.endsWith("\n\n"))
+                processed += '\n';
+            QString cl = line;
+            cl = extractEscapedEquals(cl, escapedEqBackups);
+            cl = extractSubscripts(cl, subContents);
+            cl = extractFootnoteRefs(cl, footnoteRefs);
+            cl = extractHtmlInlineElements(cl, htmlInlineBackups);
+            processed += cl + '\n';
+            // 图片后紧跟正文（无空行）同样补空行，避免正文被 lazy-continuation 并入图片段落
+            if (!next.isEmpty() && isParagraphLine(next) && !isImageOnlyLine(next))
+                processed += '\n';
+            lastBlock = BT_PARA;
         } else if (isParagraphLine(line) && !next.isEmpty()
                    && isParagraphLine(next)
-                   && !isBrOnlyLine(next)) {
+                   && !isBrOnlyLine(next)
+                   && !isImageOnlyLine(next)) {
             // 隔离：列表后紧跟正文时补空行，避免被吞入列表项
             if (lastBlock == BT_LIST)
                 processed += '\n';

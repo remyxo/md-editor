@@ -13,7 +13,7 @@ var TipTapCodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
 var CodeBlockLowlightWithNodeView = TipTapCodeBlockLowlight && TipTapCodeBlockLowlight.extend({
     addNodeView: function() { return codeBlockNodeView; }
 });
-// 扩展 Image，附加自定义 NodeView（attrs.src 存原始路径保往返保真，渲染时经 _resolveImageSrc 解析为 file://）
+// 扩展 Image，附加自定义 NodeView（attrs.src 存原始路径保往返保真，渲染时经 _resolveImageSrc 解析为 localimg://）
 // 必须用 addNodeView 而非 editorProps.nodeViews：TipTap 会用各扩展的 addNodeView 生成 nodeViews
 // 并传给 EditorView，覆盖 editorProps.nodeViews（实测 image 不会进入 view.props.nodeViews）
 var ImageWithNodeView = TipTapImage && TipTapImage.extend({
@@ -932,6 +932,20 @@ function codeBlockNodeView(ref) {
     };
 }
 
+// 判断是否为绝对路径：Unix（/foo）、Windows 盘符（C:\foo 或 C:/foo）、
+// Windows 根相对/UNC（\foo、\\server\share）。带协议 URL / 相对路径返回 false。
+function isAbsolutePath(p) {
+    return p.charAt(0) === '/' || p.charAt(0) === '\\' || /^[a-zA-Z]:[\\/]/.test(p);
+}
+
+// 磁盘路径 → URL 斜杠形式：反斜杠统一为 '/';Windows 盘符绝对路径前置 '/'，
+// 避免 'C:' 被 QUrl 解析为 host（localimg:///C:/...，path() 返回 /C:/...）。
+function toSlashPath(p) {
+    var s = p.replace(/\\/g, '/');
+    if (/^[a-zA-Z]:\//.test(s)) s = '/' + s;
+    return s;
+}
+
 // 全局编辑器 API 对象（C++ 侧通过 QWebChannel 调用其中的命令方法）
 window.editorApi = {
     editor: null,
@@ -945,7 +959,7 @@ window.editorApi = {
     _readOnly: false,
     _imageSeq: 0,            // 占位图 requestId 自增计数
     _imagePending: {},       // requestId -> marker（占位图 src，回调时据此定位节点）
-    _docDir: '',             // 当前文档目录（绝对路径），把相对图片 src 解析为 file://
+    _docDir: '',             // 当前文档目录（绝对路径），把相对图片 src 解析为 localimg://
 
     // === 内部辅助方法 ===
 
@@ -1438,7 +1452,7 @@ window.editorApi = {
         }
     },
 
-    // 相对路径 → localimg://<文档目录>/<相对>；Unix 绝对路径 → localimg://<路径>；
+    // 相对路径 → localimg://<文档目录>/<相对>；绝对路径（Unix / Windows）→ localimg://<路径>；
     // 由 C++ LocalImageSchemeHandler 读盘返回字节（绕过 qrc 页面加载 file:// 的限制）；
     // 占位 marker / 网络 URL 原样返回。attrs.src 始终存原始路径，保往返保真。
     _resolveImageSrc: function(raw) {
@@ -1446,8 +1460,8 @@ window.editorApi = {
         if (!raw) out = '';
         else if (raw.indexOf('__pending_') === 0) out = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'; // 占位图 marker：渲染为透明 1x1，避免被浏览器当作相对 URL 去 qrc:/web/ 加载而报 "QResource not found"（落盘回调后 attrs.src 被替换为真实路径，nodeView 重新解析为 localimg://）
         else if (/^(data:|blob:|https?:|file:|qrc:)/i.test(raw)) out = raw; // 带协议的 URL
-        else if (raw.charAt(0) === '/') out = 'localimg://' + raw;    // Unix 绝对路径 → localimg://（Handler 读盘；attrs.src 仍存原始绝对路径保往返保真）
-        else { var base = this._docDir || ''; out = base ? ('localimg://' + base.replace(/[\\/]+$/, '') + '/' + raw.replace(/^[\\/]+/, '')) : raw; } // 相对路径 / 文档目录未知：原样返回
+        else if (isAbsolutePath(raw)) out = 'localimg://' + toSlashPath(raw);    // 绝对路径（Unix / Windows 盘符 / UNC）→ localimg://（Handler 读盘；attrs.src 仍存原始路径保往返保真）
+        else { var base = this._docDir || ''; out = base ? ('localimg://' + toSlashPath(base).replace(/\/+$/, '') + '/' + raw.replace(/[\\/]+/g, '/').replace(/^\/+/, '')) : raw; } // 相对路径 / 文档目录未知：原样返回
         return out;
     },
 
