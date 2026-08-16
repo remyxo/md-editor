@@ -658,10 +658,13 @@ void MainWindow::onExportPdf()
                                                  "PDF 文件 (*.pdf)");
     if (path.isEmpty()) return;
 
+    // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
+    QString docDir = QFileInfo(tab->webView()->property("filePath").toString()).absolutePath();
+
     // 异步获取编辑器 HTML 内容
     tab->webView()->page()->runJavaScript(
         "window.editorApi.getContent();",
-        [this, path](const QVariant &result) {
+        [this, path, docDir](const QVariant &result) {
             QString html = result.toString();
             auto *exporter = new PdfExporter(this);
             connect(exporter, &PdfExporter::exportFinished, this,
@@ -669,7 +672,7 @@ void MainWindow::onExportPdf()
                 m_statusBar->showMessage(ok ? QString("已导出: %1").arg(out) : "导出失败", 3000);
                 exporter->deleteLater();
             });
-            exporter->exportToPdf(html, path);
+            exporter->exportToPdf(html, docDir, path);
         });
 }
 
@@ -682,10 +685,13 @@ void MainWindow::onExportDocx()
                                                  "Word 文档 (*.docx)");
     if (path.isEmpty()) return;
 
+    // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
+    QString docDir = QFileInfo(tab->webView()->property("filePath").toString()).absolutePath();
+
     // 异步获取编辑器 HTML 内容
     tab->webView()->page()->runJavaScript(
         "window.editorApi.getContent();",
-        [this, path](const QVariant &result) {
+        [this, path, docDir](const QVariant &result) {
             QString html = result.toString();
             auto *exporter = new DocxExporter(this);
             connect(exporter, &DocxExporter::exportFinished, this,
@@ -693,7 +699,7 @@ void MainWindow::onExportDocx()
                 m_statusBar->showMessage(ok ? QString("已导出: %1").arg(out) : "导出失败", 3000);
                 exporter->deleteLater();
             });
-            exporter->exportToDocx(html, path);
+            exporter->exportToDocx(html, docDir, path);
         });
 }
 

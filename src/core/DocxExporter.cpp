@@ -13,13 +13,13 @@ DocxExporter::DocxExporter(QObject *parent)
 {
 }
 
-void DocxExporter::exportToDocx(const QString &html, const QString &outputPath)
+void DocxExporter::exportToDocx(const QString &html, const QString &docDir, const QString &outputPath)
 {
     if (html.isEmpty()) {
         emit exportError("导出失败：编辑器内容为空");
         return;
     }
-    if (writeDocx(html, outputPath)) {
+    if (writeDocx(html, docDir, outputPath)) {
         emit exportFinished(true, outputPath);
     } else {
         emit exportError("DOCX 生成失败");
@@ -826,8 +826,9 @@ static QByteArray buildDocumentXml(const ParseState &s)
 
 // ============ 文件写入 ============
 
-bool DocxExporter::writeDocx(const QString &html, const QString &outputPath)
+bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const QString &outputPath)
 {
+    Q_UNUSED(docDir);   // Task 5 使用
     // 1. 预处理 HTML → XML
     QString xmlSafe = makeXmlSafe(html);
     QString xmlDoc = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><root>" + xmlSafe + "</root>";

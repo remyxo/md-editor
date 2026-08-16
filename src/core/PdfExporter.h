@@ -12,7 +12,7 @@ public:
     explicit PdfExporter(QObject *parent = nullptr);
     ~PdfExporter() override;
 
-    void exportToPdf(const QString &html, const QString &outputPath,
+    void exportToPdf(const QString &html, const QString &docDir, const QString &outputPath,
                      QPageLayout::Orientation orientation = QPageLayout::Portrait,
                      QPageSize::PageSizeId paperSize = QPageSize::A4);
 

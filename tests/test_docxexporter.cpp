@@ -16,7 +16,7 @@ class TestDocxExporter : public QObject {
         if (!dir.isValid()) return {};
         QString out = dir.path() + "/out.docx";
         DocxExporter ex;
-        ex.exportToDocx(html, out);
+        ex.exportToDocx(html, dir.path(), out);
         if (!QFile::exists(out)) return {};
         QProcess unzip;
         unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");

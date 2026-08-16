@@ -19,10 +19,11 @@ PdfExporter::~PdfExporter()
     delete m_renderView;
 }
 
-void PdfExporter::exportToPdf(const QString &html, const QString &outputPath,
+void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const QString &outputPath,
                               QPageLayout::Orientation orientation,
                               QPageSize::PageSizeId paperSize)
 {
+    Q_UNUSED(docDir);   // Task 2 使用
     QSettings settings("md-editor", "md-editor");
     double mt = settings.value("export/marginTop", 1.8).toDouble();
     double mb = settings.value("export/marginBottom", 1.8).toDouble();
