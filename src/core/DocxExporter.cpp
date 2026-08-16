@@ -1,10 +1,14 @@
 #include "DocxExporter.h"
+#include <QBuffer>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImageReader>
+#include <QMimeDatabase>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QXmlStreamReader>
 
@@ -85,6 +89,73 @@ static QString makeXmlSafe(const QString &html)
     s.replace(QRegularExpression("<input(\\s+[^>]*[^/])>", QRegularExpression::CaseInsensitiveOption), "<input\\1/>");
     s.replace(QRegularExpression("<col(\\s+[^>]*[^/])>", QRegularExpression::CaseInsensitiveOption), "<col\\1/>");
     return s;
+}
+
+// 解析图片路径 → 字节 + MIME + 尺寸（EMU）。失败返回 false。
+static bool readImageFile(const QString &src, const QString &docDir,
+                          QByteArray *bytes, QString *mime, int *cxEmu, int *cyEmu)
+{
+    if (src.startsWith("data:")) {
+        // data URI：解析 base64（mime 取 data: 前缀）
+        int comma = src.indexOf(',');
+        if (comma < 0) return false;
+        QString header = src.left(comma);
+        QRegularExpression mre("data:([^;]+);base64");
+        auto mm = mre.match(header);
+        if (!mm.hasMatch()) return false;
+        *mime = mm.captured(1);
+        *bytes = QByteArray::fromBase64(src.mid(comma + 1).toLatin1());
+    } else {
+        QString path = src.startsWith('/') ? src : docDir + "/" + src;
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) return false;
+        *bytes = f.readAll();
+        f.close();
+        QMimeDatabase db;
+        *mime = db.mimeTypeForFile(path).name();
+        if (!mime->startsWith("image/")) return false;
+    }
+    // 尺寸：PNG/JPEG 用 QImageReader；SVG 不读尺寸用默认
+    QImageReader ir;
+    QBuffer buf(bytes);
+    buf.open(QIODevice::ReadOnly);
+    ir.setDevice(&buf);
+    QSize sz = ir.size();
+    if (sz.isValid() && sz.width() > 0 && sz.height() > 0) {
+        *cxEmu = sz.width() * 9525;
+        *cyEmu = sz.height() * 9525;
+    } else {
+        *cxEmu = 300 * 9525;   // 默认 300×200 px
+        *cyEmu = 200 * 9525;
+    }
+    return true;
+}
+
+// 生成 <w:drawing> 内联图片 XML。svgRId > 0 时挂 <asvg:svgBlip>（Word 2016+ SVG）。
+static QString buildImageDrawingXml(int docPrId, int pngRId, int svgRId,
+                                    int cxEmu, int cyEmu)
+{
+    QString blip;
+    if (svgRId > 0) {
+        blip = QString("<a:blip r:embed=\"rId%1\"><a:extLst>"
+                       "<a:ext uri=\"{96DAC541-7B7A-43D3-8B79-37D633B846F1}\">"
+                       "<asvg:svgBlip xmlns:asvg=\"http://schemas.microsoft.com/office/drawing/2016/SVG/main\" r:embed=\"rId%2\"/>"
+                       "</a:ext></a:extLst></a:blip>").arg(pngRId).arg(svgRId);
+    } else {
+        blip = QString("<a:blip r:embed=\"rId%1\"/>").arg(pngRId);
+    }
+    return QString(
+        "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">"
+        "<wp:extent cx=\"%1\" cy=\"%2\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>"
+        "<wp:docPr id=\"%3\" name=\"图片%3\"/>"
+        "<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect=\"1\"/></wp:cNvGraphicFramePr>"
+        "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">"
+        "<pic:pic><pic:nvPicPr><pic:cNvPr id=\"%3\" name=\"图片%3\"/><pic:cNvPicPr/></pic:nvPicPr>"
+        "<pic:blipFill>%4<a:stretch><a:fillRect/></a:stretch></pic:blipFill>"
+        "<pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"%1\" cy=\"%2\"/></a:xfrm>"
+        "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"
+        "</a:graphicData></a:graphic></wp:inline></w:drawing>")
+        .arg(cxEmu).arg(cyEmu).arg(docPrId).arg(blip);
 }
 
 // 从 style 属性中提取颜色值并转为 RRGGBB 六位十六进制
@@ -171,6 +242,16 @@ struct ParseState {
     QList<int> usedAbstractNums;
     bool hasBulletList = false;
     bool hasDecimalList = false;
+    // 图片 media 部件（Task 5：DOCX 图片嵌入 OOXML media）
+    struct MediaPart {
+        int rId;
+        QString fileName;     // "imageN.png" / "diagramN.svg"
+        QString contentType;  // "image/png" 等
+        QByteArray bytes;
+    };
+    QList<MediaPart> media;
+    int nextDocPrId = 1;
+    QString docDir;           // 文档所在目录，用于解析相对图片路径
 
     QString makeRId(const QString &url) {
         QString rid = QString("rId%1").arg(nextRId++);
@@ -180,6 +261,19 @@ struct ParseState {
         return rid;
     }
 };
+
+// 新增图片 media 部件，返回 rId
+static int addMedia(ParseState &s, const QByteArray &bytes, const QString &contentType,
+                    const QString &ext)
+{
+    int rId = s.nextRId++;
+    QString fileName = QString("image%1.%2").arg(s.media.size() + 1).arg(ext);
+    s.media.append({rId, fileName, contentType, bytes});
+    s.relsXml += QString("  <Relationship Id=\"rId%1\""
+        " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\""
+        " Target=\"media/%2\"/>\n").arg(rId).arg(fileName);
+    return rId;
+}
 
 // ============ 内联内容解析 ============
 
@@ -312,11 +406,18 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                 flushRun();
                 out += "<w:r><w:br/></w:r>";
             }
-            // 图片占位
+            // 图片：嵌入 OOXML media；文件缺失时降级为占位文本
             else if (tag == "img") {
                 flushRun();
                 QString alt = r.attributes().value("alt").toString();
-                out += "<w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r>";
+                QByteArray bytes; QString mime; int cx = 0, cy = 0;
+                if (readImageFile(r.attributes().value("src").toString(), s.docDir, &bytes, &mime, &cx, &cy)) {
+                    QString ext = (mime == "image/png") ? "png" : (mime == "image/gif" ? "gif" : "jpg");
+                    int rId = addMedia(s, bytes, mime, ext);
+                    out += "<w:r>" + buildImageDrawingXml(s.nextDocPrId++, rId, 0, cx, cy) + "</w:r>";
+                } else {
+                    out += "<w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r>";
+                }
             }
             // 空元素直接跳过
             else if (tag == "input" || tag == "col") {
@@ -731,7 +832,14 @@ static void parseBody(QXmlStreamReader &r, ParseState &s)
             s.bodyXml += parseParagraph(r, "div", s) + "\n";
         } else if (tag == "img") {
             QString alt = r.attributes().value("alt").toString();
-            s.bodyXml += "<w:p><w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r></w:p>\n";
+            QByteArray bytes; QString mime; int cx = 0, cy = 0;
+            if (readImageFile(r.attributes().value("src").toString(), s.docDir, &bytes, &mime, &cx, &cy)) {
+                QString ext = (mime == "image/png") ? "png" : (mime == "image/gif" ? "gif" : "jpg");
+                int rId = addMedia(s, bytes, mime, ext);
+                s.bodyXml += "<w:p><w:r>" + buildImageDrawingXml(s.nextDocPrId++, rId, 0, cx, cy) + "</w:r></w:p>\n";
+            } else {
+                s.bodyXml += "<w:p><w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r></w:p>\n";
+            }
         }
         // mermaid、脚注容器等作为 div 处理
     }
@@ -811,6 +919,8 @@ static QByteArray buildDocumentXml(const ParseState &s)
         " xmlns:v=\"urn:schemas-microsoft-com:vml\""
         " xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\""
         " xmlns:w10=\"urn:schemas-microsoft-com:office:word\""
+        " xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\""
+        " xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\""
         " xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\""
         " xmlns:wne=\"http://schemas.microsoft.com/office/word/2006/wordml\""
         ">\n"
@@ -828,13 +938,13 @@ static QByteArray buildDocumentXml(const ParseState &s)
 
 bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const QString &outputPath)
 {
-    Q_UNUSED(docDir);   // Task 5 使用
     // 1. 预处理 HTML → XML
     QString xmlSafe = makeXmlSafe(html);
     QString xmlDoc = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><root>" + xmlSafe + "</root>";
 
     // 2. 解析 HTML 生成 OOXML
     ParseState state;
+    state.docDir = docDir;   // 相对图片路径基准
     QXmlStreamReader reader(xmlDoc);
     reader.readNextStartElement(); // <root>
     parseBody(reader, state);
@@ -873,6 +983,18 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
         "  <Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/>\n");
     if (state.hasBulletList || state.hasDecimalList) {
         contentTypes += "  <Override PartName=\"/word/numbering.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/>\n";
+    }
+    // 图片 media 部件：按实际出现的扩展名去重追加 Default（否则 Word 打不开图片）
+    if (!state.media.isEmpty()) {
+        QSet<QString> exts;
+        for (const auto &mp : state.media)
+            exts.insert(QFileInfo(mp.fileName).suffix());
+        for (const QString &e : exts) {
+            QString ct = (e == "png") ? "image/png" : (e == "gif") ? "image/gif"
+                       : (e == "svg") ? "image/svg+xml" : "image/jpeg";
+            contentTypes += (QString("  <Default Extension=\"%1\" ContentType=\"%2\"/>\n")
+                             .arg(e, ct)).toUtf8();
+        }
     }
     contentTypes += QByteArrayLiteral("</Types>\n");
 
@@ -927,6 +1049,14 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
     // word/numbering.xml（仅当有列表时）
     if (state.hasBulletList || state.hasDecimalList) {
         if (!writeFile(base + "/word/numbering.xml", numberingXml)) return false;
+    }
+
+    // word/media/ 部件（图片二进制）——relationship Target 为 media/xxx，须落在 word/media/ 下
+    if (!state.media.isEmpty()) {
+        QDir().mkpath(base + "/word/media");
+        for (const auto &mp : state.media) {
+            if (!writeFile(base + "/word/media/" + mp.fileName, mp.bytes)) return false;
+        }
     }
 
     // 5. ZIP 打包

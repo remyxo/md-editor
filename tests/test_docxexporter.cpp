@@ -128,10 +128,40 @@ private slots:
     }
 
     void testImageBecomesPlaceholder() {
-        // 当前 DOCX 导出不嵌入图片，降级为 [图片: alt] 占位文本（已知限制）
+        // 图片文件缺失（docDir 下无 a.png）时降级为 [图片: alt] 占位文本
         QString xml = exportDocumentXml("<p><img src=\"a.png\" alt=\"示意图\"></p>");
         QVERIFY(xml.contains("[图片"));
         QVERIFY(xml.contains("示意图")); // alt 保留
+    }
+
+    void testImageEmbeddedAsMedia() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QFile f(dir.path() + "/a.png");
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        // 1×1 透明 PNG
+        const unsigned char png[] = {0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0x0d,0x49,0x48,0x44,0x52,
+                                     0,0,0,1,0,0,0,1,0x08,0x06,0,0,0,0x1f,0x15,0xc4,0x89,0,0,0,0x0a,0x49,0x44,0x41,0x54,
+                                     0x78,0x9c,0x63,0,1,0,0,0x05,0,1,0x0d,0x0a,0x2d,0xb4,0,0,0,0,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82};
+        f.write(reinterpret_cast<const char*>(png), sizeof(png)); f.close();
+
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx("<p><img src=\"a.png\" alt=\"图\"></p>", dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        // document.xml 含 drawing + blip
+        QProcess unzip; unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString docXml = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY(docXml.contains("<w:drawing>"));
+        QVERIFY(docXml.contains("<a:blip r:embed=\"rId"));
+        QVERIFY(docXml.contains("<pic:pic>"));
+
+        // media 部件存在
+        unzip.start("unzip", QStringList() << "-l" << out);
+        QVERIFY(unzip.waitForFinished(10000));
+        QString listing = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY(listing.contains("word/media/image1.png"));
     }
 
     void testMermaidSourceSurvivesAsCodeBlock() {
