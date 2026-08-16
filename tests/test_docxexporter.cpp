@@ -3,7 +3,14 @@
 #include <QProcess>
 #include <QFile>
 #include <QDir>
+#include <QImage>
+#include <QPageLayout>
+#include <QPageSize>
+#include <QSettings>
 #include "../src/core/DocxExporter.h"
+#include "../src/core/MermaidRenderer.h"
+#include "../src/core/MathMlRenderer.h"
+#include "../src/core/MathMlConverter.h"
 
 // DocxExporter 测试：导出 HTML → DOCX，解包 word/document.xml 断言 OOXML 结构。
 // 依赖系统 zip/unzip（CI 与开发机均已安装）。
@@ -43,19 +50,82 @@ private slots:
         QVERIFY(xml.contains("<w:rFonts w:ascii=\"Consolas\""));
     }
 
-    void testInlineMathExportedAsLatex() {
-        // 行内公式 span 内容为空（KaTeX 渲染），导出应取 data-latex 而非正文
-        QString xml = exportDocumentXml(
-            "<p>能量 <span data-type=\"inline-math\" data-latex=\"E=mc^2\"></span></p>");
-        QVERIFY2(xml.contains("$E=mc^2$"), qPrintable(xml));
+    void testMathMlConverterBasic() {
+        // E=mc^2 → 变量斜体（m:sty i）+ 等号 + 上标（m:sSup）。annotation 须跳过、LaTeX 源码不泄漏。
+        QString omm = MathMlConverter::toOMML(
+            "<math><semantics><mrow>"
+            "<mi>E</mi><mo>=</mo><mi>m</mi><msup><mi>c</mi><mn>2</mn></msup>"
+            "</mrow><annotation>E=mc^2</annotation></semantics></math>");
+        QVERIFY2(omm.contains("<m:sSup>"), qPrintable(omm));
+        QVERIFY(omm.contains("<m:sty m:val=\"i\"/>"));
+        QVERIFY(omm.contains("E"));
+        QVERIFY(omm.contains("c"));
+        QVERIFY(omm.contains("2"));
+        QVERIFY(!omm.contains("annotation"));
+        QVERIFY(!omm.contains("E=mc^2"));
     }
 
-    void testBlockMathExportedAsLatex() {
-        QString xml = exportDocumentXml(
-            "<div data-type=\"block-math\" data-latex=\"x^2+y^2\"></div>");
-        QVERIFY2(xml.contains("x^2+y^2"), qPrintable(xml));
-        QVERIFY(xml.contains("$$x^2+y^2$$"));
-        QVERIFY(xml.contains("<w:jc w:val=\"center\"/>"));
+    void testMathMlConverterFractionAndRadicals() {
+        // 分数 → m:f/m:num/m:den
+        QString frac = MathMlConverter::toOMML(
+            "<math><mrow><mfrac><mi>a</mi><mi>b</mi></mfrac></mrow></math>");
+        QVERIFY2(frac.contains("<m:f>"), qPrintable(frac));
+        QVERIFY(frac.contains("<m:num>"));
+        QVERIFY(frac.contains("<m:den>"));
+        QVERIFY(frac.contains("a"));
+        QVERIFY(frac.contains("b"));
+
+        // 平方根 → m:rad 且隐藏根指数
+        QString sqrt = MathMlConverter::toOMML(
+            "<math><msqrt><mi>x</mi></msqrt></math>");
+        QVERIFY(sqrt.contains("<m:rad>"));
+        QVERIFY(sqrt.contains("<m:degHide m:val=\"1\"/>"));
+
+        // n 次根 → m:rad 带根指数（mroot 子元素顺序：基数在前、根指数在后）
+        QString root = MathMlConverter::toOMML(
+            "<math><mroot><mi>x</mi><mn>3</mn></mroot></math>");
+        QVERIFY(root.contains("<m:deg>"));
+        QVERIFY(root.contains("<m:e>"));
+    }
+
+    void testMathMlConverterScripts() {
+        QVERIFY(MathMlConverter::toOMML("<math><msub><mi>x</mi><mn>1</mn></msub></math>")
+                    .contains("<m:sSub>"));
+        QVERIFY(MathMlConverter::toOMML("<math><msup><mi>x</mi><mn>2</mn></msup></math>")
+                    .contains("<m:sSup>"));
+        QVERIFY(MathMlConverter::toOMML(
+                    "<math><msubsup><mi>x</mi><mn>1</mn><mn>2</mn></msubsup></math>")
+                    .contains("<m:sSubSup>"));
+        // 上下标内容顺序：基、下、上
+        QString ss = MathMlConverter::toOMML(
+            "<math><msubsup><mi>x</mi><mn>1</mn><mn>2</mn></msubsup></math>");
+        int e = ss.indexOf("<m:e>"), sub = ss.indexOf("<m:sub>"), sup = ss.indexOf("<m:sup>");
+        QVERIFY(e >= 0 && sub > e && sup > sub);
+    }
+
+    void testExtractMathSources() {
+        // 行内与块级按文档顺序提取，data-latex 的 HTML 转义还原
+        QString html = "<p>能量 <span data-type=\"inline-math\" data-latex=\"E=mc^2\"></span></p>"
+                       "<div data-type=\"block-math\" data-latex=\"a&amp;b &lt; c\"></div>"
+                       "<p>再一个 <span data-type=\"inline-math\" data-latex=\"x^2\"></span></p>";
+        QStringList srcs = DocxExporter::extractMathSources(html);
+        QCOMPARE(srcs.size(), 3);
+        QCOMPARE(srcs[0], QString("E=mc^2"));
+        QCOMPARE(srcs[1], QString("a&b < c"));   // &amp; &lt; 还原
+        QCOMPARE(srcs[2], QString("x^2"));
+    }
+
+    void testExtractMathSourcesNoMatch() {
+        // 普通 span / 无公式的文档不提取
+        QCOMPARE(DocxExporter::extractMathSources("<p><span>文字</span></p>").size(), 0);
+    }
+
+    void testMathRenderScriptUsesMathmlOutput() {
+        // 渲染脚本须显式指定 output:'mathml'（返回 MathML 供 OMML 转换），并含 try/catch 兜底
+        QString script = MathMlRenderer::buildRenderScript({"E=mc^2"});
+        QVERIFY2(script.contains("output:'mathml'"), qPrintable(script));
+        QVERIFY(script.contains("katex.renderToString"));
+        QVERIFY(script.contains("throwOnError:false"));
     }
 
     void testFootnoteReferenceAndDefinition() {
@@ -96,11 +166,20 @@ private slots:
     }
 
     void testTaskListCheckboxPrefix() {
+        // 任务列表：无序列表（bullet）+ ☐/☒ 前缀 + 文本。复选框 run 显式指定
+        // Segoe UI Symbol 字体（Calibri 无 U+2610/U+2612 字形，缺省回退不可靠）。
+        // 回归：曾因 <w:p> 开标签长度误算（mid(4)）残留孤立 ">" 文本节点，Word 打开
+        // 可能丢弃复选框段落、退化为普通无序列表。
         QString xml = exportDocumentXml(
-            "<ul data-type=\"taskList\"><li data-type=\"taskItem\">"
-            "<label><input type=\"checkbox\"></label><div><p>事项</p></div>"
-            "</li></ul>");
+            "<ul data-type=\"taskList\">"
+            "<li data-type=\"taskItem\"><label><input type=\"checkbox\"></label><div><p>事项</p></div></li>"
+            "<li data-type=\"taskItem\" data-checked=\"true\"><label><input type=\"checkbox\" checked=\"checked\"></label><div><p>完成</p></div></li>"
+            "</ul>");
         QVERIFY(xml.contains("☐"));
+        QVERIFY(xml.contains("☒"));
+        QVERIFY(xml.contains("<w:numPr>"));             // 任务列表用无序列表（bullet）表示
+        QVERIFY(xml.contains("Segoe UI Symbol"));       // 复选框 run 指定符号字体
+        QVERIFY(!xml.contains("</w:r>>"));              // 无孤立 ">" 残留
     }
 
     void testBlockquoteCenteredParagraphSinglePPr() {
@@ -118,6 +197,24 @@ private slots:
         QString xml = exportDocumentXml("<p>中文测试段落</p>");
         QVERIFY(xml.contains("中文测试段落"));
         QVERIFY(!xml.contains("Noto Color Emoji"));
+    }
+
+    void testDefaultFontIsChineseFriendly() {
+        // 默认正文（docDefaults）字体须为中文黑体 + 西文 Arial，而非无中文字形的 Calibri。
+        // 字体定义在 word/styles.xml（docDefaults），不在 document.xml。
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx("<p>中文测试 English 123</p>", dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QProcess unzip;
+        unzip.start("unzip", QStringList() << "-p" << out << "word/styles.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString styles = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY2(styles.contains("w:eastAsia=\"黑体\""), qPrintable(styles));
+        QVERIFY(styles.contains("w:ascii=\"Arial\""));
+        QVERIFY(!styles.contains("w:eastAsia=\"Calibri\""));
     }
 
     void testEmojiStillUsesEmojiFont() {
@@ -156,6 +253,10 @@ private slots:
         QVERIFY(docXml.contains("<w:drawing>"));
         QVERIFY(docXml.contains("<a:blip r:embed=\"rId"));
         QVERIFY(docXml.contains("<pic:pic>"));
+        // 图片一律仅嵌 PNG，不挂 <asvg:svgBlip>：Word/WPS 的 SVG 渲染器忽略 <style> 与
+        // <marker>，mermaid 时序图箭头会丢失，故统一走 Chromium 栅格化的 PNG 兜底
+        QVERIFY(!docXml.contains("svgBlip"));
+        QVERIFY(!docXml.contains("asvg:"));
 
         // media 部件存在
         unzip.start("unzip", QStringList() << "-l" << out);
@@ -230,6 +331,55 @@ private slots:
         // 非 mermaid 代码块 / 普通文本不应被提取
         QString html = "<pre><code class=\"language-cpp\">int a;</code></pre><p>正文</p>";
         QCOMPARE(DocxExporter::extractMermaidSources(html).size(), 0);
+    }
+
+    void testMermaidRenderScriptReturnsPromise() {
+        // 回归：渲染脚本的 IIFE 必须显式 return Promise.all(...)。若漏掉 return，
+        // runJavaScript 立即拿到 undefined（异步渲染未完成即回传），SVG/PNG 为空，
+        // DOCX 导出回退为 mermaid 源码文本而非图片。
+        QString script = MermaidRenderer::buildRenderScript({"graph TD;A-->B"});
+        QVERIFY2(script.contains("return Promise.all("), qPrintable(script));
+    }
+
+    void testLargeImageShrinksToPageWidth() {
+        // 超宽图片（2000px）须按比例缩小到页面文本宽度（A4 纵向 1.8cm 边距 → 174mm）。
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QImage big(2000, 1000, QImage::Format_ARGB32);
+        big.fill(Qt::red);
+        QVERIFY(big.save(dir.path() + "/big.png", "PNG"));
+
+        // 固定纸张/边距使上限确定；测后恢复原值，避免污染用户设置
+        QSettings s("md-editor", "md-editor");
+        const QVariant oldPaper = s.value("export/paperSize");
+        const QVariant oldOrient = s.value("export/orientation");
+        const QVariant oldMl = s.value("export/marginLeft");
+        const QVariant oldMr = s.value("export/marginRight");
+        s.setValue("export/paperSize", static_cast<int>(QPageSize::A4));
+        s.setValue("export/orientation", static_cast<int>(QPageLayout::Portrait));
+        s.setValue("export/marginLeft", 1.8);
+        s.setValue("export/marginRight", 1.8);
+
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx("<p><img src=\"big.png\"></p>", dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QProcess unzip; unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString docXml = QString::fromUtf8(unzip.readAllStandardOutput());
+        // 2000px→19,050,000 EMU，超上限；上限 174mm×36000=6,264,000 EMU，高按比例 3,132,000
+        QVERIFY2(docXml.contains("cx=\"6264000\""), qPrintable(docXml));
+        QVERIFY2(docXml.contains("cy=\"3132000\""), qPrintable(docXml));
+
+        // sectPr 声明纸张/页边距（A4 纵向 1.8cm 边距），使 Word 排版与图片上限一致
+        QVERIFY2(docXml.contains("<w:sectPr>"), qPrintable(docXml));
+        QVERIFY2(docXml.contains("<w:pgSz w:w=\"11906\" w:h=\"16838\"/>"), qPrintable(docXml));
+        QVERIFY2(docXml.contains("w:left=\"1020\""), qPrintable(docXml));
+
+        if (oldPaper.isValid()) s.setValue("export/paperSize", oldPaper); else s.remove("export/paperSize");
+        if (oldOrient.isValid()) s.setValue("export/orientation", oldOrient); else s.remove("export/orientation");
+        if (oldMl.isValid()) s.setValue("export/marginLeft", oldMl); else s.remove("export/marginLeft");
+        if (oldMr.isValid()) s.setValue("export/marginRight", oldMr); else s.remove("export/marginRight");
     }
 };
 

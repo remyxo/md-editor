@@ -1,0 +1,67 @@
+#include "MathMlRenderer.h"
+
+#include <QWebEngineView>
+#include <QWebEnginePage>
+#include <QWebEngineSettings>
+#include <QJsonDocument>
+#include <QJsonArray>
+
+MathMlRenderer::MathMlRenderer(QObject *parent)
+    : QObject(parent), m_view(new QWebEngineView())
+{
+    m_view->setVisible(false);
+    m_view->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls, true);
+
+    // 通过 qrc 路径加载 katex.min.js（与 PDF 导出路径一致），而非内联脚本。
+    connect(m_view, &QWebEngineView::loadFinished, this, &MathMlRenderer::onLoadFinished);
+    m_view->setHtml(QStringLiteral(
+        "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">"
+        "<script src=\"qrc:/web/katex.min.js\"></script></head>"
+        "<body></body></html>"));
+}
+
+MathMlRenderer::~MathMlRenderer() { delete m_view; }
+
+void MathMlRenderer::renderAll(const QStringList &sources)
+{
+    m_pending = sources;
+    if (m_loaded) onLoadFinished(true);
+}
+
+QString MathMlRenderer::buildRenderScript(const QStringList &sources)
+{
+    // IIFE 返回 JSON.stringify(数组)：KaTeX renderToString 为同步调用，返回的字符串
+    // 直接作为 runJavaScript 回调的 QVariant 读回。output:'mathml' 使返回值是 MathML
+    // 片段（非 HTML），可直接喂给 MathMlConverter::toOMML。throwOnError:false 保证
+    // 非法 LaTeX 不抛异常；额外 try/catch 兜底，失败项回退空串由调用侧降级处理。
+    return QStringLiteral(
+        "(function(){var sources=%1;"
+        "return JSON.stringify(sources.map(function(s){"
+        "try{return katex.renderToString(s,{output:'mathml',throwOnError:false});}"
+        "catch(e){return '';}}));"
+        "})()").arg(QString::fromUtf8(QJsonDocument(
+            QJsonArray::fromStringList(sources)).toJson(QJsonDocument::Compact)));
+}
+
+void MathMlRenderer::onLoadFinished(bool ok)
+{
+    if (!ok) { emit finished({}); return; }
+    m_loaded = true;
+    if (m_pending.isEmpty()) return;
+
+    QString script = buildRenderScript(m_pending);
+    int n = m_pending.size();   // clear 前捕获数量，供解析失败回退
+    m_pending.clear();
+    m_view->page()->runJavaScript(script, [this, n](const QVariant &res) {
+        QVector<QString> out;
+        QJsonParseError err;
+        QJsonDocument doc = QJsonDocument::fromJson(res.toString().toUtf8(), &err);
+        if (err.error == QJsonParseError::NoError && doc.isArray()) {
+            const QJsonArray arr = doc.array();
+            for (const auto &v : arr) out.append(v.toString());
+        } else {
+            for (int i = 0; i < n; ++i) out.append(QString());
+        }
+        emit finished(out);
+    });
+}

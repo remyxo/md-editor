@@ -10,6 +10,8 @@ set(SOURCES
     core/PdfExporter.cpp
     core/DocxExporter.cpp
     core/MermaidRenderer.cpp
+    core/MathMlRenderer.cpp
+    core/MathMlConverter.cpp
     core/HtmlExporter.cpp
     ui/EditorTab.cpp
     ui/TabWidget.cpp
@@ -37,6 +39,8 @@ set(HEADERS
     core/PdfExporter.h
     core/DocxExporter.h
     core/MermaidRenderer.h
+    core/MathMlRenderer.h
+    core/MathMlConverter.h
     core/HtmlExporter.h
     ui/EditorTab.h
     ui/TabWidget.h

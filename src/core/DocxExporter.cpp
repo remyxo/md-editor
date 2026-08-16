@@ -1,4 +1,5 @@
 #include "DocxExporter.h"
+#include "MathMlConverter.h"
 #include <QBuffer>
 #include <QDebug>
 #include <QDir>
@@ -6,14 +7,18 @@
 #include <QFileInfo>
 #include <QImageReader>
 #include <QMimeDatabase>
+#include <QPageLayout>
+#include <QPageSize>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSet>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QXmlStreamReader>
 
 // 前向声明：实现位于文件后半部（mermaidBlockRe 附近），onMermaidRendered 先于它被定义
 static QString substituteMermaidPlaceholders(const QString &html);
+static QString substituteMathPlaceholders(const QString &html);
 
 DocxExporter::DocxExporter(QObject *parent)
     : QObject(parent)
@@ -30,8 +35,10 @@ void DocxExporter::exportToDocx(const QString &html, const QString &docDir, cons
     m_outputPath = outputPath;
     m_lastHtml = html;
     m_mermaidSources = extractMermaidSources(html);
-    if (m_mermaidSources.isEmpty()) {
-        // 无 mermaid：同步直接写入
+    m_mathSources = extractMathSources(html);
+
+    // 无 mermaid 且无公式：同步直接写入
+    if (m_mermaidSources.isEmpty() && m_mathSources.isEmpty()) {
         if (writeDocx(html, docDir, outputPath)) {
             emit exportFinished(true, outputPath);
         } else {
@@ -39,18 +46,51 @@ void DocxExporter::exportToDocx(const QString &html, const QString &docDir, cons
         }
         return;
     }
-    // 有 mermaid：先离屏渲染，全部完成后替换占位再写 DOCX（异步）
-    if (!m_renderer) {
-        m_renderer = new MermaidRenderer(this);
-        connect(m_renderer, &MermaidRenderer::finished, this, &DocxExporter::onMermaidRendered);
+
+    // 有 mermaid / 公式：分别离屏渲染，全部完成后替换占位再写 DOCX（异步）
+    m_mermaidPending = !m_mermaidSources.isEmpty();
+    m_mathPending = !m_mathSources.isEmpty();
+    if (m_mermaidPending) {
+        if (!m_renderer) {
+            m_renderer = new MermaidRenderer(this);
+            connect(m_renderer, &MermaidRenderer::finished, this, &DocxExporter::onMermaidRendered);
+        }
+        m_renderer->renderAll(m_mermaidSources);
     }
-    m_renderer->renderAll(m_mermaidSources);
+    if (m_mathPending) {
+        if (!m_mathRenderer) {
+            m_mathRenderer = new MathMlRenderer(this);
+            connect(m_mathRenderer, &MathMlRenderer::finished, this, &DocxExporter::onMathRendered);
+        }
+        m_mathRenderer->renderAll(m_mathSources);
+    }
 }
 
 void DocxExporter::onMermaidRendered(const QVector<MermaidRenderer::Result> &results)
 {
     m_mermaidResults = results;
+    m_mermaidPending = false;
+    maybeFinish();
+}
+
+void DocxExporter::onMathRendered(const QVector<QString> &mathmlList)
+{
+    // MathML → OMML 转换；渲染/转换失败的项留空，解析时回退为 $...$ 源码文本
+    m_mathOMML.clear();
+    m_mathOMML.reserve(mathmlList.size());
+    for (const QString &ml : mathmlList) {
+        if (ml.isEmpty()) m_mathOMML.append(QString());
+        else m_mathOMML.append(MathMlConverter::toOMML(ml));
+    }
+    m_mathPending = false;
+    maybeFinish();
+}
+
+void DocxExporter::maybeFinish()
+{
+    if (m_mermaidPending || m_mathPending) return;
     QString html = substituteMermaidPlaceholders(m_lastHtml);   // mermaid 块 → <p data-mermaid-idx>
+    html = substituteMathPlaceholders(html);                    // 公式 → <span/p data-math-idx>
     if (writeDocx(html, m_docDir, m_outputPath)) {
         emit exportFinished(true, m_outputPath);
     } else {
@@ -156,6 +196,54 @@ static QString substituteMermaidPlaceholders(const QString &html)
     return out;
 }
 
+// 公式占位正则：捕获组 1=行内 <span data-type="inline-math">，组 2=块级 <div data-type="block-math">。
+// extractMathSources 与 substituteMathPlaceholders 必须共用同一正则，保证占位序号与源码列表序号对齐。
+// data-latex 值经 HTML 转义（&lt; 等），提取后由 htmlUnescape 还原；属性顺序不假定（renderHTML
+// 中 data-type 与 data-latex 的先后可能随序列化器变化），故按 data-type 定位整元素、再单独取 data-latex。
+static const QRegularExpression &mathRe()
+{
+    static const QRegularExpression re(
+        "(<span\\b[^>]*\\bdata-type=\"inline-math\"[^>]*>(?:\\s*</span>)?)"
+        "|(<div\\b[^>]*\\bdata-type=\"block-math\"[^>]*>(?:\\s*</div>)?)",
+        QRegularExpression::CaseInsensitiveOption);
+    return re;
+}
+
+// 从匹配到的完整元素中提取 data-latex 属性值
+static QString extractLatexAttr(const QString &elementHtml)
+{
+    QRegularExpression re("\\bdata-latex=\"([^\"]*)\"", QRegularExpression::CaseInsensitiveOption);
+    auto m = re.match(elementHtml);
+    return m.hasMatch() ? m.captured(1) : QString();
+}
+
+QStringList DocxExporter::extractMathSources(const QString &html)
+{
+    QStringList out;
+    auto it = mathRe().globalMatch(html);
+    while (it.hasNext()) { auto m = it.next(); out << htmlUnescape(extractLatexAttr(m.captured(0))); }
+    return out;
+}
+
+// 每个公式替换为占位：行内 <span data-math-idx="N"></span>，块级 <p data-math-idx="N"></p>
+// （N 与 extractMathSources 顺序一致）
+static QString substituteMathPlaceholders(const QString &html)
+{
+    QString out = html; int offset = 0, idx = 0;
+    auto it = mathRe().globalMatch(html);
+    while (it.hasNext()) {
+        auto m = it.next();
+        const bool isBlock = m.captured(1).isEmpty();   // 组1=行内，组2=块级
+        QString ph = isBlock
+            ? QString("<p data-math-idx=\"%1\"></p>").arg(idx)
+            : QString("<span data-math-idx=\"%1\"></span>").arg(idx);
+        out.replace(m.capturedStart(0) + offset, m.capturedLength(0), ph);
+        offset += ph.length() - m.capturedLength(0);
+        ++idx;
+    }
+    return out;
+}
+
 // 解析图片路径 → 字节 + MIME + 尺寸（EMU）。失败返回 false。
 static bool readImageFile(const QString &src, const QString &docDir,
                           QByteArray *bytes, QString *mime, int *cxEmu, int *cyEmu)
@@ -201,19 +289,21 @@ static bool readImageFile(const QString &src, const QString &docDir,
     return true;
 }
 
-// 生成 <w:drawing> 内联图片 XML。svgRId > 0 时挂 <asvg:svgBlip>（Word 2016+ SVG）。
-static QString buildImageDrawingXml(int docPrId, int pngRId, int svgRId,
+// 图片超宽时按比例缩小到页面文本宽度（长边对齐 maxWidthEmu，保持宽高比）。
+// maxWidthEmu <= 0 视为不限制。使用 qint64 防 cyEmu*maxWidthEmu 溢出（约 240e12，仍在 int64 范围）。
+static void clampToMaxWidth(int &cxEmu, int &cyEmu, int maxWidthEmu)
+{
+    if (maxWidthEmu <= 0 || cxEmu <= maxWidthEmu) return;
+    cyEmu = static_cast<int>((static_cast<qint64>(cyEmu) * maxWidthEmu) / cxEmu);
+    cxEmu = maxWidthEmu;
+}
+
+// 生成 <w:drawing> 内联图片 XML。仅嵌入 PNG（mermaid 的 SVG 依赖 <style> 与 <marker>，
+// Word/WPS 的 SVG 渲染器不支持，会丢箭头，故一律用 Chromium 栅格化好的 PNG，不挂 svgBlip）。
+static QString buildImageDrawingXml(int docPrId, int pngRId,
                                     int cxEmu, int cyEmu)
 {
-    QString blip;
-    if (svgRId > 0) {
-        blip = QString("<a:blip r:embed=\"rId%1\"><a:extLst>"
-                       "<a:ext uri=\"{96DAC541-7B7A-43D3-8B79-37D633B846F1}\">"
-                       "<asvg:svgBlip xmlns:asvg=\"http://schemas.microsoft.com/office/drawing/2016/SVG/main\" r:embed=\"rId%2\"/>"
-                       "</a:ext></a:extLst></a:blip>").arg(pngRId).arg(svgRId);
-    } else {
-        blip = QString("<a:blip r:embed=\"rId%1\"/>").arg(pngRId);
-    }
+    const QString blip = QString("<a:blip r:embed=\"rId%1\"/>").arg(pngRId);
     return QString(
         "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">"
         "<wp:extent cx=\"%1\" cy=\"%2\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>"
@@ -315,15 +405,19 @@ struct ParseState {
     // 图片 media 部件（Task 5：DOCX 图片嵌入 OOXML media）
     struct MediaPart {
         int rId;
-        QString fileName;     // "imageN.png" / "diagramN.svg"
+        QString fileName;     // "imageN.png" / "imageN.gif" / "imageN.jpg"
         QString contentType;  // "image/png" 等
         QByteArray bytes;
     };
     QList<MediaPart> media;
     int nextDocPrId = 1;
     QString docDir;                                       // 文档所在目录，用于解析相对图片路径
+    int maxImageWidthEmu = 0;                             // 图片最大宽（EMU），0=不限制；超宽按比例缩小
+    QString sectPrXml;                                    // 节属性（纸张尺寸+页边距），使 DOCX 页与导出设置一致
     QVector<MermaidRenderer::Result> mermaidResults;      // 渲染结果（按 idx）
     QStringList mermaidSources;                           // 源码（渲染失败回退用）
+    QStringList mathSources;                              // 公式 LaTeX 源码（按 idx，失败回退用）
+    QStringList mathOMML;                                 // 公式 OMML 片段（按 idx，失败项空）
 
     QString makeRId(const QString &url) {
         QString rid = QString("rId%1").arg(nextRId++);
@@ -445,9 +539,19 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
             }
             // span（内联数学 / 颜色）
             else if (tag == "span") {
+                // 内联公式占位：替换为 <m:oMath> 原生公式（OMML）；渲染失败回退 $...$
+                if (r.attributes().hasAttribute("data-math-idx")) {
+                    flushRun();
+                    int idx = r.attributes().value("data-math-idx").toInt();
+                    QString latex = (idx >= 0 && idx < s.mathSources.size()) ? s.mathSources[idx] : QString();
+                    QString omm = (idx >= 0 && idx < s.mathOMML.size()) ? s.mathOMML[idx] : QString();
+                    if (!omm.isEmpty()) out += "<m:oMath>" + omm + "</m:oMath>";
+                    else out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
+                }
                 // 内联数学 span 内容为空（KaTeX 渲染），须取 data-latex；
-                // 此判断须先于颜色 span，否则 inline-math 被当普通 span 丢弃
-                if (r.attributes().value("data-type").toString() == "inline-math") {
+                // 此判断须先于颜色 span，否则 inline-math 被当普通 span 丢弃。
+                // 占位替换正常运行时此分支不可达，保留作兜底（替换漏匹配时仍输出 $...$）。
+                else if (r.attributes().value("data-type").toString() == "inline-math") {
                     flushRun();
                     QString latex = r.attributes().value("data-latex").toString();
                     out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
@@ -484,9 +588,10 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                 QString alt = r.attributes().value("alt").toString();
                 QByteArray bytes; QString mime; int cx = 0, cy = 0;
                 if (readImageFile(r.attributes().value("src").toString(), s.docDir, &bytes, &mime, &cx, &cy)) {
+                    clampToMaxWidth(cx, cy, s.maxImageWidthEmu);
                     QString ext = (mime == "image/png") ? "png" : (mime == "image/gif" ? "gif" : "jpg");
                     int rId = addMedia(s, bytes, mime, ext);
-                    out += "<w:r>" + buildImageDrawingXml(s.nextDocPrId++, rId, 0, cx, cy) + "</w:r>";
+                    out += "<w:r>" + buildImageDrawingXml(s.nextDocPrId++, rId, cx, cy) + "</w:r>";
                 } else {
                     out += "<w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r>";
                 }
@@ -721,6 +826,9 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s)
                         if (lt == QXmlStreamReader::StartElement
                             && r.name().toString().compare(QLatin1String("input"), Qt::CaseInsensitive) == 0) {
                             QString c = r.attributes().value("checked").toString();
+                            // ☐/☒（U+2610/U+2612）为 GFM 任务列表的方框/方框带叉符号。
+                            // 文档默认字体（西文 Arial/中文黑体）不含这两个码位字形，须在复选框 run 上
+                            // 显式指定含该字形的符号字体（见下方 ckRun 的 w:rFonts）。
                             taskPrefix = c.isNull() ? QStringLiteral("☐ ") : QStringLiteral("☒ ");
                         }
                     }
@@ -731,12 +839,17 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s)
                 }
                 // 任务列表复选框前缀
                 if (!taskPrefix.isEmpty() && inner.startsWith("<w:p>")) {
-                    QString ckRun = "<w:r><w:t xml:space=\"preserve\">" + taskPrefix + "</w:t></w:r>";
+                    // 复选框 run 显式指定符号字体：Arial/黑体 无 U+2610/U+2612 字形，
+                    // 缺省回退在部分 Word/WPS 环境不可靠，☐/☒ 会渲染成空白。
+                    QString ckRun = "<w:r><w:rPr><w:rFonts w:ascii=\"Segoe UI Symbol\" w:hAnsi=\"Segoe UI Symbol\" w:cs=\"Segoe UI Symbol\"/></w:rPr><w:t xml:space=\"preserve\">" + taskPrefix + "</w:t></w:r>";
                     int pPrEnd = inner.indexOf("</w:pPr>");
                     if (pPrEnd >= 0) {
                         inner = inner.left(pPrEnd + 8) + ckRun + inner.mid(pPrEnd + 8);
                     } else {
-                        inner = QStringLiteral("<w:p>") + ckRun + inner.mid(4);
+                        // <w:p> 共 5 个字符，mid(5) 才跳过整个开标签；mid(4) 会残留一个
+                        // 孤立的 ">" 文本节点（<w:p> 内不允许裸文本），Word 打开时可能
+                        // 丢弃该段或触发修复，导致任务列表复选框丢失、退化为普通列表。
+                        inner = QStringLiteral("<w:p>") + ckRun + inner.mid(5);
                     }
                     taskPrefix.clear();
                 }
@@ -890,15 +1003,42 @@ static void parseBody(QXmlStreamReader &r, ParseState &s)
                 if (idx >= 0 && idx < s.mermaidSources.size()) {
                     if (idx < s.mermaidResults.size()) {
                         const auto &res = s.mermaidResults[idx];
-                        if (!res.svg.isEmpty() && !res.png.isEmpty()) {
+                        if (!res.png.isEmpty()) {
+                            int cx = res.cxEmu, cy = res.cyEmu;
+                            clampToMaxWidth(cx, cy, s.maxImageWidthEmu);
+                            // 仅嵌入 PNG，不挂 <asvg:svgBlip>。mermaid 的时序图箭头依赖
+                            // <style> CSS 类（.messageLineN{stroke:#333}）与 <marker>（marker-end
+                            // 箭头），二者 Word/WPS 的 SVG 渲染器均不支持（忽略 <style>、
+                            // 不渲染 <marker>），会导致箭头丢失；而 Chromium 栅格化的 PNG
+                            // 已正确应用 CSS 与 marker，箭头完整。故放弃矢量 SVG，用 PNG 兜底。
                             int pngRId = addMedia(s, res.png, "image/png", "png");
-                            int svgRId = addMedia(s, res.svg.toUtf8(), "image/svg+xml", "svg");
-                            s.bodyXml += "<w:p><w:r>" + buildImageDrawingXml(s.nextDocPrId++, pngRId, svgRId, res.cxEmu, res.cyEmu) + "</w:r></w:p>\n";
+                            s.bodyXml += "<w:p><w:r>" + buildImageDrawingXml(s.nextDocPrId++, pngRId, cx, cy) + "</w:r></w:p>\n";
                             continue;
                         }
                     }
                     // 渲染失败或结果缺失：回退源码文本
                     s.bodyXml += "<w:p><w:r><w:t xml:space=\"preserve\">" + xmlEscape(s.mermaidSources[idx]) + "</w:t></w:r></w:p>\n";
+                }
+                continue;
+            }
+            // 公式块占位：<p data-math-idx="N"></p>，替换为居中 <m:oMathPara> 原生公式
+            // （渲染失败回退 $$...$$ 源码文本）。
+            if (r.attributes().hasAttribute("data-math-idx")) {
+                int idx = r.attributes().value("data-math-idx").toInt();
+                while (!r.atEnd()) {                     // 消费空 <p> 到 </p>
+                    auto t = r.readNext();
+                    if (t == QXmlStreamReader::EndElement
+                        && r.name().toString().compare(QLatin1String("p"), Qt::CaseInsensitive) == 0)
+                        break;
+                }
+                QString latex = (idx >= 0 && idx < s.mathSources.size()) ? s.mathSources[idx] : QString();
+                QString omm = (idx >= 0 && idx < s.mathOMML.size()) ? s.mathOMML[idx] : QString();
+                if (!omm.isEmpty()) {
+                    s.bodyXml += "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>"
+                                 "<m:oMathPara><m:oMath>" + omm + "</m:oMath></m:oMathPara></w:p>\n";
+                } else {
+                    s.bodyXml += "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>"
+                                 "<w:r><w:t>$$" + xmlEscape(latex) + "$$</w:t></w:r></w:p>\n";
                 }
                 continue;
             }
@@ -933,9 +1073,10 @@ static void parseBody(QXmlStreamReader &r, ParseState &s)
             QString alt = r.attributes().value("alt").toString();
             QByteArray bytes; QString mime; int cx = 0, cy = 0;
             if (readImageFile(r.attributes().value("src").toString(), s.docDir, &bytes, &mime, &cx, &cy)) {
+                clampToMaxWidth(cx, cy, s.maxImageWidthEmu);
                 QString ext = (mime == "image/png") ? "png" : (mime == "image/gif" ? "gif" : "jpg");
                 int rId = addMedia(s, bytes, mime, ext);
-                s.bodyXml += "<w:p><w:r>" + buildImageDrawingXml(s.nextDocPrId++, rId, 0, cx, cy) + "</w:r></w:p>\n";
+                s.bodyXml += "<w:p><w:r>" + buildImageDrawingXml(s.nextDocPrId++, rId, cx, cy) + "</w:r></w:p>\n";
             } else {
                 s.bodyXml += "<w:p><w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r></w:p>\n";
             }
@@ -952,7 +1093,7 @@ static QString makeStylesXml()
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
         "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n"
         "  <w:docDefaults>"
-        "<w:rPrDefault><w:rPr><w:sz w:val=\"22\"/><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\" w:eastAsia=\"Calibri\" w:cs=\"Calibri\"/></w:rPr></w:rPrDefault>"
+        "<w:rPrDefault><w:rPr><w:sz w:val=\"22\"/><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"黑体\" w:cs=\"Arial\"/></w:rPr></w:rPrDefault>"
         "<w:pPrDefault><w:pPr><w:spacing w:line=\"276\" w:lineRule=\"auto\"/></w:pPr></w:pPrDefault>"
         "</w:docDefaults>\n"
         "  <w:style w:type=\"paragraph\" w:styleId=\"Normal\" w:default=\"1\"><w:name w:val=\"Normal\"/><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>\n"
@@ -1029,6 +1170,9 @@ static QByteArray buildDocumentXml(const ParseState &s)
     } else {
         doc += s.bodyXml.toUtf8();
     }
+    // 节属性（纸张/页边距）必须作为 <w:body> 的最后一个子元素
+    if (!s.sectPrXml.isEmpty())
+        doc += s.sectPrXml.toUtf8();
     doc += QByteArrayLiteral("</w:body>\n</w:document>\n");
     return doc;
 }
@@ -1046,6 +1190,35 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
     state.docDir = docDir;   // 相对图片路径基准
     state.mermaidResults = m_mermaidResults;
     state.mermaidSources = m_mermaidSources;
+    state.mathSources = m_mathSources;
+    state.mathOMML = m_mathOMML;
+
+    // 图片最大宽：与 PDF 导出一致，取纸张尺寸减左右边距（毫米 → EMU，1mm=36000 EMU）。
+    // 超宽图片按比例缩小到页面文本宽度，小图保持自然尺寸（不放大）。
+    // 同时生成 sectPr 声明纸张尺寸与页边距（twips），使 DOCX 页与导出设置一致，
+    // 否则 Word/WPS 用默认（约 1 英寸边距）排版，图片上限与实际页宽不匹配、超宽图越界。
+    {
+        QSettings settings("md-editor", "md-editor");
+        const int paper = settings.value("export/paperSize", static_cast<int>(QPageSize::A4)).toInt();
+        const int orient = settings.value("export/orientation", static_cast<int>(QPageLayout::Portrait)).toInt();
+        const double mt = settings.value("export/marginTop", 1.8).toDouble();
+        const double mb = settings.value("export/marginBottom", 1.8).toDouble();
+        const double ml = settings.value("export/marginLeft", 1.8).toDouble();
+        const double mr = settings.value("export/marginRight", 1.8).toDouble();
+        QSizeF ps = QPageSize(static_cast<QPageSize::PageSizeId>(paper)).size(QPageSize::Millimeter);
+        const bool landscape = (orient == static_cast<int>(QPageLayout::Landscape));
+        const double pageW = landscape ? ps.height() : ps.width();
+        const double pageH = landscape ? ps.width() : ps.height();
+        const double contentMm = pageW - (ml + mr) * 10.0;
+        state.maxImageWidthEmu = contentMm > 0 ? static_cast<int>(contentMm * 36000.0) : 0;
+        const auto mm2twips = [](double mm) { return static_cast<int>(qRound(mm * 56.6929134)); };
+        state.sectPrXml = QStringLiteral(
+            "<w:sectPr><w:pgSz w:w=\"%1\" w:h=\"%2\"/><w:pgMar w:top=\"%3\" w:right=\"%4\" "
+            "w:bottom=\"%5\" w:left=\"%6\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>")
+            .arg(mm2twips(pageW)).arg(mm2twips(pageH))
+            .arg(mm2twips(mt * 10.0)).arg(mm2twips(mr * 10.0))
+            .arg(mm2twips(mb * 10.0)).arg(mm2twips(ml * 10.0));
+    }
     QXmlStreamReader reader(xmlDoc);
     reader.readNextStartElement(); // <root>
     parseBody(reader, state);
