@@ -164,6 +164,46 @@ private slots:
         QVERIFY(listing.contains("word/media/image1.png"));
     }
 
+    void testSvgImageFallsBackToPlaceholder() {
+        // SVG 图片（非 mermaid）无 DOCX 嵌入方案，应回退 [图片] 占位而非嵌入成损坏 jpg
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QFile f(dir.path() + "/x.svg");
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"); f.close();
+
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx("<p><img src=\"x.svg\" alt=\"矢量图\"></p>", dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QProcess unzip; unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString docXml = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY(!docXml.contains("<w:drawing>"));   // 不嵌入
+        QVERIFY(docXml.contains("[图片"));
+        QVERIFY(docXml.contains("矢量图"));           // alt 保留
+    }
+
+    void testEmptyImageFileFallsBackToPlaceholder() {
+        // 零字节图片文件应回退 [图片] 占位，不得嵌入为损坏图片
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QFile f(dir.path() + "/empty.png");
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.close(); // 零字节文件
+
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx("<p><img src=\"empty.png\" alt=\"空图\"></p>", dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QProcess unzip; unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString docXml = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY(!docXml.contains("<w:drawing>"));   // 不嵌入
+        QVERIFY(docXml.contains("[图片"));
+        QVERIFY(docXml.contains("空图"));             // alt 保留
+    }
+
     void testExtractMermaidSources() {
         // mermaid 源码提取是纯函数（不构造 MermaidRenderer，无 WebEngine 依赖）。
         // HTML 中源码被转义（&gt;），提取后应还原为原始 mermaid 语法。

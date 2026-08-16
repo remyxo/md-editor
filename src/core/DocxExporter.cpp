@@ -161,14 +161,13 @@ static bool readImageFile(const QString &src, const QString &docDir,
                           QByteArray *bytes, QString *mime, int *cxEmu, int *cyEmu)
 {
     if (src.startsWith("data:")) {
-        // data URI：解析 base64（mime 取 data: 前缀）
+        // data URI：解析 base64 字节（mime 不信任 data: 前缀，交由内容判定）
         int comma = src.indexOf(',');
         if (comma < 0) return false;
         QString header = src.left(comma);
         QRegularExpression mre("data:([^;]+);base64");
         auto mm = mre.match(header);
         if (!mm.hasMatch()) return false;
-        *mime = mm.captured(1);
         *bytes = QByteArray::fromBase64(src.mid(comma + 1).toLatin1());
     } else {
         QString path = src.startsWith('/') ? src : docDir + "/" + src;
@@ -176,10 +175,16 @@ static bool readImageFile(const QString &src, const QString &docDir,
         if (!f.open(QIODevice::ReadOnly)) return false;
         *bytes = f.readAll();
         f.close();
-        QMimeDatabase db;
-        *mime = db.mimeTypeForFile(path).name();
-        if (!mime->startsWith("image/")) return false;
     }
+    // 非空校验：零字节文件 / 空 base64 不得嵌入为损坏图片
+    if (bytes->isEmpty()) return false;
+    // 基于内容判定真实 MIME（不信任扩展名 / data: 前缀），仅接受三种 Word 可直接嵌入的格式；
+    // svg/webp/bmp/tiff 等其他 image/* 一律回退 [图片] 占位，避免嵌入声明 image/jpeg 的损坏 jpg
+    QMimeDatabase db;
+    const QString realMime = db.mimeTypeForData(*bytes).name();
+    if (realMime != "image/png" && realMime != "image/jpeg" && realMime != "image/gif")
+        return false;
+    *mime = realMime;
     // 尺寸：PNG/JPEG 用 QImageReader；SVG 不读尺寸用默认
     QImageReader ir;
     QBuffer buf(bytes);
