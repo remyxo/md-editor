@@ -50,6 +50,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "%2"
         "</style>"
         "<script src=\"katex.min.js\"></script>"
+        "<script src=\"mermaid.min.js\"></script>"
         "<script>"
         "window.addEventListener('DOMContentLoaded',function(){"
         "var els=document.querySelectorAll('[data-latex]');"
@@ -65,6 +66,11 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "</script>"
         "</head><body>%1</body></html>"
     ).arg(body, katexCss);
+
+    // 注入 mermaid 渲染 helper（定义 window.__renderAllMermaid，返回 Promise，
+    // 不自调用——PDF 在 onLoadFinished 里显式调用并等待）。PDF 固定亮色打印。
+    fullHtml.replace("</head>",
+        QString("<script>%1</script></head>").arg(HtmlExporter::mermaidRenderScript("default")));
 
     if (!customCss.isEmpty()) {
         fullHtml.replace("</head>", QString("<style>%1</style></head>").arg(customCss));
@@ -122,7 +128,14 @@ void PdfExporter::onLoadFinished(bool ok)
         emit exportError("HTML 渲染失败");
         return;
     }
-    m_renderView->page()->printToPdf(m_pendingOutputPath, m_pendingLayout);
+    // 先渲染 mermaid（异步），全部完成后再打印，否则图表空白。
+    // .then 与 .catch 都返回 true：即使 mermaid 渲染同步抛异常，Promise
+    // 也一定会 settle，保证 printToPdf 必定触发，避免 PDF 导出静默挂起。
+    m_renderView->page()->runJavaScript(
+        "window.__renderAllMermaid().then(function(){return true;}).catch(function(){return true;})",
+        [this](const QVariant &) {
+            m_renderView->page()->printToPdf(m_pendingOutputPath, m_pendingLayout);
+        });
 }
 
 void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)

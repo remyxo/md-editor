@@ -25,6 +25,12 @@ private slots:
         QString out = PdfExporter::buildRenderHtml(html, "/tmp", "", "");
         QVERIFY(out.contains("src=\"/nonexistent/zzz.jpg\""));
     }
+
+    void testBuildRenderHtmlInjectsMermaid() {
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
+        QVERIFY(out.contains("mermaid.min.js"));
+        QVERIFY(out.contains("__renderAllMermaid"));
+    }
 };
 
 QTEST_APPLESS_MAIN(TestPdfExporter)
