@@ -27,10 +27,12 @@ target_include_directories(test_htmlexporter PRIVATE ../src)
 target_link_libraries(test_htmlexporter PRIVATE Qt6::Test)
 add_test(NAME test_htmlexporter COMMAND test_htmlexporter)
 
-add_executable(test_docxexporter test_docxexporter.cpp ../src/core/DocxExporter.cpp)
+add_executable(test_docxexporter test_docxexporter.cpp ../src/core/DocxExporter.cpp ../src/core/MermaidRenderer.cpp)
 target_include_directories(test_docxexporter PRIVATE ../src)
-# DocxExporter.cpp 用到 QImageReader（QtGui），必须链接 Qt6::Gui
-target_link_libraries(test_docxexporter PRIVATE Qt6::Test Qt6::Gui)
+# DocxExporter.cpp 用到 QImageReader（QtGui），必须链接 Qt6::Gui；
+# MermaidRenderer.cpp 用 QWebEngine，须链接 WebEngineWidgets。测试只用非 mermaid HTML
+#（extractMermaidSources 返回空 → 不构造 MermaidRenderer），链接 WebEngine 不触发无头渲染
+target_link_libraries(test_docxexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets)
 add_test(NAME test_docxexporter COMMAND test_docxexporter)
 
 add_executable(test_pdfexporter test_pdfexporter.cpp ../src/core/PdfExporter.cpp ../src/core/HtmlExporter.cpp)

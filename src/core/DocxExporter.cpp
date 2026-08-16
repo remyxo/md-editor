@@ -12,6 +12,9 @@
 #include <QTemporaryDir>
 #include <QXmlStreamReader>
 
+// 前向声明：实现位于文件后半部（mermaidBlockRe 附近），onMermaidRendered 先于它被定义
+static QString substituteMermaidPlaceholders(const QString &html);
+
 DocxExporter::DocxExporter(QObject *parent)
     : QObject(parent)
 {
@@ -23,8 +26,33 @@ void DocxExporter::exportToDocx(const QString &html, const QString &docDir, cons
         emit exportError("导出失败：编辑器内容为空");
         return;
     }
-    if (writeDocx(html, docDir, outputPath)) {
-        emit exportFinished(true, outputPath);
+    m_docDir = docDir;
+    m_outputPath = outputPath;
+    m_lastHtml = html;
+    m_mermaidSources = extractMermaidSources(html);
+    if (m_mermaidSources.isEmpty()) {
+        // 无 mermaid：同步直接写入
+        if (writeDocx(html, docDir, outputPath)) {
+            emit exportFinished(true, outputPath);
+        } else {
+            emit exportError("DOCX 生成失败");
+        }
+        return;
+    }
+    // 有 mermaid：先离屏渲染，全部完成后替换占位再写 DOCX（异步）
+    if (!m_renderer) {
+        m_renderer = new MermaidRenderer(this);
+        connect(m_renderer, &MermaidRenderer::finished, this, &DocxExporter::onMermaidRendered);
+    }
+    m_renderer->renderAll(m_mermaidSources);
+}
+
+void DocxExporter::onMermaidRendered(const QVector<MermaidRenderer::Result> &results)
+{
+    m_mermaidResults = results;
+    QString html = substituteMermaidPlaceholders(m_lastHtml);   // mermaid 块 → <p data-mermaid-idx>
+    if (writeDocx(html, m_docDir, m_outputPath)) {
+        emit exportFinished(true, m_outputPath);
     } else {
         emit exportError("DOCX 生成失败");
     }
@@ -89,6 +117,43 @@ static QString makeXmlSafe(const QString &html)
     s.replace(QRegularExpression("<input(\\s+[^>]*[^/])>", QRegularExpression::CaseInsensitiveOption), "<input\\1/>");
     s.replace(QRegularExpression("<col(\\s+[^>]*[^/])>", QRegularExpression::CaseInsensitiveOption), "<col\\1/>");
     return s;
+}
+
+// mermaid 块正则：<pre><code class="...language-mermaid..."> 源码。extractMermaidSources 与
+// substituteMermaidPlaceholders 必须共用同一正则，保证占位序号与源码列表序号对齐。
+static const QRegularExpression &mermaidBlockRe()
+{
+    static const QRegularExpression re(
+        "<pre[^>]*><code[^>]*class=\"[^\"]*language-mermaid[^\"]*\"[^>]*>([\\s\\S]*?)</code></pre>",
+        QRegularExpression::CaseInsensitiveOption);
+    return re;
+}
+
+static QString htmlUnescape(QString s)   // mermaid 源码在 getContent() 中被 HTML 转义
+{
+    return s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", "\"");
+}
+
+QStringList DocxExporter::extractMermaidSources(const QString &html)
+{
+    QStringList out;
+    auto it = mermaidBlockRe().globalMatch(html);
+    while (it.hasNext()) { auto m = it.next(); out << htmlUnescape(m.captured(1)); }
+    return out;
+}
+
+// 每个 mermaid 块替换为 <p data-mermaid-idx="N"></p> 占位（N 与 extractMermaidSources 顺序一致）
+static QString substituteMermaidPlaceholders(const QString &html)
+{
+    QString out = html; int offset = 0, idx = 0;
+    auto it = mermaidBlockRe().globalMatch(html);
+    while (it.hasNext()) {
+        auto m = it.next();
+        QString ph = QString("<p data-mermaid-idx=\"%1\"></p>").arg(idx++);
+        out.replace(m.capturedStart(0) + offset, m.capturedLength(0), ph);
+        offset += ph.length() - m.capturedLength(0);
+    }
+    return out;
 }
 
 // 解析图片路径 → 字节 + MIME + 尺寸（EMU）。失败返回 false。
@@ -251,7 +316,9 @@ struct ParseState {
     };
     QList<MediaPart> media;
     int nextDocPrId = 1;
-    QString docDir;           // 文档所在目录，用于解析相对图片路径
+    QString docDir;                                       // 文档所在目录，用于解析相对图片路径
+    QVector<MermaidRenderer::Result> mermaidResults;      // 渲染结果（按 idx）
+    QStringList mermaidSources;                           // 源码（渲染失败回退用）
 
     QString makeRId(const QString &url) {
         QString rid = QString("rId%1").arg(nextRId++);
@@ -803,6 +870,33 @@ static void parseBody(QXmlStreamReader &r, ParseState &s)
         QString tag = r.name().toString().toLower();
 
         if (tag == "p") {
+            // mermaid 占位：<p data-mermaid-idx="N"></p>，替换为渲染图（或源码回退）。
+            // 守卫必须 key off mermaidSources（由 extractMermaidSources 从原始 HTML 提取，
+            // 始终完整）；mermaidResults 在渲染失败时可能为空/缺项（如 loadFinished !ok
+            // 发出空向量），若 key off 它则占位被静默丢弃，mermaid 块从 DOCX 丢失。
+            if (r.attributes().hasAttribute("data-mermaid-idx")) {
+                int idx = r.attributes().value("data-mermaid-idx").toInt();
+                while (!r.atEnd()) {                     // 消费空 <p> 到 </p>
+                    auto t = r.readNext();
+                    if (t == QXmlStreamReader::EndElement
+                        && r.name().toString().compare(QLatin1String("p"), Qt::CaseInsensitive) == 0)
+                        break;
+                }
+                if (idx >= 0 && idx < s.mermaidSources.size()) {
+                    if (idx < s.mermaidResults.size()) {
+                        const auto &res = s.mermaidResults[idx];
+                        if (!res.svg.isEmpty() && !res.png.isEmpty()) {
+                            int pngRId = addMedia(s, res.png, "image/png", "png");
+                            int svgRId = addMedia(s, res.svg.toUtf8(), "image/svg+xml", "svg");
+                            s.bodyXml += "<w:p><w:r>" + buildImageDrawingXml(s.nextDocPrId++, pngRId, svgRId, res.cxEmu, res.cyEmu) + "</w:r></w:p>\n";
+                            continue;
+                        }
+                    }
+                    // 渲染失败或结果缺失：回退源码文本
+                    s.bodyXml += "<w:p><w:r><w:t xml:space=\"preserve\">" + xmlEscape(s.mermaidSources[idx]) + "</w:t></w:r></w:p>\n";
+                }
+                continue;
+            }
             s.bodyXml += parseParagraph(r, "p", s) + "\n";
         } else if (tag == "h1") {
             s.bodyXml += parseHeading(r, 1, s) + "\n";
@@ -945,6 +1039,8 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
     // 2. 解析 HTML 生成 OOXML
     ParseState state;
     state.docDir = docDir;   // 相对图片路径基准
+    state.mermaidResults = m_mermaidResults;
+    state.mermaidSources = m_mermaidSources;
     QXmlStreamReader reader(xmlDoc);
     reader.readNextStartElement(); // <root>
     parseBody(reader, state);

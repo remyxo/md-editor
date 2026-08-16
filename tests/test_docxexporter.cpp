@@ -164,11 +164,32 @@ private slots:
         QVERIFY(listing.contains("word/media/image1.png"));
     }
 
-    void testMermaidSourceSurvivesAsCodeBlock() {
-        // 当前 DOCX 导出把 mermaid 当普通代码块，仅保留源码（图表不渲染，已知限制）
-        QString xml = exportDocumentXml(
-            "<pre><code class=\"language-mermaid\">graph TD;A--&gt;B;</code></pre>");
-        QVERIFY(xml.contains("graph TD"));
+    void testExtractMermaidSources() {
+        // mermaid 源码提取是纯函数（不构造 MermaidRenderer，无 WebEngine 依赖）。
+        // HTML 中源码被转义（&gt;），提取后应还原为原始 mermaid 语法。
+        QString html = "<pre><code class=\"language-mermaid\">graph TD;A--&gt;B;</code></pre>";
+        QStringList srcs = DocxExporter::extractMermaidSources(html);
+        QCOMPARE(srcs.size(), 1);
+        QVERIFY(srcs[0].contains("graph TD"));
+        QVERIFY(srcs[0].contains("-->"));
+    }
+
+    void testExtractMermaidSourcesMultipleAndOrder() {
+        // 多个 mermaid 块按文档顺序提取，序号与占位替换对齐
+        QString html = "<p>前文</p>"
+                       "<pre><code class=\"language-mermaid\">graph LR;A--&gt;B</code></pre>"
+                       "<p>中间</p>"
+                       "<pre data-x=\"1\"><code class=\"language-mermaid\">pie title 占比\n\"A\": 30</code></pre>";
+        QStringList srcs = DocxExporter::extractMermaidSources(html);
+        QCOMPARE(srcs.size(), 2);
+        QVERIFY(srcs[0].contains("graph LR"));
+        QVERIFY(srcs[1].contains("pie title"));
+    }
+
+    void testExtractMermaidSourcesNoMatch() {
+        // 非 mermaid 代码块 / 普通文本不应被提取
+        QString html = "<pre><code class=\"language-cpp\">int a;</code></pre><p>正文</p>";
+        QCOMPARE(DocxExporter::extractMermaidSources(html).size(), 0);
     }
 };
 

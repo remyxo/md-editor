@@ -9,6 +9,7 @@ set(SOURCES
     core/MarkdownHandler.cpp
     core/PdfExporter.cpp
     core/DocxExporter.cpp
+    core/MermaidRenderer.cpp
     core/HtmlExporter.cpp
     ui/EditorTab.cpp
     ui/TabWidget.cpp
@@ -35,6 +36,7 @@ set(HEADERS
     core/MarkdownHandler.h
     core/PdfExporter.h
     core/DocxExporter.h
+    core/MermaidRenderer.h
     core/HtmlExporter.h
     ui/EditorTab.h
     ui/TabWidget.h
