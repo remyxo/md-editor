@@ -31,6 +31,13 @@ private slots:
         QVERIFY(out.contains("mermaid.min.js"));
         QVERIFY(out.contains("__renderAllMermaid"));
     }
+
+    void testBuildRenderHtmlIncludesTaskListCss() {
+        // 任务列表复选框与文字须同行：<label> 与 <div> 需 flex 并排，
+        // 否则各占一行（复选框一行、文字一行）。
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
+        QVERIFY(out.contains("ul[data-type=\"taskList\"] li{display:flex;align-items:flex-start;gap:8px;}"));
+    }
 };
 
 QTEST_APPLESS_MAIN(TestPdfExporter)

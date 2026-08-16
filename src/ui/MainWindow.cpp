@@ -648,18 +648,29 @@ void MainWindow::onToggleSourceMode()
     }
 }
 
+// 导出默认文件名：已命名文件取文件基名（去路径与后缀），未命名（未保存）用 untitled
+static QString exportDefaultName(const QString &filePath, const QString &ext)
+{
+    QString base = filePath.isEmpty() ? QStringLiteral("untitled")
+                                      : QFileInfo(filePath).completeBaseName();
+    if (base.isEmpty()) base = QStringLiteral("untitled");   // 如 ".md" 这类隐藏名
+    return base + "." + ext;
+}
+
 void MainWindow::onExportPdf()
 {
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (!tab) return;
 
     // 先弹出保存对话框
-    QString path = QFileDialog::getSaveFileName(this, "导出 PDF", "document.pdf",
-                                                 "PDF 文件 (*.pdf)");
+    QString filePath = tab->webView()->property("filePath").toString();
+    QString path = QFileDialog::getSaveFileName(this, "导出 PDF",
+                                                exportDefaultName(filePath, "pdf"),
+                                                "PDF 文件 (*.pdf)");
     if (path.isEmpty()) return;
 
     // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
-    QString docDir = QFileInfo(tab->webView()->property("filePath").toString()).absolutePath();
+    QString docDir = QFileInfo(filePath).absolutePath();
 
     // 异步获取编辑器 HTML 内容
     tab->webView()->page()->runJavaScript(
@@ -681,12 +692,14 @@ void MainWindow::onExportDocx()
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (!tab) return;
 
-    QString path = QFileDialog::getSaveFileName(this, "导出 DOCX", "document.docx",
-                                                 "Word 文档 (*.docx)");
+    QString filePath = tab->webView()->property("filePath").toString();
+    QString path = QFileDialog::getSaveFileName(this, "导出 DOCX",
+                                                exportDefaultName(filePath, "docx"),
+                                                "Word 文档 (*.docx)");
     if (path.isEmpty()) return;
 
     // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
-    QString docDir = QFileInfo(tab->webView()->property("filePath").toString()).absolutePath();
+    QString docDir = QFileInfo(filePath).absolutePath();
 
     // 异步获取编辑器 HTML 内容
     tab->webView()->page()->runJavaScript(
@@ -708,12 +721,14 @@ void MainWindow::onExportHtml()
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (!tab) return;
 
-    QString path = QFileDialog::getSaveFileName(this, "导出 HTML", "document.html",
-                                                 "HTML 文件 (*.html)");
+    QString filePath = tab->webView()->property("filePath").toString();
+    QString path = QFileDialog::getSaveFileName(this, "导出 HTML",
+                                                exportDefaultName(filePath, "html"),
+                                                "HTML 文件 (*.html)");
     if (path.isEmpty()) return;
 
     // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
-    QString docDir = QFileInfo(tab->webView()->property("filePath").toString()).absolutePath();
+    QString docDir = QFileInfo(filePath).absolutePath();
     QString theme = Application::instance()->themeManager()->currentTheme();
 
     tab->webView()->page()->runJavaScript(
