@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets WebEngineWidgets WebChannel)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets WebEngineWidgets WebChannel DBus)
 
 add_subdirectory(src)
 
@@ -36,7 +36,7 @@ set(CPACK_DEBIAN_PACKAGE_SECTION "editors")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 # 运行时依赖 (去掉 -dev 后缀，只保留运行时库)
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
-    "libqt6widgets6 (>= 6.4), libqt6webenginewidgets6 (>= 6.4), libqt6webchannel6 (>= 6.4), libqt6gui6 (>= 6.4), libqt6core6 (>= 6.4), qt6-qpa-plugins")
+    "libqt6widgets6 (>= 6.4), libqt6webenginewidgets6 (>= 6.4), libqt6webchannel6 (>= 6.4), libqt6gui6 (>= 6.4), libqt6dbus6 (>= 6.4), libqt6core6 (>= 6.4), qt6-qpa-plugins")
 # 推荐安装
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "qt6-translations-l10n")
 

@@ -42,3 +42,9 @@ target_include_directories(test_pdfexporter PRIVATE ../src)
 # 测试只调用静态 buildRenderHtml，从不构造 PdfExporter，不会触发无头渲染
 target_link_libraries(test_pdfexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets)
 add_test(NAME test_pdfexporter COMMAND test_pdfexporter)
+
+add_executable(test_systemthemewatcher test_systemthemewatcher.cpp
+    ../src/app/SystemThemeWatcher.cpp)
+target_include_directories(test_systemthemewatcher PRIVATE ../src)
+target_link_libraries(test_systemthemewatcher PRIVATE Qt6::Test Qt6::DBus)
+add_test(NAME test_systemthemewatcher COMMAND test_systemthemewatcher)

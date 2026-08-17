@@ -1,6 +1,7 @@
 set(SOURCES
     main.cpp
     app/Application.cpp
+    app/SystemThemeWatcher.cpp
     app/ThemeManager.cpp
     core/EditorBridge.cpp
     core/FileManager.cpp
@@ -30,6 +31,7 @@ set(SOURCES
 
 set(HEADERS
     app/Application.h
+    app/SystemThemeWatcher.h
     app/ThemeManager.h
     core/EditorBridge.h
     core/FileManager.h
@@ -67,4 +69,5 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     Qt6::WebEngineWidgets
     Qt6::WebChannel
+    Qt6::DBus
 )
