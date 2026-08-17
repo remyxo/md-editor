@@ -14,6 +14,7 @@ class StatusBar;
 class SearchBar;
 class EditorBridge;
 class FileManager;
+class SystemThemeWatcher;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -72,6 +73,9 @@ private:
                               const QString &suggestedName);
     EditorBridge *currentBridge() const;
 
+    // 当前主题偏好模式（system/light/dark）
+    QString currentThemeMode() const;
+
     // 会话恢复
     void saveSession();
     void restoreSession();
@@ -83,6 +87,8 @@ private:
     StatusBar *m_statusBar;
     SearchBar *m_searchBar;
     FileManager *m_fileManager;
+    SystemThemeWatcher *m_systemThemeWatcher = nullptr;
+    QString m_themeMode = QStringLiteral("light");  // 偏好模式，非实际主题
     QSplitter *m_splitter;
     bool m_modalDialogOpen = false;  // 当前标签页是否有模态编辑面板打开（Esc 优先级判断）
     bool m_sourceModeToggling = false;   // 异步切换进行中（防重入）

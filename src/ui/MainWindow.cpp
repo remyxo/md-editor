@@ -20,6 +20,7 @@
 #include "../core/HtmlExporter.h"
 #include "../app/Application.h"
 #include "../app/ThemeManager.h"
+#include "../app/SystemThemeWatcher.h"
 
 #include <QVBoxLayout>
 #include <QIcon>
@@ -130,11 +131,18 @@ void MainWindow::setupUi()
         runEditorCommand("window.editorApi.insertMath('block');");
     });
 
-    // 初始化亮色主题
+    // 系统主题监听（无 portal 环境自动降级恒 light）
+    m_systemThemeWatcher = SystemThemeWatcher::createForProduction(this);
+    connect(m_systemThemeWatcher, &SystemThemeWatcher::systemThemeChanged,
+            this, [this](const QString &actual) {
+        // 仅 system 模式下跟随系统变化
+        if (m_themeMode == "system") onThemeSwitch("system");
+    });
+
+    // 恢复主题偏好模式（system/light/dark，缺省 light）
     QSettings settings("md-editor", "md-editor");
-    QString savedTheme = settings.value("appearance/theme", "light").toString();
-    Application::instance()->themeManager()->switchTheme(savedTheme);
-    m_toolBar->refreshThemeIcons(savedTheme);
+    QString savedMode = settings.value("appearance/theme", "light").toString();
+    onThemeSwitch(savedMode);
 }
 
 void MainWindow::connectSignals()
@@ -431,7 +439,13 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (tab) {
         connect(tab, &EditorTab::pageLoadFinished, this,
-                [this](bool ok) { if (ok) { applyEditorFont(); applyEditorWidth(); applyEditorSettings(); applyCustomCss(); } });
+                [this, tab](bool ok) {
+            if (!ok) return;
+            applyEditorFont(); applyEditorWidth(); applyEditorSettings(); applyCustomCss();
+            // 补推当前实际主题，新 tab 与全局一致（缺口①）
+            tab->setEditorTheme(
+                Application::instance()->themeManager()->currentTheme());
+        });
     }
 }
 
@@ -745,17 +759,29 @@ void MainWindow::onExportHtml()
         });
 }
 
-void MainWindow::onThemeSwitch(const QString &theme)
+void MainWindow::onThemeSwitch(const QString &mode)
 {
-    Application::instance()->themeManager()->switchTheme(theme);
-    // 保存主题偏好
+    m_themeMode = mode;
+    // system 模式解析为当前系统实际主题；light/dark 原样使用
+    QString actual = (mode == "system")
+                         ? m_systemThemeWatcher->currentSystemTheme()
+                         : mode;
+    Application::instance()->themeManager()->switchTheme(actual);
+    m_toolBar->refreshThemeIcons(actual);
+    // 保存偏好模式（存的不是实际主题）
     QSettings settings("md-editor", "md-editor");
-    settings.setValue("appearance/theme", theme);
+    settings.setValue("appearance/theme", mode);
     settings.sync();
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         EditorTab *tab = m_tabWidget->tabAt(i);
-        if (tab) tab->setEditorTheme(theme);
+        if (tab) tab->setEditorTheme(actual);
     }
+    // Task 3 回填：m_menuBar->setThemeChecked(mode);
+}
+
+QString MainWindow::currentThemeMode() const
+{
+    return m_themeMode;
 }
 
 // === 文件操作 ===
