@@ -48,7 +48,7 @@ md-editor 目前提供亮色/暗色两种主题（`ThemeManager` 加载 QSS + We
 
 | 职责 | 说明 |
 |------|------|
-| 检测 | 启动时经 portal `ReadOne("org.freedesktop.appearance", "color-scheme")` 读一次：返回 `1` → dark，`2` → light |
+| 检测 | 启动时经 portal `ReadOne("org.freedesktop.appearance", "color-scheme")` 读一次：返回 `1` → dark；`2`、`0`（无偏好）、无 portal、调用失败 → light |
 | 监听 | 连接 portal `SettingChanged` 信号（namespace = `org.freedesktop.appearance`、key = `color-scheme`）实时感知 |
 | 信号 | `systemThemeChanged(QString actualTheme)` — 只在值**变化**时发射 |
 | 生命周期 | `MainWindow` 持有，随主窗口创建 |
