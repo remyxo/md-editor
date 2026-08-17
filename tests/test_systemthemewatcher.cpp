@@ -1,4 +1,5 @@
 #include <QtTest>
+#include <QDBusVariant>
 #include "app/SystemThemeWatcher.h"
 
 // SystemThemeWatcher 单测：翻译逻辑 + 变化信号 + 降级行为。
@@ -24,14 +25,14 @@ private slots:
     void testSignalOnlyOnChange() {
         SystemThemeWatcher w;
         QSignalSpy spy(&w, &SystemThemeWatcher::systemThemeChanged);
-        w.handleSettingChanged("org.freedesktop.appearance", "color-scheme", QVariant(1));
+        w.handleSettingChanged("org.freedesktop.appearance", "color-scheme", QDBusVariant(QVariant(1)));
         QCOMPARE(spy.count(), 1);
         QCOMPARE(w.currentSystemTheme(), QString("dark"));
         // 同值再来一次：不重复发射
-        w.handleSettingChanged("org.freedesktop.appearance", "color-scheme", QVariant(1));
+        w.handleSettingChanged("org.freedesktop.appearance", "color-scheme", QDBusVariant(QVariant(1)));
         QCOMPARE(spy.count(), 1);
         // 变回浅色：再次发射
-        w.handleSettingChanged("org.freedesktop.appearance", "color-scheme", QVariant(2));
+        w.handleSettingChanged("org.freedesktop.appearance", "color-scheme", QDBusVariant(QVariant(2)));
         QCOMPARE(spy.count(), 2);
         QCOMPARE(w.currentSystemTheme(), QString("light"));
     }
@@ -40,8 +41,8 @@ private slots:
     void testIgnoresOtherSettings() {
         SystemThemeWatcher w;
         QSignalSpy spy(&w, &SystemThemeWatcher::systemThemeChanged);
-        w.handleSettingChanged("org.freedesktop.appearance", "accent-color", QVariant(1));
-        w.handleSettingChanged("org.gnome.desktop", "color-scheme", QVariant(1));
+        w.handleSettingChanged("org.freedesktop.appearance", "accent-color", QDBusVariant(QVariant(1)));
+        w.handleSettingChanged("org.gnome.desktop", "color-scheme", QDBusVariant(QVariant(1)));
         QCOMPARE(spy.count(), 0);
         QCOMPARE(w.currentSystemTheme(), QString("light"));
     }

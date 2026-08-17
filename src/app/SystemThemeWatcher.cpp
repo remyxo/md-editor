@@ -6,6 +6,7 @@
 #include <QDBusMessage>
 #include <QDBusMetaType>
 #include <QDBusArgument>
+#include <QDBusVariant>
 #include <QVariant>
 #include <QVariantMap>
 #include <QDebug>
@@ -65,14 +66,15 @@ void SystemThemeWatcher::connectToPortal()
     m_active = true;
 
     // 订阅 SettingChanged(namespace, key, value) 信号。
-    // 个别 Qt 小版本上 QVariant 参数的信号匹配偏严格，connect 可能返回 false：
-    // 此时仅失去实时性（初始读取值仍正确），qWarning 记录后保持 m_active，
-    // 不视为失败，也不改用其他连接方式（SLOT 宏形式版本无关，6.4.2/6.8.x 均可工作）
+    // 参数签名用 QDBusVariant：QtDBus 要求 SLOT 参数为已注册的 DBus 元类型，
+    // QVariant 未注册且无法注册（connect 恒 false），QDBusVariant 与 portal
+    // 信号的 v 类型负载一一对应。连接失败仍仅失去实时性（初始值正确），
+    // qWarning 记录后保持 m_active，不视为致命
     if (!bus.connect(QString::fromLatin1(kPortalService),
                      QString::fromLatin1(kPortalPath),
                      QString::fromLatin1(kPortalSettingsIface),
                      QStringLiteral("SettingChanged"),
-                     this, SLOT(handleSettingChanged(QString,QString,QVariant)))) {
+                     this, SLOT(handleSettingChanged(QString,QString,QDBusVariant)))) {
         qWarning() << "[SystemThemeWatcher] SettingChanged 订阅失败，仅失去实时性（初始值仍有效）";
     }
 }
@@ -109,15 +111,15 @@ bool SystemThemeWatcher::readInitialValue()
 
 void SystemThemeWatcher::handleSettingChanged(const QString &namespace_,
                                               const QString &key,
-                                              const QVariant &value)
+                                              const QDBusVariant &value)
 {
     // 只关心 appearance 命名空间的 color-scheme
     if (namespace_ != QString::fromLatin1(kAppearanceNamespace)
         || key != QString::fromLatin1(kColorSchemeKey))
         return;
 
-    // 信号负载是 QDBusVariant 包装的 uint
-    QVariant inner = value;
+    // 信号负载是 QDBusVariant 包装的 uint：先解包成 QVariant 再取值
+    QVariant inner = value.variant();
     if (inner.userType() == qMetaTypeId<QDBusVariant>())
         inner = inner.value<QDBusVariant>().variant();
     bool ok = false;

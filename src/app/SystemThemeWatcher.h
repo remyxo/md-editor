@@ -13,6 +13,7 @@
 //   单测直接调 handleSettingChanged() 模拟 portal 信号
 // - 无 portal 环境（DBus 连接失败/接口缺失）静默降级恒 light，不报错
 class QDBusInterface;
+class QDBusVariant;
 class SystemThemeWatcher : public QObject {
     Q_OBJECT
 public:
@@ -35,8 +36,11 @@ public:
 
 public slots:
     // 供测试注入：模拟 portal SettingChanged 信号（生产环境由真实 DBus 信号转发进来）。
-    // 必须声明为 slot：bus.connect(SLOT(...)) 依赖元对象系统能查到该方法
-    void handleSettingChanged(const QString &namespace_, const QString &key, const QVariant &value);
+    // 必须声明为 slot：bus.connect(SLOT(...)) 依赖元对象系统能查到该方法。
+    // 参数用 QDBusVariant：QtDBus 要求信号参数为已注册的 DBus 元类型，
+    // QVariant 无法注册（bus.connect 恒返回 false），QDBusVariant 才是
+    // portal SettingChanged 信号 v 类型负载的正确映射
+    void handleSettingChanged(const QString &namespace_, const QString &key, const QDBusVariant &value);
 
 signals:
     // 仅当实际主题与上次不同才发射
