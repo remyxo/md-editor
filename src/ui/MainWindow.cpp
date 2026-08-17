@@ -898,6 +898,8 @@ void MainWindow::onFormatChanged(const QJsonObject &format, int /*tabId*/)
 void MainWindow::onShowSettings()
 {
     SettingsDialog dialog(m_fileManager, this);
+    connect(&dialog, &SettingsDialog::themeModeChanged,
+            this, &MainWindow::onThemeSwitch);
     dialog.exec();
     applyEditorFont();
     applyEditorWidth();

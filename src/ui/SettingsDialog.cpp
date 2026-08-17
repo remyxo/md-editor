@@ -1,7 +1,5 @@
 #include "SettingsDialog.h"
 #include "../core/FileManager.h"
-#include "../app/Application.h"
-#include "../app/ThemeManager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -75,6 +73,7 @@ void SettingsDialog::setupUi()
     QWidget *appearanceTab = new QWidget();
     QFormLayout *appearanceForm = new QFormLayout(appearanceTab);
     m_themeCombo = new QComboBox();
+    m_themeCombo->addItem("跟随系统", "system");
     m_themeCombo->addItem("亮色", "light");
     m_themeCombo->addItem("暗色", "dark");
     appearanceForm->addRow("主题:", m_themeCombo);
@@ -217,8 +216,9 @@ void SettingsDialog::loadSettings()
     m_marginLeft->setValue(settings.value("export/marginLeft", 1.8).toDouble());
     m_marginRight->setValue(settings.value("export/marginRight", 1.8).toDouble());
 
-    QString theme = Application::instance()->themeManager()->currentTheme();
-    m_themeCombo->setCurrentIndex(m_themeCombo->findData(theme));
+    // 显示偏好模式（system 时下拉框选「跟随系统」，而非当前实际主题）
+    QString mode = settings.value("appearance/theme", "light").toString();
+    m_themeCombo->setCurrentIndex(m_themeCombo->findData(mode));
     m_customCssEdit->setPlainText(settings.value("editor/customCss").toString());
 }
 
@@ -235,9 +235,8 @@ void SettingsDialog::onAccepted()
     settings.setValue("editor/customCss", m_customCssEdit->toPlainText());
     settings.sync();
 
-    // 应用主题并持久化
-    QString theme = m_themeCombo->currentData().toString();
-    Application::instance()->themeManager()->switchTheme(theme);
+    // 主题走 MainWindow 统一链路（联动编辑区/菜单勾选/持久化），不再直调 themeManager
+    emit themeModeChanged(m_themeCombo->currentData().toString());
     // 导出
     settings.setValue("export/paperSize", m_paperSizeCombo->currentData().toInt());
     settings.setValue("export/orientation", m_selectedOrientation);
@@ -245,8 +244,6 @@ void SettingsDialog::onAccepted()
     settings.setValue("export/marginBottom", m_marginBottom->value());
     settings.setValue("export/marginLeft", m_marginLeft->value());
     settings.setValue("export/marginRight", m_marginRight->value());
-
-    settings.setValue("appearance/theme", theme);
 
     accept();
 }

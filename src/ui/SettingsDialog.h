@@ -16,6 +16,10 @@ class SettingsDialog : public QDialog {
 public:
     explicit SettingsDialog(FileManager *fileManager, QWidget *parent = nullptr);
 
+signals:
+    // 用户在外观页确定新的主题模式（system/light/dark）——由 MainWindow 统一应用
+    void themeModeChanged(const QString &mode);
+
 private slots:
     void onAccepted();
 
