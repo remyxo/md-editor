@@ -776,7 +776,7 @@ void MainWindow::onThemeSwitch(const QString &mode)
         EditorTab *tab = m_tabWidget->tabAt(i);
         if (tab) tab->setEditorTheme(actual);
     }
-    // Task 3 回填：m_menuBar->setThemeChecked(mode);
+    m_menuBar->setThemeChecked(mode);
 }
 
 QString MainWindow::currentThemeMode() const

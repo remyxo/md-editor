@@ -1,5 +1,6 @@
 #include "MenuBar.h"
 #include <QAction>
+#include <QActionGroup>
 #include <QKeySequence>
 #include <QSettings>
 #include <QFileInfo>
@@ -103,10 +104,24 @@ void MenuBar::setupUi()
     m_viewMenu->addSeparator();
 
     QMenu *themeMenu = m_viewMenu->addMenu("主题");
-    QAction *lightAct = themeMenu->addAction("亮色");
-    connect(lightAct, &QAction::triggered, this, [this]() { emit switchTheme("light"); });
-    QAction *darkAct = themeMenu->addAction("暗色");
-    connect(darkAct, &QAction::triggered, this, [this]() { emit switchTheme("dark"); });
+    QActionGroup *themeGroup = new QActionGroup(this);
+    themeGroup->setExclusive(true);
+    auto addThemeAct = [&](const QString &label, const QString &mode, const QString &checked) {
+        QAction *act = themeMenu->addAction(label);
+        act->setCheckable(true);
+        act->setChecked(mode == checked);
+        act->setActionGroup(themeGroup);
+        connect(act, &QAction::triggered, this, [this, mode]() { emit switchTheme(mode); });
+        return act;
+    };
+    const QString savedMode = [] {
+        QSettings settings("md-editor", "md-editor");
+        return settings.value("appearance/theme", "light").toString();
+    }();
+    m_themeActs.clear();
+    m_themeActs << addThemeAct("跟随系统", "system", savedMode)
+                << addThemeAct("亮色", "light", savedMode)
+                << addThemeAct("暗色", "dark", savedMode);
 
     // === 插入菜单 ===
     m_insertMenu = addMenu("插入(&I)");
@@ -156,6 +171,15 @@ void MenuBar::setupUi()
     connect(aboutAct, &QAction::triggered, this, &MenuBar::showAbout);
 
     loadRecentFiles();
+}
+
+void MenuBar::setThemeChecked(const QString &mode)
+{
+    static const QMap<QString, int> kIndex = {
+        {"system", 0}, {"light", 1}, {"dark", 2}};
+    const int idx = kIndex.value(mode, 1);
+    if (idx < m_themeActs.size())
+        m_themeActs[idx]->setChecked(true);
 }
 
 void MenuBar::addRecentFile(const QString &path)

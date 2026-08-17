@@ -11,6 +11,9 @@ public:
     void addRecentFile(const QString &path);
     void loadRecentFiles();
 
+    // 按偏好模式（system/light/dark）勾选主题菜单项
+    void setThemeChecked(const QString &mode);
+
 signals:
     void newFile();
     void openFile();
@@ -60,6 +63,8 @@ private:
     QMenu *m_viewMenu;
     QMenu *m_insertMenu;
     QMenu *m_helpMenu;
+
+    QList<QAction *> m_themeActs;  // 主题菜单项（与 system/light/dark 顺序对应）
 };
 
 #endif // MD_EDITOR_MENUBAR_H
