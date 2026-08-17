@@ -2,6 +2,16 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.8.2]
+
+### 新增
+- 主题「跟随系统」模式：经 xdg-desktop-portal 实时跟随系统深浅色
+- 新增 SystemThemeWatcher 组件（`src/app/`），无 portal 环境自动降级亮色
+
+### 修复
+- 新建/恢复标签页编辑区不跟随当前主题（暗色下新 tab 是亮色）
+- 设置对话框切换主题不联动 Web 编辑器
+
 ## [0.8.1] — 2026-08-16
 
 ### 新增

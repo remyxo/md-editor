@@ -91,6 +91,8 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 | `src/ui/MainWindow.cpp` | 信号编排中枢，所有组件在此连接 |
 | `src/core/EditorBridge.cpp` | C++/JS 通信核心 |
 | `src/ui/EditorTab.cpp` | QWebEngineView 封装 + 中文右键菜单 |
+| `src/app/ThemeManager.cpp` | QSS 主题加载（light/dark 实际主题） |
+| `src/app/SystemThemeWatcher.cpp` | 系统深浅色检测（D-Bus portal，跟随系统模式） |
 | `src/resources/web/editor.js` | TipTap 初始化 + editorApi + 状态同步 |
 | `src/resources/web/tiptap-entry.js` | esbuild 打包入口，需 npm + esbuild 重建 |
 | `src/resources/themes/light.qss` | 亮色主题 QSS |
