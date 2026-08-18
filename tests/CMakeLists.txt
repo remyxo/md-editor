@@ -48,3 +48,10 @@ add_executable(test_systemthemewatcher test_systemthemewatcher.cpp
 target_include_directories(test_systemthemewatcher PRIVATE ../src)
 target_link_libraries(test_systemthemewatcher PRIVATE Qt6::Test Qt6::DBus)
 add_test(NAME test_systemthemewatcher COMMAND test_systemthemewatcher)
+
+add_executable(test_languagemanager test_languagemanager.cpp
+    ../src/app/LanguageManager.cpp)
+target_include_directories(test_languagemanager PRIVATE ../src)
+# LanguageManager.cpp 用到 QApplication（QTranslator 装载），必须链接 Qt6::Widgets
+target_link_libraries(test_languagemanager PRIVATE Qt6::Test Qt6::Widgets)
+add_test(NAME test_languagemanager COMMAND test_languagemanager)

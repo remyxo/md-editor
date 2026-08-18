@@ -10,11 +10,18 @@ Application::Application(int &argc, char **argv)
 
     m_themeManager = new ThemeManager(this);
     m_themeManager->switchTheme("light");
+
+    m_languageManager = new LanguageManager(this);
 }
 
 ThemeManager *Application::themeManager() const
 {
     return m_themeManager;
+}
+
+LanguageManager *Application::languageManager() const
+{
+    return m_languageManager;
 }
 
 Application *Application::instance()

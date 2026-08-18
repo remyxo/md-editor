@@ -1,6 +1,7 @@
 set(SOURCES
     main.cpp
     app/Application.cpp
+    app/LanguageManager.cpp
     app/SystemThemeWatcher.cpp
     app/ThemeManager.cpp
     core/EditorBridge.cpp
@@ -31,6 +32,7 @@ set(SOURCES
 
 set(HEADERS
     app/Application.h
+    app/LanguageManager.h
     app/SystemThemeWatcher.h
     app/ThemeManager.h
     core/EditorBridge.h

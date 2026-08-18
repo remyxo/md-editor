@@ -2,6 +2,7 @@
 #define MD_EDITOR_APPLICATION_H
 
 #include <QApplication>
+#include "LanguageManager.h"
 #include "ThemeManager.h"
 
 class Application : public QApplication {
@@ -10,9 +11,11 @@ public:
     Application(int &argc, char **argv);
     static Application *instance();
     ThemeManager *themeManager() const;
+    LanguageManager *languageManager() const;
 
 private:
     ThemeManager *m_themeManager;
+    LanguageManager *m_languageManager;
 };
 
 #endif // MD_EDITOR_APPLICATION_H
