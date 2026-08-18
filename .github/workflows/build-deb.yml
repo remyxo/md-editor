@@ -28,7 +28,8 @@ jobs:
           qt6-base-dev qt6-base-dev-tools \
           qt6-webengine-dev qt6-webengine-dev-tools \
           qt6-webchannel-dev \
-          qmake6
+          qmake6 \
+          qt6-tools-dev qt6-tools-dev-tools
 
     - name: JS 测试 (vitest)
       working-directory: src/resources/web

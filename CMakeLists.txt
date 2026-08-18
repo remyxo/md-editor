@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets WebEngineWidgets WebChannel DBus)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets WebEngineWidgets WebChannel DBus LinguistTools)
 
 add_subdirectory(src)
 

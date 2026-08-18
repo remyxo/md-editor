@@ -73,3 +73,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::WebChannel
     Qt6::DBus
 )
+
+# 编译翻译资源并打入 qrc：生成 :/i18n/md-editor_en_US.qm
+qt6_add_translations(${PROJECT_NAME}
+    TS_FILES resources/i18n/md-editor_en_US.ts
+    RESOURCE_PREFIX "/i18n"
+)

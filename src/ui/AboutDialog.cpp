@@ -8,7 +8,6 @@
 AboutDialog::AboutDialog(QWidget *parent)
     : QDialog(parent)
 {
-    setWindowTitle("关于 Markdown Editor");
     setFixedSize(400, 210);
 
     QHBoxLayout *mainLayout = new QHBoxLayout(this);
@@ -25,36 +24,45 @@ AboutDialog::AboutDialog(QWidget *parent)
     QVBoxLayout *rightLayout = new QVBoxLayout();
     rightLayout->setSpacing(4);
 
-    QLabel *nameLabel = new QLabel("Markdown Editor");
-    QFont nameFont = nameLabel->font();
+    m_nameLabel = new QLabel("Markdown Editor");
+    QFont nameFont = m_nameLabel->font();
     nameFont.setPointSize(16);
     nameFont.setBold(true);
-    nameLabel->setFont(nameFont);
-    rightLayout->addWidget(nameLabel);
+    m_nameLabel->setFont(nameFont);
+    rightLayout->addWidget(m_nameLabel);
 
-    QLabel *versionLabel = new QLabel(
-        QString("版本 %1").arg(MD_EDITOR_VERSION));
-    versionLabel->setStyleSheet("color: #666; font-size: 13px;");
-    rightLayout->addWidget(versionLabel);
+    m_versionLabel = new QLabel();
+    m_versionLabel->setStyleSheet("color: #666; font-size: 13px;");
+    rightLayout->addWidget(m_versionLabel);
 
     rightLayout->addSpacing(20);
 
-    QLabel *descLabel = new QLabel(
-        "一款基于 Qt6 + TipTap 的 Markdown 所见即所得编辑器");
-    descLabel->setWordWrap(true);
-    descLabel->setStyleSheet("color: #888; font-size: 13px;");
-    rightLayout->addWidget(descLabel);
+    m_descLabel = new QLabel();
+    m_descLabel->setWordWrap(true);
+    m_descLabel->setStyleSheet("color: #888; font-size: 13px;");
+    rightLayout->addWidget(m_descLabel);
 
-    QLabel *copyLabel = new QLabel("© 2026");
-    copyLabel->setStyleSheet("color: #aaa; font-size: 12px;");
-    rightLayout->addWidget(copyLabel);
+    m_copyLabel = new QLabel("© 2026");
+    m_copyLabel->setStyleSheet("color: #aaa; font-size: 12px;");
+    rightLayout->addWidget(m_copyLabel);
 
     rightLayout->addStretch();
 
-    QPushButton *closeBtn = new QPushButton("确定");
-    closeBtn->setFixedWidth(80);
-    connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
-    rightLayout->addWidget(closeBtn);
+    m_closeBtn = new QPushButton();
+    m_closeBtn->setFixedWidth(80);
+    connect(m_closeBtn, &QPushButton::clicked, this, &QDialog::accept);
+    rightLayout->addWidget(m_closeBtn);
 
     mainLayout->addLayout(rightLayout);
+
+    retranslateUi();
+}
+
+void AboutDialog::retranslateUi()
+{
+    setWindowTitle(tr("关于 Markdown Editor"));
+    // 应用名 Markdown Editor 为品牌名，不翻译
+    m_versionLabel->setText(tr("版本 %1").arg(MD_EDITOR_VERSION));
+    m_descLabel->setText(tr("一款基于 Qt6 + TipTap 的 Markdown 所见即所得编辑器"));
+    m_closeBtn->setText(tr("确定"));
 }
