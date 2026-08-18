@@ -721,7 +721,7 @@ static QString parseCodeBlock(QXmlStreamReader &r, ParseState &s)
                   "<w:ind w:left=\"360\" w:right=\"360\"/>"
                   "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>"
                   "</w:pPr>";
-    QString rPr = "<w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/><w:sz w:val=\"18\"/></w:rPr>";
+    QString rPr = "<w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/><w:sz w:val=\"22\"/></w:rPr>";
 
     QString result;
     const QStringList lines = allText.split('\n');
