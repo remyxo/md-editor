@@ -26,6 +26,7 @@ EditorTab *TabWidget::openNewTab()
     EditorTab *tab = new EditorTab(tabId, this);
     m_tabs.insert(tabId, tab);
     int index = addTab(tab, generateUntitledName());
+    m_untitledTabs.insert(tab);   // 先取名再登记，保证首个未命名编号从 1 开始
     setCurrentIndex(index);
     connect(tab->bridge(), &EditorBridge::dirtyStateChanged, this,
             [this, tab](bool dirty, int) {
@@ -94,6 +95,7 @@ void TabWidget::setTabDirty(int index, bool dirty)
 
 void TabWidget::markTabSaved(int index, const QString &filePath)
 {
+    m_untitledTabs.remove(tabAt(index));   // 保存后不再是未命名 tab
     QFileInfo fi(filePath);
     setTabText(index, fi.fileName());
     setTabToolTip(index, filePath);
@@ -117,6 +119,7 @@ void TabWidget::onTabCloseRequested(int index)
     }
     emit tabClosed(index);
     m_tabs.remove(tab->bridge()->tabId());
+    m_untitledTabs.remove(tab);
     removeTab(index);
     tab->deleteLater();
 }
@@ -131,6 +134,7 @@ void TabWidget::completePendingTabClose()
     if (tab) {
         emit tabClosed(idx);
         m_tabs.remove(tab->bridge()->tabId());
+        m_untitledTabs.remove(tab);
         removeTab(idx);
         tab->deleteLater();
     }
@@ -146,20 +150,16 @@ void TabWidget::onCurrentChanged(int index)
 
 QString TabWidget::generateUntitledName()
 {
-    int n = 1;
-    for (int i = 0; i < count(); ++i) {
-        // 未命名 tab 无文件路径（tooltip 空），跨语言计数，避免依赖「未命名-」前缀
-        if (tabToolTip(i).isEmpty()) n++;
-    }
-    return tr("未命名-%1").arg(n);
+    return tr("未命名-%1").arg(m_untitledTabs.size() + 1);
 }
 
-// 语言切换后重命名未命名 tab（无文件路径）；保留「● 」脏标记前缀
+// 语言切换后重命名未命名 tab；保留「● 」脏标记前缀
 void TabWidget::retranslateUi()
 {
     int n = 1;
     for (int i = 0; i < count(); ++i) {
-        if (tabToolTip(i).isEmpty()) {
+        EditorTab *tab = tabAt(i);
+        if (m_untitledTabs.contains(tab)) {
             QString t = tr("未命名-%1").arg(n++);
             if (tabText(i).startsWith("● "))
                 t = "● " + t;

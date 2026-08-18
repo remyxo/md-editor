@@ -3,6 +3,7 @@
 
 #include <QTabWidget>
 #include <QMap>
+#include <QSet>
 
 class EditorTab;
 class EditorBridge;
@@ -40,6 +41,7 @@ private:
     int m_nextTabId;
     int m_pendingCloseIndex;
     QMap<int, EditorTab *> m_tabs;
+    QSet<EditorTab *> m_untitledTabs;   // 显式追踪未命名 tab（帮助页无 tooltip 但非未命名）
     QString generateUntitledName();
 };
 
