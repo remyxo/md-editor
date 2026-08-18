@@ -251,6 +251,13 @@ void EditorTab::setEditorTheme(const QString &theme)
     }
 }
 
+void EditorTab::setEditorLanguage(const QString &lang)
+{
+    if (m_pageLoaded) {
+        runJsCommand(QString("window.editorApi.setLanguage('%1');").arg(lang));
+    }
+}
+
 void EditorTab::setEditorFont(const QString &family, int size)
 {
     if (m_pageLoaded) {

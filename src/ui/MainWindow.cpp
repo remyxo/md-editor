@@ -445,6 +445,9 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
             // 补推当前实际主题，新 tab 与全局一致（缺口①）
             tab->setEditorTheme(
                 Application::instance()->themeManager()->currentTheme());
+            // 补推当前语言，新 tab 与全局一致（JS 弹窗文案跟随）
+            tab->setEditorLanguage(
+                Application::instance()->languageManager()->currentLanguage());
         });
     }
 }
@@ -784,6 +787,28 @@ QString MainWindow::currentThemeMode() const
     return m_themeMode;
 }
 
+void MainWindow::retranslateUi()
+{
+    m_menuBar->retranslateUi();
+    m_toolBar->retranslateUi();
+    m_statusBar->retranslateUi();
+    m_sideBar->retranslateUi();
+    m_sideBar->fileTree()->retranslateUi();
+    m_sideBar->outlineTree()->retranslateUi();
+    m_tabWidget->retranslateUi();
+    m_searchBar->retranslateUi();
+}
+
+void MainWindow::onLanguageSwitch(const QString &lang)
+{
+    Application::instance()->languageManager()->switchLanguage(lang);  // 装/卸 translator + 持久化 + 发信号
+    retranslateUi();
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        EditorTab *tab = m_tabWidget->tabAt(i);
+        if (tab) tab->setEditorLanguage(lang);
+    }
+}
+
 // === 文件操作 ===
 
 void MainWindow::onOpenFolder()
@@ -900,6 +925,11 @@ void MainWindow::onShowSettings()
     SettingsDialog dialog(m_fileManager, this);
     connect(&dialog, &SettingsDialog::themeModeChanged,
             this, &MainWindow::onThemeSwitch);
+    connect(&dialog, &SettingsDialog::languageChanged,
+            this, [this, &dialog](const QString &lang) {
+        onLanguageSwitch(lang);
+        dialog.retranslateUi();  // 对话框自身随语言切换即时刷新
+    });
     dialog.exec();
     applyEditorFont();
     applyEditorWidth();

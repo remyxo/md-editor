@@ -40,6 +40,9 @@ private slots:
     void onExportHtml();
     void onThemeSwitch(const QString &theme);
 
+    // 语言切换
+    void onLanguageSwitch(const QString &lang);
+
     // 文件操作
     void onOpenFolder();
     void onFileDoubleClicked(const QString &path);
@@ -75,6 +78,9 @@ private:
 
     // 当前主题偏好模式（system/light/dark）
     QString currentThemeMode() const;
+
+    // 全量刷新各组件界面文本（语言切换后调用）
+    void retranslateUi();
 
     // 会话恢复
     void saveSession();
