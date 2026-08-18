@@ -18,6 +18,7 @@ public:
     void setReplaceMode(bool on);                // Ctrl+H 展开/收起替换行
     void emitParamsNow();                        // 立即触发一次（去抖 flush）
     void emitResumeNow();                        // 立即触发恢复（切 tab 用）
+    void retranslateUi();
     bool replaceModeActive() const { return m_replaceRow->isVisible(); }
 
 signals:

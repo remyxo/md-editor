@@ -105,8 +105,8 @@ void TabWidget::onTabCloseRequested(int index)
     if (!tab) return;
     bool isDirty = tabText(index).startsWith("● ");
     if (isDirty) {
-        auto r = QMessageBox::question(this, "未保存的更改",
-            QString("文件 '%1' 有未保存的更改。\n是否保存？").arg(tabText(index)),
+        auto r = QMessageBox::question(this, tr("未保存的更改"),
+            tr("文件 '%1' 有未保存的更改。\n是否保存？").arg(tabText(index)),
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         if (r == QMessageBox::Cancel) return;
         if (r == QMessageBox::Save) {
@@ -148,8 +148,22 @@ QString TabWidget::generateUntitledName()
 {
     int n = 1;
     for (int i = 0; i < count(); ++i) {
-        if (tabText(i).startsWith("未命名-"))
-            n++;
+        // 未命名 tab 无文件路径（tooltip 空），跨语言计数，避免依赖「未命名-」前缀
+        if (tabToolTip(i).isEmpty()) n++;
     }
-    return QString("未命名-%1").arg(n);
+    return tr("未命名-%1").arg(n);
+}
+
+// 语言切换后重命名未命名 tab（无文件路径）；保留「● 」脏标记前缀
+void TabWidget::retranslateUi()
+{
+    int n = 1;
+    for (int i = 0; i < count(); ++i) {
+        if (tabToolTip(i).isEmpty()) {
+            QString t = tr("未命名-%1").arg(n++);
+            if (tabText(i).startsWith("● "))
+                t = "● " + t;
+            setTabText(i, t);
+        }
+    }
 }
