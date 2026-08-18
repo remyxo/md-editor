@@ -1014,7 +1014,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
                 tr("'%1' 有未保存的更改。\n\n是否保存后关闭？").arg(title),
                 QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
             box.button(QMessageBox::Save)->setText(tr("保存"));
-            box.button(QMessageBox::Discard)->setText(tr("不保存"));
+            box.button(QMessageBox::Discard)->setText(tr("不保存并关闭"));
             box.button(QMessageBox::Cancel)->setText(tr("取消"));
             auto r = box.exec();
             if (r == QMessageBox::Cancel) {

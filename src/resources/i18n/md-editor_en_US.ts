@@ -287,8 +287,8 @@ Save before closing?</translation>
         <translation>Save</translation>
     </message>
     <message>
-        <source>不保存</source>
-        <translation>Don't Save</translation>
+        <source>不保存并关闭</source>
+        <translation>Close Without Saving</translation>
     </message>
     <message>
         <source>取消</source>
@@ -710,8 +710,8 @@ Save?</translation>
         <translation>Save</translation>
     </message>
     <message>
-        <source>不保存</source>
-        <translation>Don't Save</translation>
+        <source>不保存并关闭</source>
+        <translation>Close Without Saving</translation>
     </message>
     <message>
         <source>取消</source>

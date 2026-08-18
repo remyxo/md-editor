@@ -112,7 +112,7 @@ void TabWidget::onTabCloseRequested(int index)
             tr("文件 '%1' 有未保存的更改。\n是否保存？").arg(tabText(index)),
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
         box.button(QMessageBox::Save)->setText(tr("保存"));
-        box.button(QMessageBox::Discard)->setText(tr("不保存"));
+        box.button(QMessageBox::Discard)->setText(tr("不保存并关闭"));
         box.button(QMessageBox::Cancel)->setText(tr("取消"));
         auto r = box.exec();
         if (r == QMessageBox::Cancel) return;
