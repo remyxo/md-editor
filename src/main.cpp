@@ -2,6 +2,7 @@
 #include "ui/MainWindow.h"
 #include "core/LocalImageSchemeHandler.h"
 #include <QLocale>
+#include <QStringList>
 #include <QWebEngineProfile>
 #include <QWebEngineUrlScheme>
 
@@ -34,6 +35,16 @@ int main(int argc, char *argv[])
 
     Application app(argc, argv);
 
+    // 解析命令行传入的文件路径：文件管理器「打开方式」双击 .md 时经 .desktop 的 %f 传入。
+    QString initialFile;
+    const QStringList args = app.arguments();
+    for (int i = 1; i < args.size(); ++i) {
+        if (!args[i].startsWith(QLatin1Char('-'))) {
+            initialFile = args[i];
+            break;
+        }
+    }
+
     // QWebEngineProfile 必须在 QApplication 之后初始化
     // 在默认 profile 上挂载 localimg:// 处理器（随 app 存活，覆盖所有 EditorTab）
     auto profile = QWebEngineProfile::defaultProfile();
@@ -41,7 +52,7 @@ int main(int argc, char *argv[])
     profile->installUrlSchemeHandler(kLocalImageScheme, imgHandler);
     profile->setHttpAcceptLanguage("zh-CN,zh;q=0.9");
 
-    MainWindow window;
+    MainWindow window(initialFile);
     window.show();
 
     return app.exec();

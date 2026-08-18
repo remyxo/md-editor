@@ -19,7 +19,7 @@ class SystemThemeWatcher;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(const QString &initialFile = QString(), QWidget *parent = nullptr);
     ~MainWindow();
 
 private slots:

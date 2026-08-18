@@ -39,7 +39,7 @@
 #include <QMimeData>
 #include <QKeySequence>
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(const QString &initialFile, QWidget *parent)
     : QMainWindow(parent)
 {
     m_fileManager = new FileManager(this);
@@ -47,8 +47,13 @@ MainWindow::MainWindow(QWidget *parent)
     setupUi();
     connectSignals();
 
-    // 恢复上次会话（无会话时自动新建空白标签页）
-    restoreSession();
+    // 命令行传入文件路径（文件管理器双击打开）时优先打开该文件；
+    // 否则恢复上次会话（无会话时自动新建空白标签页）
+    if (!initialFile.isEmpty()) {
+        onFileDoubleClicked(initialFile);
+    } else {
+        restoreSession();
+    }
 }
 
 MainWindow::~MainWindow() {}
