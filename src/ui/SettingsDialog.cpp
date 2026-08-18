@@ -296,6 +296,11 @@ void SettingsDialog::loadSettings()
     // 显示偏好模式（system 时下拉框选「跟随系统」，而非当前实际主题）
     QString mode = settings.value("appearance/theme", "light").toString();
     m_themeCombo->setCurrentIndex(m_themeCombo->findData(mode));
+
+    // 界面语言：预选已存语言，避免英文用户打开设置时误选「简体中文」导致切回中文
+    QString lang = settings.value("appearance/language", "zh_CN").toString();
+    m_langCombo->setCurrentIndex(m_langCombo->findData(lang));
+
     m_customCssEdit->setPlainText(settings.value("editor/customCss").toString());
 }
 
