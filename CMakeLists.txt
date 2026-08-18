@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(md-editor VERSION 0.9.0 LANGUAGES CXX)
+project(md-editor VERSION 0.10.0 LANGUAGES CXX)
 add_compile_definitions(MD_EDITOR_VERSION="${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 17)
