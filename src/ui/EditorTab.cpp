@@ -50,36 +50,36 @@ void EditorWebView::setupContextMenu()
     }
     m_contextMenu->clear();
 
-    QAction *undoAct = m_contextMenu->addAction("撤销(&U)");
+    QAction *undoAct = m_contextMenu->addAction(tr("撤销(&U)"));
     connect(undoAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::Undo);
     });
 
-    QAction *redoAct = m_contextMenu->addAction("重做(&R)");
+    QAction *redoAct = m_contextMenu->addAction(tr("重做(&R)"));
     connect(redoAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::Redo);
     });
 
     m_contextMenu->addSeparator();
 
-    QAction *cutAct = m_contextMenu->addAction("剪切(&X)");
+    QAction *cutAct = m_contextMenu->addAction(tr("剪切(&X)"));
     connect(cutAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::Cut);
     });
 
-    QAction *copyAct = m_contextMenu->addAction("复制(&C)");
+    QAction *copyAct = m_contextMenu->addAction(tr("复制(&C)"));
     connect(copyAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::Copy);
     });
 
-    QAction *pasteAct = m_contextMenu->addAction("粘贴(&V)");
+    QAction *pasteAct = m_contextMenu->addAction(tr("粘贴(&V)"));
     connect(pasteAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::Paste);
     });
 
     m_contextMenu->addSeparator();
 
-    QAction *selectAllAct = m_contextMenu->addAction("全选(&A)");
+    QAction *selectAllAct = m_contextMenu->addAction(tr("全选(&A)"));
     connect(selectAllAct, &QAction::triggered, [this]() {
         page()->triggerAction(QWebEnginePage::SelectAll);
     });
@@ -88,7 +88,7 @@ void EditorWebView::setupContextMenu()
     if (m_hasSelection || !m_linkUrl.isEmpty()) {
         m_contextMenu->addSeparator();
         QAction *createLink = m_contextMenu->addAction(
-            QStringLiteral("编辑超链接..."));
+            tr("编辑超链接..."));
         connect(createLink, &QAction::triggered, [this]() {
             page()->runJavaScript("window.editorApi._linkEditor.open();");
         });
@@ -97,7 +97,7 @@ void EditorWebView::setupContextMenu()
     // 链接访问 — 仅光标在链接上时显示
     if (!m_linkUrl.isEmpty()) {
         QAction *visitLink = m_contextMenu->addAction(
-            QString::fromUtf8("访问 %1").arg(m_linkUrl));
+            tr("访问 %1").arg(m_linkUrl));
         connect(visitLink, &QAction::triggered, [this]() {
             QDesktopServices::openUrl(QUrl(m_linkUrl));
         });
@@ -106,34 +106,34 @@ void EditorWebView::setupContextMenu()
     // 表格操作子菜单 — 仅光标在表格内时显示
     if (m_inTable) {
         m_contextMenu->addSeparator();
-        QMenu *tableMenu = m_contextMenu->addMenu("表格");
-        QAction *addRowBefore = tableMenu->addAction("上方插入行");
+        QMenu *tableMenu = m_contextMenu->addMenu(tr("表格"));
+        QAction *addRowBefore = tableMenu->addAction(tr("上方插入行"));
         connect(addRowBefore, &QAction::triggered, [this]() {
             page()->runJavaScript("window.editorApi.addRowBefore();");
         });
-        QAction *addRowAfter = tableMenu->addAction("下方插入行");
+        QAction *addRowAfter = tableMenu->addAction(tr("下方插入行"));
         connect(addRowAfter, &QAction::triggered, [this]() {
             page()->runJavaScript("window.editorApi.addRowAfter();");
         });
-        QAction *delRow = tableMenu->addAction("删除当前行");
+        QAction *delRow = tableMenu->addAction(tr("删除当前行"));
         connect(delRow, &QAction::triggered, [this]() {
             page()->runJavaScript("window.editorApi.deleteRow();");
         });
         tableMenu->addSeparator();
-        QAction *addColBefore = tableMenu->addAction("左侧插入列");
+        QAction *addColBefore = tableMenu->addAction(tr("左侧插入列"));
         connect(addColBefore, &QAction::triggered, [this]() {
             page()->runJavaScript("window.editorApi.addColumnBefore();");
         });
-        QAction *addColAfter = tableMenu->addAction("右侧插入列");
+        QAction *addColAfter = tableMenu->addAction(tr("右侧插入列"));
         connect(addColAfter, &QAction::triggered, [this]() {
             page()->runJavaScript("window.editorApi.addColumnAfter();");
         });
-        QAction *delCol = tableMenu->addAction("删除当前列");
+        QAction *delCol = tableMenu->addAction(tr("删除当前列"));
         connect(delCol, &QAction::triggered, [this]() {
             page()->runJavaScript("window.editorApi.deleteColumn();");
         });
         tableMenu->addSeparator();
-        QAction *delTable = tableMenu->addAction("删除表格");
+        QAction *delTable = tableMenu->addAction(tr("删除表格"));
         connect(delTable, &QAction::triggered, [this]() {
             page()->runJavaScript("window.editorApi.deleteTable();");
         });

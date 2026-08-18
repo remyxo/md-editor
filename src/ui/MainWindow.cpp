@@ -157,8 +157,8 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::newFile, this, &MainWindow::onNewFile);
     connect(m_menuBar, &MenuBar::openFolder, this, &MainWindow::onOpenFolder);
     connect(m_menuBar, &MenuBar::openFile, this, [this]() {
-        QString path = QFileDialog::getOpenFileName(this, "打开文件", "",
-                                                     "Markdown 文件 (*.md *.markdown);;所有文件 (*)");
+        QString path = QFileDialog::getOpenFileName(this, tr("打开文件"), "",
+                                                     tr("Markdown 文件 (*.md *.markdown);;所有文件 (*)"));
         if (!path.isEmpty()) onFileDoubleClicked(path);
     });
     connect(m_menuBar, &MenuBar::openRecentFile, this,
@@ -315,8 +315,8 @@ void MainWindow::connectSignals()
                 for (int i = 0; i < m_tabWidget->count(); ++i) {
                     EditorTab *tab = m_tabWidget->tabAt(i);
                     if (tab && tab->webView()->property("filePath").toString() == path) {
-                        auto r = QMessageBox::question(this, "文件已变更",
-                            QString("文件 %1 已被外部程序修改。\n是否重新加载？").arg(path),
+                        auto r = QMessageBox::question(this, tr("文件已变更"),
+                            tr("文件 %1 已被外部程序修改。\n是否重新加载？").arg(path),
                             QMessageBox::Yes | QMessageBox::No);
                         if (r == QMessageBox::Yes) {
                             QString content = m_fileManager->readFile(path);
@@ -584,30 +584,30 @@ void MainWindow::onImageSaveRequested(EditorTab *tab, const QString &requestId,
 {
     QString filePath = tab->webView()->property("filePath").toString();
     if (filePath.isEmpty() || !QFile::exists(filePath)) {
-        m_statusBar->showMessage("请先保存文档再插入图片", 3000);
+        m_statusBar->showMessage(tr("请先保存文档再插入图片"), 3000);
         tab->runJsCommand(jsImageSaveResult(requestId, false, QString(), QStringLiteral("unsaved")));
         return;
     }
     QByteArray bytes = QByteArray::fromBase64(base64.toUtf8());
     if (bytes.isEmpty()) {
-        m_statusBar->showMessage("图片数据为空", 3000);
+        m_statusBar->showMessage(tr("图片数据为空"), 3000);
         tab->runJsCommand(jsImageSaveResult(requestId, false, QString(), QStringLiteral("io")));
         return;
     }
     QString rel = ImageManager::saveImage(filePath, bytes, suggestedName, ext);
     if (rel.isEmpty()) {
-        m_statusBar->showMessage("图片保存失败", 3000);
+        m_statusBar->showMessage(tr("图片保存失败"), 3000);
         tab->runJsCommand(jsImageSaveResult(requestId, false, QString(), QStringLiteral("io")));
         return;
     }
-    m_statusBar->showMessage("已插入图片", 1500);
+    m_statusBar->showMessage(tr("已插入图片"), 1500);
     tab->runJsCommand(jsImageSaveResult(requestId, true, rel, QString()));
 }
 
 void MainWindow::onInsertImage()
 {
-    QString path = QFileDialog::getOpenFileName(this, "插入图片", "",
-                                                 "图片文件 (*.png *.jpg *.jpeg *.gif *.svg *.webp)");
+    QString path = QFileDialog::getOpenFileName(this, tr("插入图片"), "",
+                                                 tr("图片文件 (*.png *.jpg *.jpeg *.gif *.svg *.webp)"));
     if (!path.isEmpty()) {
         QString js = QString("window.editorApi.insertImage('%1');").arg(path);
         runEditorCommand(js);
@@ -635,7 +635,7 @@ void MainWindow::onToggleSourceMode()
                 m_statusBar->setSourceMode(true);
                 // 源码模式下 editorApi 搜索方法直接 return，给用户提示
                 if (m_searchBar->isVisible())
-                    m_statusBar->showMessage("源码模式暂不支持搜索", 3000);
+                    m_statusBar->showMessage(tr("源码模式暂不支持搜索"), 3000);
                 if (QAction *act = m_menuBar->findChild<QAction *>(
                         QStringLiteral("sourceModeAction")))
                     act->setChecked(true);
@@ -678,9 +678,9 @@ void MainWindow::onExportPdf()
 
     // 先弹出保存对话框
     QString filePath = tab->webView()->property("filePath").toString();
-    QString path = QFileDialog::getSaveFileName(this, "导出 PDF",
+    QString path = QFileDialog::getSaveFileName(this, tr("导出 PDF"),
                                                 exportDefaultName(filePath, "pdf"),
-                                                "PDF 文件 (*.pdf)");
+                                                tr("PDF 文件 (*.pdf)"));
     if (path.isEmpty()) return;
 
     // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
@@ -694,7 +694,7 @@ void MainWindow::onExportPdf()
             auto *exporter = new PdfExporter(this);
             connect(exporter, &PdfExporter::exportFinished, this,
                     [this, exporter](bool ok, const QString &out) {
-                m_statusBar->showMessage(ok ? QString("已导出: %1").arg(out) : "导出失败", 3000);
+                m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
                 exporter->deleteLater();
             });
             exporter->exportToPdf(html, docDir, path);
@@ -707,9 +707,9 @@ void MainWindow::onExportDocx()
     if (!tab) return;
 
     QString filePath = tab->webView()->property("filePath").toString();
-    QString path = QFileDialog::getSaveFileName(this, "导出 DOCX",
+    QString path = QFileDialog::getSaveFileName(this, tr("导出 DOCX"),
                                                 exportDefaultName(filePath, "docx"),
-                                                "Word 文档 (*.docx)");
+                                                tr("Word 文档 (*.docx)"));
     if (path.isEmpty()) return;
 
     // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
@@ -723,7 +723,7 @@ void MainWindow::onExportDocx()
             auto *exporter = new DocxExporter(this);
             connect(exporter, &DocxExporter::exportFinished, this,
                     [this, exporter](bool ok, const QString &out) {
-                m_statusBar->showMessage(ok ? QString("已导出: %1").arg(out) : "导出失败", 3000);
+                m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
                 exporter->deleteLater();
             });
             exporter->exportToDocx(html, docDir, path);
@@ -736,9 +736,9 @@ void MainWindow::onExportHtml()
     if (!tab) return;
 
     QString filePath = tab->webView()->property("filePath").toString();
-    QString path = QFileDialog::getSaveFileName(this, "导出 HTML",
+    QString path = QFileDialog::getSaveFileName(this, tr("导出 HTML"),
                                                 exportDefaultName(filePath, "html"),
-                                                "HTML 文件 (*.html)");
+                                                tr("HTML 文件 (*.html)"));
     if (path.isEmpty()) return;
 
     // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
@@ -752,7 +752,7 @@ void MainWindow::onExportHtml()
             auto *exporter = new HtmlExporter(this);
             connect(exporter, &HtmlExporter::exportFinished, this,
                     [this, exporter](bool ok, const QString &out) {
-                m_statusBar->showMessage(ok ? QString("已导出: %1").arg(out) : "导出失败", 3000);
+                m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
                 exporter->deleteLater();
             });
             exporter->exportToHtml(html, docDir, path, theme);
@@ -788,10 +788,10 @@ QString MainWindow::currentThemeMode() const
 
 void MainWindow::onOpenFolder()
 {
-    QString path = QFileDialog::getExistingDirectory(this, "打开文件夹", "");
+    QString path = QFileDialog::getExistingDirectory(this, tr("打开文件夹"), "");
     if (!path.isEmpty()) {
         m_sideBar->fileTree()->setRootPath(path);
-        m_statusBar->showMessage(QString("已打开文件夹: %1").arg(path), 3000);
+        m_statusBar->showMessage(tr("已打开文件夹: %1").arg(path), 3000);
     }
 }
 
@@ -799,8 +799,8 @@ void MainWindow::onFileDoubleClicked(const QString &path)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "打开失败",
-                             QString("无法打开文件: %1").arg(path));
+        QMessageBox::warning(this, tr("打开失败"),
+                             tr("无法打开文件: %1").arg(path));
         return;
     }
 
@@ -838,7 +838,7 @@ void MainWindow::onSaveFile()
             QString html = result.toString();
             QString md = MarkdownHandler::fromHtml(html);
             if (m_fileManager->writeFile(filePath, md)) {
-                m_statusBar->showMessage("已保存", 2000);
+                m_statusBar->showMessage(tr("已保存"), 2000);
                 tab->runJsCommand("window.editorApi.markClean();");
                 int idx = m_tabWidget->indexOf(tab);
                 if (idx >= 0) {
@@ -846,7 +846,7 @@ void MainWindow::onSaveFile()
                 }
                 m_tabWidget->completePendingTabClose();
             } else {
-                m_statusBar->showMessage("保存失败", 3000);
+                m_statusBar->showMessage(tr("保存失败"), 3000);
             }
         }
     );
@@ -857,8 +857,8 @@ void MainWindow::onSaveFileAs()
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (!tab) return;
 
-    QString path = QFileDialog::getSaveFileName(this, "另存为", "untitled.md",
-                                                 "Markdown 文件 (*.md *.markdown)");
+    QString path = QFileDialog::getSaveFileName(this, tr("另存为"), "untitled.md",
+                                                 tr("Markdown 文件 (*.md *.markdown)"));
     if (path.isEmpty()) return;
 
     tab->webView()->page()->runJavaScript(
@@ -867,7 +867,7 @@ void MainWindow::onSaveFileAs()
             QString html = result.toString();
             QString md = MarkdownHandler::fromHtml(html);
             if (m_fileManager->writeFile(path, md)) {
-                m_statusBar->showMessage("已保存", 2000);
+                m_statusBar->showMessage(tr("已保存"), 2000);
                 tab->runJsCommand("window.editorApi.markClean();");
                 tab->setFilePath(path);
                 int idx = m_tabWidget->indexOf(tab);
@@ -876,7 +876,7 @@ void MainWindow::onSaveFileAs()
                 }
                 m_tabWidget->completePendingTabClose();
             } else {
-                m_statusBar->showMessage("保存失败", 3000);
+                m_statusBar->showMessage(tr("保存失败"), 3000);
             }
         }
     );
@@ -914,7 +914,7 @@ void MainWindow::onShowMarkdownGuide()
     QString md = QString::fromUtf8(f.readAll());
     f.close();
 
-    EditorTab *tab = m_tabWidget->openHelpTab("Markdown 语法", md);
+    EditorTab *tab = m_tabWidget->openHelpTab(tr("Markdown 语法"), md);
     tab->setPermanentReadOnly(true);
     // 页面加载后锁为只读
     connect(tab, &EditorTab::pageLoadFinished, this, [tab](bool ok) {
@@ -975,8 +975,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         QString title = m_tabWidget->tabText(i);
         if (title.startsWith("● ")) {
-            auto r = QMessageBox::question(this, "未保存的更改",
-                QString("'%1' 有未保存的更改。\n\n是否保存后关闭？").arg(title),
+            auto r = QMessageBox::question(this, tr("未保存的更改"),
+                tr("'%1' 有未保存的更改。\n\n是否保存后关闭？").arg(title),
                 QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
             if (r == QMessageBox::Cancel) {
                 event->ignore();
