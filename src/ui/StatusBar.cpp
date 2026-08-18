@@ -3,10 +3,10 @@
 StatusBar::StatusBar(QWidget *parent)
     : QStatusBar(parent)
 {
-    m_cursorLabel = new QLabel("行 1, 列 1", this);
-    m_sourceModeLabel = new QLabel("源码模式", this);
+    m_cursorLabel = new QLabel(this);
+    m_sourceModeLabel = new QLabel(this);
     m_filePathLabel = new QLabel("", this);
-    m_wordLabel = new QLabel("字符: 0 / 词: 0", this);
+    m_wordLabel = new QLabel(this);
 
     m_sourceModeLabel->setVisible(false);
 
@@ -14,11 +14,23 @@ StatusBar::StatusBar(QWidget *parent)
     addWidget(m_sourceModeLabel);
     addWidget(m_filePathLabel, 1);
     addPermanentWidget(m_wordLabel);
+
+    retranslateUi();  // 统一重设文案（首次设置，语言切换后 MainWindow 再次调用）
+}
+
+// 语言切换后按缓存值重设全部文案
+void StatusBar::retranslateUi()
+{
+    m_cursorLabel->setText(tr("行 %1, 列 %2").arg(m_line).arg(m_col));
+    m_sourceModeLabel->setText(tr("源码模式"));
+    m_wordLabel->setText(tr("字符: %1 / 词: %2").arg(m_chars).arg(m_words));
 }
 
 void StatusBar::updateCursorPosition(int line, int col, int /*tabId*/)
 {
-    m_cursorLabel->setText(QString("行 %1, 列 %2").arg(line).arg(col));
+    m_line = line;
+    m_col = col;
+    m_cursorLabel->setText(tr("行 %1, 列 %2").arg(line).arg(col));
 }
 
 void StatusBar::updateFilePath(const QString &path)
@@ -28,7 +40,9 @@ void StatusBar::updateFilePath(const QString &path)
 
 void StatusBar::updateWordCount(int chars, int words, int /*tabId*/)
 {
-    m_wordLabel->setText(QString("字符: %1 / 词: %2").arg(chars).arg(words));
+    m_chars = chars;
+    m_words = words;
+    m_wordLabel->setText(tr("字符: %1 / 词: %2").arg(chars).arg(words));
 }
 
 void StatusBar::setSourceMode(bool on)

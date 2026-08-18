@@ -5,7 +5,7 @@ OutlineTree::OutlineTree(QWidget *parent)
     : QTreeView(parent)
     , m_model(new QStandardItemModel(this))
 {
-    m_model->setHorizontalHeaderLabels({"大纲"});
+    m_model->setHorizontalHeaderLabels({tr("大纲")});
     setModel(m_model);
     setHeaderHidden(true);
     setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -16,6 +16,8 @@ OutlineTree::OutlineTree(QWidget *parent)
 void OutlineTree::updateHeadings(const QJsonArray &headings)
 {
     m_model->clear();
+    // clear() 会清掉 header 标签，需重设
+    m_model->setHorizontalHeaderLabels({tr("大纲")});
 
     if (headings.isEmpty()) return;
 
@@ -50,4 +52,10 @@ void OutlineTree::onItemClicked(const QModelIndex &index)
 {
     int pos = index.data(Qt::UserRole).toInt();
     emit headingClicked(pos);
+}
+
+// 语言切换后重设 header 文案
+void OutlineTree::retranslateUi()
+{
+    m_model->setHorizontalHeaderLabels({tr("大纲")});
 }

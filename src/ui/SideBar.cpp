@@ -20,16 +20,26 @@ void SideBar::setupUi()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    QTabWidget *tabWidget = new QTabWidget(this);
-    tabWidget->addTab(m_fileTree, "文件");
-    tabWidget->addTab(m_outlineTree, "大纲");
-    layout->addWidget(tabWidget);
+    m_tabWidget = new QTabWidget(this);
+    m_tabWidget->addTab(m_fileTree, tr("文件"));
+    m_tabWidget->addTab(m_outlineTree, tr("大纲"));
+    layout->addWidget(m_tabWidget);
 
-    m_openFolderBtn = new QPushButton("打开文件夹...", this);
+    m_openFolderBtn = new QPushButton(tr("打开文件夹..."), this);
     connect(m_openFolderBtn, &QPushButton::clicked, this, &SideBar::openFolderClicked);
     layout->addWidget(m_openFolderBtn);
 
     setMinimumWidth(240);
+
+    retranslateUi();  // 统一重设文案（首次设置，语言切换后 MainWindow 再次调用）
+}
+
+// 语言切换后重设全部文案
+void SideBar::retranslateUi()
+{
+    m_tabWidget->setTabText(0, tr("文件"));
+    m_tabWidget->setTabText(1, tr("大纲"));
+    m_openFolderBtn->setText(tr("打开文件夹..."));
 }
 
 FileTree *SideBar::fileTree() const { return m_fileTree; }

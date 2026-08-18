@@ -6,6 +6,7 @@
 
 class FileTree;
 class OutlineTree;
+class QTabWidget;
 
 class SideBar : public QWidget {
     Q_OBJECT
@@ -18,15 +19,17 @@ public:
     void setCollapsed(bool collapsed);
     bool isCollapsed() const;
 
+    // 语言切换后重设全部文案（Task 10 调用）
+    void retranslateUi();
+
 signals:
     void openFolderClicked();
-
-private:
 
 private:
     void setupUi();
     FileTree *m_fileTree;
     OutlineTree *m_outlineTree;
+    QTabWidget *m_tabWidget;
     QPushButton *m_openFolderBtn;
     bool m_collapsed;
 };

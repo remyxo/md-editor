@@ -10,6 +10,9 @@ class OutlineTree : public QTreeView {
 public:
     explicit OutlineTree(QWidget *parent = nullptr);
 
+    // 语言切换后重设全部文案（Task 10 调用）
+    void retranslateUi();
+
 public slots:
     void updateHeadings(const QJsonArray &headings);
 

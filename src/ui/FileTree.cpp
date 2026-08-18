@@ -52,18 +52,18 @@ void FileTree::showContextMenu(const QPoint &pos)
     QModelIndex index = indexAt(pos);
     QMenu menu;
 
-    QAction *newFileAct = menu.addAction("新建 Markdown 文件");
+    QAction *newFileAct = menu.addAction(tr("新建 Markdown 文件"));
     menu.addSeparator();
 
     QAction *renameAct = nullptr;
     QAction *deleteAct = nullptr;
     if (index.isValid()) {
-        renameAct = menu.addAction("重命名");
-        deleteAct = menu.addAction("删除");
+        renameAct = menu.addAction(tr("重命名"));
+        deleteAct = menu.addAction(tr("删除"));
         menu.addSeparator();
     }
 
-    QAction *openFolderAct = menu.addAction("在文件管理器中打开");
+    QAction *openFolderAct = menu.addAction(tr("在文件管理器中打开"));
 
     QAction *selected = menu.exec(viewport()->mapToGlobal(pos));
 
@@ -73,7 +73,7 @@ void FileTree::showContextMenu(const QPoint &pos)
             QFileInfo fi = m_model->fileInfo(index);
             parentPath = fi.isDir() ? fi.absoluteFilePath() : fi.absolutePath();
         }
-        QString name = QInputDialog::getText(this, "新建文件", "文件名:", QLineEdit::Normal, "untitled.md");
+        QString name = QInputDialog::getText(this, tr("新建文件"), tr("文件名:"), QLineEdit::Normal, "untitled.md");
         if (!name.isEmpty()) {
             QString newPath = parentPath + "/" + name;
             QFile file(newPath);
@@ -83,7 +83,7 @@ void FileTree::showContextMenu(const QPoint &pos)
         }
     } else if (selected == renameAct && renameAct) {
         QFileInfo fi = m_model->fileInfo(index);
-        QString newName = QInputDialog::getText(this, "重命名", "新文件名:", QLineEdit::Normal, fi.fileName());
+        QString newName = QInputDialog::getText(this, tr("重命名"), tr("新文件名:"), QLineEdit::Normal, fi.fileName());
         if (!newName.isEmpty() && newName != fi.fileName()) {
             QString newPath = fi.absolutePath() + "/" + newName;
             QFile::rename(fi.absoluteFilePath(), newPath);
@@ -91,8 +91,8 @@ void FileTree::showContextMenu(const QPoint &pos)
     } else if (selected == deleteAct && deleteAct) {
         QFileInfo fi = m_model->fileInfo(index);
         QMessageBox::StandardButton r = QMessageBox::question(
-            this, "确认删除",
-            QString("确定要删除 '%1' 吗？").arg(fi.fileName())
+            this, tr("确认删除"),
+            tr("确定要删除 '%1' 吗？").arg(fi.fileName())
         );
         if (r == QMessageBox::Yes) {
             if (fi.isDir()) {
@@ -109,4 +109,9 @@ void FileTree::showContextMenu(const QPoint &pos)
         }
         QProcess::startDetached("xdg-open", {path});
     }
+}
+
+// 右键菜单与对话框文案均动态创建，每次显示时经 tr() 取当前语言，无需缓存重设
+void FileTree::retranslateUi()
+{
 }

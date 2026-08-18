@@ -9,6 +9,9 @@ class StatusBar : public QStatusBar {
 public:
     explicit StatusBar(QWidget *parent = nullptr);
 
+    // 语言切换后重设全部文案（Task 10 调用）
+    void retranslateUi();
+
 public slots:
     void updateCursorPosition(int line, int col, int /*tabId*/);
     void updateFilePath(const QString &path);
@@ -20,6 +23,11 @@ private:
     QLabel *m_sourceModeLabel;
     QLabel *m_filePathLabel;
     QLabel *m_wordLabel;
+    // 缓存当前值，供 retranslateUi 重设文案
+    int m_line = 1;
+    int m_col = 1;
+    int m_chars = 0;
+    int m_words = 0;
 };
 
 #endif // MD_EDITOR_STATUSBAR_H

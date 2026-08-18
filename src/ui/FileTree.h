@@ -11,6 +11,9 @@ public:
     void setRootPath(const QString &path);
     QString rootPath() const;
 
+    // 语言切换后重设全部文案（Task 10 调用；右键菜单动态创建，故此处为空实现）
+    void retranslateUi();
+
 signals:
     void fileDoubleClicked(const QString &filePath);
 
