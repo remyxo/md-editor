@@ -17,7 +17,6 @@ SettingsDialog::SettingsDialog(FileManager *fileManager, QWidget *parent)
     : QDialog(parent)
     , m_fileManager(fileManager)
 {
-    setWindowTitle("设置");
     setMinimumWidth(500);
     setupUi();
     loadSettings();
@@ -26,66 +25,75 @@ SettingsDialog::SettingsDialog(FileManager *fileManager, QWidget *parent)
 void SettingsDialog::setupUi()
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
-    QTabWidget *tabs = new QTabWidget(this);
+    m_tabs = new QTabWidget(this);
 
     // === 通用 ===
     QWidget *generalTab = new QWidget();
     QVBoxLayout *generalLayout = new QVBoxLayout(generalTab);
 
-    QGroupBox *startupGroup = new QGroupBox("启动");
+    m_startupGroup = new QGroupBox();
     QVBoxLayout *startupLayout = new QVBoxLayout();
-    m_restoreSessionCheck = new QCheckBox("启动时恢复上次会话");
+    m_restoreSessionCheck = new QCheckBox();
     startupLayout->addWidget(m_restoreSessionCheck);
-    startupGroup->setLayout(startupLayout);
-    generalLayout->addWidget(startupGroup);
+    m_startupGroup->setLayout(startupLayout);
+    generalLayout->addWidget(m_startupGroup);
 
     generalLayout->addStretch();
-    tabs->addTab(generalTab, "通用");
+    m_tabs->addTab(generalTab, QString());
 
     // === 编辑器 ===
     QWidget *editorTab = new QWidget();
     QFormLayout *editorForm = new QFormLayout(editorTab);
     m_fontCombo = new QFontComboBox();
-    editorForm->addRow("字体:", m_fontCombo);
+    m_fontLabel = new QLabel();
+    editorForm->addRow(m_fontLabel, m_fontCombo);
     m_fontSizeSpin = new QSpinBox();
     m_fontSizeSpin->setRange(10, 32);
     m_fontSizeSpin->setSuffix(" px");
-    editorForm->addRow("字号:", m_fontSizeSpin);
+    m_fontSizeLabel = new QLabel();
+    editorForm->addRow(m_fontSizeLabel, m_fontSizeSpin);
     m_lineNumbersCheck = new QCheckBox();
-    editorForm->addRow("显示行号:", m_lineNumbersCheck);
+    m_lineNumbersLabel = new QLabel();
+    editorForm->addRow(m_lineNumbersLabel, m_lineNumbersCheck);
     m_wordWrapCheck = new QCheckBox();
     m_wordWrapCheck->setChecked(true);
-    editorForm->addRow("自动换行:", m_wordWrapCheck);
+    m_wordWrapLabel = new QLabel();
+    editorForm->addRow(m_wordWrapLabel, m_wordWrapCheck);
     m_tabSizeSpin = new QSpinBox();
     m_tabSizeSpin->setRange(2, 8);
-    m_tabSizeSpin->setSuffix(" 空格");
-    editorForm->addRow("Tab 宽度:", m_tabSizeSpin);
+    m_tabSizeSpin->setSuffix(tr(" 空格"));
+    m_tabSizeLabel = new QLabel();
+    editorForm->addRow(m_tabSizeLabel, m_tabSizeSpin);
 
     m_widthSpin = new QSpinBox();
     m_widthSpin->setRange(50, 100);
     m_widthSpin->setSingleStep(5);
     m_widthSpin->setSuffix("%");
     m_widthSpin->setValue(80);
-    editorForm->addRow("编辑区宽度:", m_widthSpin);
-    tabs->addTab(editorTab, "编辑器");
+    m_widthLabel = new QLabel();
+    editorForm->addRow(m_widthLabel, m_widthSpin);
+    m_tabs->addTab(editorTab, QString());
 
     // === 外观 ===
     QWidget *appearanceTab = new QWidget();
     QFormLayout *appearanceForm = new QFormLayout(appearanceTab);
     m_themeCombo = new QComboBox();
-    m_themeCombo->addItem("跟随系统", "system");
-    m_themeCombo->addItem("亮色", "light");
-    m_themeCombo->addItem("暗色", "dark");
-    appearanceForm->addRow("主题:", m_themeCombo);
+    m_themeCombo->addItem(QString(), "system");
+    m_themeCombo->addItem(QString(), "light");
+    m_themeCombo->addItem(QString(), "dark");
+    m_themeLabel = new QLabel();
+    appearanceForm->addRow(m_themeLabel, m_themeCombo);
     m_langCombo = new QComboBox();
-    m_langCombo->addItem("简体中文", "zh_CN");
-    m_langCombo->addItem("English", "en_US");
-    appearanceForm->addRow("界面语言:", m_langCombo);
+    m_langCombo->addItem(QString(), "zh_CN");
+    m_langCombo->addItem(QString(), "en_US");
+    m_langLabel = new QLabel();
+    appearanceForm->addRow(m_langLabel, m_langCombo);
     m_customCssEdit = new QPlainTextEdit();
-    m_customCssEdit->setPlaceholderText("/* 可选：覆盖编辑器与导出的默认样式 */");
+    m_customCssEdit->setPlaceholderText(tr("/* 可选：覆盖编辑器与导出的默认样式 */"));
     m_customCssEdit->setMinimumHeight(120);
-    appearanceForm->addRow("自定义 CSS:", m_customCssEdit);
-    tabs->addTab(appearanceTab, "外观");
+    m_customCssLabel = new QLabel();
+    appearanceForm->addRow(m_customCssLabel, m_customCssEdit);
+    m_tabs->addTab(appearanceTab, QString());
 
     // === 导出 ===
     QWidget *exportTab = new QWidget();
@@ -96,12 +104,13 @@ void SettingsDialog::setupUi()
     m_paperSizeCombo = new QComboBox();
     m_paperSizeCombo->addItem("A4", QPageSize::A4);
     m_paperSizeCombo->addItem("Letter", QPageSize::Letter);
-    paperForm->addRow("纸张:", m_paperSizeCombo);
+    m_paperLabel = new QLabel();
+    paperForm->addRow(m_paperLabel, m_paperSizeCombo);
     exportLayout->addLayout(paperForm);
 
     // 页边距
-    QGroupBox *marginGroup = new QGroupBox("页边距");
-    marginGroup->setStyleSheet("QGroupBox{padding:8px 16px;}");
+    m_marginGroup = new QGroupBox();
+    m_marginGroup->setStyleSheet("QGroupBox{padding:8px 16px;}");
     auto makeMargin = []() {
         auto *s = new QDoubleSpinBox();
         s->setRange(0.5, 5.0); s->setSingleStep(0.1);
@@ -113,22 +122,36 @@ void SettingsDialog::setupUi()
     QGridLayout *marginGrid = new QGridLayout();
     marginGrid->setHorizontalSpacing(8);
     marginGrid->setColumnStretch(3, 1); // 左组和右组之间留空
-    auto addPair = [&](int row, int startCol, const QString &label, QDoubleSpinBox *spin) {
-        QLabel *lbl = new QLabel(label);
+    auto makeEdgeLabel = [](const QString &text) {
+        QLabel *lbl = new QLabel(text);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        marginGrid->addWidget(lbl, row, startCol);
-        marginGrid->addWidget(spin, row, startCol + 1);
-        marginGrid->addWidget(new QLabel("厘米"), row, startCol + 2);
+        return lbl;
     };
-    addPair(0, 0, "上:", m_marginTop);
-    addPair(0, 4, "下:", m_marginBottom);
-    addPair(1, 0, "左:", m_marginLeft);
-    addPair(1, 4, "右:", m_marginRight);
-    marginGroup->setLayout(marginGrid);
-    exportLayout->addWidget(marginGroup);
+    m_marginTopLbl = makeEdgeLabel(tr("上:"));
+    m_marginBottomLbl = makeEdgeLabel(tr("下:"));
+    m_marginLeftLbl = makeEdgeLabel(tr("左:"));
+    m_marginRightLbl = makeEdgeLabel(tr("右:"));
+    m_cmTopLbl = new QLabel(tr("厘米"));
+    m_cmBottomLbl = new QLabel(tr("厘米"));
+    m_cmLeftLbl = new QLabel(tr("厘米"));
+    m_cmRightLbl = new QLabel(tr("厘米"));
+    marginGrid->addWidget(m_marginTopLbl, 0, 0);
+    marginGrid->addWidget(m_marginTop, 0, 1);
+    marginGrid->addWidget(m_cmTopLbl, 0, 2);
+    marginGrid->addWidget(m_marginBottomLbl, 0, 4);
+    marginGrid->addWidget(m_marginBottom, 0, 5);
+    marginGrid->addWidget(m_cmBottomLbl, 0, 6);
+    marginGrid->addWidget(m_marginLeftLbl, 1, 0);
+    marginGrid->addWidget(m_marginLeft, 1, 1);
+    marginGrid->addWidget(m_cmLeftLbl, 1, 2);
+    marginGrid->addWidget(m_marginRightLbl, 1, 4);
+    marginGrid->addWidget(m_marginRight, 1, 5);
+    marginGrid->addWidget(m_cmRightLbl, 1, 6);
+    m_marginGroup->setLayout(marginGrid);
+    exportLayout->addWidget(m_marginGroup);
 
     // 方向（图标选择）
-    QGroupBox *orientGroup = new QGroupBox("方向");
+    m_orientGroup = new QGroupBox();
     QVBoxLayout *orientOuter = new QVBoxLayout();
     QHBoxLayout *orientLayout = new QHBoxLayout();
     m_portraitBtn = new QPushButton();
@@ -156,24 +179,24 @@ void SettingsDialog::setupUi()
     orientLayout->addStretch();
     // 文字标签
     QHBoxLayout *labelLayout = new QHBoxLayout();
-    QLabel *portraitLabel = new QLabel("纵向(P)");
-    portraitLabel->setAlignment(Qt::AlignCenter);
-    portraitLabel->setFixedWidth(60);
-    QLabel *landscapeLabel = new QLabel("横向(L)");
-    landscapeLabel->setAlignment(Qt::AlignCenter);
-    landscapeLabel->setFixedWidth(60);
-    labelLayout->addWidget(portraitLabel);
-    labelLayout->addWidget(landscapeLabel);
+    m_portraitLbl = new QLabel();
+    m_portraitLbl->setAlignment(Qt::AlignCenter);
+    m_portraitLbl->setFixedWidth(60);
+    m_landscapeLbl = new QLabel();
+    m_landscapeLbl->setAlignment(Qt::AlignCenter);
+    m_landscapeLbl->setFixedWidth(60);
+    labelLayout->addWidget(m_portraitLbl);
+    labelLayout->addWidget(m_landscapeLbl);
     labelLayout->addStretch();
     orientOuter->addLayout(orientLayout);
     orientOuter->addLayout(labelLayout);
-    orientGroup->setLayout(orientOuter);
-    exportLayout->addWidget(orientGroup);
+    m_orientGroup->setLayout(orientOuter);
+    exportLayout->addWidget(m_orientGroup);
 
     exportLayout->addStretch();
-    tabs->addTab(exportTab, "导出");
+    m_tabs->addTab(exportTab, QString());
 
-    mainLayout->addWidget(tabs);
+    mainLayout->addWidget(m_tabs);
 
     // 按钮
     QDialogButtonBox *buttons = new QDialogButtonBox(
@@ -181,6 +204,60 @@ void SettingsDialog::setupUi()
     connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::onAccepted);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     mainLayout->addWidget(buttons);
+
+    // 初始化全部界面文本；语言切换后 MainWindow 会再次调用 retranslateUi()
+    retranslateUi();
+}
+
+void SettingsDialog::retranslateUi()
+{
+    setWindowTitle(tr("设置"));
+
+    m_startupGroup->setTitle(tr("启动"));
+    m_restoreSessionCheck->setText(tr("启动时恢复上次会话"));
+
+    m_fontLabel->setText(tr("字体:"));
+    m_fontSizeLabel->setText(tr("字号:"));
+    m_lineNumbersLabel->setText(tr("显示行号:"));
+    m_wordWrapLabel->setText(tr("自动换行:"));
+    m_tabSizeLabel->setText(tr("Tab 宽度:"));
+    m_widthLabel->setText(tr("编辑区宽度:"));
+
+    m_themeLabel->setText(tr("主题:"));
+    m_langLabel->setText(tr("界面语言:"));
+    m_customCssLabel->setText(tr("自定义 CSS:"));
+
+    m_paperLabel->setText(tr("纸张:"));
+    m_marginGroup->setTitle(tr("页边距"));
+    m_marginTopLbl->setText(tr("上:"));
+    m_marginBottomLbl->setText(tr("下:"));
+    m_marginLeftLbl->setText(tr("左:"));
+    m_marginRightLbl->setText(tr("右:"));
+    m_cmTopLbl->setText(tr("厘米")); m_cmBottomLbl->setText(tr("厘米"));
+    m_cmLeftLbl->setText(tr("厘米")); m_cmRightLbl->setText(tr("厘米"));
+    m_orientGroup->setTitle(tr("方向"));
+    m_portraitLbl->setText(tr("纵向(P)"));
+    m_landscapeLbl->setText(tr("横向(L)"));
+
+    m_tabs->setTabText(0, tr("通用"));
+    m_tabs->setTabText(1, tr("编辑器"));
+    m_tabs->setTabText(2, tr("外观"));
+    m_tabs->setTabText(3, tr("导出"));
+
+    // 主题下拉三项 + 语言下拉两项（顺序不变，仅改显示文本；data 保持 system/light/dark、zh_CN/en_US）
+    m_themeCombo->setItemText(0, tr("跟随系统"));
+    m_themeCombo->setItemText(1, tr("亮色"));
+    m_themeCombo->setItemText(2, tr("暗色"));
+    m_langCombo->setItemText(0, tr("简体中文"));
+    m_langCombo->setItemText(1, tr("English"));
+
+    // 自定义 CSS 占位符也随语言刷新
+    m_customCssEdit->setPlaceholderText(tr("/* 可选：覆盖编辑器与导出的默认样式 */"));
+
+    if (QDialogButtonBox *bb = findChild<QDialogButtonBox *>()) {
+        if (QAbstractButton *ok = bb->button(QDialogButtonBox::Ok)) ok->setText(tr("确定"));
+        if (QAbstractButton *cb = bb->button(QDialogButtonBox::Cancel)) cb->setText(tr("取消"));
+    }
 }
 
 void SettingsDialog::loadSettings()
@@ -244,6 +321,9 @@ void SettingsDialog::onAccepted()
     settings.setValue("export/marginBottom", m_marginBottom->value());
     settings.setValue("export/marginLeft", m_marginLeft->value());
     settings.setValue("export/marginRight", m_marginRight->value());
+
+    // 语言走 MainWindow 统一链路（切换 + 持久化），不再直写 QSettings
+    emit languageChanged(m_langCombo->currentData().toString());
 
     accept();
 }
