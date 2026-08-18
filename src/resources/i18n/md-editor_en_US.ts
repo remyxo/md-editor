@@ -125,6 +125,22 @@
         <source>确定要删除 &apos;%1&apos; 吗？</source>
         <translation>Delete &apos;%1&apos;?</translation>
     </message>
+    <message>
+        <source>确定</source>
+        <translation>OK</translation>
+    </message>
+    <message>
+        <source>取消</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>是</source>
+        <translation>Yes</translation>
+    </message>
+    <message>
+        <source>否</source>
+        <translation>No</translation>
+    </message>
 </context>
 <context>
     <name>MainWindow</name>
@@ -253,6 +269,30 @@ Reload?</translation>
         <translation>&apos;%1&apos; has unsaved changes.
 
 Save before closing?</translation>
+    </message>
+    <message>
+        <source>是</source>
+        <translation>Yes</translation>
+    </message>
+    <message>
+        <source>否</source>
+        <translation>No</translation>
+    </message>
+    <message>
+        <source>确定</source>
+        <translation>OK</translation>
+    </message>
+    <message>
+        <source>保存</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <source>不保存</source>
+        <translation>Don't Save</translation>
+    </message>
+    <message>
+        <source>取消</source>
+        <translation>Cancel</translation>
     </message>
 </context>
 <context>
@@ -664,6 +704,18 @@ Save?</translation>
     <message>
         <source>未命名-%1</source>
         <translation>Untitled-%1</translation>
+    </message>
+    <message>
+        <source>保存</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <source>不保存</source>
+        <translation>Don't Save</translation>
+    </message>
+    <message>
+        <source>取消</source>
+        <translation>Cancel</translation>
     </message>
 </context>
 <context>

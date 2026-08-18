@@ -4,6 +4,7 @@
 #include <QTabBar>
 #include <QStyle>
 #include <QMessageBox>
+#include <QAbstractButton>
 #include <QFileInfo>
 
 TabWidget::TabWidget(QWidget *parent)
@@ -107,9 +108,13 @@ void TabWidget::onTabCloseRequested(int index)
     if (!tab) return;
     bool isDirty = tabText(index).startsWith("● ");
     if (isDirty) {
-        auto r = QMessageBox::question(this, tr("未保存的更改"),
+        QMessageBox box(QMessageBox::Question, tr("未保存的更改"),
             tr("文件 '%1' 有未保存的更改。\n是否保存？").arg(tabText(index)),
-            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
+        box.button(QMessageBox::Save)->setText(tr("保存"));
+        box.button(QMessageBox::Discard)->setText(tr("不保存"));
+        box.button(QMessageBox::Cancel)->setText(tr("取消"));
+        auto r = box.exec();
         if (r == QMessageBox::Cancel) return;
         if (r == QMessageBox::Save) {
             m_pendingCloseIndex = index;

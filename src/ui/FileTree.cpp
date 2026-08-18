@@ -3,6 +3,8 @@
 #include <QProcess>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QDialogButtonBox>
+#include <QPushButton>
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
@@ -73,28 +75,49 @@ void FileTree::showContextMenu(const QPoint &pos)
             QFileInfo fi = m_model->fileInfo(index);
             parentPath = fi.isDir() ? fi.absoluteFilePath() : fi.absolutePath();
         }
-        QString name = QInputDialog::getText(this, tr("新建文件"), tr("文件名:"), QLineEdit::Normal, "untitled.md");
-        if (!name.isEmpty()) {
-            QString newPath = parentPath + "/" + name;
-            QFile file(newPath);
-            if (file.open(QIODevice::WriteOnly)) {
-                file.close();
+        QInputDialog dialog(this);
+        dialog.setWindowTitle(tr("新建文件"));
+        dialog.setLabelText(tr("文件名:"));
+        dialog.setTextValue("untitled.md");
+        if (QDialogButtonBox *bb = dialog.findChild<QDialogButtonBox *>()) {
+            if (QPushButton *ok = bb->button(QDialogButtonBox::Ok)) ok->setText(tr("确定"));
+            if (QPushButton *cb = bb->button(QDialogButtonBox::Cancel)) cb->setText(tr("取消"));
+        }
+        if (dialog.exec() == QDialog::Accepted) {
+            QString name = dialog.textValue();
+            if (!name.isEmpty()) {
+                QString newPath = parentPath + "/" + name;
+                QFile file(newPath);
+                if (file.open(QIODevice::WriteOnly)) {
+                    file.close();
+                }
             }
         }
     } else if (selected == renameAct && renameAct) {
         QFileInfo fi = m_model->fileInfo(index);
-        QString newName = QInputDialog::getText(this, tr("重命名"), tr("新文件名:"), QLineEdit::Normal, fi.fileName());
-        if (!newName.isEmpty() && newName != fi.fileName()) {
-            QString newPath = fi.absolutePath() + "/" + newName;
-            QFile::rename(fi.absoluteFilePath(), newPath);
+        QInputDialog dialog(this);
+        dialog.setWindowTitle(tr("重命名"));
+        dialog.setLabelText(tr("新文件名:"));
+        dialog.setTextValue(fi.fileName());
+        if (QDialogButtonBox *bb = dialog.findChild<QDialogButtonBox *>()) {
+            if (QPushButton *ok = bb->button(QDialogButtonBox::Ok)) ok->setText(tr("确定"));
+            if (QPushButton *cb = bb->button(QDialogButtonBox::Cancel)) cb->setText(tr("取消"));
+        }
+        if (dialog.exec() == QDialog::Accepted) {
+            QString newName = dialog.textValue();
+            if (!newName.isEmpty() && newName != fi.fileName()) {
+                QString newPath = fi.absolutePath() + "/" + newName;
+                QFile::rename(fi.absoluteFilePath(), newPath);
+            }
         }
     } else if (selected == deleteAct && deleteAct) {
         QFileInfo fi = m_model->fileInfo(index);
-        QMessageBox::StandardButton r = QMessageBox::question(
-            this, tr("确认删除"),
-            tr("确定要删除 '%1' 吗？").arg(fi.fileName())
-        );
-        if (r == QMessageBox::Yes) {
+        QMessageBox box(QMessageBox::Question, tr("确认删除"),
+            tr("确定要删除 '%1' 吗？").arg(fi.fileName()),
+            QMessageBox::Yes | QMessageBox::No, this);
+        box.button(QMessageBox::Yes)->setText(tr("是"));
+        box.button(QMessageBox::No)->setText(tr("否"));
+        if (box.exec() == QMessageBox::Yes) {
             if (fi.isDir()) {
                 QDir(fi.absoluteFilePath()).removeRecursively();
             } else {

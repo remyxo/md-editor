@@ -28,6 +28,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QAbstractButton>
 #include <QJsonObject>
 #include <QWebEnginePage>
 #include <QTextStream>
@@ -315,10 +316,12 @@ void MainWindow::connectSignals()
                 for (int i = 0; i < m_tabWidget->count(); ++i) {
                     EditorTab *tab = m_tabWidget->tabAt(i);
                     if (tab && tab->webView()->property("filePath").toString() == path) {
-                        auto r = QMessageBox::question(this, tr("文件已变更"),
+                        QMessageBox box(QMessageBox::Question, tr("文件已变更"),
                             tr("文件 %1 已被外部程序修改。\n是否重新加载？").arg(path),
-                            QMessageBox::Yes | QMessageBox::No);
-                        if (r == QMessageBox::Yes) {
+                            QMessageBox::Yes | QMessageBox::No, this);
+                        box.button(QMessageBox::Yes)->setText(tr("是"));
+                        box.button(QMessageBox::No)->setText(tr("否"));
+                        if (box.exec() == QMessageBox::Yes) {
                             QString content = m_fileManager->readFile(path);
                             if (!content.isNull())
                                 tab->loadFile(path, content);
@@ -824,8 +827,10 @@ void MainWindow::onFileDoubleClicked(const QString &path)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, tr("打开失败"),
-                             tr("无法打开文件: %1").arg(path));
+        QMessageBox box(QMessageBox::Warning, tr("打开失败"),
+                        tr("无法打开文件: %1").arg(path), QMessageBox::Ok, this);
+        box.button(QMessageBox::Ok)->setText(tr("确定"));
+        box.exec();
         return;
     }
 
@@ -1005,9 +1010,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         QString title = m_tabWidget->tabText(i);
         if (title.startsWith("● ")) {
-            auto r = QMessageBox::question(this, tr("未保存的更改"),
+            QMessageBox box(QMessageBox::Question, tr("未保存的更改"),
                 tr("'%1' 有未保存的更改。\n\n是否保存后关闭？").arg(title),
-                QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+                QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
+            box.button(QMessageBox::Save)->setText(tr("保存"));
+            box.button(QMessageBox::Discard)->setText(tr("不保存"));
+            box.button(QMessageBox::Cancel)->setText(tr("取消"));
+            auto r = box.exec();
             if (r == QMessageBox::Cancel) {
                 event->ignore();
                 return;
