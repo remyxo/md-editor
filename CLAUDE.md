@@ -13,7 +13,7 @@
 5. **编辑区内部存储 HTML**：读文件时 MD→HTML，写文件时 HTML→MD，通过 `MarkdownHandler` 转换
 6. **先讨论设计再编码**：不确定的地方先和用户确认
 7. **往返保真（Round-Trip Fidelity）**：MD→HTML→MD 转换必须保证信息不丢失。详见下方「往返保真规则」
-8. **兼容基准为 Qt 6.10.2（最低运行时 6.4.2）**：CI/发布 DEB 在 `ubuntu-26.04`（Qt 6.10.2）构建，本地开发机为 6.8.x，DEB 运行时依赖 `>= 6.4`（6.4.2 用户仍存在）。新增任何依赖 Qt `toMarkdown()`/`setHtml()` 行为的逻辑，必须以**占位符保护实现版本无关转义**，覆盖 6.4.2 → 6.8.x → 6.10.2 全范围，不得依赖单一版本的转义行为。详见 [`docs/qt-642-escaping-compat.md`](docs/qt-642-escaping-compat.md)
+8. **兼容基准为 Qt 6.10.2（最低运行时 6.8.2）**：CI/发布 DEB 在 `ubuntu-26.04`（Qt 6.10.2）构建，本地开发机为 6.8.x，DEB 运行时依赖 `>= 6.8`（最低 6.8.2，6.4.x 已停止支持）。新增任何依赖 Qt `toMarkdown()`/`setHtml()` 行为的逻辑，必须以**占位符保护实现版本无关转义**，覆盖 6.8.2 → 6.10.2 及未来版本，不得依赖单一版本的转义行为。详见 [`docs/qt-642-escaping-compat.md`](docs/qt-642-escaping-compat.md)
 9. **改资源/源码后必须重新编译**：`src/resources/` 下打进 qrc 的文件（`web/` 的 .js/.css/.md、`themes/` 的 .qss）与任何 C++ 源码，改动后必须 `cmake --build build`——qrc 打包进二进制，不重编译用户跑旧版。告知用户「已修复」前，先确认二进制时间戳新于所有改动源文件
 
 ## 架构
@@ -132,5 +132,5 @@ ctest --output-on-failure
 - **[Mermaid SVG 渲染问题](docs/mermaid-svg-rendering.md)** — 负宽度 rect 报错 / 字体缩放 / 甘特图缩块 / `_sanitizeMermaidSvg` 设计规范
 - **[模态对话框 ESC 关闭机制](docs/modal-dialog-esc-handling.md)** — Qt QShortcut 拦截 Esc → Bridge 通知 → 分流处理
 - **[\<br\> 与软换行往返机制](docs/br-and-softbreak-roundtrip.md)** — BRMARKER/data-brk 标记 / 双 TipTap 节点 / toHtml/fromHtml 三层分离架构
-- **[Qt 转义兼容（6.4.2→6.10.2）](docs/qt-642-escaping-compat.md)** — 各版本 toMarkdown 转义差异 / 占位符保护范式 / 容器验证法
+- **[Qt 转义兼容（6.8.2→6.10.2）](docs/qt-642-escaping-compat.md)** — 各版本 toMarkdown 转义差异 / 占位符保护范式 / 容器验证法
 - **[代码块围栏往返机制](docs/code-fence-roundtrip.md)** — 嵌套围栏三坑：解析层围栏长度 / 序列化层反引号数推断 / 占位符段落重排粘连
