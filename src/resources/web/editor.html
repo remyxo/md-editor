@@ -10,6 +10,19 @@
 <link rel="stylesheet" href="hljs-dark.css" id="hljs-dark" disabled>
 </head>
 <body>
+<script>
+// 首帧前应用主题（主题经 URL ?theme= 传入），避免暗色模式下先白后暗的闪烁
+(function () {
+    var m = /[?&]theme=([^&]+)/.exec(location.search);
+    if (m && m[1] === 'dark') {
+        document.body.classList.add('dark');
+        var l = document.getElementById('hljs-light');
+        var d = document.getElementById('hljs-dark');
+        if (l) l.disabled = true;
+        if (d) d.disabled = false;
+    }
+})();
+</script>
 <div id="editor"></div>
 <textarea id="source-view" style="display:none"></textarea>
 

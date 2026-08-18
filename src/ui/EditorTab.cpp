@@ -1,10 +1,12 @@
 #include "EditorTab.h"
 #include "../core/MarkdownHandler.h"
+#include "../app/Application.h"
 #include <QVBoxLayout>
 #include <QWebEngineSettings>
 #include <QWebEnginePage>
 #include <QUrl>
 #include <QDesktopServices>
+#include <QColor>
 #include <QDebug>
 #include <QContextMenuEvent>
 #include <QAction>
@@ -180,8 +182,14 @@ EditorTab::EditorTab(int tabId, QWidget *parent)
     connect(m_webView, &QWebEngineView::loadFinished,
             this, &EditorTab::onPageLoadFinished);
 
-    // 加载编辑器页面
-    m_webView->load(QUrl("qrc:/web/editor.html"));
+    // 加载编辑器页面（附当前主题：首帧即暗色，避免暗色模式下的亮色闪烁）
+    const QString theme = Application::instance()->themeManager()->currentTheme();
+    // 页面加载完成前 WebView 控件绘制的是 QWebEnginePage 默认白底（TipTap bundle
+    // 解析 + JS 初始化期间），暗色下会先白后暗；load 前同步把页面背景设为暗色。
+    if (theme == "dark") {
+        m_webView->page()->setBackgroundColor(QColor("#1e1e1e"));
+    }
+    m_webView->load(QUrl("qrc:/web/editor.html?theme=" + theme));
 }
 
 EditorBridge *EditorTab::bridge() const { return m_bridge; }
@@ -246,6 +254,9 @@ void EditorTab::pushDocDir()
 
 void EditorTab::setEditorTheme(const QString &theme)
 {
+    // 页面背景色跟随主题，避免切换主题后新建/重载页面仍闪白
+    m_webView->page()->setBackgroundColor(
+        theme == "dark" ? QColor("#1e1e1e") : QColor("#ffffff"));
     if (m_pageLoaded) {
         runJsCommand(QString("window.editorApi.setTheme('%1');").arg(theme));
     }
