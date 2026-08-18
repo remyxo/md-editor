@@ -4,6 +4,7 @@
 #include <QToolBar>
 #include <QComboBox>
 
+class QLabel;
 class QMenu;
 class QToolButton;
 
@@ -16,6 +17,9 @@ public:
     void updateHistoryState(bool canUndo, bool canRedo);
     void refreshThemeIcons(const QString &theme);
     void setSourceMode(bool on);
+
+    // 语言切换后重设全部 tooltip/菜单文案（Task 10 调用）
+    void retranslateUi();
 
 signals:
     void boldClicked();
@@ -56,6 +60,7 @@ protected:
 
 private:
     void setupUi();
+    QLabel *m_headingLabel = nullptr;
     QComboBox *m_headingCombo;
     QAction *m_undoAction;
     QAction *m_redoAction;
@@ -75,6 +80,8 @@ private:
     QToolButton *m_subsupButton = nullptr;  // 上下标下拉按钮（上标/下标折叠）
     QMenu *m_alignMenu = nullptr;
     QMenu *m_subsupMenu = nullptr;
+    QAction *m_alignLeftAct = nullptr, *m_alignCenterAct = nullptr, *m_alignRightAct = nullptr;
+    QAction *m_superscriptAct = nullptr, *m_subscriptAct = nullptr;
     QString m_currentAlign = QStringLiteral("left");  // 当前对齐状态，主题切换时重选图标
     // 按对齐状态设置按钮图标（light/dark 由 m_isDark 决定）
     void setAlignIcon(const QString &alignment);
@@ -90,6 +97,7 @@ private:
     QAction *m_footnoteAction = nullptr;
     QAction *m_clearFormatAction = nullptr;
     QToolButton *m_exportButton = nullptr;
+    QMenu *m_exportMenu = nullptr;
     QList<QAction*> m_allActions;
     bool m_isDark;
     QMap<QAction*, QString> m_iconPaths; // action → 亮色图标路径

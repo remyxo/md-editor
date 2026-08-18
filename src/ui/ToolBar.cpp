@@ -57,21 +57,21 @@ void ToolBar::setupUi()
 {
     // === 撤销/重做 ===
     m_undoAction = makeAction(this, &m_iconPaths, "undoAction",
-        "撤销 (Ctrl+Z)", ":/icons/light/undo.svg");
+        tr("撤销 (Ctrl+Z)"), ":/icons/light/undo.svg");
     m_undoAction->setEnabled(false);
 
     m_redoAction = makeAction(this, &m_iconPaths, "redoAction",
-        "重做 (Ctrl+Y)", ":/icons/light/redo.svg");
+        tr("重做 (Ctrl+Y)"), ":/icons/light/redo.svg");
     m_redoAction->setEnabled(false);
 
     addSeparator();
 
     // 标题下拉选择器
-    QLabel *headingLabel = new QLabel(" 标题 ");
-    headingLabel->setObjectName("headingLabel");
-    addWidget(headingLabel);
+    m_headingLabel = new QLabel(tr(" 标题 "));
+    m_headingLabel->setObjectName("headingLabel");
+    addWidget(m_headingLabel);
     m_headingCombo = new QComboBox(this);
-    m_headingCombo->addItem("正文", 0);
+    m_headingCombo->addItem(tr("正文"), 0);
     m_headingCombo->addItem("H1", 1);
     m_headingCombo->addItem("H2", 2);
     m_headingCombo->addItem("H3", 3);
@@ -91,35 +91,35 @@ void ToolBar::setupUi()
 
     // === 文本格式按钮 ===
     m_boldAction = makeAction(this, &m_iconPaths, "boldAction",
-        "加粗 (Ctrl+B)", ":/icons/light/bold.svg");
+        tr("加粗 (Ctrl+B)"), ":/icons/light/bold.svg");
     m_boldAction->setCheckable(true);
 
     m_italicAction = makeAction(this, &m_iconPaths, "italicAction",
-        "斜体 (Ctrl+I)", ":/icons/light/italic.svg");
+        tr("斜体 (Ctrl+I)"), ":/icons/light/italic.svg");
     m_italicAction->setCheckable(true);
 
     m_strikeAction = makeAction(this, &m_iconPaths, "strikeAction",
-        "删除线", ":/icons/light/strikethrough.svg");
+        tr("删除线"), ":/icons/light/strikethrough.svg");
     m_strikeAction->setCheckable(true);
 
     m_underlineAction = makeAction(this, &m_iconPaths, "underlineAction",
-        "下划线", ":/icons/light/underline.svg");
+        tr("下划线"), ":/icons/light/underline.svg");
     m_underlineAction->setCheckable(true);
 
     m_highlightAction = makeAction(this, &m_iconPaths, "highlightAction",
-        "高亮", ":/icons/light/highlight.svg");
+        tr("高亮"), ":/icons/light/highlight.svg");
     m_highlightAction->setCheckable(true);
 
     m_clearFormatAction = makeAction(this, &m_iconPaths, "clearFormatAction",
-        "清除样式", ":/icons/light/clear-format.svg");
+        tr("清除样式"), ":/icons/light/clear-format.svg");
 
     addSeparator();
 
     // 颜色按钮：点击弹出调色板（非 checkable）
     m_textColorAction = makeAction(this, &m_iconPaths, "textColorAction",
-        "文字颜色", ":/icons/light/text-color.svg");
+        tr("文字颜色"), ":/icons/light/text-color.svg");
     m_bgColorAction = makeAction(this, &m_iconPaths, "bgColorAction",
-        "背景颜色", ":/icons/light/bg-color.svg");
+        tr("背景颜色"), ":/icons/light/bg-color.svg");
 
     addSeparator();
 
@@ -127,7 +127,7 @@ void ToolBar::setupUi()
     {
         m_alignButton = new QToolButton(this);
         m_alignButton->setObjectName("alignButton");
-        m_alignButton->setToolTip("段落对齐");
+        m_alignButton->setToolTip(tr("段落对齐"));
         m_alignButton->setCheckable(true);  // 居中/右对齐时高亮（左对齐为默认态不高亮）
         m_alignButton->setArrowType(Qt::NoArrow); // chevron 由 QSS menu-indicator 提供（同导出按钮）
         m_alignMenu = new QMenu(m_alignButton);
@@ -142,11 +142,11 @@ void ToolBar::setupUi()
             m_iconPaths.insert(a, icon);
             return a;
         };
-        addAlignItem("alignLeftItem", "左对齐(&L)", "Ctrl+Shift+L",
+        m_alignLeftAct = addAlignItem("alignLeftItem", tr("左对齐(&L)"), "Ctrl+Shift+L",
                      ":/icons/light/align-left.svg");
-        addAlignItem("alignCenterItem", "居中对齐(&E)", "Ctrl+Shift+E",
+        m_alignCenterAct = addAlignItem("alignCenterItem", tr("居中对齐(&E)"), "Ctrl+Shift+E",
                      ":/icons/light/align-center.svg");
-        addAlignItem("alignRightItem", "右对齐(&R)", "Ctrl+Shift+R",
+        m_alignRightAct = addAlignItem("alignRightItem", tr("右对齐(&R)"), "Ctrl+Shift+R",
                      ":/icons/light/align-right.svg");
         m_alignButton->setMenu(m_alignMenu);
         // 快捷键仅作显示：绑定到菜单自身上下文，避免抢 WebEngine 按键
@@ -166,7 +166,7 @@ void ToolBar::setupUi()
     {
         m_subsupButton = new QToolButton(this);
         m_subsupButton->setObjectName("subsupButton");
-        m_subsupButton->setToolTip("上标/下标");
+        m_subsupButton->setToolTip(tr("上标/下标"));
         m_subsupButton->setCheckable(true);  // 光标处于上下标内容时高亮
         m_subsupButton->setArrowType(Qt::NoArrow);
         m_subsupMenu = new QMenu(m_subsupButton);
@@ -181,9 +181,9 @@ void ToolBar::setupUi()
             m_iconPaths.insert(a, icon);
             return a;
         };
-        addSubsupItem("superscriptItem", "上标(&P)", "Ctrl+.",
+        m_superscriptAct = addSubsupItem("superscriptItem", tr("上标(&P)"), "Ctrl+.",
                       ":/icons/light/superscript.svg");
-        addSubsupItem("subscriptItem", "下标(&B)", "Ctrl+,",
+        m_subscriptAct = addSubsupItem("subscriptItem", tr("下标(&B)"), "Ctrl+,",
                       ":/icons/light/subscript.svg");
         m_subsupButton->setMenu(m_subsupMenu);
         for (QAction *a : m_subsupMenu->actions())
@@ -198,65 +198,65 @@ void ToolBar::setupUi()
 
     // === 结构按钮 ===
     m_bulletListAction = makeAction(this, &m_iconPaths, "bulletListAction",
-        "无序列表", ":/icons/light/list-bullet.svg");
+        tr("无序列表"), ":/icons/light/list-bullet.svg");
     m_bulletListAction->setCheckable(true);
 
     m_orderedListAction = makeAction(this, &m_iconPaths, "orderedListAction",
-        "有序列表", ":/icons/light/list-ordered.svg");
+        tr("有序列表"), ":/icons/light/list-ordered.svg");
     m_orderedListAction->setCheckable(true);
 
     m_taskListAction = makeAction(this, &m_iconPaths, "taskListAction",
-        "任务列表", ":/icons/light/task-list.svg");
+        tr("任务列表"), ":/icons/light/task-list.svg");
     m_taskListAction->setCheckable(true);
 
     m_blockquoteAction = makeAction(this, &m_iconPaths, "blockquoteAction",
-        "引用", ":/icons/light/blockquote.svg");
+        tr("引用"), ":/icons/light/blockquote.svg");
     m_blockquoteAction->setCheckable(true);
 
     addSeparator();
 
     // === 插入按钮 ===
     makeAction(this, &m_iconPaths, "linkAction",
-        "插入链接", ":/icons/light/link.svg");
+        tr("插入链接"), ":/icons/light/link.svg");
     makeAction(this, &m_iconPaths, "imageAction",
-        "插入图片", ":/icons/light/image.svg");
+        tr("插入图片"), ":/icons/light/image.svg");
     makeAction(this, &m_iconPaths, "tableAction",
-        "插入表格", ":/icons/light/table.svg");
+        tr("插入表格"), ":/icons/light/table.svg");
     m_codeAction = makeAction(this, &m_iconPaths, "codeAction",
-        "行内代码", ":/icons/light/code.svg");
+        tr("行内代码"), ":/icons/light/code.svg");
     m_codeAction->setCheckable(true);
     m_codeBlockAction = makeAction(this, &m_iconPaths, "codeBlockAction",
-        "代码块", ":/icons/light/code-block.svg");
+        tr("代码块"), ":/icons/light/code-block.svg");
     m_codeBlockAction->setCheckable(true);
     makeAction(this, &m_iconPaths, "hrAction",
-        "分割线", ":/icons/light/horizontal-rule.svg");
+        tr("分割线"), ":/icons/light/horizontal-rule.svg");
     makeAction(this, &m_iconPaths, "mathAction",
-        "插入公式 (Ctrl+M)", ":/icons/light/math.svg");
+        tr("插入公式 (Ctrl+M)"), ":/icons/light/math.svg");
     makeAction(this, &m_iconPaths, "diagramAction",
-        "插入 Mermaid 图表", ":/icons/light/diagram.svg");
+        tr("插入 Mermaid 图表"), ":/icons/light/diagram.svg");
     makeAction(this, &m_iconPaths, "emojiAction",
-        "插入表情", ":/icons/light/emoji.svg");
+        tr("插入表情"), ":/icons/light/emoji.svg");
     makeAction(this, &m_iconPaths, "footnoteAction",
-        "插入脚注", ":/icons/light/footnote.svg");
+        tr("插入脚注"), ":/icons/light/footnote.svg");
 
     addSeparator();
 
     // === 视图 / 导出 ===
     makeAction(this, &m_iconPaths, "sourceAction",
-        "切换源码模式", ":/icons/light/source-code.svg");
+        tr("切换源码模式"), ":/icons/light/source-code.svg");
     // 导出下拉按钮：直接用 QToolButton + InstantPopup
     {
         m_exportButton = new QToolButton(this);
         m_exportButton->setObjectName("pdfAction");
         m_exportButton->setIcon(QIcon(":/icons/light/pdf.svg"));
-        m_exportButton->setToolTip("导出");
+        m_exportButton->setToolTip(tr("导出"));
         m_exportButton->setCheckable(false);
         m_exportButton->setArrowType(Qt::NoArrow); // chevron 由 QSS menu-indicator 提供（同对齐/上下标按钮）
-        QMenu *exportMenu = new QMenu(m_exportButton);
-        exportMenu->addAction("导出 PDF...", this, &ToolBar::pdfExportClicked);
-        exportMenu->addAction("导出 DOCX...", this, &ToolBar::docxExportClicked);
-        exportMenu->addAction("导出 HTML...", this, &ToolBar::htmlExportClicked);
-        m_exportButton->setMenu(exportMenu);
+        m_exportMenu = new QMenu(m_exportButton);
+        m_exportMenu->addAction(tr("导出 PDF..."), this, &ToolBar::pdfExportClicked);
+        m_exportMenu->addAction(tr("导出 DOCX..."), this, &ToolBar::docxExportClicked);
+        m_exportMenu->addAction(tr("导出 HTML..."), this, &ToolBar::htmlExportClicked);
+        m_exportButton->setMenu(m_exportMenu);
         m_exportButton->installEventFilter(this);
         addWidget(m_exportButton);
     }
@@ -317,6 +317,59 @@ void ToolBar::setupUi()
 
     // 收集所有 action，用于源码模式禁用
     m_allActions = findChildren<QAction *>().toList();
+
+    retranslateUi();  // 统一重设文案（首次设置，语言切换后 MainWindow 再次调用）
+}
+
+// 语言切换后重设全部 tooltip/菜单项文案
+void ToolBar::retranslateUi()
+{
+    m_undoAction->setToolTip(tr("撤销 (Ctrl+Z)"));
+    m_redoAction->setToolTip(tr("重做 (Ctrl+Y)"));
+
+    m_headingLabel->setText(tr(" 标题 "));
+    m_headingCombo->setItemText(0, tr("正文"));  // H1~H6 保持不变
+
+    m_boldAction->setToolTip(tr("加粗 (Ctrl+B)"));
+    m_italicAction->setToolTip(tr("斜体 (Ctrl+I)"));
+    m_strikeAction->setToolTip(tr("删除线"));
+    m_underlineAction->setToolTip(tr("下划线"));
+    m_highlightAction->setToolTip(tr("高亮"));
+    m_clearFormatAction->setToolTip(tr("清除样式"));
+    m_textColorAction->setToolTip(tr("文字颜色"));
+    m_bgColorAction->setToolTip(tr("背景颜色"));
+
+    m_alignButton->setToolTip(tr("段落对齐"));
+    m_alignLeftAct->setText(tr("左对齐(&L)"));
+    m_alignCenterAct->setText(tr("居中对齐(&E)"));
+    m_alignRightAct->setText(tr("右对齐(&R)"));
+
+    m_subsupButton->setToolTip(tr("上标/下标"));
+    m_superscriptAct->setText(tr("上标(&P)"));
+    m_subscriptAct->setText(tr("下标(&B)"));
+
+    m_bulletListAction->setToolTip(tr("无序列表"));
+    m_orderedListAction->setToolTip(tr("有序列表"));
+    m_taskListAction->setToolTip(tr("任务列表"));
+    m_blockquoteAction->setToolTip(tr("引用"));
+
+    findChild<QAction*>("linkAction")->setToolTip(tr("插入链接"));
+    findChild<QAction*>("imageAction")->setToolTip(tr("插入图片"));
+    findChild<QAction*>("tableAction")->setToolTip(tr("插入表格"));
+    m_codeAction->setToolTip(tr("行内代码"));
+    m_codeBlockAction->setToolTip(tr("代码块"));
+    findChild<QAction*>("hrAction")->setToolTip(tr("分割线"));
+    findChild<QAction*>("mathAction")->setToolTip(tr("插入公式 (Ctrl+M)"));
+    findChild<QAction*>("diagramAction")->setToolTip(tr("插入 Mermaid 图表"));
+    findChild<QAction*>("emojiAction")->setToolTip(tr("插入表情"));
+    findChild<QAction*>("footnoteAction")->setToolTip(tr("插入脚注"));
+
+    findChild<QAction*>("sourceAction")->setToolTip(tr("切换源码模式"));
+
+    m_exportButton->setToolTip(tr("导出"));
+    m_exportMenu->actions().at(0)->setText(tr("导出 PDF..."));
+    m_exportMenu->actions().at(1)->setText(tr("导出 DOCX..."));
+    m_exportMenu->actions().at(2)->setText(tr("导出 HTML..."));
 }
 
 // 按对齐状态切换按钮图标与高亮（跟随光标回显）。
@@ -365,7 +418,7 @@ QMenu *ToolBar::buildColorMenu(bool forText)
     menu->setAttribute(Qt::WA_DeleteOnClose);
 
     // 无颜色
-    QAction *noneAct = menu->addAction(forText ? QStringLiteral("无文字颜色") : QStringLiteral("无背景颜色"));
+    QAction *noneAct = menu->addAction(forText ? tr("无文字颜色") : tr("无背景颜色"));
     connect(noneAct, &QAction::triggered, this, [this, forText]() {
         if (forText) emit textColorCleared();
         else emit bgColorCleared();
@@ -410,10 +463,10 @@ QMenu *ToolBar::buildColorMenu(bool forText)
     menu->addSeparator();
 
     // 更多颜色（QColorDialog）
-    QAction *moreAct = menu->addAction(QStringLiteral("更多颜色…"));
+    QAction *moreAct = menu->addAction(tr("更多颜色…"));
     connect(moreAct, &QAction::triggered, this, [this, forText]() {
         QColor chosen = QColorDialog::getColor(Qt::white, this,
-            forText ? QStringLiteral("选择文字颜色") : QStringLiteral("选择背景颜色"));
+            forText ? tr("选择文字颜色") : tr("选择背景颜色"));
         if (!chosen.isValid()) return;   // 用户取消
         if (forText) emit textColorSelected(chosen.name());
         else emit bgColorSelected(chosen.name());
