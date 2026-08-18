@@ -104,7 +104,7 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 
 ## 环境要求
 
-- **开发环境**：Debian 13，Qt6 系统安装 (`apt install qt6-base-dev qt6-webengine-dev qt6-webchannel-dev`)，本地为 Qt 6.8.x
+- **开发环境**：Debian 13，Qt6 系统安装 (`apt install qt6-base-dev qt6-webengine-dev qt6-webchannel-dev qt6-tools-dev qt6-tools-dev-tools`)，本地为 Qt 6.8.x。`qt6-tools-dev` 提供 Qt6LinguistTools（`qt6_add_translations`），`qt6-tools-dev-tools` 提供 `lupdate`/`lrelease` 二进制
 - **运行方式**：`./scripts/run-editor.sh` 或直接 `build/src/md-editor`
 - **GitHub Actions**：`ubuntu-24.04`，Qt 6.4.2（**兼容基准**，本地 6.8.x 通过不等于出厂正确，差异见 `docs/qt-642-escaping-compat.md`）
 
@@ -123,7 +123,6 @@ ctest --output-on-failure
 - 自动保存已被移除（0.2.1，因未完整接线；会话恢复仍可用）
 - 标签页交互待补全：中键关闭、Ctrl+1~9 跳转、右键批量关闭
 - 大纲光标自动高亮待实现（当前仅点击跳转）
-- 界面语言 English 为占位（设置已有下拉，未接入 QTranslator）
 - `tiptap-all.js` 更新需在 `src/resources/web/` 下运行 `npx esbuild tiptap-entry.js --bundle --outfile=tiptap-all.js --format=iife`
 
 ## 专题文档
