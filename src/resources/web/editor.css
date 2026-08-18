@@ -97,6 +97,7 @@ body.dark .ProseMirror pre {
 
 body.dark .ProseMirror pre code {
     color: #abb2bf;
+    background: none;
 }
 
 /* 高亮 */
