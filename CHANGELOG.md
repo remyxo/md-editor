@@ -2,9 +2,10 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.8.2]
+## [0.9.0] — 2026-08-18
 
 ### 新增
+- **界面语言中英文运行时切换** — 新增 LanguageManager（QTranslator）组件，设置页切换语言后即时刷新菜单/工具栏/状态栏/侧边栏/搜索栏/右键菜单/关于等全部界面，以及 TipTap 编辑器内的弹窗、悬浮提示与占位符；全组件接入 `tr()`/`retranslateUi()`，`editor.js` 增加 I18N 字典与 `setLanguage`；语言偏好持久化（`appearance/language`，缺省中文）；emoji 分类名保持中文
 - 主题「跟随系统」模式：经 xdg-desktop-portal 实时跟随系统深浅色
 - 新增 SystemThemeWatcher 组件（`src/app/`），无 portal 环境自动降级亮色
 
