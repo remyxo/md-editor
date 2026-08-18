@@ -587,12 +587,12 @@ function buildFootnoteReference() {
                     dom.textContent = node.attrs.id;
                 }
                 render();
-                dom.title = '双击修改脚注标记';
+                _setI18nTitle(dom, 'footnote.editId');
                 dom.addEventListener('dblclick', function(e) {
                     e.preventDefault();
                     e.stopPropagation();
                     var cur = node.attrs.id;
-                    var v = prompt('脚注标记:', cur);
+                    var v = prompt(i18n('footnote.prompt'), cur);
                     if (v != null) {
                         v = v.trim();
                         // 禁止空串与脚注语法字符
@@ -675,12 +675,16 @@ function mermaidNodeView(ref) {
     var dom = document.createElement('div');
     dom.className = 'mermaid-block';
     dom.setAttribute('data-mermaid', '');
-    dom.setAttribute('title', '双击编辑图表源码');
+    _setI18nTitle(dom, 'mermaid.editTip');
 
     function paint(source) {
         dom.innerHTML = '';
         if (!(source && source.trim())) {
-            dom.innerHTML = '<div class="mermaid-empty">（空图表，双击编辑）</div>';
+            // 空态：创建带 data-i18n 的元素，setLanguage 时全量重刷
+            var empty = document.createElement('div');
+            empty.className = 'mermaid-empty';
+            _setI18n(empty, 'mermaid.empty');
+            dom.appendChild(empty);
             return;
         }
         if (!window.mermaid) {
@@ -839,19 +843,19 @@ function codeBlockNodeView(ref) {
     var label = document.createElement('span');
     label.className = 'code-lang-label';
     label.textContent = 'auto';
-    label.title = '双击修改语言';
+    _setI18nTitle(label, 'codeblock.changeLang');
 
     var copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'code-copy-btn';
-    copyBtn.title = '复制代码';
-    // 双层方块复制图标（内联 SVG）
+    _setI18nTitle(copyBtn, 'codeblock.copy');
+    // 双层方块复制图标（内联 SVG）；按钮可见文字用 data-i18n span，setLanguage 时可重刷
     copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
         'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
         'style="vertical-align:middle;margin-right:2px">' +
         '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
         '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' +
-        '</svg>复制';
+        '</svg><span data-i18n="codeblock.copyBtn">' + i18n('codeblock.copyBtn') + '</span>';
 
     toolbar.appendChild(label);
     toolbar.appendChild(copyBtn);
@@ -878,14 +882,14 @@ function codeBlockNodeView(ref) {
                 'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
                 'style="vertical-align:middle;margin-right:2px">' +
                 '<polyline points="20 6 9 17 4 12"/>' +
-                '</svg>已复制';
+                '</svg><span data-i18n="codeblock.copied">' + i18n('codeblock.copied') + '</span>';
             setTimeout(function(){
                 copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
                     'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
                     'style="vertical-align:middle;margin-right:2px">' +
                     '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
                     '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' +
-                    '</svg>复制';
+                    '</svg><span data-i18n="codeblock.copyBtn">' + i18n('codeblock.copyBtn') + '</span>';
             }, 1500);
         });
     });
@@ -946,6 +950,109 @@ function toSlashPath(p) {
     return s;
 }
 
+// 界面文案字典（源语言中文；emoji 分类名保持中文不在此列）
+var I18N = {
+  zh_CN: {
+    'placeholder.empty': '开始编写 Markdown...',
+    'common.cancel': '取消',
+    'common.ok': '确定',
+    'common.close': '关闭',
+    'link.editTitle': '编辑超链接',
+    'link.text': '链接文字',
+    'link.url': '链接地址',
+    'link.remove': '删除链接',
+    'link.tip.click': '点击访问',
+    'link.tip.ctrlClick': 'Ctrl+点击访问',
+    'math.blockTag': '块级公式',
+    'math.inlineTag': '行内公式',
+    'math.latexLabel': 'LaTeX 源码',
+    'math.preview': '预览',
+    'math.previewHint': '（输入 LaTeX 公式）',
+    'mermaid.editTitle': '编辑 Mermaid 图表',
+    'mermaid.insertTitle': '插入 Mermaid 图表',
+    'mermaid.srcLabel': 'Mermaid 源码（如 graph TD; A-->B）',
+    'mermaid.hint': '支持 flowchart / sequence / class / state / pie / gantt 等，详见 mermaid.js.org',
+    'mermaid.previewHint': '（输入 Mermaid 源码预览图表）',
+    'mermaid.renderFail': '渲染失败：',
+    'mermaid.empty': '（空图表，双击编辑）',
+    'codeLang.search': '搜索语言...',
+    'codeLang.auto': '自动检测',
+    'codeLang.current': ' (当前)',
+    'codeblock.copy': '复制代码',
+    'codeblock.changeLang': '双击修改语言',
+    'footnote.editId': '双击修改脚注标记',
+    'emoji.search': '搜索表情（如 笑 / heart / +1）',
+    'emoji.freq': '常用表情符号',
+    'emoji.empty': '无匹配表情',
+    'editor.failInit': '编辑器内核加载失败：未找到 window.TipTap。请检查 tiptap-all.js。',
+    // 简报字典之外的补充键（自检补漏，均为用户可见文案）
+    'footnote.prompt': '脚注标记:',
+    'mermaid.editTip': '双击编辑图表源码',
+    'codeblock.copyBtn': '复制',
+    'codeblock.copied': '已复制'
+  },
+  en_US: {
+    'placeholder.empty': 'Start writing Markdown...',
+    'common.cancel': 'Cancel',
+    'common.ok': 'OK',
+    'common.close': 'Close',
+    'link.editTitle': 'Edit Link',
+    'link.text': 'Link Text',
+    'link.url': 'Link URL',
+    'link.remove': 'Remove Link',
+    'link.tip.click': 'Click to visit',
+    'link.tip.ctrlClick': 'Ctrl+Click to visit',
+    'math.blockTag': 'Block Formula',
+    'math.inlineTag': 'Inline Formula',
+    'math.latexLabel': 'LaTeX Source',
+    'math.preview': 'Preview',
+    'math.previewHint': '(Enter a LaTeX formula)',
+    'mermaid.editTitle': 'Edit Mermaid Diagram',
+    'mermaid.insertTitle': 'Insert Mermaid Diagram',
+    'mermaid.srcLabel': 'Mermaid Source (e.g. graph TD; A-->B)',
+    'mermaid.hint': 'Supports flowchart / sequence / class / state / pie / gantt, etc. See mermaid.js.org',
+    'mermaid.previewHint': '(Enter Mermaid source to preview)',
+    'mermaid.renderFail': 'Render failed: ',
+    'mermaid.empty': '(Empty diagram, double-click to edit)',
+    'codeLang.search': 'Search language...',
+    'codeLang.auto': 'Auto Detect',
+    'codeLang.current': ' (current)',
+    'codeblock.copy': 'Copy code',
+    'codeblock.changeLang': 'Double-click to change language',
+    'footnote.editId': 'Double-click to edit footnote marker',
+    'emoji.search': 'Search emoji (e.g. smile / heart / +1)',
+    'emoji.freq': 'Frequently used',
+    'emoji.empty': 'No matching emoji',
+    'editor.failInit': 'Editor core failed to load: window.TipTap not found. Check tiptap-all.js.',
+    // 简报字典之外的补充键（自检补漏，均为用户可见文案）
+    'footnote.prompt': 'Footnote marker:',
+    'mermaid.editTip': 'Double-click to edit diagram source',
+    'codeblock.copyBtn': 'Copy',
+    'codeblock.copied': 'Copied'
+  }
+};
+
+// 当前界面语言（与 C++ LanguageManager 同步；默认中文）
+var _uiLang = 'zh_CN';
+
+function i18n(key) {
+  var t = I18N[_uiLang];
+  if (t && t[key] !== undefined) return t[key];
+  return I18N.zh_CN[key] !== undefined ? I18N.zh_CN[key] : key;
+}
+
+// 把元素文本设为 i18n(key) 并打 data-i18n 标记（setLanguage 时全量重刷）
+function _setI18n(el, key) {
+  el.setAttribute('data-i18n', key);
+  el.textContent = i18n(key);
+}
+
+// 把元素 title 设为 i18n(key) 并打 data-i18n-title 标记（setLanguage 时全量重刷）
+function _setI18nTitle(el, key) {
+  el.setAttribute('data-i18n-title', key);
+  el.title = i18n(key);
+}
+
 // 全局编辑器 API 对象（C++ 侧通过 QWebChannel 调用其中的命令方法）
 window.editorApi = {
     editor: null,
@@ -957,6 +1064,7 @@ window.editorApi = {
     _sourceValue: null,
     _onSourceInput: null,
     _readOnly: false,
+    _lang: 'zh_CN',          // 当前界面语言（setLanguage 更新，与 C++ LanguageManager 同步）
     _imageSeq: 0,            // 占位图 requestId 自增计数
     _imagePending: {},       // requestId -> marker（占位图 src，回调时据此定位节点）
     _docDir: '',             // 当前文档目录（绝对路径），把相对图片 src 解析为 localimg://
@@ -997,7 +1105,7 @@ window.editorApi = {
             TipTapTaskItem.configure({ nested: true }),
             TipTapHighlight,
             ImageWithNodeView.configure({ allowBase64: true }),
-            TipTapPlaceholder.configure({ placeholder: '开始编写 Markdown...' }),
+            TipTapPlaceholder.configure({ placeholder: function() { return i18n('placeholder.empty'); } }),
         ];
         if (CodeBlockLowlightWithNodeView && window.lowlight)
             exts.push(CodeBlockLowlightWithNodeView.configure({ lowlight: window.lowlight }));
@@ -1046,7 +1154,7 @@ window.editorApi = {
     _createEditor: function(container, content) {
         if (!TipTapEditor) {
             console.error('TipTap bundle 未加载，请确认 tiptap-all.js 已正确引入。');
-            container.textContent = '编辑器内核加载失败：未找到 window.TipTap。请检查 tiptap-all.js。';
+            container.textContent = i18n('editor.failInit');
             return null;
         }
         var self = this;
@@ -1124,8 +1232,7 @@ window.editorApi = {
     init: function() {
         if (!TipTapEditor) {
             console.error('TipTap bundle 未加载，请确认 tiptap-all.js 已正确引入。');
-            document.querySelector('#editor').textContent =
-                '编辑器内核加载失败：未找到 window.TipTap。请检查 tiptap-all.js。';
+            document.querySelector('#editor').textContent = i18n('editor.failInit');
             return;
         }
         var el = document.querySelector('#editor');
@@ -1671,6 +1778,28 @@ window.editorApi = {
         window.__mermaidInited = false;
         try { _repaintMermaidViews(); } catch (e) { /* 主题切换不应被图表渲染阻断 */ }
     },
+
+    setLanguage: function(lang) {
+        this._lang = lang;
+        _uiLang = lang;
+        // 全量重刷带 data-i18n 标记的静态标签（NodeView tooltip/空态/弹窗按钮等）
+        var els = document.querySelectorAll('[data-i18n]');
+        for (var i = 0; i < els.length; i++) {
+            var key = els[i].getAttribute('data-i18n');
+            if (key) els[i].textContent = i18n(key);
+        }
+        // 再刷一遍带 data-i18n-title 标记的 title（NodeView tooltip 类标签）
+        var titleEls = document.querySelectorAll('[data-i18n-title]');
+        for (var j = 0; j < titleEls.length; j++) {
+            var tk = titleEls[j].getAttribute('data-i18n-title');
+            if (tk) titleEls[j].title = i18n(tk);
+        }
+        // 占位符：TipTap Placeholder 配置为函数读取当前语言，派发一个空事务触发重渲染
+        if (this.editor) {
+            var ed = this.editor;
+            ed.view.dispatch(ed.state.tr);  // 无内容变更，仅触发视图/装饰重算
+        }
+    },
     applyCustomCss: function(css) {
         var style = document.getElementById('custom-css');
         if (css) {
@@ -1752,7 +1881,7 @@ window.editorApi = {
         var readOnly = this._readOnly;
         var showTip = function(link, x, y) {
             if (!link || !link.href) return;
-            var label = readOnly ? '点击访问' : 'Ctrl+点击访问';
+            var label = readOnly ? i18n('link.tip.click') : i18n('link.tip.ctrlClick');
             tip.innerHTML = '<span class="tip-label">' + label + '</span>' +
                 '<span class="tip-url">' + _escapeText(link.href) + '</span>';
             tip.style.display = 'block';
@@ -2019,13 +2148,13 @@ window.editorApi = {
 
             var tag = document.createElement('span');
             tag.className = 'math-editor-type-tag';
-            tag.textContent = isBlock ? '块级公式' : '行内公式';
+            tag.textContent = isBlock ? i18n('math.blockTag') : i18n('math.inlineTag');
             titleBar.appendChild(tag);
 
             var closeBtn = document.createElement('button');
             closeBtn.className = 'math-editor-close-btn';
             closeBtn.textContent = '×';
-            closeBtn.title = '关闭';
+            _setI18nTitle(closeBtn, 'common.close');
             var self = this;
             closeBtn.addEventListener('click', function(e) { e.stopPropagation(); self.close(); });
             titleBar.appendChild(closeBtn);
@@ -2046,14 +2175,14 @@ window.editorApi = {
             }
             var label = document.createElement('div');
             label.className = 'math-editor-label';
-            label.textContent = 'LaTeX 源码';
+            _setI18n(label, 'math.latexLabel');
             this.popover.appendChild(label);
             this.popover.appendChild(this.input);
 
             // 实时预览
             var prevLabel = document.createElement('div');
             prevLabel.className = 'math-editor-label';
-            prevLabel.textContent = '预览';
+            _setI18n(prevLabel, 'math.preview');
             this.popover.appendChild(prevLabel);
             this.preview = document.createElement('div');
             this.preview.className = 'math-editor-preview';
@@ -2064,13 +2193,13 @@ window.editorApi = {
             actions.className = 'math-editor-actions';
 
             this.cancelBtn = document.createElement('button');
-            this.cancelBtn.textContent = '取消';
+            _setI18n(this.cancelBtn, 'common.cancel');
             this.cancelBtn.addEventListener('click', function() { self.close(); });
             actions.appendChild(this.cancelBtn);
 
             this.okBtn = document.createElement('button');
             this.okBtn.className = 'primary';
-            this.okBtn.textContent = '确定';
+            _setI18n(this.okBtn, 'common.ok');
             this.okBtn.addEventListener('click', function() { self.confirm(); });
             actions.appendChild(this.okBtn);
 
@@ -2117,7 +2246,7 @@ window.editorApi = {
         updatePreview: function() {
             var latex = this.input.value;
             if (!latex.trim()) {
-                this.preview.innerHTML = '<span style="color:#888;font-size:17px;">（输入 LaTeX 公式）</span>';
+                this.preview.innerHTML = '<span style="color:#888;font-size:17px;">' + i18n('math.previewHint') + '</span>';
                 return;
             }
             try {
@@ -2286,12 +2415,12 @@ window.editorApi = {
             titleBar.className = 'math-editor-titlebar';
             var tag = document.createElement('span');
             tag.className = 'math-editor-type-tag';
-            tag.textContent = this.mode === 'edit' ? '编辑 Mermaid 图表' : '插入 Mermaid 图表';
+            tag.textContent = this.mode === 'edit' ? i18n('mermaid.editTitle') : i18n('mermaid.insertTitle');
             titleBar.appendChild(tag);
             var closeBtn = document.createElement('button');
             closeBtn.className = 'math-editor-close-btn';
             closeBtn.textContent = '×';
-            closeBtn.title = '关闭';
+            _setI18nTitle(closeBtn, 'common.close');
             closeBtn.addEventListener('click', function(e) { e.stopPropagation(); self.close(); });
             titleBar.appendChild(closeBtn);
             this.popover.appendChild(titleBar);
@@ -2299,7 +2428,7 @@ window.editorApi = {
             // 源码输入
             var label = document.createElement('div');
             label.className = 'math-editor-label';
-            label.textContent = 'Mermaid 源码（如 graph TD; A-->B）';
+            _setI18n(label, 'mermaid.srcLabel');
             this.popover.appendChild(label);
             this.input = document.createElement('textarea');
             this.input.className = 'math-editor-input block mermaid-source';
@@ -2310,7 +2439,7 @@ window.editorApi = {
             // 实时预览
             var prevLabel = document.createElement('div');
             prevLabel.className = 'math-editor-label';
-            prevLabel.textContent = '预览';
+            _setI18n(prevLabel, 'mermaid.preview');
             this.popover.appendChild(prevLabel);
             this.preview = document.createElement('div');
             this.preview.className = 'math-editor-preview mermaid-preview';
@@ -2319,19 +2448,19 @@ window.editorApi = {
             // 语法提示
             var hint = document.createElement('div');
             hint.className = 'mermaid-hint';
-            hint.textContent = '支持 flowchart / sequence / class / state / pie / gantt 等，详见 mermaid.js.org';
+            _setI18n(hint, 'mermaid.hint');
             this.popover.appendChild(hint);
 
             // 按钮
             var actions = document.createElement('div');
             actions.className = 'math-editor-actions';
             this.cancelBtn = document.createElement('button');
-            this.cancelBtn.textContent = '取消';
+            _setI18n(this.cancelBtn, 'common.cancel');
             this.cancelBtn.addEventListener('click', function() { self.close(); });
             actions.appendChild(this.cancelBtn);
             this.okBtn = document.createElement('button');
             this.okBtn.className = 'primary';
-            this.okBtn.textContent = '确定';
+            _setI18n(this.okBtn, 'common.ok');
             this.okBtn.addEventListener('click', function() { self.confirm(); });
             actions.appendChild(this.okBtn);
             this.popover.appendChild(actions);
@@ -2366,7 +2495,7 @@ window.editorApi = {
             var src = this.input.value;
             var p = this.preview;
             if (!src.trim()) {
-                p.innerHTML = '<span style="color:#888;font-size:14px;">（输入 Mermaid 源码预览图表）</span>';
+                p.innerHTML = '<span style="color:#888;font-size:14px;">' + i18n('mermaid.previewHint') + '</span>';
                 return;
             }
             if (!window.mermaid) { p.textContent = src; return; }
@@ -2377,7 +2506,7 @@ window.editorApi = {
                 var svg = p.querySelector('svg');
                 if (svg) { _fixNegativeRects(svg); svg.style.maxWidth = '100%'; svg.style.height = 'auto'; }
             }).catch(function(err) {
-                p.innerHTML = '<span style="color:#c00;font-size:13px;">渲染失败：'
+                p.innerHTML = '<span style="color:#c00;font-size:13px;">' + i18n('mermaid.renderFail')
                     + _escapeText(err && err.message || String(err)) + '</span>';
             });
         },
@@ -2512,12 +2641,12 @@ window.editorApi = {
             titleBar.className = 'math-editor-titlebar';
             var tag = document.createElement('span');
             tag.className = 'math-editor-type-tag';
-            tag.textContent = '编辑超链接';
+            _setI18n(tag, 'link.editTitle');
             titleBar.appendChild(tag);
             var closeBtn = document.createElement('button');
             closeBtn.className = 'math-editor-close-btn';
             closeBtn.textContent = '×';
-            closeBtn.title = '关闭';
+            _setI18nTitle(closeBtn, 'common.close');
             closeBtn.addEventListener('click', function(e) { e.stopPropagation(); self.close(); });
             titleBar.appendChild(closeBtn);
             this.popover.appendChild(titleBar);
@@ -2525,7 +2654,7 @@ window.editorApi = {
             // 链接文字（可编辑）
             var textLabel = document.createElement('div');
             textLabel.className = 'math-editor-label';
-            textLabel.textContent = '链接文字';
+            _setI18n(textLabel, 'link.text');
             this.popover.appendChild(textLabel);
             this.textInput = document.createElement('input');
             this.textInput.type = 'text';
@@ -2536,7 +2665,7 @@ window.editorApi = {
             // URL 输入
             var urlLabel = document.createElement('div');
             urlLabel.className = 'math-editor-label';
-            urlLabel.textContent = '链接地址';
+            _setI18n(urlLabel, 'link.url');
             this.popover.appendChild(urlLabel);
             this.urlInput = document.createElement('input');
             this.urlInput.type = 'url';
@@ -2552,7 +2681,7 @@ window.editorApi = {
             if (!this._isNew) {
                 this.removeBtn = document.createElement('button');
                 this.removeBtn.className = 'link-editor-remove-btn';
-                this.removeBtn.textContent = '删除链接';
+                _setI18n(this.removeBtn, 'link.remove');
                 this.removeBtn.addEventListener('click', function() { self.removeLink(); });
                 actions.appendChild(this.removeBtn);
             }
@@ -2560,12 +2689,12 @@ window.editorApi = {
             spacer.style.flex = '1';
             actions.appendChild(spacer);
             this.cancelBtn = document.createElement('button');
-            this.cancelBtn.textContent = '取消';
+            _setI18n(this.cancelBtn, 'common.cancel');
             this.cancelBtn.addEventListener('click', function() { self.close(); });
             actions.appendChild(this.cancelBtn);
             this.okBtn = document.createElement('button');
             this.okBtn.className = 'primary';
-            this.okBtn.textContent = '确定';
+            _setI18n(this.okBtn, 'common.ok');
             this.okBtn.addEventListener('click', function() { self.confirm(); });
             actions.appendChild(this.okBtn);
             this.popover.appendChild(actions);
@@ -2723,7 +2852,7 @@ window.editorApi = {
             this.searchInput = document.createElement('input');
             this.searchInput.type = 'text';
             this.searchInput.className = 'code-lang-picker-search';
-            this.searchInput.placeholder = '搜索语言...';
+            this.searchInput.placeholder = i18n('codeLang.search');
             this.searchInput.addEventListener('input', function(){
                 self.render(this.value.trim().toLowerCase());
             });
@@ -2750,10 +2879,10 @@ window.editorApi = {
             if (!this.list) return;
             this.list.innerHTML = '';
             var langs = window.lowlight ? window.lowlight.listLanguages() : [];
-            var options = [{ value: null, label: '自动检测' }];
+            var options = [{ value: null, label: i18n('codeLang.auto') }];
             // 若当前语言不在列表中（如用户输入的别名），追加到选项前
             if (this._current && langs.indexOf(this._current) < 0) {
-                options.push({ value: this._current, label: this._current + ' (当前)' });
+                options.push({ value: this._current, label: this._current + i18n('codeLang.current') });
             }
             var f = filter || '';
             langs.sort();
@@ -2863,7 +2992,7 @@ window.editorApi = {
             this.searchInput = document.createElement('input');
             this.searchInput.type = 'text';
             this.searchInput.className = 'emoji-picker-search';
-            this.searchInput.placeholder = '搜索表情（如 笑 / heart / +1）';
+            this.searchInput.placeholder = i18n('emoji.search');
             this.searchInput.addEventListener('input', function(){
                 self._filter = this.value.trim().toLowerCase();
                 self._curCat = self._filter ? '' : (self._curCat || EMOJI_CATEGORIES[0].id);
@@ -2876,7 +3005,7 @@ window.editorApi = {
             closeBtn.className = 'emoji-picker-close';
             closeBtn.type = 'button';
             closeBtn.textContent = '×';
-            closeBtn.title = '关闭';
+            _setI18nTitle(closeBtn, 'common.close');
             closeBtn.addEventListener('click', function(e){ e.stopPropagation(); self.close(); });
             searchRow.appendChild(closeBtn);
             this.root.appendChild(searchRow);
@@ -2886,7 +3015,7 @@ window.editorApi = {
             this.freqSection.className = 'emoji-freq';
             var freqLabel = document.createElement('div');
             freqLabel.className = 'emoji-freq-label';
-            freqLabel.textContent = '常用表情符号';
+            _setI18n(freqLabel, 'emoji.freq');
             this.freqSection.appendChild(freqLabel);
             this.freqGrid = document.createElement('div');
             this.freqGrid.className = 'emoji-freq-grid';
@@ -2940,7 +3069,7 @@ window.editorApi = {
             if (!list.length) {
                 var empty = document.createElement('div');
                 empty.className = 'emoji-empty';
-                empty.textContent = '无匹配表情';
+                _setI18n(empty, 'emoji.empty');
                 this.grid.appendChild(empty);
             }
             this._renderFreq();
