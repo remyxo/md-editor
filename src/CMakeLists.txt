@@ -11,6 +11,7 @@ set(SOURCES
     core/MarkdownHandler.cpp
     core/PdfExporter.cpp
     core/DocxExporter.cpp
+    core/miniz/miniz.c
     core/MermaidRenderer.cpp
     core/MathMlRenderer.cpp
     core/MathMlConverter.cpp
@@ -71,7 +72,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     Qt6::WebEngineWidgets
     Qt6::WebChannel
-    Qt6::DBus
 )
 
 # 编译翻译资源并打入 qrc：生成 :/i18n/md-editor_en_US.qm

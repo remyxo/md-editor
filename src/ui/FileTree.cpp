@@ -1,6 +1,6 @@
 #include "FileTree.h"
 #include <QMenu>
-#include <QProcess>
+#include <QDesktopServices>
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QDialogButtonBox>
@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <QUrl>
 #include <QLineEdit>
 
 FileTree::FileTree(QWidget *parent)
@@ -130,7 +131,7 @@ void FileTree::showContextMenu(const QPoint &pos)
             QFileInfo fi = m_model->fileInfo(index);
             path = fi.isDir() ? fi.absoluteFilePath() : fi.absolutePath();
         }
-        QProcess::startDetached("xdg-open", {path});
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
     }
 }
 

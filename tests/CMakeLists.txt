@@ -27,7 +27,7 @@ target_include_directories(test_htmlexporter PRIVATE ../src)
 target_link_libraries(test_htmlexporter PRIVATE Qt6::Test)
 add_test(NAME test_htmlexporter COMMAND test_htmlexporter)
 
-add_executable(test_docxexporter test_docxexporter.cpp ../src/core/DocxExporter.cpp ../src/core/MermaidRenderer.cpp ../src/core/MathMlRenderer.cpp ../src/core/MathMlConverter.cpp)
+add_executable(test_docxexporter test_docxexporter.cpp ../src/core/DocxExporter.cpp ../src/core/miniz/miniz.c ../src/core/MermaidRenderer.cpp ../src/core/MathMlRenderer.cpp ../src/core/MathMlConverter.cpp)
 target_include_directories(test_docxexporter PRIVATE ../src)
 # DocxExporter.cpp 用到 QImageReader（QtGui），必须链接 Qt6::Gui；
 # MermaidRenderer.cpp/MathMlRenderer.cpp 用 QWebEngine，须链接 WebEngineWidgets。
@@ -46,7 +46,7 @@ add_test(NAME test_pdfexporter COMMAND test_pdfexporter)
 add_executable(test_systemthemewatcher test_systemthemewatcher.cpp
     ../src/app/SystemThemeWatcher.cpp)
 target_include_directories(test_systemthemewatcher PRIVATE ../src)
-target_link_libraries(test_systemthemewatcher PRIVATE Qt6::Test Qt6::DBus)
+target_link_libraries(test_systemthemewatcher PRIVATE Qt6::Test Qt6::Gui)
 add_test(NAME test_systemthemewatcher COMMAND test_systemthemewatcher)
 
 add_executable(test_languagemanager test_languagemanager.cpp

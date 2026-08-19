@@ -1,6 +1,9 @@
 #include "DocxExporter.h"
 #include "MathMlConverter.h"
+#include "miniz/miniz.h"
+
 #include <QBuffer>
+#include <cstring>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -9,11 +12,9 @@
 #include <QMimeDatabase>
 #include <QPageLayout>
 #include <QPageSize>
-#include <QProcess>
 #include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
-#include <QTemporaryDir>
 #include <QXmlStreamReader>
 
 // 前向声明：实现位于文件后半部（mermaidBlockRe 附近），onMermaidRendered 先于它被定义
@@ -1281,92 +1282,66 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
     }
     contentTypes += QByteArrayLiteral("</Types>\n");
 
-    // 4. 写入临时目录
-    QTemporaryDir tmpDir;
-    if (!tmpDir.isValid()) {
-        qDebug() << "[DocxExport] Cannot create temp dir";
-        return false;
-    }
-    const QString base = tmpDir.path();
-
-    auto writeFile = [](const QString &path, const QByteArray &data) -> bool {
-        QFile f(path);
-        if (!f.open(QIODevice::WriteOnly)) {
-            qDebug() << "[DocxExport] Cannot write:" << path;
-            return false;
-        }
-        f.write(data);
-        f.close();
-        return true;
-    };
-
-    // mimetype
-    if (!writeFile(base + "/mimetype",
-        QByteArrayLiteral("application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml")))
-        return false;
-
-    // [Content_Types].xml
-    if (!writeFile(base + "/[Content_Types].xml", contentTypes)) return false;
-
-    // _rels/.rels
-    QDir().mkpath(base + "/_rels");
-    if (!writeFile(base + "/_rels/.rels",
-        QByteArrayLiteral(
+    // 4. ZIP 打包（miniz：跨平台、无外部 zip 依赖；部件均已在内存，先写堆内存再经
+    //    QFile 落盘，规避 Windows 下 fopen 对非 ASCII 路径的处理问题）
+    const QByteArray mimetype = QByteArrayLiteral(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    const QByteArray rootRels = QByteArrayLiteral(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
         "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n"
         "  <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>\n"
-        "</Relationships>\n")))
-        return false;
+        "</Relationships>\n");
 
-    // word/_rels/document.xml.rels
-    QDir().mkpath(base + "/word/_rels");
-    if (!writeFile(base + "/word/_rels/document.xml.rels", docRelsXml)) return false;
-
-    // word/document.xml
-    QDir().mkpath(base + "/word");
-    if (!writeFile(base + "/word/document.xml", docXml)) return false;
-
-    // word/styles.xml
-    if (!writeFile(base + "/word/styles.xml", stylesXml)) return false;
-
-    // word/numbering.xml（仅当有列表时）
-    if (state.hasBulletList || state.hasDecimalList) {
-        if (!writeFile(base + "/word/numbering.xml", numberingXml)) return false;
-    }
-
-    // word/media/ 部件（图片二进制）——relationship Target 为 media/xxx，须落在 word/media/ 下
-    if (!state.media.isEmpty()) {
-        QDir().mkpath(base + "/word/media");
-        for (const auto &mp : state.media) {
-            if (!writeFile(base + "/word/media/" + mp.fileName, mp.bytes)) return false;
-        }
-    }
-
-    // 5. ZIP 打包
     QFile::remove(outputPath);
 
-    QProcess zip1;
-    zip1.setWorkingDirectory(base);
-    zip1.start("zip", QStringList() << "-0" << outputPath << "mimetype");
-    if (!zip1.waitForFinished(10000)) {
-        qDebug() << "[DocxExport] zip step 1 timeout";
-        return false;
-    }
-    if (zip1.exitCode() != 0) {
-        qDebug() << "[DocxExport] zip step 1 failed:" << zip1.readAllStandardError();
+    mz_zip_archive zip;
+    std::memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_writer_init_heap(&zip, 0, 0)) {
+        qDebug() << "[DocxExport] miniz 初始化内存归档失败";
         return false;
     }
 
-    QProcess zip2;
-    zip2.setWorkingDirectory(base);
-    zip2.start("zip", QStringList() << "-r" << outputPath
-               << "[Content_Types].xml" << "_rels" << "word");
-    if (!zip2.waitForFinished(15000)) {
-        qDebug() << "[DocxExport] zip step 2 timeout";
-        return false;
+    bool ok = true;
+    auto add = [&zip, &ok](const char *name, const QByteArray &data, mz_uint level) {
+        if (!ok) return;
+        if (!mz_zip_writer_add_mem(&zip, name, data.constData(),
+                                   static_cast<size_t>(data.size()), level)) {
+            qDebug() << "[DocxExport] miniz 写入条目失败:" << name;
+            ok = false;
+        }
+    };
+
+    // OPC 规范：mimetype 必须为首条目且 STORE（不压缩），其余按需 deflate
+    add("mimetype", mimetype, MZ_NO_COMPRESSION);
+    add("[Content_Types].xml", contentTypes, MZ_BEST_COMPRESSION);
+    add("_rels/.rels", rootRels, MZ_BEST_COMPRESSION);
+    add("word/_rels/document.xml.rels", docRelsXml, MZ_BEST_COMPRESSION);
+    add("word/document.xml", docXml, MZ_BEST_COMPRESSION);
+    add("word/styles.xml", stylesXml, MZ_BEST_COMPRESSION);
+    if (state.hasBulletList || state.hasDecimalList)
+        add("word/numbering.xml", numberingXml, MZ_BEST_COMPRESSION);
+    for (const auto &mp : state.media) {
+        const QByteArray name = "word/media/" + mp.fileName.toUtf8();
+        add(name.constData(), mp.bytes, MZ_BEST_COMPRESSION);
     }
-    if (zip2.exitCode() != 0) {
-        qDebug() << "[DocxExport] zip step 2 failed:" << zip2.readAllStandardError();
+
+    void *buf = nullptr;
+    size_t size = 0;
+    const bool finalized = ok && mz_zip_writer_finalize_heap_archive(&zip, &buf, &size);
+
+    bool written = false;
+    if (finalized) {
+        QFile outFile(outputPath);
+        written = outFile.open(QIODevice::WriteOnly)
+            && outFile.write(static_cast<const char *>(buf), static_cast<qint64>(size)) == static_cast<qint64>(size);
+        outFile.close();
+    }
+
+    mz_free(buf);   // NULL 安全
+    mz_zip_writer_end(&zip);
+
+    if (!finalized || !written) {
+        qDebug() << "[DocxExport] miniz 归档或写文件失败";
         return false;
     }
 

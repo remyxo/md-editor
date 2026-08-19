@@ -2,6 +2,16 @@
 #include <QRegularExpression>
 #include "../src/core/MarkdownHandler.h"
 
+// 构造含空格、长度远超 80 列的测试文本。QTextDocument::toMarkdown() 硬编码
+// 80 列换行，只有含空格（词边界）的文本才会触发折行——纯中文无空格不会折。
+static QString longSpacedText(int words)
+{
+    QString s;
+    for (int i = 1; i <= words; ++i)
+        s += QStringLiteral("单词%1 ").arg(i);
+    return s;
+}
+
 class TestMarkdownHandler : public QObject {
     Q_OBJECT
 private slots:
@@ -1955,6 +1965,95 @@ private slots:
         int pyPos = html.indexOf("class=\"language-python\"");
         QVERIFY2(cppPos >= 0 && pyPos >= 0 && cppPos != pyPos,
                  qPrintable("两个代码块应分别输出，实际: " + html));
+    }
+
+    // ===== 80 列自动换行回归：长段落/列表项/引用块不应被折行拆分 =====
+    // 根因：QTextDocument::toMarkdown() 硬编码 ColumnLimit = 80（无公开 API 关闭），
+    // 把含空格的长段落/列表项/引用块在词边界折成多行，破坏往返保真（列表项被拆成
+    // 多块、段落被拆成多行）。修复：fromHtml 在 toMarkdown 之后做反换行后处理。
+
+    void testLongParagraphNotWrapped()
+    {
+        const QString md1 = longSpacedText(30);   // 含空格、远超 80 列
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QVERIFY2(!md2.contains('\n'),
+                 qPrintable("长段落不应被折成多行，实际: " + md2));
+        QVERIFY2(md2.trimmed() == md1.trimmed(),
+                 qPrintable("长段落往返文本应一致，实际: " + md2));
+    }
+
+    void testLongOrderedListNotWrapped()
+    {
+        const QString md1 = QStringLiteral("1. ") + longSpacedText(30) + QStringLiteral("\n");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QVERIFY2(!md2.contains('\n'),
+                 qPrintable("长有序列表项不应被折成多行，实际: " + md2));
+        QVERIFY2(md2.contains("1. ") && md2.contains("单词30"),
+                 qPrintable("有序列表项内容应保留，实际: " + md2));
+    }
+
+    void testLongUnorderedListNotWrapped()
+    {
+        const QString md1 = QStringLiteral("- ") + longSpacedText(30) + QStringLiteral("\n");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QVERIFY2(!md2.contains('\n'),
+                 qPrintable("长无序列表项不应被折成多行，实际: " + md2));
+        QVERIFY2(md2.contains("- ") && md2.contains("单词30"),
+                 qPrintable("无序列表项内容应保留，实际: " + md2));
+    }
+
+    void testLongBlockquoteNotWrapped()
+    {
+        const QString md1 = QStringLiteral("> ") + longSpacedText(30) + QStringLiteral("\n");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QVERIFY2(!md2.contains('\n'),
+                 qPrintable("长引用块不应被折成多行，实际: " + md2));
+        QVERIFY2(md2.contains("> ") && md2.contains("单词30"),
+                 qPrintable("引用块内容应保留，实际: " + md2));
+    }
+
+    void testLongListMultipleItemsNotSplit()
+    {
+        // 用户报告：3 条长有序列表项往返后被拆成 4 条。修复后仍为 3 条单行项。
+        const QString md1 =
+            QStringLiteral("1. ") + longSpacedText(20) + QStringLiteral("\n")
+            + QStringLiteral("2. ") + longSpacedText(20) + QStringLiteral("\n")
+            + QStringLiteral("3. ") + longSpacedText(20) + QStringLiteral("\n");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        // 只应有 2 个换行（3 条列表项之间的两个分隔），无折行续行
+        QVERIFY2(md2.count('\n') == 2,
+                 qPrintable("3 条列表项应只有 2 个换行，实际: " + md2));
+        QVERIFY2(md2.contains("1. ") && md2.contains("2. ") && md2.contains("3. "),
+                 qPrintable("3 条列表项序号应保留，实际: " + md2));
+    }
+
+    void testSoftBreakInListRoundTrip()
+    {
+        // Shift+Enter 在列表项内产生的 <br data-brk> 应保留为项内续行（缩进）
+        const QString html =
+            QStringLiteral("<ol><li>第一行内容<br data-brk=\"true\">第二行内容</li>"
+                           "<li>第三行内容</li></ol>");
+        const QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains("第一行内容") && md.contains("第二行内容"),
+                 qPrintable("软换行两侧内容应保留，实际: " + md));
+        // 续行应以缩进保持在同一列表项内，且列表仍为 2 条
+        QVERIFY2(md.contains("\n    "),
+                 qPrintable("列表项内软换行应带 4 空格续行缩进，实际: " + md));
+        QVERIFY2(!md.contains("ZZBK"),
+                 qPrintable("不应残留 ZZBK 占位符，实际: " + md));
+    }
+
+    void testSoftBreakInParagraphRoundTrip()
+    {
+        // 段落内软换行（两行正文，toHtml 的 BRMARKER 路径）应保留为两行，不折行
+        const QString md1 = QStringLiteral("第一行正文内容\n第二行正文内容\n");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QVERIFY2(md2.contains("第一行正文内容") && md2.contains("第二行正文内容"),
+                 qPrintable("段落软换行两侧内容应保留，实际: " + md2));
+        QVERIFY2(md2.count('\n') == 1,
+                 qPrintable("两行段落应恰好一个软换行，实际: " + md2));
+        QVERIFY2(!md2.contains("ZZBK"),
+                 qPrintable("不应残留 ZZBK 占位符，实际: " + md2));
     }
 };
 

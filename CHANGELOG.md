@@ -2,6 +2,15 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.10.2] — 2026-08-19
+
+### 变更
+- **移除 Linux 专属依赖，迈向 Windows/macOS 跨平台** — 主题跟随系统由 QDBus/xdg-desktop-portal 改为 `QStyleHints::colorScheme`（Qt 6.5+，跨平台），删除 `Qt6::DBus` 依赖；DOCX 导出由调用外部 `zip` 命令改为内置 miniz 3.0.2 单文件库（堆内存归档，去除系统 `zip` 依赖）；文件管理器打开文件由 `xdg-open` 改为 `QDesktopServices::openUrl`
+
+### 修复
+- **DOCX mimetype 条目内容修正** — OPC 首条目 `mimetype` 的内容由带 `.main+xml` 后缀的错误值修正为 `application/vnd.openxmlformats-officedocument.wordprocessingml.document`（STORE 不压缩）
+- **长列表项/段落被 80 列自动换行拆散（往返保真）** — Qt `QTextDocument::toMarkdown()` 硬编码 80 列换行，把含空格的长段落/列表项/引用块在词边界折成多行，导致有序列表项被拆成多条、段落被拆成多行（再次加载时被提升为 `<br>`）。`fromHtml()` 新增反换行后处理：先以占位符保护 `<br data-brk>` 软换行，再逐行拼回折行，仅保留真实块边界
+
 ## [0.10.1] — 2026-08-18
 
 ### 修复

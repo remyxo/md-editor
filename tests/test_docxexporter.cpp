@@ -430,6 +430,42 @@ private slots:
         if (oldMl.isValid()) s.setValue("export/marginLeft", oldMl); else s.remove("export/marginLeft");
         if (oldMr.isValid()) s.setValue("export/marginRight", oldMr); else s.remove("export/marginRight");
     }
+
+    void testZipStructureOpacCompliant() {
+        // 回归：DOCX 必须符合 OPC 规范——mimetype 是 zip 首条目且 STORE（不压缩），
+        // 否则 Word/WPS 可能拒绝打开。直接校验原始字节，不依赖外部 zip/unzip。
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx("<p>结构校验</p>", dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QFile f(out);
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        const QByteArray raw = f.readAll();
+
+        // 本地文件头签名 "PK\x03\x04"
+        QVERIFY2(raw.startsWith("PK\x03\x04"), qPrintable(raw.left(8).toHex()));
+        QVERIFY2(raw.size() >= 30, "zip 文件过小");
+        // 首条目压缩方法字段（offset 8，2 字节小端）== 0（STORE）
+        const quint16 method = static_cast<quint8>(raw[8]) | (static_cast<quint8>(raw[9]) << 8);
+        QCOMPARE(method, quint16(0));
+        // 首条目文件名 == "mimetype"（文件名长度 offset 26-27；文件名起始 offset 30）
+        const quint16 nameLen = static_cast<quint8>(raw[26]) | (static_cast<quint8>(raw[27]) << 8);
+        QCOMPARE(nameLen, quint16(8));
+        QCOMPARE(QString::fromLatin1(raw.mid(30, 8)), QString("mimetype"));
+
+        // 首条目 STORE 未压缩：mimetype 内容紧跟文件名，应恰为标准 OPC mimetype
+        // （回归：曾误写 .main+xml 后缀）。miniz 用 data descriptor，local header 尺寸为 0，
+        // 故不读 offset 22-25，改从固定位置取内容，并用紧随其后的 PK\x07\x08 签名确认内容恰好在此结束。
+        const quint16 extraLen = static_cast<quint8>(raw[28]) | (static_cast<quint8>(raw[29]) << 8);
+        const int dataStart = 30 + nameLen + extraLen;
+        const QByteArray expected = QByteArrayLiteral(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        QCOMPARE(QString::fromLatin1(raw.mid(dataStart, expected.size())), QString(expected));
+        QVERIFY2(raw.mid(dataStart + expected.size(), 4) == "PK\x07\x08",
+                 "mimetype 内容长度异常（可能残留 .main+xml 后缀）");
+    }
 };
 
 QTEST_APPLESS_MAIN(TestDocxExporter)
