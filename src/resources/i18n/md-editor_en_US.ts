@@ -418,8 +418,8 @@ Save before closing?</translation>
         <translation>Table...</translation>
     </message>
     <message>
-        <source>插入公式(&amp;M)</source>
-        <translation>Insert &amp;Formula</translation>
+        <source>公式(&amp;M)</source>
+        <translation>&amp;Formula</translation>
     </message>
     <message>
         <source>行内代码</source>

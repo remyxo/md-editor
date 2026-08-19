@@ -33,6 +33,7 @@
 #include <QWebEnginePage>
 #include <QTextStream>
 #include <QSettings>
+#include <QDebug>
 #include <QShortcut>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -809,6 +810,7 @@ void MainWindow::retranslateUi()
 
 void MainWindow::onLanguageSwitch(const QString &lang)
 {
+    qWarning() << "[Language] 设置对话框确定 lang=" << lang;
     Application::instance()->languageManager()->switchLanguage(lang);  // 装/卸 translator + 持久化 + 发信号
     retranslateUi();
     for (int i = 0; i < m_tabWidget->count(); ++i) {

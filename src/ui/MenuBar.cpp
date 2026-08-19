@@ -137,7 +137,7 @@ void MenuBar::setupUi()
     m_tableAct = m_insertMenu->addAction(tr("表格..."));
     connect(m_tableAct, &QAction::triggered, this, &MenuBar::insertTable);
 
-    m_mathAct = m_insertMenu->addAction(tr("插入公式(&M)"));
+    m_mathAct = m_insertMenu->addAction(tr("公式(&M)"));
     m_mathAct->setShortcut(QKeySequence("Ctrl+M"));
     connect(m_mathAct, &QAction::triggered, this, &MenuBar::insertMath);
 
@@ -218,7 +218,7 @@ void MenuBar::retranslateUi()
     m_linkAct->setText(tr("链接..."));
     m_imageAct->setText(tr("图片..."));
     m_tableAct->setText(tr("表格..."));
-    m_mathAct->setText(tr("插入公式(&M)"));
+    m_mathAct->setText(tr("公式(&M)"));
     m_codeAct->setText(tr("行内代码"));
     m_codeBlockAct->setText(tr("代码块"));
     m_hrAct->setText(tr("分割线"));
