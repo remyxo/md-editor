@@ -26,6 +26,42 @@
 
 **修复**：占位符还原**之前**，凡备份含 `\n` 的占位符强制独占一行——正则检测前后是否有同行内容，有则插入空行。
 
+## 块引用内代码围栏（`> ```）
+
+块引用内代码块（`> ``` `）是另一组往返坑，涉及 BRMARKER、块引用重构与空行边界三处叠加。
+
+### 坑 A：BRMARKER 破坏围栏（解析层）
+
+**症状**：`> 前\n> ```\n> int x;\n> ```\n> 后` 中，`> ``` ` 被 `isParagraphLine` 判为正文行，软换行标记注入围栏内，`setMarkdown` 把 `<pre>` 拆成多段、代码内容与语言全部丢失。
+
+**修复**：新增 `blockquoteCodeFenceLen()`（识别单层 `> ``` ` / `> ~~~` 并返回围栏长度），`isParagraphLine` 对其返回非正文；行循环里把块引用代码块整体收集（`stripBlockquotePrefix()` 剥离 `>` 前缀），用 `ZZBQ<n>ZZ` 占位符保护并**保留语言信息串**（`setMarkdown` 不保留代码语言，须像顶层代码块一样手动收集）。
+
+### 坑 B：`<p` 误匹配 `<pre`（块引用重构层）
+
+**症状**：块引用后处理正则 `R"(<p(...margin-left:40px...)...)"` 中 `<p` 是 `<pre` 的前缀，把 `<pre>…</pre>` 与其后的 `<p>…</p>` 吞成一个块，代码块被拆碎。
+
+**修复**：正则改为 `<(p|pre)\b`（`\b` 阻止 `<p` 匹配 `<pre` 开头）。块引用重构改为**状态机**——把连续的 `margin-left:40px` 块分组，**含 `<pre>` 的整段合并为一个 `<blockquote>`**，纯 `<p>` 序列每个独立成块（保持 `> a\n\n> b` 两个独立引用的往返）。
+
+### 坑 C：空行边界被 `setMarkdown` 折叠（边界层）
+
+**症状**：`> 前\n> ```\n> code\n> ```\n\n> 后`（代码块后空行再接块引用）与「同一块引用内多段」产出**完全相同**的扁平 `margin-left:40px` 块，空行信息丢失，后处理把 `> 后` 误并入前一块引用。
+
+**修复**：块引用代码块闭合时若下一行是空行，发出 `ZZBQSEP` 边界标记（顶层段落形态，透传穿过 `setMarkdown`）；它在块引用重构时打破「连续 margin-left 块」合并，随后在后处理移除（相邻 `<blockquote>` 由 `toMarkdown` 自动补空行）。
+
+### 往返形态说明
+
+块引用代码块往返后，代码内容行规范化为 **lazy 形式**（不带 `>` 前缀）：
+
+```
+> 前
+> ```
+int x;
+```
+> 后
+```
+
+这是 Qt `toMarkdown` 的固有输出，语义等价（CommonMark 中围栏内代码内容无需 `>` 前缀）。
+
 ## 通用范式
 
 ```
@@ -39,4 +75,4 @@ MD ──toHtml──► HTML ──TipTap parseHTML──► PM doc ──getHT
 
 ## 相关测试
 
-`tests/test_markdownhandler.cpp`：`testNestedFenceCodeBlock`、`testNestedFenceRoundTrip`、`testCodeBlockAdjacentBlockMathRoundTrip`、`testAdjacentCodeBlocksNotMerged`。
+`tests/test_markdownhandler.cpp`：`testNestedFenceCodeBlock`、`testNestedFenceRoundTrip`、`testCodeBlockAdjacentBlockMathRoundTrip`、`testAdjacentCodeBlocksNotMerged`、`testBlockquoteCodeFenceRoundTrip`。

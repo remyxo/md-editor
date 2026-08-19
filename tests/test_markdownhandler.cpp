@@ -1683,6 +1683,153 @@ private slots:
                  qPrintable("多行引用不应合并为一行，md=[" + md2 + "]"));
     }
 
+    void testBlockquoteInterruptParagraphNoSoftBreak()
+    {
+        // 段落紧跟块引用（无空行）：块引用打断段落是块边界，非软换行，
+        // 不应插入 <br data-brk>（否则往返多一个空行）。
+        QString md1 = QStringLiteral("正文\n> 引用\n");
+        QString html = MarkdownHandler::toHtml(md1);
+        int bsi = html.indexOf("<body");
+        int bei = html.indexOf("</body>");
+        bsi = html.indexOf('>', bsi) + 1;
+        QString body = html.mid(bsi, bei - bsi).trimmed();
+        QVERIFY2(!body.contains("<br data-brk>"),
+                 qPrintable("段落到块引用不应插入软换行，body=[" + body + "]"));
+        QString md2 = MarkdownHandler::fromHtml(body);
+        QVERIFY2(md2 == QStringLiteral("正文\n\n> 引用"),
+                 qPrintable("段落到块引用应精确往返（无多余空行/软换行），实际: [" + md2 + "]"));
+    }
+
+    void testBlockquoteLazyContinuationKeepsSoftBreak()
+    {
+        // 反向：块引用行后紧跟普通行（lazy continuation）仍属同一段落，
+        // 软换行应保留（规范化为显式 > 前缀，内容与换行不丢失）。
+        QString md1 = QStringLiteral("> 引用\n正文\n");
+        QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QVERIFY2(md2 == QStringLiteral("> 引用\n> 正文"),
+                 qPrintable("块引用 lazy continuation 应保留软换行，实际: [" + md2 + "]"));
+    }
+
+    void testBlockquoteCodeFenceRoundTrip()
+    {
+        // 块引用内代码围栏：此前 BRMARKER 会破坏围栏解析，把 <pre> 拆成多段并
+        // 注入 <br data-brk>，代码内容与语言信息串全部丢失。修复后代码内容、
+        // 语言信息串均保留，块引用结构完整。代码内容行规范化为 lazy 形式
+        // （不带 > 前缀，语义等价，Qt toMarkdown 的固有输出）。
+        struct { const char *in; const char *expect; } cases[] = {
+            {"> 前\n> ```\n> int x;\n> ```\n> 后\n", "> 前\n> ```\nint x;\n```\n> 后"},
+            {"> ```cpp\n> int x;\n> ```\n", "> ```cpp\nint x;\n```"},
+            {"> 前\n> ```\n> line1\n> line2\n> ```\n> 后\n", "> 前\n> ```\nline1\nline2\n```\n> 后"},
+            {"> ```\n> int x;\n> ```\n", "> ```\nint x;\n```"},
+            // 代码块后空行分隔的第二个块引用/正文：空行必须保留，不得合并进同一块引用
+            {"> 前\n> ```\n> code\n> ```\n\n> 后\n", "> 前\n> ```\ncode\n```\n\n> 后"},
+            {"> ```\n> code\n> ```\n\n正文\n", "> ```\ncode\n```\n\n正文"},
+        };
+        for (const auto &c : cases) {
+            QString md1 = QString::fromUtf8(c.in);
+            QString html = MarkdownHandler::toHtml(md1);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            // 代码块不应被注入软换行（BRMARKER 破坏围栏的典型症状）
+            QVERIFY2(!body.contains("<br data-brk>"),
+                     qPrintable(QString("块引用代码块不应含软换行，输入[%1] body[%2]")
+                                    .arg(c.in, body)));
+            // 代码块应整体包裹在 <blockquote> 内
+            QVERIFY2(body.contains("<blockquote>") && body.contains("<pre"),
+                     qPrintable(QString("块引用代码块应含 <blockquote><pre>，输入[%1] body[%2]")
+                                    .arg(c.in, body)));
+            QString md2 = MarkdownHandler::fromHtml(body);
+            QVERIFY2(md2 == QString::fromUtf8(c.expect),
+                     qPrintable(QString("块引用代码块应精确往返，输入[%1] 实际[%2]")
+                                    .arg(c.in, md2)));
+        }
+    }
+
+    void testHorizontalRuleRoundTrip()
+    {
+        // 连字符水平线 --- 往返：Qt setMarkdown 会把连续 --- 折叠为一个 <hr>，
+        // 且 ---\n\n正文\n\n--- 会被灾难性误解析（正文与水平线一并丢失），
+        // toHtml 需占位保护。以下各场景均应精确往返。
+        struct { const char *in; const char *expect; } cases[] = {
+            {"---\n", "---"},
+            {"正文\n\n---\n", "正文\n\n---"},
+            {"---\n\n正文\n", "---\n\n正文"},
+            {"---\n\n---\n\n---\n", "---\n\n---\n\n---"},
+            {"---\n\n正文\n\n---\n", "---\n\n正文\n\n---"},
+        };
+        for (const auto &c : cases) {
+            QString md1 = QString::fromUtf8(c.in);
+            QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+            QVERIFY2(md2 == QString::fromUtf8(c.expect),
+                     qPrintable(QString("水平线往返应精确，输入[%1] 实际[%2]")
+                                    .arg(c.in, md2)));
+        }
+    }
+
+    void testSetextHeadingNotTreatedAsHr()
+    {
+        // 正文\n---（无空行）是 setext 二级标题，非水平线，不应被占位保护。
+        // 正文\n=== 是 setext 一级标题，此前被误判为正文行，在标题与下划线之间
+        // 插入幽灵 <br data-brk>。二者往返均应规范化为 ATX 形式，且无幽灵软换行。
+        struct { const char *in; const char *expect; } cases[] = {
+            {"标题\n---\n", "## 标题"},
+            {"标题\n===\n", "# 标题"},
+        };
+        for (const auto &c : cases) {
+            QString md1 = QString::fromUtf8(c.in);
+            QString body = MarkdownHandler::toHtml(md1);
+            int bsi = body.indexOf("<body");
+            int bei = body.indexOf("</body>");
+            bsi = body.indexOf('>', bsi) + 1;
+            body = body.mid(bsi, bei - bsi).trimmed();
+            QVERIFY2(!body.contains("<br data-brk>"),
+                     qPrintable(QString("setext 标题不应含幽灵软换行，输入[%1] body[%2]")
+                                    .arg(c.in, body)));
+            QString md2 = MarkdownHandler::fromHtml(body);
+            QVERIFY2(md2 == QString::fromUtf8(c.expect),
+                     qPrintable(QString("setext 标题应规范化，输入[%1] 实际[%2]")
+                                    .arg(c.in, md2)));
+        }
+    }
+
+    void testTableSeparatorRoundTrip()
+    {
+        // Qt toMarkdown 把表格分隔行输出为单连字符（|-|-|），此前归一化正则
+        // 只匹配 3+ 连字符，导致分隔行被误判为数据行、--- 缩成 -。
+        struct { const char *in; const char *expect; } cases[] = {
+            {"| a | b |\n| --- | --- |\n| 1 | 2 |\n", "| a | b |\n| --- | --- |\n| 1 | 2 |"},
+        };
+        for (const auto &c : cases) {
+            QString md1 = QString::fromUtf8(c.in);
+            QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+            QVERIFY2(md2 == QString::fromUtf8(c.expect),
+                     qPrintable(QString("表格分隔行应精确往返（--- 不缩成 -），输入[%1] 实际[%2]")
+                                    .arg(c.in, md2)));
+        }
+    }
+
+    void testBlockPlaceholderNoTrailingSpace()
+    {
+        // 块级元素（块引用/代码块/块公式/任务列表）后跟段落：占位符作为裸文本
+        // 节点时 setHtml 会把块间换行折成行尾空格，往返后残留。占位符统一包裹
+        // <p> 后应消除该尾随空格。
+        struct { const char *in; const char *expect; } cases[] = {
+            {"> 引用\n\n正文\n", "> 引用\n\n正文"},
+            {"```cpp\nint x;\n```\n\n正文\n", "```cpp\nint x;\n```\n\n正文"},
+            {"$$\na=1\n$$\n\n正文\n", "$$\na=1\n$$\n\n正文"},
+            {"- [ ] 任务\n\n正文\n", "- [ ] 任务\n\n正文"},
+        };
+        for (const auto &c : cases) {
+            QString md1 = QString::fromUtf8(c.in);
+            QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+            QVERIFY2(md2 == QString::fromUtf8(c.expect),
+                     qPrintable(QString("块级元素后跟段落应精确往返（无行尾空格），输入[%1] 实际[%2]")
+                                    .arg(c.in, md2)));
+        }
+    }
+
     void testBrMixedWithSoftBreaks()
     {
         // 软换行（BRMARKER）+ 硬换行（<br>）混排，往返后 <br> 不应丢失
@@ -2054,6 +2201,18 @@ private slots:
                  qPrintable("两行段落应恰好一个软换行，实际: " + md2));
         QVERIFY2(!md2.contains("ZZBK"),
                  qPrintable("不应残留 ZZBK 占位符，实际: " + md2));
+        // 软换行行尾不得残留空格（BRMARKER 前置隔离空格未在替换时删除的缺陷）
+        QVERIFY2(md2 == QStringLiteral("第一行正文内容\n第二行正文内容"),
+                 qPrintable("软换行往返应精确相等（无行尾空格），实际: [" + md2 + "]"));
+    }
+
+    void testSoftBreakNoTrailingSpaceEnglish()
+    {
+        // 英文词边界的软换行：往返后行尾同样不得残留空格
+        const QString md1 = QStringLiteral("hello world\nnext line\n");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QVERIFY2(md2 == QStringLiteral("hello world\nnext line"),
+                 qPrintable("英文软换行往返应精确相等（无行尾空格），实际: [" + md2 + "]"));
     }
 };
 

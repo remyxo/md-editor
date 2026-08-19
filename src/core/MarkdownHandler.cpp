@@ -2,6 +2,7 @@
 #include <QTextDocument>
 #include <QRegularExpression>
 #include <QSet>
+#include <QVector>
 
 // 行是否仅为 <br> 等硬换行标签（含属性及自闭合写法）
 // 用于 BRMARKER 逻辑：<br> 本身即是换行，其前后 \n 不应再触发 BRMARKER
@@ -10,6 +11,39 @@ static bool isBrOnlyLine(const QString &line)
     static const QRegularExpression brRe(
         R"(^\s*<br\b[^>]*>\s*$)");
     return brRe.match(line).hasMatch();
+}
+
+// 块引用内代码围栏行（单层 > 前缀 + 代码围栏）：> ``` / > ~~~，可带语言信息串。
+// 返回围栏长度（>=3）；非块引用围栏行返回 0。
+// 用途：块引用内的代码围栏行及其内容不是正文，BRMARKER 逻辑不得在围栏内插入
+// 软换行——否则 Qt setMarkdown 的块引用+围栏组合解析会错乱，代码块被拆碎。
+static int blockquoteCodeFenceLen(const QString &line)
+{
+    int i = 0;
+    while (i < line.size() && line[i] == ' ') ++i;   // 前导空白
+    if (i >= line.size() || line[i] != '>') return 0;
+    ++i;
+    if (i < line.size() && line[i] == ' ') ++i;       // > 后的可选空格
+    if (i >= line.size()) return 0;
+    const QChar f = line[i];
+    if (f != '`' && f != '~') return 0;
+    int len = 0;
+    while (i < line.size() && line[i] == f) { ++len; ++i; }
+    return len >= 3 ? len : 0;
+}
+
+// 剥离块引用前缀（前导空白 + > + 可选空格），返回行剩余内容。
+// 非块引用行原样返回。用于收集块引用内代码块内容（移除 > 前缀）。
+static QString stripBlockquotePrefix(const QString &line)
+{
+    int i = 0;
+    while (i < line.size() && line[i] == ' ') ++i;
+    if (i < line.size() && line[i] == '>') {
+        ++i;
+        if (i < line.size() && line[i] == ' ') ++i;
+        return line.mid(i);
+    }
+    return line;
 }
 
 static bool isParagraphLine(const QString &line)
@@ -24,12 +58,31 @@ static bool isParagraphLine(const QString &line)
     }
     // 数学公式分隔符不是正文行（避免 BRMARKER 插入导致多余 <br>）
     if (trimmed.startsWith("$$")) return false;
+    // setext 一级标题下划线（整行仅由 3 个及以上等号组成）：非正文行，
+    // 避免 BRMARKER 在「标题」与「===」之间插入多余 <br>。
+    // ==text== 高亮含非等号内容，不满足整行等号，不受影响。
+    if (trimmed.length() >= 3
+        && trimmed.count(QLatin1Char('=')) == trimmed.length())
+        return false;
     // <br> 独占行仍算正文行——其后的 \n 仍需 BRMARKER 表达换行；
     // 但其前的 \n 由调用侧通过 isBrOnlyLine 抑制 BRMARKER
-    if (c == '>') return true;
+    if (c == '>') {
+        // 块引用代码围栏行（> ```）是块边界，非正文行，避免在其前插入软换行
+        if (blockquoteCodeFenceLen(line) > 0)
+            return false;
+        return true;
+    }
     return c != '#' && c != '-' && c != '|'
            && !(c >= '0' && c <= '9' && trimmed.length() > 1
                 && trimmed[1] == '.');
+}
+
+// 块引用行（> 前缀）。用于 BRMARKER 软换行判定：CommonMark 规定块引用可打断
+// 段落（块边界），但普通段落不能打断块引用（后者为 lazy continuation，仍属
+// 同一段落）。故仅「非块引用行紧跟块引用行」是块边界，不应插入软换行。
+static bool isBlockquoteLine(const QString &line)
+{
+    return line.trimmed().startsWith(QLatin1Char('>'));
 }
 
 // 图片独占行（![alt](src)，可带 title 与首尾空白）：视为块级图片行。
@@ -38,6 +91,16 @@ static bool isImageOnlyLine(const QString &line)
 {
     static const QRegularExpression re(
         R"(^\s*!\[[^\]]*\]\([^)\n]*\)\s*$)");
+    return re.match(line).hasMatch();
+}
+
+// 水平线行（仅 --- 连字符，3 个及以上，可带首尾空白）。仅保护连字符水平线：
+// Qt setMarkdown 对连续 --- 会折叠成一个 <hr>，且 ---\n\n正文\n\n--- 会被灾难
+// 性误解析（--- 兼具 setext 二级标题下划线歧义），导致正文与水平线一并丢失。
+// *** / ___ 无此歧义，Qt 处理正常，无需保护。
+static bool isDashHrLine(const QString &line)
+{
+    static const QRegularExpression re(R"(^\s*-{3,}\s*$)");
     return re.match(line).hasMatch();
 }
 
@@ -577,6 +640,10 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList lines = markdown.split('\n');
     QString processed;
     int codeFenceLen = 0; // 当前代码块开启围栏的反引号数（0 = 不在代码块）
+    int bqCodeFenceLen = 0; // 当前块引用内代码围栏长度（0 = 不在块引用代码块）
+    QString bqCodeFenceLang;    // 当前块引用代码块语言（围栏信息串）
+    QStringList bqCodeContent;  // 当前块引用代码块内容行
+    QStringList bqCodeBlocks;   // 块引用代码块最终 HTML（<pre margin-left…>，后处理还原）
     bool inMathBlock = false;
     QStringList codeBlocks;  // 每个代码块的最终 HTML（<pre><code class="language-X">…</code></pre>）
     QString codeFenceLang;   // 当前代码块的语言（围栏信息串）
@@ -588,6 +655,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList footnoteDefIds; // 已收集的定义 id（去重用）
     QStringList escapedEqBackups;  // 转义等号 \= → ZZES 保护
     QStringList htmlInlineBackups; // 原始 HTML 内联标签（<span style> / <u>）
+    QStringList hrMarkers;       // 水平线 --- → 占位符保护（后处理还原为 <hr/>）
 
     QStringList mathBlocks;  // 收集 $$ 块的内容
     QStringList mathLines;    // 当前 $$ 块的行
@@ -606,6 +674,9 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         static const QRegularExpression footnoteDefRe("^\\[\\^([^\\]]+)\\]\\s*:\\s*(.*)$");
         auto footnoteDefMatch = footnoteDefRe.match(line);
         bool isFootnoteDef = codeFenceLen == 0 && footnoteDefMatch.hasMatch();
+
+        // 块引用内代码围栏长度（> ``` / > ~~~），0 表示非块引用围栏行
+        int bqFenceLen = blockquoteCodeFenceLen(line);
 
         if (codeFenceLen == 0 && line.startsWith("$$")) {
             if (!inMathBlock) {
@@ -659,6 +730,50 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             lastBlock = BT_NONE;
         } else if (codeFenceLen > 0) {
             codeContent << line;
+        } else if (bqFenceLen > 0) {
+            // 块引用内代码围栏行（> ``` / > ~~~）：整体收集（剥离 > 前缀），
+            // 用占位符保护并保留语言信息串——Qt setMarkdown 不保留代码语言，且
+            // BRMARKER 会破坏围栏解析。占位符以块引用行（> ZZBQnZZ）发出并前后
+            // 空行隔离，setMarkdown 产出独立 <p margin-left>ZZBQnZZ</p>，后处理
+            // 还原为 <pre margin-left>…</pre>，再由块引用重构合并进 <blockquote>。
+            QString stripped = stripBlockquotePrefix(line);
+            int fenceLen = 0;
+            while (fenceLen < stripped.size()
+                   && (stripped[fenceLen] == QLatin1Char('`')
+                       || stripped[fenceLen] == QLatin1Char('~')))
+                ++fenceLen;
+            if (bqCodeFenceLen == 0) {
+                // 开启：提取语言（信息串为围栏后的文本）
+                bqCodeFenceLang = stripped.mid(fenceLen).trimmed();
+                bqCodeFenceLen = fenceLen;
+                bqCodeContent.clear();
+            } else if (fenceLen >= bqCodeFenceLen && stripped.mid(fenceLen).trimmed().isEmpty()) {
+                // 闭合：本行为纯围栏且长度 >= 开启围栏
+                QString content = bqCodeContent.join('\n');
+                QString codeOpen = bqCodeFenceLang.isEmpty()
+                    ? QStringLiteral("<code>")
+                    : QStringLiteral("<code class=\"language-") + bqCodeFenceLang + "\">";
+                bqCodeBlocks << "<pre style=\" margin-left:40px; margin-right:40px;\">"
+                                + codeOpen + content.toHtmlEscaped() + "</code></pre>";
+                bqCodeFenceLen = 0;
+                // 占位符（前后空行隔离，使 setMarkdown 产出独立 <p> 块）
+                if (!processed.isEmpty() && !processed.endsWith("\n\n"))
+                    processed += '\n';
+                processed += "> ZZBQ" + QString::number(bqCodeBlocks.size() - 1) + "ZZ\n\n";
+                // 闭合后紧跟空行（块引用结束）：发出边界标记。setMarkdown 会把空行
+                // 折叠，扁平 margin-left 块无法区分「同一块引用」与「空行分隔的两个
+                // 块引用」，故此标记以顶层段落形态透传，供后处理打破合并。
+                if (next.trimmed().isEmpty())
+                    processed += "ZZBQSEP\n";
+            } else {
+                // 块引用代码内容（含以围栏开头但不足以闭合的嵌套围栏行）
+                bqCodeContent << stripped;
+            }
+            lastBlock = BT_NONE;
+        } else if (bqCodeFenceLen > 0) {
+            // 块引用代码内容行（非围栏行）：剥离 > 前缀收集
+            bqCodeContent << stripBlockquotePrefix(line);
+            lastBlock = BT_NONE;
         } else if (isFootnoteDef) {
             // 脚注定义行 [^id]: 内容（非代码块）—— 抽取归集到文末容器，从正文流移除
             QString fid = footnoteDefMatch.captured(1).trimmed();
@@ -705,7 +820,11 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         } else if (isParagraphLine(line) && !next.isEmpty()
                    && isParagraphLine(next)
                    && !isBrOnlyLine(next)
-                   && !isImageOnlyLine(next)) {
+                   && !isImageOnlyLine(next)
+                   // 块引用打断段落是块边界，非软换行：正文\n> 引用 不应插入
+                   // <br data-brk>（否则往返成多一个空行）。反向（> 引用\n正文）
+                   // 是 lazy continuation，仍保留软换行。
+                   && !(!isBlockquoteLine(line) && isBlockquoteLine(next))) {
             // 隔离：列表后紧跟正文时补空行，避免被吞入列表项
             if (lastBlock == BT_LIST)
                 processed += '\n';
@@ -721,6 +840,15 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             cl = extractHtmlInlineElements(cl, htmlInlineBackups);
             processed += cl + " " + MARKER + "\n";
             lastBlock = BT_PARA;
+        } else if (isDashHrLine(line) && lastBlock != BT_PARA) {
+            // 水平线 ---：占位保护，避免 Qt setMarkdown 折叠连续 --- 或灾难性
+            // 误解析。--- 紧跟前文段落（无空行）时是 setext 二级标题下划线，
+            // 非水平线，此时 lastBlock==BT_PARA 不满足条件，落入 else 分支原样直通。
+            QString ph = QStringLiteral("ZZHR") + QString::number(hrMarkers.size())
+                         + QStringLiteral("ZZ");
+            hrMarkers << "<hr/>";
+            processed += ph + '\n';
+            lastBlock = BT_NONE;
         } else {
             // 隔离：列表后紧跟正文时补空行（同上）
             if (isParagraphLine(line) && lastBlock == BT_LIST)
@@ -806,7 +934,32 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         html.replace(ph, codeBlocks[i]); // fallback：占位符未独立成段时
     }
 
+    // 后处理 1.4: 还原块引用代码块占位符 ZZBQ → <pre margin-left:40px>…</pre>
+    //   占位符以块引用行发出，setMarkdown 产出 <p margin-left>ZZBQnZZ</p>；还原为
+    //   <pre margin-left>…</pre> 后由后处理 2 的块引用重构合并进 <blockquote>。
+    for (int i = 0; i < bqCodeBlocks.size(); ++i) {
+        QString ph = QString("ZZBQ%1ZZ").arg(i);
+        html.replace(QRegularExpression("<p[^>]*>" + ph + "</p>"), bqCodeBlocks[i]);
+        html.replace(ph, bqCodeBlocks[i]); // fallback：占位符未独立成段时
+    }
+
+    // 后处理 1.5: 还原水平线占位符 ZZHR → <hr/>
+    //   连字符水平线在预处理阶段已占位保护（Qt setMarkdown 会折叠/误解析 ---），
+    //   此处还原为 <hr/>。占位符独立成段时连同 <p> 一起替换。
+    for (int i = 0; i < hrMarkers.size(); ++i) {
+        QString ph = QString("ZZHR%1ZZ").arg(i);
+        html.replace(QRegularExpression("<p[^>]*>" + ph + "</p>"), "<hr/>");
+        html.replace(ph, "<hr/>"); // fallback：占位符未独立成段时
+    }
+
     // 后处理 2: BRMARKER → <br data-brk>（标记以区分用户手写 <br>）
+    // 嵌入处 cl + " " + MARKER 在标记前补了一个空格作为隔离符，防止标记被
+    // 前文行尾标点（*、_、` 等）吞入内联结构；setMarkdown 又在标记后（原换行处）
+    // 生成一个空格。这两个空格都是标记机制的伪影，替换时必须一并删除，否则
+    // 残留为软换行行尾空格，破坏往返保真。故先匹配「空格+标记+空格」消费两侧
+    // 空格，再降级匹配仅一侧有空格的情形。
+    html.replace(" " + MARKER + " ", "<br data-brk>");
+    html.replace(" " + MARKER, "<br data-brk>");
     html.replace(MARKER + " ", "<br data-brk>");
     html.replace(MARKER, "<br data-brk>");
 
@@ -820,13 +973,89 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     }
 
     // 后处理 2: QTextDocument 内联样式 → 语义标签
-    //    引用: <p margin-left:40px>... → <blockquote><p>...</p></blockquote>
+    //   引用: <p margin-left:40px>... → <blockquote><p>...</p></blockquote>
+    //   Qt 的 setMarkdown 将块引用表示为扁平的 margin-left:40px 块（非 <blockquote>
+    //   标签），且无法区分「同一块引用内的多段落」与「多个相邻块引用」（空白行
+    //   信息被折叠）。折中：仅当连续的 margin-left 块序列中含 <pre>（块引用内
+    //   代码块）时才合并为单个 <blockquote>；纯 <p> 序列每个 <p> 独立成
+    //   <blockquote>（保持「> a\n\n> b」两个独立块引用的往返）。
+    //   注意 <(p|pre)\b 的 \b 必须保留：否则 <p 会误匹配 <pre 的开头（p 是 pre 的
+    //   前缀），把 <pre>…</pre> 与其后的 <p>…</p> 吞成一个 <p> 块，代码块被拆碎。
     {
-        QRegularExpression re(
-            R"(<p([^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*)>(.*?)</p>)",
+        QRegularExpression blockRe(
+            R"(<(p|pre)\b([^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*)>(.*?)</\1>)",
             QRegularExpression::DotMatchesEverythingOption);
-        html.replace(re, "<blockquote><p\\1>\\2</p></blockquote>");
+
+        struct BqBlock { int start = 0; int end = 0; bool isPre = false; };
+        QVector<BqBlock> blocks;
+        int off = 0;
+        while (true) {
+            auto m = blockRe.match(html, off);
+            if (!m.hasMatch()) break;
+            BqBlock b;
+            b.start = m.capturedStart();
+            b.end = m.capturedEnd();
+            b.isPre = (m.captured(1) == QLatin1String("pre"));
+            blocks << b;
+            off = m.capturedEnd();
+        }
+
+        if (!blocks.isEmpty()) {
+            // 相邻块之间仅含空白时归为同一 run
+            QVector<QVector<int>> runs;
+            QVector<int> cur;
+            for (int i = 0; i < blocks.size(); ++i) {
+                if (cur.isEmpty()) {
+                    cur << i;
+                } else {
+                    QString between = html.mid(blocks[cur.last()].end,
+                                               blocks[i].start - blocks[cur.last()].end);
+                    bool onlyWs = true;
+                    for (QChar ch : between) { if (!ch.isSpace()) { onlyWs = false; break; } }
+                    if (onlyWs) cur << i;
+                    else { runs << cur; cur.clear(); cur << i; }
+                }
+            }
+            if (!cur.isEmpty()) runs << cur;
+
+            // 从后往前重建，避免位置偏移。相邻 <blockquote> 间无需保留空白——
+            // Qt toMarkdown 对相邻 <blockquote> 自动补空行（已实测验证）。
+            QString rebuilt = html;
+            for (int r = runs.size() - 1; r >= 0; --r) {
+                const QVector<int> &run = runs[r];
+                bool hasPre = false;
+                for (int idx : run) if (blocks[idx].isPre) { hasPre = true; break; }
+
+                int runStart = blocks[run.first()].start;
+                int runEnd = blocks[run.last()].end;
+
+                QString out;
+                if (hasPre) {
+                    // 含 <pre>：整段 run 合并为一个 <blockquote>
+                    QString inner;
+                    for (int idx : run)
+                        inner += html.mid(blocks[idx].start,
+                                          blocks[idx].end - blocks[idx].start);
+                    out = "<blockquote>" + inner + "</blockquote>";
+                } else {
+                    // 纯 <p>：每个 <p> 独立成 <blockquote>
+                    for (int idx : run) {
+                        out += "<blockquote>" + html.mid(blocks[idx].start,
+                                                         blocks[idx].end - blocks[idx].start)
+                               + "</blockquote>";
+                    }
+                }
+                rebuilt.replace(runStart, runEnd - runStart, out);
+            }
+            html = rebuilt;
+        }
     }
+
+    // 后处理 2.5: 移除块引用代码块的边界标记 ZZBQSEP。
+    //   标记以顶层段落透传，用于打破块引用重构的「连续 margin-left 块」合并，
+    //   使「> 代码\n\n> 引用」空行分隔的两个块引用不被误合并为一个。此处移除，
+    //   相邻 <blockquote>（或 <blockquote> 与正文）由 Qt toMarkdown 自动补空行。
+    html.remove(QRegularExpression(R"(<p[^>]*>ZZBQSEP</p>\s*)"));
     //    monospace span → <code>
     {
         QRegularExpression re(
@@ -1115,6 +1344,14 @@ QString MarkdownHandler::fromHtml(const QString &html)
     QStringList brSoftPlaceholders;
     QString processed = html;
 
+    // 块级占位符统一包裹为 <p>：占位符若为裸文本节点，setHtml 会把它与相邻块
+    // 之间的换行折成尾随空格（"ZZBQ0ZZ "），或与相邻块级占位符合并为一行
+    // （"ZZHR0ZZ ZZCB0ZZ"），破坏往返保真。包裹为 <p> 使其成为真正的块级节点，
+    // 块间自然以空行分隔，尾随空格与合并两类问题同时消除。
+    auto wrapBlock = [](const QString &ph) {
+        return QStringLiteral("<p>") + ph + QStringLiteral("</p>");
+    };
+
     // 0) 数学公式 → $$/$$ 或 $$...$$（在 setHtml 前保护，避免 data-latex 被丢弃）
     //    注: 属性顺序不固定 — toHtml 输出 data-type 在前，TipTap 输出 data-latex 在前
     {
@@ -1140,8 +1377,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString ph = QString("ZZBM%1ZZ").arg(n++);
             placeholders << ph;
             backups << md;
-            processed.replace(m.capturedStart(), m.capturedLength(), ph);
-            offset = m.capturedStart() + ph.length();
+            QString wrapped = wrapBlock(ph);
+            processed.replace(m.capturedStart(), m.capturedLength(), wrapped);
+            offset = m.capturedStart() + wrapped.length();
         }
         // 行内公式（同理：属性顺序无关）
         QRegularExpression inlineMathTagRe(
@@ -1221,8 +1459,28 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (fenceLen < 3) fenceLen = 3;
             QString fence(fenceLen, QLatin1Char('`'));
             backups << fence + lang + "\n" + code + "\n" + fence;
-            processed.replace(blockStart, blockEnd - blockStart, ph);
-            searchFrom = blockStart + ph.length();
+            QString wrapped = wrapBlock(ph);
+            processed.replace(blockStart, blockEnd - blockStart, wrapped);
+            searchFrom = blockStart + wrapped.length();
+        }
+    }
+
+    // 1.5) 水平线 <hr> → ---
+    //    QTextDocument::toMarkdown 把 <hr> 输出为 "- - -"（空格分隔），且后随
+    //    块边界丢失（与相邻段落粘连）；保护为占位符，还原时输出规范 "---"。
+    {
+        int n = 0;
+        int offset = 0;
+        QRegularExpression hrRe(R"(<hr\b[^>]*>)");
+        while (true) {
+            auto m = hrRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("ZZHR%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << "---";
+            QString wrapped = wrapBlock(ph);
+            processed.replace(m.capturedStart(), m.capturedLength(), wrapped);
+            offset = m.capturedStart() + wrapped.length();
         }
     }
 
@@ -1256,8 +1514,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString ph = QString("ZZBQ%1ZZ").arg(n++);
             placeholders << ph;
             backups << quoted;
-            processed.replace(m.capturedStart(), m.capturedLength(), ph);
-            offset = m.capturedStart() + ph.length();
+            QString wrapped = wrapBlock(ph);
+            processed.replace(m.capturedStart(), m.capturedLength(), wrapped);
+            offset = m.capturedStart() + wrapped.length();
         }
         // 裸 margin-left <p>（未被 <blockquote> 包裹的）
         QRegularExpression bqRe(
@@ -1282,8 +1541,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString ph = QString("ZZBQ%1ZZ").arg(n++);
             placeholders << ph;
             backups << quoted;
-            processed.replace(m.capturedStart(), m.capturedLength(), ph);
-            offset = m.capturedStart() + ph.length();
+            QString wrapped = wrapBlock(ph);
+            processed.replace(m.capturedStart(), m.capturedLength(), wrapped);
+            offset = m.capturedStart() + wrapped.length();
         }
     }
 
@@ -1418,8 +1678,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
             placeholders << ph;
             backups << md2;
             int totalLen = closeStart + 5 - m.capturedStart(); // 含 </ul>
-            processed.replace(m.capturedStart(), totalLen, ph);
-            offset = m.capturedStart() + ph.length();
+            QString wrapped = wrapBlock(ph);
+            processed.replace(m.capturedStart(), totalLen, wrapped);
+            offset = m.capturedStart() + wrapped.length();
         }
     }
 
@@ -1481,8 +1742,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
             placeholders << ph;
             backups << mdBlock;
             int totalLen = closeStart + 6 - om.capturedStart();  // 含 </div>
-            processed.replace(om.capturedStart(), totalLen, ph);
-            offset = om.capturedStart() + ph.length();
+            QString wrapped = wrapBlock(ph);
+            processed.replace(om.capturedStart(), totalLen, wrapped);
+            offset = om.capturedStart() + wrapped.length();
         }
     }
 
@@ -2037,7 +2299,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
             bool isSep = false;
             for (auto &cell : cells) {
                 cell = cell.trimmed();
-                if (QRegularExpression("^:?-{3,}:?$").match(cell).hasMatch())
+                // Qt toMarkdown 把分隔行输出为单连字符（|-|-|），故匹配 1+ 连字符
+                // （含 :---: 对齐写法），而非 3+。
+                if (QRegularExpression("^:?-+:?$").match(cell).hasMatch())
                     isSep = true;
             }
             if (isSep) {
@@ -2066,5 +2330,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
 
     while (md.endsWith('\n'))
         md.chop(1);
+    // 清除文档开头的空行伪影：QTextDocument::toMarkdown 对文档首个表格会前置
+    // 一个空行（块间分隔），往返后残留为多余首行空行，破坏往返保真。
+    while (md.startsWith('\n'))
+        md.remove(0, 1);
     return md;
 }
