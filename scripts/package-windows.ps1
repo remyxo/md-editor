@@ -38,9 +38,22 @@ if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path (Join-Path $dist "*") -DestinationPath $zip
 
 # 5. NSIS 安装器（在仓库根目录运行，nsi 内相对路径依赖此 CWD）
+#    定位 makensis：choco 装到 Program Files (x86)\NSIS，常不在 PATH，需显式解析
+$makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
+if ($makensis) {
+    $makensisPath = $makensis.Source
+} else {
+    $candidates = @(
+        "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+        "${env:ProgramFiles}\NSIS\makensis.exe",
+        "${env:ProgramData}\chocolatey\bin\makensis.exe"
+    )
+    $makensisPath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $makensisPath) { throw "未找到 makensis.exe，请先安装 NSIS" }
+}
 Push-Location $root
 try {
-    & makensis /DVERSION=$Version "scripts\md-editor.nsi"
+    & $makensisPath /DVERSION=$Version "scripts\md-editor.nsi"
     if ($LASTEXITCODE -ne 0) { throw "makensis 失败 (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location

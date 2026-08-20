@@ -49,6 +49,13 @@ jobs:
       env:
         QT_ROOT: ${{ runner.tool_cache }}/Qt
 
+    - name: 修补 AGL 链接（macOS 26 SDK 已移除 AGL 框架）
+      run: |
+        AGL_FILE="$QT_PREFIX/lib/cmake/Qt6/FindWrapOpenGL.cmake"
+        test -f "$AGL_FILE" || { echo "未找到 $AGL_FILE"; exit 1; }
+        sed -i '' 's/-framework AGL//g' "$AGL_FILE"
+        echo "已移除 AGL 链接引用: $AGL_FILE"
+
     - name: 构建 universal (arm64 + x86_64)
       run: |
         cmake -B build -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
