@@ -389,6 +389,43 @@ private slots:
         QVERIFY(!md.contains("&amp;"));
     }
 
+    void testInlineCodeWithBacktickRoundTrip() {
+        // 行内代码内容含反引号：定界符必须长于内容中最长连续反引号串，
+        // 否则 fromHtml 固定单反引号序列化会提前闭合、往返错乱
+        // （与代码块围栏同源问题，见 docs/code-fence-roundtrip.md 坑 2）。
+        const QString html = MarkdownHandler::toHtml(QStringLiteral("`` `x` ``\n"));
+        const QString back = MarkdownHandler::fromHtml(html);
+        // 内容 `x`（含两侧反引号）必须完整保留为 `` `x` ``
+        QVERIFY2(back.contains(QStringLiteral("`` `x` ``")),
+                 qPrintable("往返应保留 `` `x` ``，实际: " + back));
+    }
+
+    void testInlineCodeDoubleBacktickRoundTrip() {
+        // 表格内行内代码含反引号（markdown-guide.md「行内代码」演示行）：
+        // `` `行内代码` `` 往返后必须保留双反引号定界与内容反引号，
+        // 否则演示行退化为 ``行内代码``（内容反引号丢失）。
+        const QString md = QStringLiteral(
+            "| 语法 | 效果 |\n| --- | --- |\n| `` `行内代码` `` | `行内代码` |\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains(QStringLiteral("`` `行内代码` ``")),
+                 qPrintable("表格内 `` `行内代码` `` 往返应保留，实际: " + back));
+    }
+
+    void testInlineCodeRedundantDoubleBacktickNormalized() {
+        // 内容无反引号却用双反引号定界（``行内代码``）：定界长度在 HTML 中
+        // 天然丢失，往返后归一为最小定界符 `行内代码`（与代码块围栏坑 2 同理：
+        // 内容无反引号时 1 根即正确，与用户手写 2 根语义等价）。
+        const QString md = QStringLiteral(
+            "| 语法 | 效果 |\n| --- | --- |\n|``行内代码``|`行内代码`|\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        QVERIFY(!html.contains(QStringLiteral("data-bk")));
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains(QStringLiteral("`行内代码`")),
+                 qPrintable("往返应归一为单反引号，实际: " + back));
+        QVERIFY(!back.contains(QStringLiteral("``行内代码``")));
+    }
+
     void testSubscriptRoundTrip() {
         // 下标 Pandoc 语法 ~x~ 往返：MD → HTML → MD
         QString md1 = "H~2~O 是水\n";

@@ -1332,6 +1332,31 @@ QString MarkdownHandler::extractTitle(const QString &markdown)
     return m.hasMatch() ? m.captured(1).trimmed() : QString();
 }
 
+// 行内代码内容 → 定界正确的行内代码 Markdown。
+// 定界符取内容中最长连续反引号串 + 1（至少 1），保证内容含反引号时不会
+// 提前闭合（与代码块围栏同源问题，见 docs/code-fence-roundtrip.md 坑 2）。
+// 内容首/尾为反引号时补空格分隔：否则反引号与定界符并成更长的定界串，
+// 内容被吞（如内容 `x` 直接拼 `` 会得到 ``x``，反引号丢失）。
+static QString buildInlineCodeMd(const QString &content)
+{
+    int maxRun = 0, run = 0;
+    for (const QChar &c : content) {
+        if (c == QLatin1Char('`')) {
+            ++run;
+            if (run > maxRun) maxRun = run;
+        } else {
+            run = 0;
+        }
+    }
+    int fenceLen = maxRun + 1;
+    if (fenceLen < 1) fenceLen = 1;
+    QString fence(fenceLen, QLatin1Char('`'));
+    QString body = content;
+    if (body.startsWith(QLatin1Char('`'))) body.prepend(QLatin1Char(' '));
+    if (body.endsWith(QLatin1Char('`'))) body.append(QLatin1Char(' '));
+    return fence + body + fence;
+}
+
 QString MarkdownHandler::fromHtml(const QString &html)
 {
     // QTextDocument::toMarkdown() 不能正确处理 <code> / <pre>
@@ -1635,7 +1660,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (!m.hasMatch()) break;
             QString ph = QString("ZZCD%1ZZ").arg(n++);
             placeholders << ph;
-            backups << "`" + unescapeHtmlEntities(m.captured(1)) + "`";
+            backups << buildInlineCodeMd(unescapeHtmlEntities(m.captured(1)));
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }
@@ -1650,7 +1675,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (!m.hasMatch()) break;
             QString ph = QString("ZZIC%1ZZ").arg(n++);
             placeholders << ph;
-            backups << "`" + unescapeHtmlEntities(m.captured(1)) + "`";
+            backups << buildInlineCodeMd(unescapeHtmlEntities(m.captured(1)));
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }
