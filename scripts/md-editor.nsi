@@ -40,7 +40,7 @@ Section "安装"
     "Publisher" "md-editor"
 SectionEnd
 
-Section "卸载"
+Section "Uninstall"
   Delete "$INSTDIR\uninstall.exe"
   Delete "$INSTDIR\md-editor.exe"
   RMDir /r "$INSTDIR"

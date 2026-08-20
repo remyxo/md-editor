@@ -52,26 +52,29 @@ jobs:
     - name: 修补 AGL 链接（macOS 26 SDK 已移除 AGL 框架）
       run: |
         python3 - "$QT_PREFIX" <<'PY'
-        import pathlib, sys
+        import pathlib, re, sys
         prefix = sys.argv[1]
-        hits = []
-        for p in pathlib.Path(prefix, 'lib', 'cmake').rglob('*.cmake'):
-            try:
-                s = p.read_text()
-            except OSError:
-                continue
-            if '-framework AGL' in s:
-                p.write_text(s.replace('-framework AGL', ''))
-                hits.append(str(p))
-        print(f"已修补 {len(hits)} 个含 -framework AGL 的文件")
-        for h in hits:
-            print("  " + h)
+        f = pathlib.Path(prefix, 'lib', 'cmake', 'Qt6', 'FindWrapOpenGL.cmake')
+        s = f.read_text()
+        # 彻底移除 AGL 探测块（find_library ... 到 "-framework AGL" 后的 endif）
+        s = re.sub(
+            r'\n[ \t]*find_library\(WrapOpenGL_AGL NAMES AGL\).*?"-framework AGL"\)\n[ \t]*endif\(\)',
+            '', s, count=1, flags=re.DOTALL)
+        # 移除 target_link_libraries 中的 AGL 链接引用
+        s = re.sub(
+            r'\n[ \t]*target_link_libraries\(WrapOpenGL::WrapOpenGL INTERFACE \$\{__opengl_agl_fw_path\}\)',
+            '', s)
+        f.write_text(s)
+        print("残留 -framework AGL:", '-framework AGL' in s)
+        print("残留 WrapOpenGL_AGL:", 'WrapOpenGL_AGL' in s)
         PY
 
     - name: 构建 universal (arm64 + x86_64)
       run: |
         cmake -B build -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+        echo "=== link.txt 中的 AGL 上下文 ==="
+        find build -name link.txt -exec grep -o '.\{0,60\}AGL.\{0,60\}' {} \; 2>/dev/null || echo "(link.txt 无 AGL)"
         cmake --build build --parallel
 
     - name: 打包 dmg (macdeployqt + 签名)
