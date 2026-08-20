@@ -1,0 +1,2 @@
+// Windows 程序图标资源（icons/md-editor.ico 由 CI 的 generate-icons-win.ps1 生成）
+IDI_ICON1               ICON    DISCARDABLE     "icons/md-editor.ico"

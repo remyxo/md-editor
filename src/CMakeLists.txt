@@ -64,7 +64,33 @@ set(HEADERS
 
 qt_add_resources(RESOURCES resources/app.qrc)
 
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${RESOURCES})
+if(APPLE)
+    # macOS 打包为 .app bundle（供 macdeployqt / dmg 使用）
+    qt_add_executable(${PROJECT_NAME} MACOSX_BUNDLE ${SOURCES} ${HEADERS} ${RESOURCES})
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE_BUNDLE_NAME "md-editor"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.md-editor.app"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    )
+    # 应用图标（.icns 由 CI 的 generate-icons-macos.sh 生成；不存在则用系统默认图标）
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/md-editor.icns")
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            MACOSX_BUNDLE_ICON_FILE "md-editor.icns")
+        set_source_files_properties(
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/md-editor.icns"
+            PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+        target_sources(${PROJECT_NAME} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/md-editor.icns")
+    endif()
+else()
+    add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${RESOURCES})
+    # Windows 程序图标（.ico 由 CI 的 generate-icons-win.ps1 生成；.rc 引用它）
+    if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/md-editor.ico")
+        target_sources(${PROJECT_NAME} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/md-editor.rc")
+    endif()
+endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

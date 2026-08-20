@@ -1,0 +1,87 @@
+name: Build macOS Package
+
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest  # ARM64 (Apple Silicon)
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # 获取 tag 信息
+
+    - name: 安装 librsvg (SVG→PNG)
+      run: brew install librsvg
+
+    - name: 生成应用图标 (.icns)
+      run: ./scripts/generate-icons-macos.sh
+
+    - name: JS 测试 (vitest)
+      working-directory: src/resources/web
+      run: |
+        npm ci
+        npm test
+
+    - name: 安装 Qt (arm64 + x86_64)
+      run: |
+        python3 -m pip install --quiet aqtinstall
+        python3 -m aqt install-qt mac desktop 6.8.2 arm64   -O "$QT_ROOT" -m qtwebengine qtwebchannel qttools
+        python3 -m aqt install-qt mac desktop 6.8.2 clang_64 -O "$QT_ROOT" -m qtwebengine qtwebchannel qttools
+      env:
+        QT_ROOT: ${{ runner.tool_cache }}/Qt
+
+    - name: 定位两个 Qt 前缀 (按框架实际架构判定)
+      run: |
+        for cfg in $(find "$QT_ROOT" -path '*/lib/cmake/Qt6/Qt6Config.cmake'); do
+          prefix="${cfg%/lib/cmake/Qt6/Qt6Config.cmake}"
+          lib="$prefix/lib/QtCore.framework/QtCore"
+          archs="$(lipo -info "$lib" 2>/dev/null | sed 's/.*: //')"
+          case "$archs" in
+            *arm64*)  echo "ARM64_PREFIX=$prefix" >> "$GITHUB_ENV" ;;
+            *x86_64*) echo "X86_PREFIX=$prefix"  >> "$GITHUB_ENV" ;;
+          esac
+        done
+        test -n "${ARM64_PREFIX:-}" || { echo "未找到 arm64 Qt"; exit 1; }
+        test -n "${X86_PREFIX:-}"  || { echo "未找到 x86_64 Qt"; exit 1; }
+        echo "ARM64_PREFIX=$ARM64_PREFIX"
+        echo "X86_PREFIX=$X86_PREFIX"
+      env:
+        QT_ROOT: ${{ runner.tool_cache }}/Qt
+
+    - name: 构建 arm64
+      run: |
+        cmake -B build-arm64 -DCMAKE_PREFIX_PATH="$ARM64_PREFIX" \
+          -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+        cmake --build build-arm64 --parallel
+
+    - name: 构建 x86_64
+      run: |
+        cmake -B build-x86_64 -DCMAKE_PREFIX_PATH="$X86_PREFIX" \
+          -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+        cmake --build build-x86_64 --parallel
+
+    - name: 打包 dmg (lipo 合并 + macdeployqt + 签名)
+      run: ./scripts/package-macos.sh
+
+    - name: 上传制品
+      uses: actions/upload-artifact@v4
+      with:
+        name: md-editor-macos
+        path: md-editor-*-macos-universal.dmg
+
+    - name: 发布 Release（tag 推送时）
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: md-editor-*-macos-universal.dmg
+        generate_release_notes: true

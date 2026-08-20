@@ -1,0 +1,77 @@
+name: Build Windows Package
+
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # 获取 tag 信息
+
+    - name: 安装打包工具 (NSIS + ImageMagick)
+      shell: pwsh
+      run: |
+        choco install -y --no-progress nsis imagemagick
+
+    - name: 设置 MSVC 环境
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: 安装 Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.8.2'
+        arch: 'win64_msvc2022_64'
+        modules: 'qtwebengine qtwebchannel qttools'
+        cache: true
+
+    - name: 生成应用图标 (.ico)
+      shell: pwsh
+      run: ./scripts/generate-icons-win.ps1
+
+    - name: JS 测试 (vitest)
+      working-directory: src/resources/web
+      shell: pwsh
+      run: |
+        npm ci
+        npm test
+
+    - name: 配置 CMake (Release)
+      shell: pwsh
+      run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+
+    - name: 构建
+      shell: pwsh
+      run: cmake --build build
+
+    - name: 打包 (便携 zip + NSIS 安装器)
+      shell: pwsh
+      run: ./scripts/package-windows.ps1
+
+    - name: 上传制品
+      uses: actions/upload-artifact@v4
+      with:
+        name: md-editor-windows
+        path: |
+          md-editor-*-win64.zip
+          md-editor-*-win64.exe
+
+    - name: 发布 Release（tag 推送时）
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          md-editor-*-win64.zip
+          md-editor-*-win64.exe
+        generate_release_notes: true
