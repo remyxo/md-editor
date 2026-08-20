@@ -2,6 +2,18 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.11.0] — 2026-08-20
+
+### 新增
+- **Windows/macOS 跨平台 CI 自动打包** — 新增 GitHub Actions 三平台构建流水线；macOS 用 Qt 6.8.2 通用二进制（arm64+x86_64）经 macdeployqt 产出 dmg；Windows 用 MSVC + Qt 6.8.2 经 windeployqt 产出便携 zip + NSIS 安装器；应用图标由 CI 从 SVG 生成 .ico/.icns（不提交二进制）；CMakeLists 平台化（macOS 走 MACOSX_BUNDLE，CPack DEB 仅限 Linux）
+
+### 修复
+- **块引用内代码块与多项往返保真修复** — 块引用内代码围栏：BRMARKER 不再破坏围栏，代码内容与语言信息串保真；块引用重构：修复 `<p` 误匹配 `<pre` 拆碎代码块，连续 margin-left 块按含 `<pre>` 与否合并；空行边界：代码块后空行分隔的块引用经 ZZBQSEP 标记保留；一并修复段落软换行行尾空格、段落到块引用软换行、水平线 `---` 丢失、setext `===` 幽灵 `<br>`、表格分隔行 `---` 缩成 `-`、块级占位符尾随空格
+- **行内代码内容含反引号时往返定界符错乱** — `fromHtml()` 序列化行内代码时写死单反引号，内容含反引号会提前闭合；改为按内容最长连续反引号串 +1 定界，首尾反引号补空格分隔（与代码块围栏同源）
+- **语言持久化兜底与插入菜单文案统一** — LanguageManager 语言未变时也落盘，默认 zh_CN 不再依赖默认值兜底；插入菜单「插入公式」改为「公式」
+- **单测 QSettings 重定向 NativeFormat** — LanguageManager/DocxExporter 测试走 NativeFormat，重定向到临时目录，避免单测改写用户 `~/.config/md-editor` 语言设置
+- **跨平台 CI 构建修复** — macOS：pip PEP 668 加 `--break-system-packages`、macOS 26 SDK 移除 AGL 框架导致 Qt 6.8.2 链接失败（彻底移除 `FindWrapOpenGL.cmake` 的 AGL 探测块）、补装 qtpositioning；Windows：显式定位 choco 安装的 makensis、`makensis` 加 `/NOCD` 禁止切到 .nsi 目录、NSIS 卸载段改用保留名 `Uninstall`、版本号提取正则适配 `LANGUAGES` 子句
+
 ## [0.10.2] — 2026-08-19
 
 ### 变更
