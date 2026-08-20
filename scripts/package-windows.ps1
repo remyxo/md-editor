@@ -39,6 +39,7 @@ Compress-Archive -Path (Join-Path $dist "*") -DestinationPath $zip
 
 # 5. NSIS 安装器（在仓库根目录运行，nsi 内相对路径依赖此 CWD）
 #    定位 makensis：choco 装到 Program Files (x86)\NSIS，常不在 PATH，需显式解析
+#    /NOCD：禁止 makensis 自动切到 .nsi 所在目录，使 File/OutFile 相对路径基于仓库根目录
 $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
 if ($makensis) {
     $makensisPath = $makensis.Source
@@ -53,7 +54,7 @@ if ($makensis) {
 }
 Push-Location $root
 try {
-    & $makensisPath /DVERSION=$Version "scripts\md-editor.nsi"
+    & $makensisPath /NOCD /DVERSION=$Version "scripts\md-editor.nsi"
     if ($LASTEXITCODE -ne 0) { throw "makensis 失败 (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location

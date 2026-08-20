@@ -51,10 +51,22 @@ jobs:
 
     - name: 修补 AGL 链接（macOS 26 SDK 已移除 AGL 框架）
       run: |
-        AGL_FILE="$QT_PREFIX/lib/cmake/Qt6/FindWrapOpenGL.cmake"
-        test -f "$AGL_FILE" || { echo "未找到 $AGL_FILE"; exit 1; }
-        sed -i '' 's/-framework AGL//g' "$AGL_FILE"
-        echo "已移除 AGL 链接引用: $AGL_FILE"
+        python3 - "$QT_PREFIX" <<'PY'
+        import pathlib, sys
+        prefix = sys.argv[1]
+        hits = []
+        for p in pathlib.Path(prefix, 'lib', 'cmake').rglob('*.cmake'):
+            try:
+                s = p.read_text()
+            except OSError:
+                continue
+            if '-framework AGL' in s:
+                p.write_text(s.replace('-framework AGL', ''))
+                hits.append(str(p))
+        print(f"已修补 {len(hits)} 个含 -framework AGL 的文件")
+        for h in hits:
+            print("  " + h)
+        PY
 
     - name: 构建 universal (arm64 + x86_64)
       run: |
