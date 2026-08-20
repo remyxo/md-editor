@@ -19,7 +19,7 @@ UninstPage instfiles
 
 Section "安装"
   SetOutPath "$INSTDIR"
-  File /r "dist\md-editor\*"
+  File /r "dist\md-editor\*.*"
 
   ; 卸载程序
   WriteUninstaller "$INSTDIR\uninstall.exe"

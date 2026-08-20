@@ -21,7 +21,7 @@ fi
 codesign --force --deep --sign - "$APP"
 
 # 3. 版本号从 CMakeLists.txt 读取
-VERSION="$(sed -n 's/.*project(md-editor VERSION \([0-9.]*\)).*/\1/p' "$PROJECT_DIR/CMakeLists.txt")"
+VERSION="$(sed -n 's/.*project(md-editor VERSION \([0-9.]*\).*/\1/p' "$PROJECT_DIR/CMakeLists.txt")"
 [ -n "$VERSION" ] || VERSION="0.0.0"
 
 # 4. 生成 dmg

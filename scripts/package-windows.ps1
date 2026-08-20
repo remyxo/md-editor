@@ -13,7 +13,7 @@ $dist  = Join-Path $root "dist\md-editor"
 # 版本号：优先参数，否则从 CMakeLists.txt 读取
 if (-not $Version) {
     $cmake = Get-Content (Join-Path $root "CMakeLists.txt") -Raw
-    if ($cmake -match 'project\(md-editor VERSION ([0-9.]+)\)') {
+    if ($cmake -match 'project\(md-editor VERSION ([0-9.]+)') {
         $Version = $Matches[1]
     } else {
         $Version = "0.0.0"
