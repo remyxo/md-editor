@@ -34,6 +34,12 @@ class TestDocxExporter : public QObject {
     }
 
 private slots:
+    // 重定向 QSettings 到临时目录：testLargeImageShrinksToPageWidth 会临时写 export/* 设置，
+    // 若不隔离会污染真实用户配置（同 test_languagemanager，须重定向 NativeFormat）。
+    void initTestCase() {
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, QDir::tempPath());
+    }
+
     void testBasicInlineFormatting() {
         QString xml = exportDocumentXml(
             "<h1>标题</h1>"

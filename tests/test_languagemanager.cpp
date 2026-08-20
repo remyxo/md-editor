@@ -9,8 +9,11 @@ class TestLanguageManager : public QObject {
     Q_OBJECT
 private slots:
     void initTestCase() {
-        QSettings::setDefaultFormat(QSettings::IniFormat);
-        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, QDir::tempPath());
+        // 重定向 QSettings 到临时目录，避免污染真实用户配置。
+        // 关键：LanguageManager 与本测试都用 QSettings("md-editor", "md-editor") 两参构造，
+        // 该构造固定走 NativeFormat（忽略 setDefaultFormat），因此必须重定向 NativeFormat
+        // 而非 IniFormat——否则单测会把 ~/.config/md-editor/md-editor.conf 的语言写成 en_US。
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, QDir::tempPath());
     }
 
     void init() {
