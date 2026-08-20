@@ -33,7 +33,7 @@ jobs:
       with:
         version: '6.8.2'
         arch: 'win64_msvc2022_64'
-        modules: 'qtwebengine qtwebchannel'
+        modules: 'qtwebengine qtwebchannel qtpositioning'
         cache: true
 
     - name: 生成应用图标 (.ico)
