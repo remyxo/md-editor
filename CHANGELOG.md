@@ -2,6 +2,13 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.11.1] — 2026-08-21
+
+### 修复
+- **Windows/macOS 行内代码加载即丢失（跨平台字体差异）** — Qt 给行内代码设置的字体 `systemFont(FixedFont)` 族名平台相关（Linux="monospace"、Windows="Courier New"、macOS="Menlo"），`toHtml()`/`fromHtml()` 硬编码只认 `'monospace'`，Windows/macOS 上 monospace span → `<code>` 转换失效，code 语义在文件加载时即被 TipTap 丢弃（切源码模式显形：反引号丢失、内容被转义如 `\*\*A\*\*`）；改为 `monoSpanFamilyPattern()` 三大平台已知名 + 动态本平台 FixedFont 族名匹配，版本/平台无关（详见 `docs/cross-platform-monospace-font.md`）
+- **表格单元格含行内代码时空格不规整** — 表格规范化不再因单元格含反引号而整行跳过，改为 `splitTableCells()` 反引号感知拆分（行内代码内的 `|` 与转义 `\|` 不作分隔符），含行内代码的表格行统一 `| cell |` 风格
+- **移除语言切换问题排查遗留的调试输出** — `[Language]` 系列日志清理
+
 ## [0.11.0] — 2026-08-20
 
 ### 新增
