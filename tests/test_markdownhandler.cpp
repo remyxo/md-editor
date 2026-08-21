@@ -2251,6 +2251,66 @@ private slots:
         QVERIFY2(md2 == QStringLiteral("hello world\nnext line"),
                  qPrintable("英文软换行往返应精确相等（无行尾空格），实际: [" + md2 + "]"));
     }
+
+    void testFromHtmlPlatformMonoSpanToInlineCode()
+    {
+        // QTextMarkdownImporter 给行内代码的字体是
+        // QFontDatabase::systemFont(QFontDatabase::FixedFont)，其族名平台相关：
+        //   Linux="monospace"、Windows="Courier New"、macOS="Menlo"。
+        // QTextDocument::toHtml 据此导出 <span font-family:'...'>，fromHtml 的
+        // monospace span 兜底正则若硬编码只认 'monospace'，Windows/macOS 上
+        // 行内代码在加载时即丢失（切源码后反引号消失、内容被转义）。
+        const QStringList platformFamilies = {
+            QStringLiteral("Courier New"),   // Windows
+            QStringLiteral("Menlo"),         // macOS
+        };
+        for (const QString &family : platformFamilies) {
+            const QString html = QStringLiteral(
+                "<p>before <span style=\" font-family:'%1';\">==code==</span> after</p>")
+                .arg(family);
+            const QString md = MarkdownHandler::fromHtml(html);
+            QVERIFY2(md.contains("`==code==`"),
+                     qPrintable(family + " span 应还原为行内代码，实际: " + md));
+        }
+    }
+
+    void testTableInlineCodeRoundTrip()
+    {
+        // 用户实测输入：表格「语法|显示」对照表（行内代码在表格单元格内）
+        const QString md1 = QStringLiteral(
+            "| markdown语法 | 显示 |\n"
+            "| --- | --- |\n"
+            "| `==高亮==` | ==高亮== |\n"
+            "| `**A**` | **A** |\n");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        // 行内代码语义必须保留（code mark 往返）
+        QVERIFY2(md2.contains("`==高亮==`"),
+                 qPrintable("表格内行内代码应保留反引号，实际: " + md2));
+        QVERIFY2(md2.contains("`**A**`"),
+                 qPrintable("表格内行内代码应保留反引号，实际: " + md2));
+        // 表格空格规范化不应因单元格含反引号而整行跳过：
+        // 竖线两侧各恰好一个空格（GFM 风格 | cell |）
+        static const QRegularExpression rowRe(
+            QStringLiteral("^\\| (`==高亮==`|`\\*\\*A\\*\\*`) \\| (==高亮==|\\*\\*A\\*\\*) \\|$"),
+            QRegularExpression::MultilineOption);
+        QVERIFY2(rowRe.match(md2).hasMatch(),
+                 qPrintable("表格行应为 | cell | 格式（竖线两侧各一空格），实际: " + md2));
+    }
+
+    void testTableDoubleBacktickCellSpacing()
+    {
+        // 内容本身含反引号的行内代码（`` `x` `` 形式）同样不应阻断表格规范化
+        const QString md1 = QStringLiteral(
+            "| 语法 | 显示 |\n"
+            "| --- | --- |\n"
+            "| `` `code` `` | `code` |\n");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        static const QRegularExpression rowRe(
+            QStringLiteral("^\\| `` `code` `` \\| `code` \\|$"),
+            QRegularExpression::MultilineOption);
+        QVERIFY2(rowRe.match(md2).hasMatch(),
+                 qPrintable("双反引号单元格行应为 | cell | 格式，实际: " + md2));
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)

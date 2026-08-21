@@ -3,6 +3,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QVector>
+#include <QFontDatabase>
 
 // 行是否仅为 <br> 等硬换行标签（含属性及自闭合写法）
 // 用于 BRMARKER 逻辑：<br> 本身即是换行，其前后 \n 不应再触发 BRMARKER
@@ -11,6 +12,87 @@ static bool isBrOnlyLine(const QString &line)
     static const QRegularExpression brRe(
         R"(^\s*<br\b[^>]*>\s*$)");
     return brRe.match(line).hasMatch();
+}
+
+// 等宽字体 span 的字体名匹配模式（单引号内 OR 分支，不含引号与两侧语法）。
+// QTextMarkdownImporter 给行内代码设置的字体是
+// QFontDatabase::systemFont(QFontDatabase::FixedFont)，其族名平台相关：
+// Linux="monospace"、Windows="Courier New"、macOS="Menlo"，QTextDocument::toHtml
+// 据此导出 <span style=" font-family:'...';">。硬编码只认 'monospace' 会导致
+// Windows/macOS 上加载即丢 code 语义。三大平台已知名全部纳入 + 动态取本平台
+// FixedFont 族名兜底（覆盖自定义系统字体配置），保持版本/平台无关。
+static QString monoSpanFamilyPattern()
+{
+    QStringList names;
+    const QStringList fixed =
+        QFontDatabase::systemFont(QFontDatabase::FixedFont).families();
+    for (const QString &f : fixed)
+        if (!names.contains(f))
+            names << f;
+    names << QStringLiteral("monospace")
+          << QStringLiteral("Courier New")
+          << QStringLiteral("Menlo");
+    names.removeDuplicates();
+    QStringList escaped;
+    for (const QString &n : names)
+        escaped << QRegularExpression::escape(n);
+    return escaped.join(QLatin1Char('|'));
+}
+
+// 反引号感知的表格单元格拆分：行内代码内的 | 不是分隔符（GFM code span 由
+// 等长反引号 run 定界）；转义竖线 \| 同样不是。返回按分隔符拆出的原始单元格
+// （未 trim，由调用方处理）。无配对闭合 run 的反引号按普通文本处理。
+static QStringList splitTableCells(const QString &inner)
+{
+    QStringList cells;
+    QString cur;
+    int i = 0;
+    while (i < inner.size()) {
+        const QChar c = inner.at(i);
+        if (c == QLatin1Char('\\') && i + 1 < inner.size()
+                && inner.at(i + 1) == QLatin1Char('|')) {
+            cur += QStringLiteral("\\|");   // 转义竖线：字面 |，不拆分
+            i += 2;
+        } else if (c == QLatin1Char('|')) {
+            cells << cur;
+            cur.clear();
+            ++i;
+        } else if (c == QLatin1Char('`')) {
+            // 反引号 run：寻找等长配对 run，其间内容属于 code span（| 不拆分）
+            const int runStart = i;
+            while (i < inner.size() && inner.at(i) == QLatin1Char('`'))
+                ++i;
+            const int runLen = i - runStart;
+            int j = i;
+            int closeStart = -1;
+            while (j < inner.size()) {
+                if (inner.at(j) == QLatin1Char('`')) {
+                    const int rs = j;
+                    while (j < inner.size() && inner.at(j) == QLatin1Char('`'))
+                        ++j;
+                    if (j - rs == runLen) {
+                        closeStart = rs;
+                        break;
+                    }
+                    // 长度不等的 run 属于内容，继续找配对
+                } else {
+                    ++j;
+                }
+            }
+            if (closeStart >= 0) {
+                cur += inner.mid(runStart, closeStart + runLen - runStart);
+                i = closeStart + runLen;
+            } else {
+                // 未闭合：按普通文本继续（后续 | 仍作分隔符）
+                cur += inner.mid(runStart, runLen);
+            }
+        } else {
+            cur += c;
+            ++i;
+        }
+    }
+    cells << cur;
+    return cells;
 }
 
 // 块引用内代码围栏行（单层 > 前缀 + 代码围栏）：> ``` / > ~~~，可带语言信息串。
@@ -1056,10 +1138,11 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     //   使「> 代码\n\n> 引用」空行分隔的两个块引用不被误合并为一个。此处移除，
     //   相邻 <blockquote>（或 <blockquote> 与正文）由 Qt toMarkdown 自动补空行。
     html.remove(QRegularExpression(R"(<p[^>]*>ZZBQSEP</p>\s*)"));
-    //    monospace span → <code>
+    //    monospace span → <code>（字体名动态匹配本平台 FixedFont，见 monoSpanFamilyPattern）
     {
         QRegularExpression re(
-            R"(<span[^>]*font-family:\s*'monospace'[^>]*>(.*?)</span>)");
+            QStringLiteral("<span[^>]*font-family:\\s*'(?:%1)'[^>]*>(.*?)</span>")
+                .arg(monoSpanFamilyPattern()));
         html.replace(re, "<code>\\1</code>");
     }
     // 行内公式 $...$ → <span data-type="inline-math">；上下标 Pandoc → <sub>/<sup>
@@ -1664,9 +1747,11 @@ QString MarkdownHandler::fromHtml(const QString &html)
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }
-        // <span monospace>（QTextDocument 原始输出）
+        // <span monospace>（QTextDocument 原始输出；字体名动态匹配本平台
+        // FixedFont，Windows="Courier New"/macOS="Menlo" 同样识别）
         QRegularExpression spanRe(
-            R"(<span[^>]*font-family:\s*'monospace'[^>]*>(.*?)</span>)",
+            QStringLiteral("<span[^>]*font-family:\\s*'(?:%1)'[^>]*>(.*?)</span>")
+                .arg(monoSpanFamilyPattern()),
             QRegularExpression::DotMatchesEverythingOption);
         n = 0;
         offset = 0;
@@ -2314,13 +2399,10 @@ QString MarkdownHandler::fromHtml(const QString &html)
             // 仅处理表格行（以 | 开头且以 | 结尾，非 blockquote 前缀 > |）
             if (!t.startsWith('|') || !t.endsWith('|')) continue;
 
-            // 去掉首尾 | → 拆分为单元格
+            // 去掉首尾 | → 拆分为单元格（反引号感知：行内代码内的 | 与
+            // 转义 \| 不作为分隔符，故含反引号的行同样参与规范化）
             QString inner = t.mid(1, t.length() - 2);
-            QStringList cells;
-            // 简单拆分（不处理行内代码含 | 的极端情况——极少见且拆分会破坏）
-            if (inner.contains('`'))
-                continue;
-            cells = inner.split('|');
+            QStringList cells = splitTableCells(inner);
             bool isSep = false;
             for (auto &cell : cells) {
                 cell = cell.trimmed();
