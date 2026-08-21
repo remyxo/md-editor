@@ -10,7 +10,6 @@ LanguageManager::LanguageManager(QObject *parent)
     // 启动恢复：读偏好并装载（先于 MainWindow 构造 → 启动即正确语言）
     QSettings settings("md-editor", "md-editor");
     const QString saved = settings.value("appearance/language", "zh_CN").toString();
-    qWarning() << "[Language] 启动恢复 saved=" << saved;
     switchLanguage(saved);
 }
 
@@ -29,9 +28,6 @@ void LanguageManager::switchLanguage(const QString &lang)
     // 未知语言忽略（不改变状态、不发信号），与 availableLanguages() 保持一致
     if (!availableLanguages().contains(lang))
         return;
-
-    qWarning() << "[Language] switchLanguage lang=" << lang
-               << " current=" << m_currentLanguage;
 
     if (lang == m_currentLanguage) {
         // 幂等：语言未变时不重装 translator、不发信号，但仍落盘——否则默认的
