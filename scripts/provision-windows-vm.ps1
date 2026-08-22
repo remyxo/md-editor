@@ -88,24 +88,28 @@ function Get-ShareDrive([string]$label) {
     (Get-CimInstance Win32_LogicalDisk -Filter "VolumeName='$label' AND FileSystem='VirtIO-FS'" -ErrorAction SilentlyContinue |
         Select-Object -First 1).DeviceID
 }
-function Ensure-VirtioFsService([string]$name, [string]$tag) {
-    $want = "`"$exe`" -t $tag -m *"
+function Ensure-VirtioFsService([string]$name, [string]$tag, [string]$mount = '*') {
+    # 坑 3：-m '*' 自动找空盘符（WinFsp 从 Z: 倒序扫），两个服务开机顺序不定会互换
+    #        盘符——D:\build 的 CMake 缓存内嵌绝对源路径，盘符一漂（实测 Z:→Y:）即报
+    #        「does not match the source used to generate cache」。仓库共享钉死 W:
+    #        （在自动扫号区 Z:/Y: 之外，永不冲突）；Downloads 共享无路径依赖，保持自动
+    $want = "`"$exe`" -t $tag -m $mount"
     if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
         $cur = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\$name" -Name ImagePath).ImagePath
         if ($cur -ne $want) {
             Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\$name" -Name ImagePath -Value $want
             if ((Get-Service -Name $name).Status -eq 'Running') { Restart-Service -Name $name -Force }
-            Ok "$name binPath 已修正（-t $tag -m *）"
+            Ok "$name binPath 已修正（-t $tag -m $mount）"
         }
     } else {
         # 用 New-Service 而非 sc.exe：PS 5.1 给原生命令传内嵌引号会错乱（服务建不出来的根因）
         New-Service -Name $name -BinaryPathName $want -StartupType Automatic | Out-Null
-        Ok "已创建服务 $name（-t $tag -m *）"
+        Ok "已创建服务 $name（-t $tag -m $mount）"
     }
     if ((Get-Service -Name $name).Status -ne 'Running') { Start-Service -Name $name }
 }
 Ensure-VirtioFsService 'VirtioFsSvc'  'daijd-shared'   # 原服务（宿主 Downloads，装 guest tools 时自带）
-Ensure-VirtioFsService 'VirtioFsSvc2' $ShareTag        # 本脚本加的（宿主仓库）
+Ensure-VirtioFsService 'VirtioFsSvc2' $ShareTag 'W:'   # 本脚本加的（宿主仓库，盘符固定 W:）
 
 $drive = Get-ShareDrive $ShareTag
 if (-not $drive) {

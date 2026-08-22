@@ -43,7 +43,7 @@ virsh -c qemu:///system shutdown win11   # 若在运行
    powershell -NoProfile -ExecutionPolicy Bypass -File <仓库盘>:\scripts\provision-windows-vm.ps1 -SshPublicKey "ssh-ed25519 AAAA... 你的用户名"
    ```
 
-脚本做：D: 盘 NTFS → 两个 virtiofs 服务明确 tag 化（原 `VirtioFsSvc` 补 `-t daijd-shared`，新建 `VirtioFsSvc2` 挂 `md-editor-src`，盘符动态分配）→ VS 2022 Build Tools（10-25 分钟）→ Python + aqtinstall + Qt 6.8.2（约 2G 下载）→ NSIS + ImageMagick → OpenSSH Server（WU 不通自动用 GitHub 离线包）+ `builder` 用户（随机密码自动存 `C:\builder-pass.txt`，日常构建走公钥用不到）→ 生成 ssh 构建入口 `C:\md-editor-build-launch.ps1` → 自检清单（应全绿）。
+脚本做：D: 盘 NTFS → 两个 virtiofs 服务明确 tag 化（原 `VirtioFsSvc` 补 `-t daijd-shared`，新建 `VirtioFsSvc2` 挂 `md-editor-src`，盘符固定 `W:`——`-m *` 自动盘符会随开机顺序漂移，炸 `D:\build` 的 CMake 缓存）→ VS 2022 Build Tools（10-25 分钟）→ Python + aqtinstall + Qt 6.8.2（约 2G 下载）→ NSIS + ImageMagick → OpenSSH Server（WU 不通自动用 GitHub 离线包）+ `builder` 用户（随机密码自动存 `C:\builder-pass.txt`，日常构建走公钥用不到）→ 生成 ssh 构建入口 `C:\md-editor-build-launch.ps1` → 自检清单（应全绿）。
 
 本机没有 winget（App Installer 缺失），工具安装包直连官方站静默安装；镜像站在 guest 里不稳时，先在宿主预下到 `~/Downloads`（如 `curl -L -C - -o ~/Downloads/ImageMagick-setup.exe <官方地址>`，断点续传），provision 会优先从该共享（daijd-shared）拷入。
 
@@ -72,7 +72,8 @@ virsh -c qemu:///system shutdown win11   # 若在运行
 |------|-----------|
 | 共享挂不上，宿主 `dmesg \| grep DENIED` 有 apparmor 拒绝 | system 实例 qemu 受 AppArmor 约束。在 `/etc/apparmor.d/libvirt/libvirt-qemu`（或 `local/` 对应文件）追加 `"/home/daijd/claude-workspace/md-editor/**" rwk,` 与 `"~/qemu/**" rwk,` 后 `sudo apparmor_parser -r` 对应 profile，重启 VM |
 | 找不到卷标 `md-editor-src` | VM 里 `sc query VirtioFsSvc2`；没起则 `sc start VirtioFsSvc2`；确认宿主 XML 有 `<filesystem>` 段且 target 一致 |
-| 两个盘同卷标 `md-editor-src`（其一 FileSystem 为 NTFS）、Downloads 共享消失 | 原服务 `VirtioFsSvc` 不带 `-t` 时会抢挂开机后先枚举到的设备。重跑 provision（步骤 2 会给两个服务都写入明确 `-t <tag> -m *` 并重启）；脚本探测已限定 `FileSystem='VirtIO-FS'` 排除假盘 |
+| 两个盘同卷标 `md-editor-src`（其一 FileSystem 为 NTFS）、Downloads 共享消失 | 原服务 `VirtioFsSvc` 不带 `-t` 时会抢挂开机后先枚举到的设备。重跑 provision（步骤 2 会给两个服务都写入明确 `-t <tag>`，仓库共享再 `-m W:` 钉死盘符）；脚本探测已限定 `FileSystem='VirtIO-FS'` 排除假盘 |
+| `cmake` 报 `The source "Y:..." does not match the source "Z:..." used to generate cache` | virtiofs 自动盘符漂移（`-m *` 从 Z: 倒序找空位，两服务开机顺序不定会互换盘符），`D:\build` 缓存内嵌了旧盘符的源路径。已根治：`VirtioFsSvc2` 固定挂 `W:`（在自动扫号区外永不冲突），build 脚本带缓存守卫（源路径不符自动清缓存重配置）。存量 VM 重跑 provision，或手动 `sc config VirtioFsSvc2 binpath= "\"C:\Program Files\Virtio-Win\VioFS\virtiofs.exe\" -t md-editor-src -m W:"` 后重启该服务 |
 | 安装器下载报「不是完整可执行文件」 | guest 直连镜像站被掐断/拦截（这台环境每次连接约 1MB 即断）。宿主预下到 `~/Downloads` 后 provision 从共享拷入；ImageMagick 走 GitHub 最稳：`gh release download 7.1.2-29 -R ImageMagick/ImageMagick --pattern '*Q16-HDRI-x64-dll.exe' -o ~/Downloads/ImageMagick-setup.exe --clobber` |
 | D: 剩余不足 5G 构建中止 | 清 `D:\build`（可整目录删，下次重新配置）或 Windows 磁盘清理；必要时 `virsh vol-resize` 扩盘 + Windows 扩卷 |
 | ssh 超时 | `virsh domaddr win11` 看 IP 是否 192.168.122.10；VM 里查 sshd 服务；公钥是否在 `C:\ProgramData\ssh\administrators_authorized_keys`（注意该文件 ACL 只留 Administrators/SYSTEM） |

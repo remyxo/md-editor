@@ -39,11 +39,23 @@ else         { Write-Error "未找到 magick.exe（provision 步骤 5）"; exit 
 #      勿在此预删旧 ico——会把 hash 跳过分支打掉，每次都重链 exe）----
 & (Join-Path $SrcRoot 'scripts\generate-icons-win.ps1')
 
-# ---- 5. 配置 + 构建（build 在 D: 本地盘，源码在共享卷）----
+# ---- 5. 配置 + 构建（build 在 D: 本地盘，源码在共享卷 W:，provision 已钉死盘符）----
+# 缓存守卫：CMake 缓存内嵌绝对源路径，与当前源路径不符（盘符漂移的历史遗留，或
+# 手动 -SrcRoot 指到别处）会硬报「does not match the source used to generate
+# cache」——自动清掉失效缓存重新配置（一次性代价，换后续增量构建）
+$srcNorm = $SrcRoot.TrimEnd('\').Replace('\', '/')
+if (Test-Path 'D:\build\CMakeCache.txt') {
+    $hit = Select-String -Path 'D:\build\CMakeCache.txt' -Pattern '^CMAKE_HOME_DIRECTORY:INTERNAL=(.+)$' | Select-Object -First 1
+    if ($hit -and $hit.Matches[0].Groups[1].Value.TrimEnd('/') -ne $srcNorm) {
+        Write-Host "==> 源路径已变（$($hit.Matches[0].Groups[1].Value) → $srcNorm），清理失效 CMake 缓存"
+        Remove-Item -Force 'D:\build\CMakeCache.txt' -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force 'D:\build\CMakeFiles' -ErrorAction SilentlyContinue
+    }
+}
 Push-Location $SrcRoot
 try {
-    Write-Host "==> cmake 配置（D:\build）"
-    cmake -B D:\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+    Write-Host "==> cmake 配置（D:\build，源 $SrcRoot）"
+    cmake -S $SrcRoot -B D:\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
     if ($LASTEXITCODE -ne 0) { Write-Error "cmake 配置失败 (exit $LASTEXITCODE)"; exit $LASTEXITCODE }
 
     Write-Host "==> 构建"
