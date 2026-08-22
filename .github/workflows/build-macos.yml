@@ -16,7 +16,7 @@ jobs:
 
     steps:
     - name: 检出代码
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         fetch-depth: 0  # 获取 tag 信息
 
@@ -81,7 +81,7 @@ jobs:
       run: ./scripts/package-macos.sh
 
     - name: 上传制品
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: md-editor-macos
         path: md-editor-*-macos-universal.dmg
