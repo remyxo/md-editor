@@ -14,4 +14,6 @@ Testing/
 # Windows 本地构建（VM）产物与暂存，见 docs/windows-build-vm.md
 /dist/
 /src/resources/icons/*.ico
+# 奇安信终端安全软件在本目录投放的蜜罐/下载文件，防止误提交
 '$QAXHoneypot'/
+/QAXDownload/
