@@ -10,3 +10,8 @@ qrc_*.cpp
 node_modules/
 session.txt
 Testing/
+
+# Windows 本地构建（VM）产物与暂存，见 docs/windows-build-vm.md
+/dist/
+/src/resources/icons/*.ico
+'$QAXHoneypot'/

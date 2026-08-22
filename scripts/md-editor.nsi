@@ -6,7 +6,7 @@
 !endif
 
 Name "md-editor ${VERSION}"
-OutFile "md-editor-${VERSION}-win64.exe"
+OutFile "dist\md-editor-${VERSION}-win64.exe"
 InstallDir "$PROGRAMFILES64\md-editor"
 RequestExecutionLevel admin
 Unicode true

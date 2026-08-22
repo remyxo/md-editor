@@ -89,6 +89,12 @@ else()
     if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/md-editor.ico")
         target_sources(${PROJECT_NAME} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/resources/md-editor.rc")
+        # CMake/Ninja 不解析 .rc 内部对 ico 的引用，显式挂依赖：
+        # ico 变了（mtime 更新）才重编 .rc 并重链，否则 exe 内嵌图标一直是旧版
+        set_source_files_properties(
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/md-editor.rc"
+            PROPERTIES OBJECT_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/md-editor.ico")
     endif()
 endif()
 
