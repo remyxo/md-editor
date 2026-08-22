@@ -31,6 +31,18 @@ New-Item -ItemType Directory -Force -Path $dist | Out-Null
 # 2. 拷贝 exe 到暂存目录
 Copy-Item $exe $dist
 
+# 2.5 PE 子系统校验：必须是 GUI(2)。若是控制台(3)（add_executable 漏 WIN32 标志），
+#     双击启动会附带一个黑色空控制台窗口——此处拦截，防止回归出厂
+$fs = [System.IO.File]::OpenRead((Join-Path $dist "md-editor.exe"))
+$br = New-Object System.IO.BinaryReader($fs)
+$fs.Seek(0x3C, 'Begin') | Out-Null
+$peOff = $br.ReadInt32()
+$fs.Seek($peOff + 4 + 20 + 68, 'Begin') | Out-Null   # PE 签名(4)+COFF 头(20)+OptionalHeader.Subsystem(68)
+$subsys = $br.ReadUInt16()
+$fs.Close()
+if ($subsys -ne 2) { throw "md-editor.exe PE 子系统为 $subsys（应为 2/GUI）——add_executable 是否漏了 WIN32 标志？" }
+Write-Host "PE 子系统校验: GUI (2) 通过"
+
 # 3. windeployqt 部署 Qt DLL / WebEngine 资源 / VC 运行库（部署到 exe 旁）
 & windeployqt --release --compiler-runtime --no-translations (Join-Path $dist "md-editor.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败 (exit $LASTEXITCODE)" }

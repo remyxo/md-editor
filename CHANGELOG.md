@@ -2,6 +2,11 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.12.2] — 2026-08-22
+
+### 修复
+- **Windows 双击启动附带黑色空控制台窗口** — `add_executable` 缺 `WIN32` 标志，exe 按 PE 控制台子系统（Subsystem=3）链接，资源管理器双击启动时 Windows 为其附带一个 conhost 空窗口（历届 Windows 版均有，非 0.12.1 引入）；补上标志改链 GUI 子系统（WinMain 入口由 Qt6 入口点库自动提供，`main()` 无改动，Linux 构建不受影响），并在 `package-windows.ps1` 增加 PE 子系统断言（非 GUI 即打包失败，CI 与本地 VM 共用此脚本）防回归
+
 ## [0.12.1] — 2026-08-22
 
 ### 修复

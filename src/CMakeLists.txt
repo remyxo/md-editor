@@ -84,7 +84,10 @@ if(APPLE)
             "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/md-editor.icns")
     endif()
 else()
-    add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${RESOURCES})
+    # WIN32：链接为 GUI 子系统 exe（WinMain 入口由 Qt6 入口点库自动提供，main() 不用改）。
+    # 缺此标志是控制台子系统——Windows 双击启动会附带一个黑色空控制台窗口。
+    # 该属性仅 Windows 生效，Linux 构建不受影响；package-windows.ps1 有 PE 子系统断言防回归
+    add_executable(${PROJECT_NAME} WIN32 ${SOURCES} ${HEADERS} ${RESOURCES})
     # Windows 程序图标（.ico 由 CI 的 generate-icons-win.ps1 生成；.rc 引用它）
     if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/md-editor.ico")
         target_sources(${PROJECT_NAME} PRIVATE
