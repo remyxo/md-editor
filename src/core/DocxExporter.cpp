@@ -945,20 +945,22 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
 
                 if (cellTag == "th" || cellTag == "td") {
                     bool isTh = (cellTag == "th");
+                    // 检查对齐（属性须在 parseInline 消费元素前读取）
+                    QString cellSty = r.attributes().value("style").toString();
+                    QString cellAlign = extractAlign(cellSty);
                     result += "<w:tc>";
-                    // 单元格属性
+                    // 单元格属性：tcPr 无 w:jc 子元素（CT_TcPr 只认 tcW/shd/vAlign 等），
+                    // 水平对齐是段落属性，写入下方单元格段落的 <w:pPr>
                     result += "<w:tcPr>";
                     result += "<w:tcW w:w=\"2340\" w:type=\"dxa\"/>";
                     if (isTh) result += "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"D9E2F3\"/>";
-                    // 检查对齐
-                    QString cellSty = r.attributes().value("style").toString();
-                    QString cellAlign = extractAlign(cellSty);
-                    if (!cellAlign.isEmpty()) result += "<w:jc w:val=\"" + cellAlign + "\"/>";
                     result += "</w:tcPr>";
 
                     // 单元格内容（内联解析）
                     QString cellInner = parseInline(r, cellTag, s);
-                    result += "<w:p>" + cellInner + "</w:p>";
+                    QString pPr = cellAlign.isEmpty() ? QString()
+                        : "<w:pPr><w:jc w:val=\"" + cellAlign + "\"/></w:pPr>";
+                    result += "<w:p>" + pPr + cellInner + "</w:p>";
                     result += "</w:tc>";
                 }
             }
@@ -1284,8 +1286,9 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
 
     // 4. ZIP 打包（miniz：跨平台、无外部 zip 依赖；部件均已在内存，先写堆内存再经
     //    QFile 落盘，规避 Windows 下 fopen 对非 ASCII 路径的处理问题）
-    const QByteArray mimetype = QByteArrayLiteral(
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    // 注意：不得写 ODF 式 mimetype 首条目——DOCX 是 OPC 包，mimetype 部件无扩展名
+    // 又未在 [Content_Types].xml 声明，属内容类型无法解析的部件，Word 会弹
+    // 「发现无法读取的内容」修复框（WPS/LibreOffice 宽容不报）。
     const QByteArray rootRels = QByteArrayLiteral(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
         "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n"
@@ -1311,8 +1314,7 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
         }
     };
 
-    // OPC 规范：mimetype 必须为首条目且 STORE（不压缩），其余按需 deflate
-    add("mimetype", mimetype, MZ_NO_COMPRESSION);
+    // OPC 包首条目为 [Content_Types].xml，无 ODF 式 mimetype（见上方注释）
     add("[Content_Types].xml", contentTypes, MZ_BEST_COMPRESSION);
     add("_rels/.rels", rootRels, MZ_BEST_COMPRESSION);
     add("word/_rels/document.xml.rels", docRelsXml, MZ_BEST_COMPRESSION);

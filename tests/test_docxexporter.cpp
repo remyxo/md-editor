@@ -173,6 +173,38 @@ private slots:
         QVERIFY(xml.contains("2"));
     }
 
+    void testTableCellAlignmentMovesToParagraph() {
+        // 回归：单元格水平对齐是段落属性（<w:pPr>/<w:jc>），不是单元格属性——
+        // CT_TcPr 没有 w:jc 子元素，曾把它写进 <w:tcPr> 属 OOXML 违规，
+        // Word 打开弹「发现无法读取的内容」修复框（WPS/LibreOffice 宽容不报）。
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx(
+            "<table><thead><tr><th style=\"text-align:center\">A</th></tr></thead>"
+            "<tbody><tr><td style=\"text-align:right\">1</td></tr></tbody></table>",
+            dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QProcess unzip; unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString xml = QString::fromUtf8(unzip.readAllStandardOutput());
+
+        // tcPr 内不得出现 w:jc（逐块检查，块数须为 2：th + td）
+        QRegularExpression tcPrRe("<w:tcPr>(.*?)</w:tcPr>");
+        auto it = tcPrRe.globalMatch(xml);
+        int n = 0;
+        while (it.hasNext()) {
+            const QString blk = it.next().captured(1);
+            QVERIFY2(!blk.contains("<w:jc"), qPrintable(blk));
+            ++n;
+        }
+        QVERIFY2(n == 2, qPrintable(xml));
+        // 对齐落在单元格段落的 pPr 里
+        QVERIFY2(xml.contains("<w:pPr><w:jc w:val=\"center\"/></w:pPr>"), qPrintable(xml));
+        QVERIFY2(xml.contains("<w:pPr><w:jc w:val=\"right\"/></w:pPr>"), qPrintable(xml));
+    }
+
     void testSeparateOrderedListsRestartNumbering() {
         // 回归：两个不相邻的有序列表曾共享同一 numId，Word 把它们当作同一编号序列，
         // 第二个列表会从上一个列表的序号续编（如 1,2 后接 3,4 而非 1,2）。
@@ -437,9 +469,11 @@ private slots:
         if (oldMr.isValid()) s.setValue("export/marginRight", oldMr); else s.remove("export/marginRight");
     }
 
-    void testZipStructureOpacCompliant() {
-        // 回归：DOCX 必须符合 OPC 规范——mimetype 是 zip 首条目且 STORE（不压缩），
-        // 否则 Word/WPS 可能拒绝打开。直接校验原始字节，不依赖外部 zip/unzip。
+    void testZipStructureOpcCompliant() {
+        // 回归：DOCX 是 OPC 包，不是 ODF——不得写 ODF 式 mimetype 首条目。
+        // mimetype 部件无扩展名、[Content_Types].xml 又未 Override 它，属
+        // 「内容类型无法解析的部件」，Word 打开弹「发现无法读取的内容」修复框
+        // （WPS/LibreOffice 宽容不报）。直接校验原始字节，不依赖外部 zip/unzip。
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QString out = dir.path() + "/o.docx";
         DocxExporter ex;
@@ -453,24 +487,16 @@ private slots:
         // 本地文件头签名 "PK\x03\x04"
         QVERIFY2(raw.startsWith("PK\x03\x04"), qPrintable(raw.left(8).toHex()));
         QVERIFY2(raw.size() >= 30, "zip 文件过小");
-        // 首条目压缩方法字段（offset 8，2 字节小端）== 0（STORE）
-        const quint16 method = static_cast<quint8>(raw[8]) | (static_cast<quint8>(raw[9]) << 8);
-        QCOMPARE(method, quint16(0));
-        // 首条目文件名 == "mimetype"（文件名长度 offset 26-27；文件名起始 offset 30）
+        // 首条目文件名（文件名长度 offset 26-27；文件名起始 offset 30）
+        // 必须是 [Content_Types].xml，不得是 ODF 式 mimetype
         const quint16 nameLen = static_cast<quint8>(raw[26]) | (static_cast<quint8>(raw[27]) << 8);
-        QCOMPARE(nameLen, quint16(8));
-        QCOMPARE(QString::fromLatin1(raw.mid(30, 8)), QString("mimetype"));
+        QCOMPARE(QString::fromLatin1(raw.mid(30, nameLen)), QString("[Content_Types].xml"));
 
-        // 首条目 STORE 未压缩：mimetype 内容紧跟文件名，应恰为标准 OPC mimetype
-        // （回归：曾误写 .main+xml 后缀）。miniz 用 data descriptor，local header 尺寸为 0，
-        // 故不读 offset 22-25，改从固定位置取内容，并用紧随其后的 PK\x07\x08 签名确认内容恰好在此结束。
-        const quint16 extraLen = static_cast<quint8>(raw[28]) | (static_cast<quint8>(raw[29]) << 8);
-        const int dataStart = 30 + nameLen + extraLen;
-        const QByteArray expected = QByteArrayLiteral(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-        QCOMPARE(QString::fromLatin1(raw.mid(dataStart, expected.size())), QString(expected));
-        QVERIFY2(raw.mid(dataStart + expected.size(), 4) == "PK\x07\x08",
-                 "mimetype 内容长度异常（可能残留 .main+xml 后缀）");
+        // 全包不得含 mimetype 部件
+        QProcess unzip; unzip.start("unzip", QStringList() << "-l" << out);
+        QVERIFY(unzip.waitForFinished(10000));
+        const QString listing = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY2(!listing.contains(" mimetype"), qPrintable(listing));
     }
 };
 

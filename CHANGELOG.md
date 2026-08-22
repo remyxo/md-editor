@@ -2,6 +2,11 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.12.1] — 2026-08-22
+
+### 修复
+- **DOCX 导出触发 Word「发现无法读取的内容」修复框** — 两处 OOXML/OPC 违规（WPS/LibreOffice 宽容不报，Word 严格校验弹修复框，macOS Word 双击实测复现/修复）：① zip 包误带 ODF 式 mimetype 首条目，该部件无扩展名又未在 `[Content_Types].xml` 声明，属内容类型无法解析的部件（每个导出必带）；② 单元格水平对齐 `<w:jc>` 误写入 `<w:tcPr>`（CT_TcPr 无此子元素，对齐表格触发），移入单元格段落 `<w:pPr>`
+
 ## [0.12.0] — 2026-08-22
 
 ### 新增
