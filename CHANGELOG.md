@@ -2,6 +2,15 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.12.0] — 2026-08-22
+
+### 新增
+- **Windows 本地 KVM 虚拟机构建链路** — 宿主一键搭建/驱动（`setup-windows-vm-host.sh`）+ guest 置备（MSVC/Qt/NSIS/ImageMagick，`provision-windows-vm.ps1`），本地即可产出与 CI 同源的便携 zip + NSIS 安装器；打包产物统一落 `dist/`；运维文档含踩坑速查表（`docs/windows-build-vm.md`）
+
+### 修复
+- **macOS 包在 macOS 15 (Sequoia) 及以下无法启动** — CI runner 为 macOS 26，未设 `CMAKE_OSX_DEPLOYMENT_TARGET` 时 Info.plist 的 `LSMinimumSystemVersion` 跟随 SDK 写成 26，旧系统弹「应用程序的这个版本不能与此版本的macOS配合使用」拒绝启动（v0.11.1 的 macOS 包因此从 release 移除）；显式设为 12.0（Qt 6.8 官方最低支持版本）
+- **Windows 图标四角白底** — ImageMagick 的 `-background none` 是 setting 只作用于其后读取的图像，原参数顺序下 SVG 已用默认白色画布栅格化、四角 alpha 丢失，装出白边图标；调整为置于 SVG 之前
+
 ## [0.11.1] — 2026-08-21
 
 ### 修复
