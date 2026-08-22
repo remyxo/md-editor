@@ -912,6 +912,10 @@ function codeBlockNodeView(ref) {
             var pos = getPos();
             if (typeof pos !== 'number') return;
             ed.view.dispatch(ed.state.tr.setNodeMarkup(pos, undefined, { language: lang || null }));
+            // 浮层打开期间编辑器失焦、原选择已丢失，无参 focus() 会把光标与滚动
+            // 带回文档头——显式把光标放回本代码块内部并滚动到可视区再交还焦点
+            ed.commands.setTextSelection(pos + 1);
+            ed.view.dispatch(ed.state.tr.scrollIntoView());
         } catch (err) { console.warn('设置代码块语言失败:', err); }
         ed.commands.focus();
     }
