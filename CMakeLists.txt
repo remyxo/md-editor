@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.20)
 project(md-editor VERSION 0.11.1 LANGUAGES CXX C)
 add_compile_definitions(MD_EDITOR_VERSION="${PROJECT_VERSION}")
 
+# macOS 最低系统版本：Qt 6.8 官方最低支持 macOS 12。
+# 必须显式设置——不设时 CMake 默认取 SDK 版本，macOS 26 runner 上会把
+# Info.plist 的 LSMinimumSystemVersion 写成 26，导致 Sequoia(15) 等
+# 旧系统弹「应用程序的这个版本不能与此版本的macOS配合使用」拒绝启动。
+if(APPLE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 12.0)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
