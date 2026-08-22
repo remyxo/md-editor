@@ -842,9 +842,11 @@ body.dark .ProseMirror .code-block .code-block-toolbar {
 .ProseMirror .code-block .code-lang-label {
     cursor: pointer;
     font-family: "Cascadia Code","Fira Code","JetBrains Mono",monospace;
-    font-size: 11px;
-    text-transform: lowercase;
-    color: #555;
+    /* 等宽小写 x-height 只有字号 ~53%（纯小写显小），首字母大写撑起视觉高度；
+       15px 常规字重（20/18/16px 逐级实测后用户定档） */
+    font-size: 15px;
+    text-transform: capitalize;
+    color: #444;
     padding: 1px 6px;
     border-radius: 3px;
 }
