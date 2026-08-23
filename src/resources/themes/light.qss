@@ -60,8 +60,8 @@ QMenu::separator {
 QToolBar {
     background-color: #ffffff;
     border-bottom: none;
-    padding: 6px 10px;
-    spacing: 6px;
+    padding: 4px 6px;
+    spacing: 3px;
 }
 
 QLabel#headingLabel {
@@ -71,14 +71,14 @@ QLabel#headingLabel {
 
 QToolBar::separator {
     width: 1px;
-    margin: 4px 6px;
+    margin: 2px 4px;
     background-color: #d8d8d8;
 }
 
 QToolButton {
     border: none;
     border-radius: 5px;
-    padding: 7px 10px;
+    padding: 4px 6px;
     font-size: 16px;
     min-width: 24px;
 }
