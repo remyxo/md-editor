@@ -16,9 +16,9 @@ int EditorBridge::tabId() const
     return m_tabId;
 }
 
-void EditorBridge::cursorChanged(int line, int col)
+void EditorBridge::cursorChanged(int line, int col, int pos)
 {
-    emit cursorPositionChanged(line, col, m_tabId);
+    emit cursorPositionChanged(line, col, pos, m_tabId);
 }
 
 void EditorBridge::requestImageSave(const QString &requestId, const QString &base64,

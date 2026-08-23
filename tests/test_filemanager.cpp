@@ -134,6 +134,115 @@ private slots:
                  "替换式修改后监控丢失：后续外部修改无法感知（需重新加入监控）");
     }
 
+    void testReadUtf8BomStripped() {
+        // 带 UTF-8 BOM 的文件读入应剥离 BOM，不残留 U+FEFF
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/bom.md";
+
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("\xEF\xBB\xBF");
+            f.write("# 标题");
+            f.close();
+        }
+
+        QString content = fm.readFile(path);
+        QVERIFY2(!content.startsWith(QChar(0xFEFF)), "读入不应残留 BOM 字符");
+        QCOMPARE(content, QStringLiteral("# 标题"));
+    }
+
+    void testWritePreservesUtf8Bom() {
+        // 原文件带 UTF-8 BOM（如 Windows 记事本），写回应保留 BOM
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/bom.md";
+
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("\xEF\xBB\xBF# v1");
+            f.close();
+        }
+
+        QVERIFY(fm.writeFile(path, "# v2"));
+
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        QByteArray bytes = f.readAll();
+        f.close();
+        QVERIFY2(bytes.startsWith(QByteArray::fromHex("efbbbf")),
+                 "写回应保留原文件的 UTF-8 BOM");
+        QCOMPARE(QString::fromUtf8(bytes.constData() + 3, bytes.size() - 3),
+                 QStringLiteral("# v2"));
+    }
+
+    void testWriteNoBomForNewFile() {
+        // 新文件（原文件不存在，另存为）不应带 BOM
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/new.md";
+
+        QVERIFY(fm.writeFile(path, "# 新文件"));
+
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        QByteArray bytes = f.readAll();
+        f.close();
+        QVERIFY2(!bytes.startsWith(QByteArray::fromHex("efbbbf")),
+                 "新文件不应写入 BOM");
+    }
+
+    void testDecodeUtf16Bom() {
+        // UTF-16LE BOM + "Hi"：应自动按 BOM 定序并剥离
+        QByteArray bytes = QByteArray::fromHex("FFFE48006900");
+        QCOMPARE(FileManager::decodeFileContent(bytes), QStringLiteral("Hi"));
+    }
+
+    void testDecodeNoBomUtf8() {
+        // 无 BOM 的合法 UTF-8 应原样解码
+        QByteArray bytes = "# 标题\n正文";
+        QCOMPARE(FileManager::decodeFileContent(bytes),
+                 QStringLiteral("# 标题\n正文"));
+    }
+
+    void testDecodeCrlfNormalized() {
+        // CRLF 换行应归一化为 \n（等价于原 QIODevice::Text 模式）
+        QByteArray bytes = "# a\r\n\r\n# b\r\n";
+        QCOMPARE(FileManager::decodeFileContent(bytes),
+                 QStringLiteral("# a\n\n# b\n"));
+    }
+
+    void testDetectEncoding() {
+        // decodeFileContent 的 encoding 出参应回填正确编码标签（状态栏显示用）
+        QString enc;
+
+        // UTF-8 BOM
+        QByteArray bom = QByteArray::fromHex("efbbbf") + "# 标题";
+        FileManager::decodeFileContent(bom, &enc);
+        QCOMPARE(enc, QStringLiteral("UTF-8 BOM"));
+
+        // UTF-16 LE BOM
+        FileManager::decodeFileContent(QByteArray::fromHex("FFFE48006900"), &enc);
+        QCOMPARE(enc, QStringLiteral("UTF-16 LE"));
+
+        // UTF-16 BE BOM
+        FileManager::decodeFileContent(QByteArray::fromHex("FEFF0048006900"), &enc);
+        QCOMPARE(enc, QStringLiteral("UTF-16 BE"));
+
+        // 无 BOM 合法 UTF-8
+        FileManager::decodeFileContent("# 标题", &enc);
+        QCOMPARE(enc, QStringLiteral("UTF-8"));
+
+        // 空内容
+        FileManager::decodeFileContent(QByteArray(), &enc);
+        QCOMPARE(enc, QString());
+    }
+
     void testSaveBurstCoalesced() {
         // 一次外部保存会在毫秒级内产生多个文件系统事件
         // （如 vim：rename 覆盖 + 新文件继续写入/恢复权限 mtime）。

@@ -1,5 +1,6 @@
 #include "OutlineTree.h"
 #include <QJsonObject>
+#include <functional>
 
 OutlineTree::OutlineTree(QWidget *parent)
     : QTreeView(parent)
@@ -19,7 +20,10 @@ void OutlineTree::updateHeadings(const QJsonArray &headings)
     // clear() 会清掉 header 标签，需重设
     m_model->setHorizontalHeaderLabels({tr("大纲")});
 
-    if (headings.isEmpty()) return;
+    if (headings.isEmpty()) {
+        applyHighlight();
+        return;
+    }
 
     QStandardItem *root = m_model->invisibleRootItem();
     // 用栈来构建层级关系
@@ -46,12 +50,53 @@ void OutlineTree::updateHeadings(const QJsonArray &headings)
     }
 
     expandAll();
+    // 大纲重建会清空当前项高亮，按最近光标位置恢复（onSelectionUpdate 里
+    // cursorChanged 先于 headingsChanged 到达，重建会擦掉刚设的高亮）
+    applyHighlight();
 }
 
 void OutlineTree::onItemClicked(const QModelIndex &index)
 {
     int pos = index.data(Qt::UserRole).toInt();
     emit headingClicked(pos);
+}
+
+void OutlineTree::highlightAtPos(int pos)
+{
+    m_currentPos = pos;
+    applyHighlight();
+}
+
+void OutlineTree::applyHighlight()
+{
+    // 高亮「最后一个 pos <= 光标位置」的标题项（即光标当前所属的最近标题）。
+    // 标题 pos 在 build 时按文档序递增，故记录最大匹配 pos 即当前小节。
+    if (m_currentPos < 0) {
+        setCurrentIndex(QModelIndex());
+        return;
+    }
+    QStandardItem *match = nullptr;
+    int bestPos = -1;
+    std::function<void(QStandardItem *)> visit = [&](QStandardItem *item) {
+        for (int i = 0; i < item->rowCount(); ++i) {
+            QStandardItem *child = item->child(i);
+            int p = child->data(Qt::UserRole).toInt();
+            if (p <= m_currentPos && p > bestPos) {
+                bestPos = p;
+                match = child;
+            }
+            visit(child);
+        }
+    };
+    visit(m_model->invisibleRootItem());
+
+    if (match) {
+        QModelIndex idx = match->index();
+        setCurrentIndex(idx);
+        scrollTo(idx);   // 高亮项滚入可见区
+    } else {
+        setCurrentIndex(QModelIndex());   // 光标位于首个标题之前：清除高亮
+    }
 }
 
 // 语言切换后重设 header 文案

@@ -337,6 +337,43 @@ private slots:
         QVERIFY(!md2.contains("aligned"));
     }
 
+    void testExplicitAlignedMathRoundTrip() {
+        // 用户显式书写 \begin{aligned} 环境（含对齐列 &）应逐字保留，
+        // 不得被 toHtml 双重包裹、也不得被 fromHtml 剥离为纯多行
+        QString md1 = "$$\n\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}\n$$\n";
+        QString html = MarkdownHandler::toHtml(md1);
+        // 不应双重包裹（仅一次 \begin{aligned}）
+        QVERIFY2(html.count("\\begin{aligned}") == 1,
+                 qPrintable("显式 aligned 不应双重包裹，实际: " + html));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("\\begin{aligned}"), qPrintable("应保留 \\begin{aligned}，实际:\n" + md2));
+        QVERIFY2(md2.contains("\\end{aligned}"), qPrintable("应保留 \\end{aligned}，实际:\n" + md2));
+        QVERIFY2(md2.contains("a &= b"), qPrintable("应保留对齐列 &，实际:\n" + md2));
+        QVERIFY2(md2.contains("c &= d"), qPrintable("应保留第二行，实际:\n" + md2));
+    }
+
+    void testExplicitMatrixMathRoundTrip() {
+        // 用户显式书写 \begin{matrix} 环境应逐字保留（含 & 与 \\ 行分隔）
+        QString md1 = "$$\n\\begin{matrix}\na & b \\\\\nc & d\n\\end{matrix}\n$$\n";
+        QString html = MarkdownHandler::toHtml(md1);
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("\\begin{matrix}"), qPrintable("应保留 \\begin{matrix}，实际:\n" + md2));
+        QVERIFY2(md2.contains("\\end{matrix}"), qPrintable("应保留 \\end{matrix}，实际:\n" + md2));
+        QVERIFY2(md2.contains("a & b"), qPrintable("应保留 & 分隔，实际:\n" + md2));
+        QVERIFY2(md2.contains("c & d"), qPrintable("应保留第二行，实际:\n" + md2));
+    }
+
+    void testExplicitCasesMathRoundTrip() {
+        // \begin{cases} 环境（无 &）也应逐字保留，不得被当作自动包裹的 aligned 剥离
+        QString md1 = "$$\n\\begin{cases}\nx \\\\\ny\n\\end{cases}\n$$\n";
+        QString html = MarkdownHandler::toHtml(md1);
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("\\begin{cases}"), qPrintable("应保留 \\begin{cases}，实际:\n" + md2));
+        QVERIFY2(md2.contains("\\end{cases}"), qPrintable("应保留 \\end{cases}，实际:\n" + md2));
+        QVERIFY2(md2.contains("x") && md2.contains("y"),
+                 qPrintable("应保留各行，实际:\n" + md2));
+    }
+
     void testMathRoundTripTipTapOrder() {
         // TipTap Mathematics 扩展输出 data-latex 在 data-type 之前
         // fromHtml() 的正则必须能匹配任意属性顺序
@@ -506,6 +543,37 @@ private slots:
         QString html = MarkdownHandler::toHtml(md1);
         QVERIFY2(!html.contains("<sub>"),
                  qPrintable("删除线不应产生 <sub>，实际: " + html));
+    }
+
+    void testStrikeRoundTrip() {
+        // 删除线 ~~x~~ 往返：MD → HTML（<s>）→ MD，不得退化为字面 <span style>
+        QString md1 = "~~删除线~~ 正文\n";
+        QString html = MarkdownHandler::toHtml(md1);
+        QVERIFY2(html.contains("<s>"), qPrintable("toHtml 应输出 <s>，实际: " + html));
+        QVERIFY2(!html.contains("line-through"),
+                 qPrintable("toHtml 不应残留 line-through span，实际: " + html));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("~~删除线~~"),
+                 qPrintable("fromHtml 应还原 ~~删除线~~，实际: " + md2));
+    }
+
+    void testStrikeSubscriptRoundTrip() {
+        // 删除线内含下标 ~~H~2~O~~：往返后逐字保留（删除线 + 下标双语义不丢失）
+        QString md1 = "~~H~2~O~~\n";
+        QString html = MarkdownHandler::toHtml(md1);
+        QVERIFY2(html.contains("<s>"), qPrintable("应输出 <s>，实际: " + html));
+        QVERIFY2(html.contains("<sub>2</sub>"),
+                 qPrintable("删除线内下标应转 <sub>2</sub>，实际: " + html));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("~~H~2~O~~"),
+                 qPrintable("应逐字还原 ~~H~2~O~~，实际: " + md2));
+    }
+
+    void testStrikeTipTapOutputRoundTrip() {
+        // TipTap Strike mark 输出 <s>/<del> → fromHtml 还原 ~~...~~
+        QString md = MarkdownHandler::fromHtml("<p><s>甲</s> <del>乙</del></p>");
+        QVERIFY2(md.contains("~~甲~~"), qPrintable("应还原 <s> → ~~甲~~，实际: " + md));
+        QVERIFY2(md.contains("~~乙~~"), qPrintable("应还原 <del> → ~~乙~~，实际: " + md));
     }
 
     void testSubSupTipTapOutputRoundTrip() {
@@ -827,6 +895,20 @@ private slots:
         QCOMPARE(html.count("data-type=\"taskList\""), 2);
         QString md2 = MarkdownHandler::fromHtml(html);
         QCOMPARE(md2, md1);
+    }
+
+    void testNestedListRoundTrip() {
+        // 普通嵌套列表（非任务列表）：2 空格缩进往返逐字一致（CommonMark 规范缩进）。
+        // 4 空格等非规范缩进会被归一化为 2 空格（语义结构保留，属预期行为）。
+        const QString md1 = QStringLiteral("- 一级\n  - 二级\n    - 三级");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QCOMPARE(md2, md1);
+
+        const QString md3 = QStringLiteral("1. 一\n   1. 子项");
+        const QString md4 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md3));
+        // 有序列表项 Qt 输出 "1.  一"（序号后两空格对齐），故仅断言语义保留
+        QVERIFY2(md4.contains("一") && md4.contains("子项"),
+                 qPrintable("嵌套有序列表语义应保留，实际: " + md4));
     }
 
     void testTaskListInlineCodeRoundTrip() {
@@ -2364,6 +2446,34 @@ private slots:
                  qPrintable("双反引号单元格行应为 | cell | 格式，实际: " + md2));
     }
 
+    void testTableEmptyCellRoundTrip()
+    {
+        // 空单元格 ||（无空格）往返：Qt setMarkdown 会把 || 误解析、空单元格
+        // 重定位到行尾。toHtml 应在 setMarkdown 前规范化 || → |  |。
+        const QString md1 = QStringLiteral(
+            "| a | b | c |\n"
+            "| --- | --- | --- |\n"
+            "| 1 || 3 |\n");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        // 空单元格应保留在中间列，不得重定位为尾列（| 1 | 3 |  | 是损坏形态）
+        QVERIFY2(md2.contains("| 1 |  | 3 |"),
+                 qPrintable("|| 空单元格应规范化保留为中间空列，实际:\n" + md2));
+        QVERIFY2(!md2.contains("| 1 | 3 |  |"),
+                 qPrintable("空单元格不得重定位到行尾，实际:\n" + md2));
+    }
+
+    void testTableEmptyCellCodeSpanNotSplit()
+    {
+        // 行内代码内的 || 不应被当作空单元格分隔（反引号感知规范化）
+        const QString md1 = QStringLiteral(
+            "| a | b |\n"
+            "| --- | --- |\n"
+            "| `x||y` | 2 |\n");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QVERIFY2(md2.contains("`x||y`"),
+                 qPrintable("行内代码内的 || 应原样保留，实际:\n" + md2));
+    }
+
     void testSingleLineBlockMathRoundTrip()
     {
         // 单行块级公式 $$...$$（开闭定界符同一行，如 $$E=mc^{2}$$）应识别为
@@ -2433,6 +2543,28 @@ private slots:
             QVERIFY2(md2.contains("\n\n# 标题"),
                      qPrintable("惰性延续后标题仍应打断表格，实际:\n" + md2));
         }
+    }
+
+    void testBlockquoteParagraphSeparatorRoundTrip()
+    {
+        // 块引用内多段落（「> 空行」分隔）往返：两段不应被合并成一段。
+        // 曾把裸 ">" 当正文行插入 <br data-brk>，「> a\n>\n> b」两段粘成一段。
+        const QString md1 = QStringLiteral("> 第一段\n>\n> 第二段");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QVERIFY2(md2.contains("> 第一段\n\n> 第二段"),
+                 qPrintable("两段引用之间应保留空行分隔，实际:\n" + md2));
+
+        // 「> + 空格」形式同理
+        const QString md3 = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(QStringLiteral("> 第一段\n> \n> 第二段")));
+        QVERIFY2(md3.contains("> 第一段\n\n> 第二段"),
+                 qPrintable(">+空格 空行形式也应保留分隔，实际:\n" + md3));
+
+        // 软换行（同一段落内两行）仍应保留为同一段，不被拆成两段
+        const QString md4 = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(QStringLiteral("> 第一行\n> 第二行")));
+        QVERIFY2(md4.contains("> 第一行\n> 第二行"),
+                 qPrintable("块引用内软换行不应被拆成两段，实际:\n" + md4));
     }
 };
 

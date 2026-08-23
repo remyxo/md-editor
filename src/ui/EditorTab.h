@@ -37,6 +37,8 @@ public:
 
     void loadFile(const QString &path, const QString &content);
     void setFilePath(const QString &path);
+    void setEncoding(const QString &encoding);
+    QString encoding() const;
     void setEditorTheme(const QString &theme);
     void setEditorLanguage(const QString &lang);
     void setEditorFont(const QString &family, int size);

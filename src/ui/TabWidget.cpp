@@ -19,6 +19,8 @@ TabWidget::TabWidget(QWidget *parent)
     setStyleSheet("QTabWidget::pane { border: none; }");
     connect(this, &QTabWidget::tabCloseRequested, this, &TabWidget::onTabCloseRequested);
     connect(this, &QTabWidget::currentChanged, this, &TabWidget::onCurrentChanged);
+    // 双击标签页关闭（复用 onTabCloseRequested 的脏检查/保存流程）
+    connect(tabBar(), &QTabBar::tabBarDoubleClicked, this, &TabWidget::onTabCloseRequested);
 }
 
 EditorTab *TabWidget::openNewTab()

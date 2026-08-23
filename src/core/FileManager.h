@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QFileSystemWatcher>
 #include <QHash>
+#include <QByteArray>
 
 class QTimer;
 
@@ -12,8 +13,13 @@ class FileManager : public QObject {
 public:
     explicit FileManager(QObject *parent = nullptr);
 
-    QString readFile(const QString &path);
+    QString readFile(const QString &path, QString *encoding = nullptr);
     bool writeFile(const QString &path, const QString &content);
+
+    // 文件内容解码（readFile 与 MainWindow 双击打开共用）：
+    //   BOM → UTF-8（校验）→ 系统编码回退；换行归一化为 \n。
+    // encoding 非空时回填检测到的编码标签（UTF-8 BOM / UTF-16 LE/BE / UTF-8 / GBK…）。
+    static QString decodeFileContent(const QByteArray &bytes, QString *encoding = nullptr);
 
     void watchFile(const QString &path);
     void unwatchFile(const QString &path);

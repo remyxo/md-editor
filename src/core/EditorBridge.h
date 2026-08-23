@@ -13,7 +13,7 @@ public:
 
 public slots:
     // JS → C++：状态同步
-    void cursorChanged(int line, int col);
+    void cursorChanged(int line, int col, int pos);
     void contentChanged(bool dirty);
     void wordCountChanged(int chars, int words);
     void openUrl(const QString &url);
@@ -30,7 +30,7 @@ public slots:
 
 signals:
     // 通知 C++ UI 组件
-    void cursorPositionChanged(int line, int col, int tabId);
+    void cursorPositionChanged(int line, int col, int pos, int tabId);
     void dirtyStateChanged(bool dirty, int tabId);
     void headingsUpdated(const QJsonArray &headings, int tabId);
     void formatStateChanged(const QJsonObject &format, int tabId);

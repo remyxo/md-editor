@@ -328,9 +328,13 @@ void MainWindow::connectSignals()
                         box.button(QMessageBox::Yes)->setText(tr("是"));
                         box.button(QMessageBox::No)->setText(tr("否"));
                         if (box.exec() == QMessageBox::Yes) {
-                            QString content = m_fileManager->readFile(path);
-                            if (!content.isNull())
+                            QString encoding;
+                            QString content = m_fileManager->readFile(path, &encoding);
+                            if (!content.isNull()) {
+                                tab->setEncoding(encoding);
                                 tab->loadFile(path, content);
+                                refreshEncodingLabel();
+                            }
                         }
                         break;
                     }
@@ -389,12 +393,14 @@ void MainWindow::connectSignals()
 
 void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
 {
-    // 连接光标位置更新（仅当前标签页）
+    // 连接光标位置更新（仅当前标签页）：状态栏行列 + 大纲高亮当前所属标题
     connect(bridge, &EditorBridge::cursorPositionChanged, this,
-            [this, bridge](int line, int col, int /*tabId*/) {
+            [this, bridge](int line, int col, int pos, int /*tabId*/) {
                 EditorTab *cur = m_tabWidget->currentEditorTab();
-                if (cur && cur->bridge() == bridge)
+                if (cur && cur->bridge() == bridge) {
                     m_statusBar->updateCursorPosition(line, col, 0);
+                    m_sideBar->outlineTree()->highlightAtPos(pos);
+                }
             });
 
     // 连接大纲更新
@@ -470,6 +476,7 @@ void MainWindow::onTabChanged(int tabId)
     bool srcMode = tab ? tab->isSourceMode() : false;
     m_toolBar->setSourceMode(srcMode);
     m_statusBar->setSourceMode(srcMode);
+    refreshEncodingLabel();   // 编码逐标签页独立
     if (QAction *act = m_menuBar->findChild<QAction *>(
             QStringLiteral("sourceModeAction")))
         act->setChecked(srcMode);
@@ -490,6 +497,12 @@ EditorBridge *MainWindow::currentBridge() const
 {
     EditorTab *tab = m_tabWidget->currentEditorTab();
     return tab ? tab->bridge() : nullptr;
+}
+
+void MainWindow::refreshEncodingLabel()
+{
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    m_statusBar->updateEncoding(tab ? tab->encoding() : QString());
 }
 
 void MainWindow::showSearchBar(bool withReplace)
@@ -832,7 +845,7 @@ void MainWindow::onOpenFolder()
 void MainWindow::onFileDoubleClicked(const QString &path)
 {
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         QMessageBox box(QMessageBox::Warning, tr("打开失败"),
                         tr("无法打开文件: %1").arg(path), QMessageBox::Ok, this);
         box.button(QMessageBox::Ok)->setText(tr("确定"));
@@ -840,16 +853,18 @@ void MainWindow::onFileDoubleClicked(const QString &path)
         return;
     }
 
-    QTextStream in(&file);
-    // Qt6 QTextStream 默认使用 UTF-8
-    QString content = in.readAll();
+    // 统一经 FileManager 的编码自动检测（BOM → UTF-8 → 系统编码回退）解码
+    QString encoding;
+    QString content = FileManager::decodeFileContent(file.readAll(), &encoding);
     file.close();
 
     EditorTab *tab = m_tabWidget->openFileTab(path, content);
     tab->setFilePath(path);
+    tab->setEncoding(encoding);
     m_fileManager->watchFile(path);
     m_menuBar->addRecentFile(path);
     m_statusBar->updateFilePath(path);
+    refreshEncodingLabel();
 }
 
 void MainWindow::onNewFile()
@@ -1107,9 +1122,11 @@ void MainWindow::restoreSession()
         if (path.isEmpty()) {
             continue; // 不恢复未命名的空白标签
         } else if (QFile::exists(path)) {
-            QString content = m_fileManager->readFile(path);
+            QString encoding;
+            QString content = m_fileManager->readFile(path, &encoding);
             EditorTab *tab = m_tabWidget->openFileTab(path, content);
             tab->setFilePath(path);
+            tab->setEncoding(encoding);
             m_fileManager->watchFile(path);
             m_menuBar->addRecentFile(path);
         }

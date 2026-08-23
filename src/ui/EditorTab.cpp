@@ -242,6 +242,16 @@ void EditorTab::setFilePath(const QString &path)
     pushDocDir();   // 页面已就绪则立即推送；否则由 onPageLoadFinished 补推
 }
 
+void EditorTab::setEncoding(const QString &encoding)
+{
+    m_webView->setProperty("encoding", encoding);
+}
+
+QString EditorTab::encoding() const
+{
+    return m_webView->property("encoding").toString();
+}
+
 void EditorTab::pushDocDir()
 {
     QString path = m_webView->property("filePath").toString();

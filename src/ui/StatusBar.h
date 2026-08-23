@@ -16,6 +16,7 @@ public slots:
     void updateCursorPosition(int line, int col, int /*tabId*/);
     void updateFilePath(const QString &path);
     void updateWordCount(int chars, int words, int /*tabId*/);
+    void updateEncoding(const QString &encoding);
     void setSourceMode(bool on);
 
 private:
@@ -23,11 +24,13 @@ private:
     QLabel *m_sourceModeLabel;
     QLabel *m_filePathLabel;
     QLabel *m_wordLabel;
+    QLabel *m_encodingLabel;
     // 缓存当前值，供 retranslateUi 重设文案
     int m_line = 1;
     int m_col = 1;
     int m_chars = 0;
     int m_words = 0;
+    QString m_encoding;
 };
 
 #endif // MD_EDITOR_STATUSBAR_H

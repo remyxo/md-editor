@@ -152,6 +152,10 @@ static bool isParagraphLine(const QString &line)
         // 块引用代码围栏行（> ```）是块边界，非正文行，避免在其前插入软换行
         if (blockquoteCodeFenceLen(line) > 0)
             return false;
+        // 块引用空行（仅 ">" 或 "> "）：段落分隔符，非正文行。避免 BRMARKER 把它
+        // 当作软换行插入，否则「> 第一段\n>\n> 第二段」两段被合并成一段。
+        if (trimmed == QLatin1String(">"))
+            return false;
         return true;
     }
     return c != '#' && c != '-' && c != '|'
@@ -193,6 +197,29 @@ static bool isTableLine(const QString &line)
     QString t = line.trimmed();
     return t.size() >= 2 && t.startsWith(QLatin1Char('|'))
            && t.endsWith(QLatin1Char('|'));
+}
+
+// 规范化表格行中「无空格空单元格」（|1||3|）：Qt setMarkdown 会把相邻 ||
+// 误解析——空单元格被重定位到行尾（数据损坏）。此处用反引号/转义感知的
+// splitTableCells 拆分后重拼，空单元格补单个空格（与 fromHtml 步骤 6 的
+// | cell | 风格一致）。仅当存在空单元格时才重拼，其余表格行（含分隔行）
+// 原样直通，零影响。
+static QString normalizeTableRowForQt(const QString &line)
+{
+    if (!isTableLine(line))
+        return line;
+    QString t = line.trimmed();
+    QString inner = t.mid(1, t.length() - 2);
+    QStringList cells = splitTableCells(inner);
+    bool hasEmpty = false;
+    for (const QString &c : cells)
+        if (c.trimmed().isEmpty()) { hasEmpty = true; break; }
+    if (!hasEmpty)
+        return line;   // 无空单元格（含分隔行），不重拼
+    QStringList padded;
+    for (const QString &c : cells)
+        padded << (" " + c.trimmed() + " ");
+    return "|" + padded.join('|') + "|";
 }
 
 // 表格中断块：GFM 规定表格在「其他块级结构」处结束。Qt setMarkdown 会错误地把
@@ -829,11 +856,19 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                     latex += l + '\n';
                 latex = latex.trimmed();
                 if (latex.contains('\n')) {
-                    QStringList parts;
-                    for (const QString &l : latex.split('\n'))
-                        if (!l.trimmed().isEmpty())
-                            parts << l.trimmed();
-                    latex = "\\begin{aligned}" + parts.join(" \\\\ ") + "\\end{aligned}";
+                    if (latex.contains("\\begin{")) {
+                        // 用户显式书写 LaTeX 环境（aligned/matrix/cases 等）：原样
+                        // 保留，仅折叠换行为空格（行尾 \\ 已含换行语义），不额外包裹
+                        // aligned——否则双重包裹破坏结构。fromHtml 据此还原为多行原样。
+                        latex.replace('\n', ' ');
+                    } else {
+                        // 纯多行（无环境）：包裹 aligned 供 KaTeX 渲染
+                        QStringList parts;
+                        for (const QString &l : latex.split('\n'))
+                            if (!l.trimmed().isEmpty())
+                                parts << l.trimmed();
+                        latex = "\\begin{aligned}" + parts.join(" \\\\ ") + "\\end{aligned}";
+                    }
                 }
                 mathBlocks << ("<div data-type=\"block-math\" data-latex=\"" + latex + "\"></div>");
                 inMathBlock = false;
@@ -996,6 +1031,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             if (isListItemLine(line) && lastBlock == BT_PARA)
                 processed += '\n';
             QString cl = line;
+            cl = normalizeTableRowForQt(cl);
             cl = extractEscapedEquals(cl, escapedEqBackups);
             cl = extractSubscripts(cl, subContents);
             cl = extractFootnoteRefs(cl, footnoteRefs);
@@ -1253,6 +1289,15 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             QRegularExpression re("==([^=\n]+?)==");
             html.replace(re, "<mark>\\1</mark>");
         }
+        // ~~删除线~~ → <s>：Qt setMarkdown 把 ~~x~~ 渲染为
+        // <span style="text-decoration:line-through">，但 TipTap Strike mark
+        // 契约是 <s>（只认 s/del，不认 span）。用户手写的 line-through span
+        // 已在 setMarkdown 前被 ZZHI 占位符保护，此处残留的 line-through 必来自
+        // Qt 的 ~~ 转换，可安全转为 <s>。内层 ZZSB（下标）占位符随 <s> 一并保留，
+        // 由后续 ZZSB 还原步骤处理（~~H~2~O~~ → <s>H<sub>2</sub>O</s>）。
+        html.replace(QRegularExpression(
+            R"(<span\b[^>]*\btext-decoration\s*:\s*line-through[^>]*>(.*?)</span>)",
+            QRegularExpression::DotMatchesEverythingOption), "<s>\\1</s>");
         // 还原转义等号 ZZES → =（在 ==→<mark> 之后，避免还原的 = 参与匹配）
         for (int i = 0; i < escapedEqBackups.size(); ++i)
             html.replace("ZZES" + QString::number(i) + "ZZ", escapedEqBackups[i]);
@@ -1556,6 +1601,52 @@ QString MarkdownHandler::extractTitle(const QString &markdown)
 // 提前闭合（与代码块围栏同源问题，见 docs/code-fence-roundtrip.md 坑 2）。
 // 内容首/尾为反引号时补空格分隔：否则反引号与定界符并成更长的定界串，
 // 内容被吞（如内容 `x` 直接拼 `` 会得到 ``x``，反引号丢失）。
+// 块级公式 data-latex → Markdown（$$ ... $$）逐字还原。
+// toHtml 对块级公式输出的 data-latex 恒为单行（换行已折叠），分三类：
+//   (a) 自动包裹：纯多行（无环境）→ "\begin{aligned}" + 行join(" \\ ") + "\end{aligned}"
+//   (b) 显式环境：用户手写 \begin{...}...\end{...} → 折叠换行为空格，保留 \\ 与 &
+//   (c) 单行公式：无换行、无环境
+// 据此反向区分：
+//   - (a) 首尾恰为 \begin{aligned}/\end{aligned}，且中间无嵌套 \begin{ 也无对齐列
+//     & → 剥离 aligned，按 \\ 拆行还原为纯多行。
+//   - (b) 含 \begin{ → 把 \begin{...}/\end{...} 提为独立行、\\ 后补换行，逐字还原。
+//   - (c) 直接单行输出。
+static QString blockMathLatexToMarkdown(const QString &latex)
+{
+    QString t = latex.trimmed();
+
+    // 自动包裹的 aligned（仅当中间既无嵌套环境也无对齐列，才能安全剥离）
+    const QString open = QStringLiteral("\\begin{aligned}");
+    const QString close = QStringLiteral("\\end{aligned}");
+    if (t.startsWith(open) && t.endsWith(close)) {
+        QString mid = t.mid(open.size(), t.size() - open.size() - close.size());
+        if (!mid.contains("\\begin{") && !mid.contains(QLatin1Char('&'))) {
+            QStringList parts;
+            for (const QString &p : mid.split(" \\\\ "))
+                parts << p.trimmed();
+            return "$$\n" + parts.join("\n") + "\n$$";
+        }
+        // 否则为显式 \begin{aligned} 环境（含对齐列或嵌套环境），落入下方逐字还原
+    }
+
+    // 显式 LaTeX 环境（aligned/matrix/pmatrix/cases 等）：逐字还原多行书写形式
+    if (t.contains("\\begin{")) {
+        QString r = t;
+        r.replace(QRegularExpression(R"(\\begin\{([^}]*)\})"), "\n\\begin{\\1}\n");
+        r.replace(QRegularExpression(R"(\\end\{([^}]*)\})"), "\n\\end{\\1}\n");
+        r.replace(" \\\\ ", " \\\\\n");
+        QStringList lines;
+        for (const QString &l : r.split('\n')) {
+            QString s = l.trimmed();
+            if (!s.isEmpty()) lines << s;
+        }
+        return "$$\n" + lines.join("\n") + "\n$$";
+    }
+
+    // 单行公式（无环境）
+    return "$$\n" + t + "\n$$";
+}
+
 static QString buildInlineCodeMd(const QString &content)
 {
     int maxRun = 0, run = 0;
@@ -1617,12 +1708,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             auto lm = latexRe.match(tag);
             if (!lm.hasMatch()) { offset = m.capturedStart() + 1; continue; }
             QString latex = lm.captured(1);
-            latex.replace("\\begin{aligned}", "");
-            latex.replace("\\end{aligned}", "");
-            QStringList parts;
-            for (const QString &p : latex.split(" \\\\ "))
-                parts << p.trimmed();
-            QString md = "$$\n" + parts.join("\n") + "\n$$";
+            QString md = blockMathLatexToMarkdown(latex);
             QString ph = QString("ZZBM%1ZZ").arg(n++);
             placeholders << ph;
             backups << md;
@@ -2038,6 +2124,40 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString replacement = QString("<th%1>%2</th>").arg(thAttrs, content);
             processed.replace(m.capturedStart(), m.capturedLength(), replacement);
             off = m.capturedStart() + replacement.length();
+        }
+    }
+
+    // 删除线 <s>/<del>/<strike> 及 <span text-decoration:line-through> → ~~...~~
+    //   toHtml 已把 ~~x~~ 转为 <s>（TipTap Strike 契约）；此处对称还原。内层
+    //   下标 <sub> 已在上一步转为 ZZSB 占位符，随 <s> 一并装入 ZZST，逆序还原时
+    //   ZZST 先开、ZZSB 后开（~~H~2~O~~ 逐字往返）。
+    {
+        int n = 0;
+        int offset = 0;
+        QRegularExpression strikeRe(R"(<(s|del|strike)\b[^>]*>(.*?)</\1>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = strikeRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("ZZST%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << "~~" + m.captured(2) + "~~";
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
+        }
+        // <span text-decoration:line-through>（兼容外部 HTML / 旧 toHtml 输出）
+        offset = 0;
+        QRegularExpression lineThroughRe(
+            R"(<span\b[^>]*\btext-decoration\s*:\s*line-through[^>]*>(.*?)</span>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = lineThroughRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            QString ph = QString("ZZST%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << "~~" + m.captured(1) + "~~";
+            processed.replace(m.capturedStart(), m.capturedLength(), ph);
+            offset = m.capturedStart() + ph.length();
         }
     }
 

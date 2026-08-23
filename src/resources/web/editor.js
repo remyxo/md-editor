@@ -1195,7 +1195,7 @@ window.editorApi = {
                             col = l[l.length - 1].length + 1;
                         }
                     });
-                    self.bridge.cursorChanged(line, col);
+                    self.bridge.cursorChanged(line, col, pos);
                     self.notifyFormat();
                 }
                 self.notifyHeadings();
@@ -1737,7 +1737,11 @@ window.editorApi = {
     },
     scrollToPos: function(pos) {
         if (!this.editor) return;
-        var dom = this.editor.view.domAtPos(Math.min(pos + 1, this.editor.state.doc.content.size));
+        var target = Math.min(pos + 1, this.editor.state.doc.content.size);
+        // 先移动光标到该标题内部（标题节点位置 pos，内容从 pos+1 起）：光标变化
+        // 触发 onSelectionUpdate → cursorChanged → C++ 大纲高亮随之跟随。
+        this.editor.commands.setTextSelection(target);
+        var dom = this.editor.view.domAtPos(target);
         if (dom && dom.node) {
             var el = dom.node.nodeType === 3 ? dom.node.parentElement : dom.node;
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });

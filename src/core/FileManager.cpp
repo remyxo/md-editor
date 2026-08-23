@@ -2,12 +2,37 @@
 #include <QFile>
 #include <QTextStream>
 #include <QStringConverter>
+#include <QStringDecoder>
 #include <QFileInfo>
 #include <QDir>
 #include <QTimer>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 // 外部变更事件去抖窗口：一次保存产生的多个事件在此窗口内合并为一次信号
 static const int kExternalChangeDebounceMs = 300;
+
+// UTF-8 BOM 字节（EF BB BF）
+static const QByteArray kUtf8Bom = QByteArray::fromHex("efbbbf");
+
+// 系统默认编码名（无 BOM 且非法 UTF-8 时回退所用编码），用于状态栏显示。
+// Windows 中文系统 ANSI 代码页为 936（GBK）；Linux/macOS 恒为 UTF-8。
+static QString systemEncodingName()
+{
+#ifdef Q_OS_WIN
+    switch (GetACP()) {
+    case 936:   return QStringLiteral("GBK");
+    case 54936: return QStringLiteral("GB18030");
+    case 65001: return QStringLiteral("UTF-8");
+    case 932:   return QStringLiteral("Shift-JIS");
+    case 949:   return QStringLiteral("EUC-KR");
+    default:    return QStringLiteral("CP%1").arg(GetACP());
+    }
+#else
+    return QStringLiteral("UTF-8");
+#endif
+}
 
 FileManager::FileManager(QObject *parent)
     : QObject(parent)
@@ -17,25 +42,77 @@ FileManager::FileManager(QObject *parent)
             this, &FileManager::onFileChanged);
 }
 
-QString FileManager::readFile(const QString &path)
+QString FileManager::decodeFileContent(const QByteArray &bytes, QString *encoding)
+{
+    if (encoding) {
+        *encoding = QString();
+        if (!bytes.isEmpty()) {
+            if (bytes.startsWith(kUtf8Bom))
+                *encoding = QStringLiteral("UTF-8 BOM");
+            else if (bytes.startsWith("\xFF\xFE"))
+                *encoding = QStringLiteral("UTF-16 LE");
+            else if (bytes.startsWith("\xFE\xFF"))
+                *encoding = QStringLiteral("UTF-16 BE");
+            else {
+                // 无 BOM：合法 UTF-8 记 UTF-8；否则回退系统编码（中文 Windows 为 GBK）
+                QStringDecoder utf8(QStringConverter::Utf8);
+                utf8(bytes);
+                *encoding = utf8.hasError() ? systemEncodingName()
+                                            : QStringLiteral("UTF-8");
+            }
+        }
+    }
+
+    if (bytes.isEmpty()) return QString();
+
+    QString content;
+    if (bytes.startsWith(kUtf8Bom)) {
+        // UTF-8 BOM：剥离后按 UTF-8 解码
+        content = QString::fromUtf8(bytes.constData() + 3, bytes.size() - 3);
+    } else if (bytes.startsWith("\xFF\xFE") || bytes.startsWith("\xFE\xFF")) {
+        // UTF-16 BOM：QStringConverter::Utf16 自动按 BOM 定序并剥离
+        content = QStringDecoder(QStringConverter::Utf16)(bytes);
+    } else {
+        // 无 BOM：先按 UTF-8 解码并校验；无效（如中文 Windows 的 GBK 文件）回退系统编码
+        QStringDecoder utf8(QStringConverter::Utf8);
+        content = utf8(bytes);
+        if (utf8.hasError())
+            content = QStringDecoder(QStringConverter::System)(bytes);
+    }
+
+    // 换行归一化为 \n（等价于原 QIODevice::Text 模式读入）
+    content.replace("\r\n", "\n");
+    content.replace('\r', '\n');
+    return content;
+}
+
+QString FileManager::readFile(const QString &path, QString *encoding)
 {
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         emit fileReadError(path, file.errorString());
         return {};
     }
-    QTextStream in(&file);
-    // 统一按 UTF-8 解码
-    in.setEncoding(QStringConverter::Utf8);
-    QString content = in.readAll();
+    QByteArray bytes = file.readAll();
     file.close();
-    return content;
+    return decodeFileContent(bytes, encoding);
 }
 
 bool FileManager::writeFile(const QString &path, const QString &content)
 {
     // 临时取消监控，防止自身写入触发外部变更信号
     unwatchFile(path);
+
+    // 保留原文件的 UTF-8 BOM 状态：Windows 记事本等创建的文件带 BOM，跨平台工具多不带。
+    // 读原文件头 3 字节判断（原文件不存在——另存为新文件——则不带 BOM）。
+    bool writeBom = false;
+    if (QFile::exists(path)) {
+        QFile orig(path);
+        if (orig.open(QIODevice::ReadOnly)) {
+            writeBom = (orig.read(3) == kUtf8Bom);
+            orig.close();
+        }
+    }
 
     // 先写入临时文件，成功后重命名（原子写入）
     QString tmpPath = path + ".tmp";
@@ -48,6 +125,8 @@ bool FileManager::writeFile(const QString &path, const QString &content)
     QTextStream out(&file);
     // 统一按 UTF-8 编码
     out.setEncoding(QStringConverter::Utf8);
+    if (writeBom)
+        out.setGenerateByteOrderMark(true);
     out << content;
     file.close();
 

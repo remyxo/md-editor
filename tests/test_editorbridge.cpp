@@ -11,12 +11,13 @@ private slots:
         EditorBridge bridge(1);
         QSignalSpy spy(&bridge, &EditorBridge::cursorPositionChanged);
 
-        bridge.cursorChanged(10, 5);
+        bridge.cursorChanged(10, 5, 128);
 
         QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy[0][0].toInt(), 10);  // line
-        QCOMPARE(spy[0][1].toInt(), 5);   // col
-        QCOMPARE(spy[0][2].toInt(), 1);   // tabId
+        QCOMPARE(spy[0][0].toInt(), 10);    // line
+        QCOMPARE(spy[0][1].toInt(), 5);     // col
+        QCOMPARE(spy[0][2].toInt(), 128);   // pos（大纲高亮用文档位置）
+        QCOMPARE(spy[0][3].toInt(), 1);     // tabId
     }
 
     void testContentChanged() {
