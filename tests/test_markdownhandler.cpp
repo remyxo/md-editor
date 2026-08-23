@@ -2363,6 +2363,77 @@ private slots:
         QVERIFY2(rowRe.match(md2).hasMatch(),
                  qPrintable("双反引号单元格行应为 | cell | 格式，实际: " + md2));
     }
+
+    void testSingleLineBlockMathRoundTrip()
+    {
+        // 单行块级公式 $$...$$（开闭定界符同一行，如 $$E=mc^{2}$$）应识别为
+        // block-math，往返不泄漏 ZZMB 占位符、不丢 LaTeX 内容。
+        // （保存时 fromHtml 规范化为多行 $$\n...\n$$，语义等价）
+        const QString md1 = QStringLiteral("$$E=mc^{2}$$");
+        const QString html = MarkdownHandler::toHtml(md1);
+        QVERIFY2(html.contains("block-math"),
+                 qPrintable("单行 $$...$$ 应生成 block-math，实际:\n" + html));
+        QVERIFY2(html.contains("data-latex=\"E=mc^{2}\""),
+                 qPrintable("LaTeX 内容应保留，实际:\n" + html));
+        QVERIFY2(!html.contains("ZZMB"),
+                 qPrintable("占位符 ZZMB 不应泄漏为字面文本，实际:\n" + html));
+
+        const QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("$$"),
+                 qPrintable("往返应含 $$ 定界符，实际:\n" + md2));
+        QVERIFY2(md2.contains("E=mc^{2}"),
+                 qPrintable("往返应保留 LaTeX 内容，实际:\n" + md2));
+    }
+
+    void testTableBoundaryGfm()
+    {
+        // GFM Tables 扩展：表格在「首个空行或其他块级结构」处结束。紧跟表格行、
+        // 不含竖线的纯文本行被惰性延续为数据行（文本进第一列、其余列空）；标题/
+        // 代码块/水平线等块级结构应打断表格。
+        const QString tbl = QStringLiteral("| a | b |\n|---|---|\n| 1 | 2 |\n");
+
+        // 纯文本行 → 吸收为数据行（带 | 前缀），不被分离成段落
+        {
+            const QString md2 = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(tbl + QStringLiteral("紧跟的正文段落")));
+            QVERIFY2(md2.contains("| 紧跟的正文段落"),
+                     qPrintable("纯文本行应按 GFM 吸收为数据行，实际:\n" + md2));
+            QVERIFY2(!md2.contains("\n\n紧跟的正文段落"),
+                     qPrintable("纯文本行不应被分离成独立段落，实际:\n" + md2));
+        }
+        // 标题 → 打断表格
+        {
+            const QString md2 = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(tbl + QStringLiteral("# 标题")));
+            QVERIFY2(md2.contains("\n\n# 标题"),
+                     qPrintable("标题应打断表格，实际:\n" + md2));
+        }
+        // 代码块 → 打断表格
+        {
+            const QString md2 = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(tbl + QStringLiteral("```\nx\n```")));
+            QVERIFY2(md2.contains("```\nx\n```"),
+                     qPrintable("代码块应打断表格，实际:\n" + md2));
+            QVERIFY2(!md2.contains("| ```"),
+                     qPrintable("代码块不应被吞入表格，实际:\n" + md2));
+        }
+        // 水平线 → 打断表格
+        {
+            const QString md2 = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(tbl + QStringLiteral("---")));
+            QVERIFY2(md2.contains("\n\n---"),
+                     qPrintable("水平线应打断表格，实际:\n" + md2));
+        }
+        // 纯文本 + 标题：纯文本吸收为数据行、标题仍打断（inTableRegion 跨惰性延续保持）
+        {
+            const QString md2 = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(tbl + QStringLiteral("正文\n# 标题")));
+            QVERIFY2(md2.contains("| 正文"),
+                     qPrintable("惰性延续的纯文本应吸收为数据行，实际:\n" + md2));
+            QVERIFY2(md2.contains("\n\n# 标题"),
+                     qPrintable("惰性延续后标题仍应打断表格，实际:\n" + md2));
+        }
+    }
 };
 
 QTEST_MAIN(TestMarkdownHandler)

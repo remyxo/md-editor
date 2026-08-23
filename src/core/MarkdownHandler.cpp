@@ -186,6 +186,31 @@ static bool isDashHrLine(const QString &line)
     return re.match(line).hasMatch();
 }
 
+// 表格行（trim 后以 | 开头且以 | 结尾）：表头/分隔行/数据行的统一识别，用于表格
+// 区域跟踪。与 fromHtml 步骤 6 的 |...| 启发式一致。
+static bool isTableLine(const QString &line)
+{
+    QString t = line.trimmed();
+    return t.size() >= 2 && t.startsWith(QLatin1Char('|'))
+           && t.endsWith(QLatin1Char('|'));
+}
+
+// 表格中断块：GFM 规定表格在「其他块级结构」处结束。Qt setMarkdown 会错误地把
+// 标题（# 或 setext ===）、代码围栏（```/~~~）、水平线（---）、块级公式（$$）吞入
+// 表格，故需在这些块前补空行打断；纯文本行按 GFM 继续作为数据行（惰性延续），不在其列。
+static bool isTableBreakingBlock(const QString &line)
+{
+    QString t = line.trimmed();
+    if (t.isEmpty()) return false;
+    if (t.startsWith(QLatin1Char('#'))) return true;               // ATX 标题
+    if (t.startsWith("```") || t.startsWith("~~~")) return true;    // 代码围栏
+    if (t.startsWith("$$")) return true;                            // 块级公式
+    if (isDashHrLine(line)) return true;                            // --- 水平线
+    if (t.length() >= 3 && t.count(QLatin1Char('=')) == t.length()) // setext ===
+        return true;
+    return false;
+}
+
 // 反转义代码块 / 行内代码内容中的 HTML 实体。
 // 代码内容以占位符形式绕过了 QTextDocument::setHtml 的实体解码，需手动还原，
 // 否则保存到 .md 时会残留 &gt; / &lt; / &amp;（影响 Mermaid 源码 A-->B 等）。
@@ -727,6 +752,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList bqCodeContent;  // 当前块引用代码块内容行
     QStringList bqCodeBlocks;   // 块引用代码块最终 HTML（<pre margin-left…>，后处理还原）
     bool inMathBlock = false;
+    bool inTableRegion = false; // 是否处于表格区域（含被惰性延续吸收的纯文本行）
     QStringList codeBlocks;  // 每个代码块的最终 HTML（<pre><code class="language-X">…</code></pre>）
     QString codeFenceLang;   // 当前代码块的语言（围栏信息串）
     QStringList codeContent; // 当前代码块的内容行
@@ -760,8 +786,38 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         // 块引用内代码围栏长度（> ``` / > ~~~），0 表示非块引用围栏行
         int bqFenceLen = blockquoteCodeFenceLen(line);
 
+        // 表格区域状态机（GFM Tables 扩展：表格在「首个空行或其他块级结构」处结束）。
+        // Qt setMarkdown 会把紧随表格行的纯文本行惰性延续为数据行（GFM 一致），却会
+        // 错误地把标题/代码围栏/水平线/块级公式也吞入表格。故：块级结构前补空行打断，
+        // 纯文本行不打断（按 GFM 吸收为数据行，保证往返保真）。
+        if (codeFenceLen == 0 && bqCodeFenceLen == 0 && !inMathBlock) {
+            if (isTableLine(line)) {
+                inTableRegion = true;
+            } else if (line.trimmed().isEmpty()
+                       || isTableBreakingBlock(line)
+                       || isListItemLine(line)
+                       || isBlockquoteLine(line)) {
+                if (inTableRegion && isTableBreakingBlock(line)
+                    && !processed.isEmpty() && !processed.endsWith("\n\n"))
+                    processed += '\n';
+                inTableRegion = false;
+            }
+            // 其余（纯文本/图片等）行：保持 inTableRegion，被惰性延续吸收
+        }
+
         if (codeFenceLen == 0 && line.startsWith("$$")) {
             if (!inMathBlock) {
+                // 单行块级公式 $$...$$（开闭定界符在同一行，如 $$E=mc^2$$）。
+                // 若按多行逻辑处理，本行内容与闭合 $$ 会被当作"开启围栏"丢弃，
+                // 占位符 ZZMB 永远无备份可还原，泄漏为字面文本 ZZMB0ZZ。
+                QString trimmedLine = line.trimmed();
+                if (trimmedLine.size() > 4 && trimmedLine.endsWith("$$")) {
+                    QString latex = trimmedLine.mid(2, trimmedLine.size() - 4).trimmed();
+                    mathBlocks << ("<div data-type=\"block-math\" data-latex=\"" + latex + "\"></div>");
+                    processed += "ZZMB" + QString::number(mathBlocks.size() - 1) + "ZZ\n";
+                    lastBlock = BT_NONE;
+                    continue;
+                }
                 mathLines.clear();
                 inMathBlock = true;
                 // 占位符
