@@ -1283,6 +1283,86 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         }
     }
 
+    // 表格列对齐提升：Qt toHtml 把 GFM 列对齐（:-: / ---:）输出为数据行单元格
+    // 内的 <p align="...">（表头行与默认左对齐不带 align 属性），而 TipTap v3
+    // TableCell/TableHeader 仅解析 <td>/<th> 自身的 style/align 属性，内层
+    // <p align> 在编辑器加载时被丢弃。此处按列聚合对齐并统一写到每个单元格
+    // 标签上（含表头行），使整列在编辑器内呈现对齐，且保存时可经 fromHtml
+    // 还原为分隔行对齐标记。
+    // （左对齐是默认值，Qt 不输出 align —— :--- 与 --- 在 Qt 层同形，
+    //  往返后统一规范化为 ---，语义等价。）
+    {
+        QRegularExpression tableRegionRe(
+            QStringLiteral("(<table\\b[^>]*>)(.*?)(</table>)"),
+            QRegularExpression::DotMatchesEverythingOption);
+        QRegularExpression cellOpenRe(QStringLiteral("<t[dh]\\b[^>]*>"));
+        // Qt 输出形态：<td>\n<p align="center" style="...">（\s 覆盖标签间换行）
+        QRegularExpression cellPAlignRe(
+            QStringLiteral("(<t[dh]\\b[^>]*>)\\s*<p\\b([^>]*?)\\s*\\balign\\s*=\\s*\"(center|right|left)\"([^>]*)>"));
+        int off = 0;
+        while (true) {
+            auto m = tableRegionRe.match(html, off);
+            if (!m.hasMatch()) break;
+            QString region = m.captured(2);
+            // 同行内列号：统计单元格开标签在本行（最近 <tr 之后）中位于其前的数量
+            auto columnOf = [&region, &cellOpenRe](int cellStart) {
+                int rowStart = region.lastIndexOf(QLatin1String("<tr"), cellStart);
+                int col = 0;
+                for (int p = rowStart; p >= 0; ) {
+                    auto om = cellOpenRe.match(region, p);
+                    if (!om.hasMatch() || om.capturedStart() >= cellStart) break;
+                    ++col;
+                    p = om.capturedEnd();
+                }
+                return col;
+            };
+            // 1) 按列聚合对齐（列内首个非空值）
+            QStringList colAligns;
+            {
+                int coff = 0;
+                while (true) {
+                    auto cm = cellPAlignRe.match(region, coff);
+                    if (!cm.hasMatch()) break;
+                    int col = columnOf(cm.capturedStart());
+                    while (colAligns.size() < col + 1) colAligns << QString();
+                    if (colAligns[col].isEmpty()) colAligns[col] = cm.captured(3);
+                    coff = cm.capturedEnd();
+                }
+            }
+            const bool hasAlign = colAligns.contains(QLatin1String("center"))
+                               || colAligns.contains(QLatin1String("right"))
+                               || colAligns.contains(QLatin1String("left"));
+            if (hasAlign) {
+                // 2) 剥离内层 p 的 align 属性（对齐已上移，避免双份携带）
+                region.replace(
+                    QRegularExpression(QStringLiteral(
+                        "<p\\b([^>]*?)\\s*\\balign\\s*=\\s*\"(?:center|right|left)\"([^>]*)>")),
+                    QStringLiteral("<p\\1\\2>"));
+                // 3) 给该列有对齐且无 style 的单元格标签注入 text-align
+                //    （含表头行 —— GFM 列对齐语义覆盖整列）
+                int coff = 0;
+                while (true) {
+                    auto cm = cellOpenRe.match(region, coff);
+                    if (!cm.hasMatch()) break;
+                    int col = columnOf(cm.capturedStart());
+                    QString a = (col < colAligns.size()) ? colAligns[col] : QString();
+                    QString tag = cm.captured();
+                    if (!a.isEmpty() && !tag.contains(QLatin1String("style"))) {
+                        QString newTag = tag.left(tag.size() - 1)
+                                       + QStringLiteral(" style=\"text-align:") + a + QStringLiteral("\">");
+                        region.replace(cm.capturedStart(), cm.capturedLength(), newTag);
+                        coff = cm.capturedStart() + newTag.size();
+                    } else {
+                        coff = cm.capturedEnd();
+                    }
+                }
+            }
+            QString replacement = m.captured(1) + region + m.captured(3);
+            html.replace(m.capturedStart(), m.capturedLength(), replacement);
+            off = m.capturedStart() + replacement.length();
+        }
+    }
+
     // 将 QTextDocument 注入的纯字体 span 统一转为语义标签。
     // QTextDocument::setMarkdown 对所有内联格式（**粗体** / *斜体*）输出
     // <span style="font-weight:700;"> / <span style="font-style:italic;">
@@ -1450,6 +1530,11 @@ QString MarkdownHandler::fromHtml(const QString &html)
     // 所在行上下文决定缩进（段落 \n / 有序列表 \n···· / 无序列表 \n··），
     // 无法在保护阶段预先确定。反换行后统一按行上下文还原。
     QStringList brSoftPlaceholders;
+    // 表格列对齐记录（每表每列："center"/"right"/"left"/空）：setHtml 前从
+    // TipTap 的 <td>/<th> style 提取，步骤 6 分隔行规范化时注回。
+    // Qt toMarkdown 从不输出对齐标记（恒 -），必须在此中转，与 Qt 写出
+    // 行为解耦（版本无关，见 docs/qt-642-escaping-compat.md 范式）。
+    QList<QStringList> tableAligns;
     QString processed = html;
 
     // 块级占位符统一包裹为 <p>：占位符若为裸文本节点，setHtml 会把它与相邻块
@@ -1978,6 +2063,68 @@ QString MarkdownHandler::fromHtml(const QString &html)
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }
+        // 表格列对齐：TipTap 在 <td>/<th> 标签上携带 style="text-align:..."。
+        // Qt setHtml 能导入但 toMarkdown 从不输出对齐标记（恒 -），故按列提取
+        // 对齐（列内首个非空值）存入 tableAligns，由步骤 6 注回分隔行。
+        // 同时剥离表格内 td/th 与 p 上的 text-align 声明：p 上的若留存会被
+        // 下方 ZZA 对齐保护包成 <div align> 占位符，破坏表格结构（单元格内容
+        // 变为内嵌 HTML 字面量）。
+        QRegularExpression tableRegionRe(
+            QStringLiteral("(<table\\b[^>]*>)(.*?)(</table>)"),
+            QRegularExpression::DotMatchesEverythingOption);
+        offset = 0;
+        while (true) {
+            auto tm = tableRegionRe.match(processed, offset);
+            if (!tm.hasMatch()) break;
+            QString region = tm.captured(2);
+            QStringList colAligns;
+            {
+                QRegularExpression rowRe(
+                    QStringLiteral("<tr\\b[^>]*>(.*?)</tr>"),
+                    QRegularExpression::DotMatchesEverythingOption);
+                QRegularExpression cellAttrRe(QStringLiteral("<t[dh]\\b([^>]*)>"));
+                // style 的 text-align 优先，其次 align 属性（与 TipTap parseAlign 同序）
+                QRegularExpression styleAlignRe(
+                    QStringLiteral("\\btext-align\\s*:\\s*(center|right|left)"));
+                QRegularExpression attrAlignRe(
+                    QStringLiteral("\\balign\\s*=\\s*\"(center|right|left)\""));
+                int roff = 0;
+                while (true) {
+                    auto rm = rowRe.match(region, roff);
+                    if (!rm.hasMatch()) break;
+                    QString row = rm.captured(1);
+                    int coff = 0, col = 0;
+                    while (true) {
+                        auto cm = cellAttrRe.match(row, coff);
+                        if (!cm.hasMatch()) break;
+                        while (colAligns.size() < col + 1) colAligns << QString();
+                        if (colAligns[col].isEmpty()) {
+                            QString attrs = cm.captured(1);
+                            auto sm = styleAlignRe.match(attrs);
+                            auto am = attrAlignRe.match(attrs);
+                            if (sm.hasMatch()) colAligns[col] = sm.captured(1);
+                            else if (am.hasMatch()) colAligns[col] = am.captured(1);
+                        }
+                        coff = cm.capturedEnd();
+                        ++col;
+                    }
+                    roff = rm.capturedEnd();
+                }
+            }
+            // 剥离 text-align 声明（含由此变空的 style 属性）。仅作用于表格
+            // 区域：顶层段落/标题的 text-align 由下方 ZZA 继续处理。
+            region.replace(
+                QRegularExpression(QStringLiteral(
+                    "(style\\s*=\\s*\"[^\"]*)\\s*text-align\\s*:\\s*(?:center|right|left)\\s*;?([^\"]*\")")),
+                QStringLiteral("\\1\\2"));
+            region.replace(
+                QRegularExpression(QStringLiteral("\\s*style\\s*=\\s*\"\\s*;?\\s*\"")),
+                QString());
+            QString replacement = tm.captured(1) + region + tm.captured(3);
+            processed.replace(tm.capturedStart(), tm.capturedLength(), replacement);
+            tableAligns << colAligns;
+            offset = tm.capturedStart() + replacement.length();
+        }
         // 对齐：<p style="text-align:..."> / 标题 text-align → <div align="...">
         // TipTap TextAlign 为段落/标题注入 text-align CSS，toMarkdown 丢弃。
         // 提取对齐值并还原为 <div align="...">（已支持往返），内容 ZZ* 占位符
@@ -2390,8 +2537,11 @@ QString MarkdownHandler::fromHtml(const QString &html)
 
     // 6) 规范化表格格式：QTextDocument::toMarkdown（md4c）对表格输出
     //    |cell|（无空格）且数据行尾部用空格做列对齐，非标准 GFM 风格。
-    //    统一为 | cell |（单元格内容前后各一个空格），分隔行统一为 | --- |。
+    //    统一为 | cell |（单元格内容前后各一个空格），分隔行统一为 | --- |，
+    //    并按 setHtml 前提取的列对齐（tableAligns）注回 GFM 对齐标记：
+    //    居中 :---: / 右对齐 ---: / 显式左 :---（文档顺序逐表对应，列数一致才注入）。
     {
+        int tableIdx = 0;
         QStringList lines = md.split('\n');
         for (int i = 0; i < lines.size(); ++i) {
             QString line = lines[i];
@@ -2412,10 +2562,22 @@ QString MarkdownHandler::fromHtml(const QString &html)
                     isSep = true;
             }
             if (isSep) {
-                // 分隔行：每格统一为 ---
+                // 分隔行：按提取的列对齐注回标记（列数一致才消费，防误判
+                // 分隔行导致与后续表格错位），每格 :---: / ---: / :--- / ---
+                QStringList aligns;
+                if (tableIdx < tableAligns.size()
+                        && tableAligns[tableIdx].size() == cells.size()) {
+                    aligns = tableAligns[tableIdx];
+                    ++tableIdx;
+                }
                 QStringList sepCells;
-                for (int k = 0; k < cells.size(); ++k)
-                    sepCells << "---";
+                for (int k = 0; k < cells.size(); ++k) {
+                    QString a = (k < aligns.size()) ? aligns[k] : QString();
+                    if (a == QLatin1String("center")) sepCells << ":---:";
+                    else if (a == QLatin1String("right")) sepCells << "---:";
+                    else if (a == QLatin1String("left")) sepCells << ":---";
+                    else sepCells << "---";
+                }
                 lines[i] = "| " + sepCells.join(" | ") + " |";
             } else {
                 // 数据/表头行：每格 trim + 前后各一个空格

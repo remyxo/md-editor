@@ -244,6 +244,58 @@ private slots:
                  qPrintable("公式与表格间应恰好 1 空行，实际:\n" + md));
     }
 
+    void testTableColumnAlignToHtml() {
+        // GFM 列对齐 → toHtml：对齐应提升到 <td style="text-align:...">。
+        // Qt toHtml 只在单元格内 <p align="..."> 上携带对齐，TipTap v3
+        // TableCell 仅解析 td 自身的 style/align 属性，不提升则在加载时丢失。
+        QString md = "| A | B | C |\n| --- | :-: | ---: |\n| 1 | 2 | 3 |\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("text-align:center"),
+                 qPrintable("居中列应提升为 td style，实际:\n" + html));
+        QVERIFY2(html.contains("text-align:right"),
+                 qPrintable("右对齐列应提升为 td style，实际:\n" + html));
+        // 默认左对齐列不应被注入 style
+        QVERIFY(!html.contains("text-align:left"));
+    }
+
+    void testTableColumnAlignFromHtml() {
+        // TipTap getHTML 形式（td style）→ fromHtml：分隔行应还原对齐标记。
+        // Qt toMarkdown 从不输出 :---: / ---:（恒 -），必须在 setHtml 前
+        // 提取、步骤 6 注回（版本无关，不依赖 Qt 写出行为）。
+        QString tipTapHtml =
+            "<table><tbody><tr><th>A</th><th>B</th></tr>"
+            "<tr><td style=\"text-align: center\">1</td>"
+            "<td style=\"text-align: right\">2</td></tr></tbody></table>";
+        QString md = MarkdownHandler::fromHtml(tipTapHtml);
+        QVERIFY2(md.contains("| :---: |"),
+                 qPrintable("居中列应还原 :-:，实际:\n" + md));
+        QVERIFY2(md.contains("| ---: |"),
+                 qPrintable("右对齐列应还原 ---:，实际:\n" + md));
+    }
+
+    void testTableCellParagraphAlignNoCorruption() {
+        // 单元格内 <p style="text-align">（工具栏旧形式/手写 HTML）不应被
+        // ZZA 对齐机制包成 <div align> 占位符破坏表格结构
+        QString html =
+            "<table><tbody><tr><th>A</th></tr>"
+            "<tr><td><p style=\"text-align: center;\">x</p></td></tr></tbody></table>";
+        QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(!md.contains("<div align"),
+                 qPrintable("单元格内不应嵌入 <div align>，实际:\n" + md));
+        QVERIFY2(md.contains("| x |"),
+                 qPrintable("表格结构与内容应完好，实际:\n" + md));
+    }
+
+    void testTableColumnAlignFullCppRoundTrip() {
+        // C++ 层全链路：toHtml 输出（已含 td style）直接喂 fromHtml，
+        // 分隔行对齐标记应原样往返（不经过 TipTap 的下限验证）
+        QString md1 = "| A | B |\n| :-: | ---: |\n| 1 | 2 |\n";
+        QString html = MarkdownHandler::toHtml(md1);
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("| :---: |") && md2.contains("| ---: |"),
+                 qPrintable("全链路对齐标记应保留，实际:\n" + md2));
+    }
+
     void testMathParagraphOneBlankRT() {
         // 块级公式 + 段落：往返后两者间应恰好 1 空行（不误伤）
         QString html =

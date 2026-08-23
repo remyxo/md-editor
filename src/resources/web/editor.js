@@ -1288,10 +1288,13 @@ window.editorApi = {
         format.superscript = !!ed.isActive('superscript');
         // 文字对齐：优先检查 paragraph/heading 的 textAlign（TipTap TextAlign 扩展设置），
         // 其次检查 divBlock 的 align 属性（手写 HTML <div align="..."> 解析），
+        // 再次检查表格单元格的 align 属性（GFM 列对齐，加载自 :-: / ---:），
         // 未显式设置时默认左对齐
         format.textAlign = ed.getAttributes('paragraph').textAlign
             || ed.getAttributes('heading').textAlign
             || ed.getAttributes('divBlock').align
+            || ed.getAttributes('tableCell').align
+            || ed.getAttributes('tableHeader').align
             || 'left';
         // 颜色 span 的 style 字符串（文字色/背景色回显）
         format.colorSpanStyle = ed.getAttributes('colorSpan').style || '';
@@ -1386,14 +1389,60 @@ window.editorApi = {
     toggleHighlight: function() { if (this.editor) this.editor.commands.toggleHighlight(); },
     toggleSubscript: function() { if (this.editor) this.editor.commands.toggleSubscript(); },
     toggleSuperscript: function() { if (this.editor) this.editor.commands.toggleSuperscript(); },
+    // 表格整列设置对齐：GFM 列对齐是列属性（分隔行 :-: / --: / :-），
+    // 与加载侧 toHtml 的整列提升对偶，工具栏必须更新整列而非单个单元格
+    // （只改光标格会让列内残留旧值，保存侧"列内首个非空对齐"被表头旧值
+    // 覆盖，用户操作往返丢失）。列号按行内单元格序号定位——常规表格
+    // 均为 1x1 单元格，序号即列号；合并单元格场景为近似。
+    setTableColumnAlign: function(align) {
+        var ed = this.editor;
+        if (!ed) return false;
+        var state = ed.state, $from = state.selection.$from;
+        // 1) 找光标所在单元格（tableCell/tableHeader）与所在表格
+        var cellDepth = -1, tableDepth = -1;
+        for (var d = $from.depth; d > 0; d--) {
+            var name = $from.node(d).type.name;
+            if ((name === 'tableCell' || name === 'tableHeader') && cellDepth < 0) cellDepth = d;
+            if (name === 'table') { tableDepth = d; break; }
+        }
+        if (cellDepth < 0 || tableDepth < 0) return false;
+        // 2) 光标单元格在其行内的序号（= 列号）
+        var cellNode = $from.node(cellDepth);
+        var col = 0;
+        $from.node(cellDepth - 1).forEach(function(child, _off, i) {
+            if (child === cellNode) col = i;
+        });
+        // 3) 遍历表格各行，更新该序号单元格的 align（仅属性变化，位置不变）
+        var tr = state.tr;
+        var tablePos = $from.before(tableDepth);
+        $from.node(tableDepth).forEach(function(row, rowOff) {
+            var idx = 0;
+            row.forEach(function(cell, cellOff) {
+                if (idx === col) {
+                    var pos = tablePos + 1 + rowOff + 1 + cellOff;
+                    tr.setNodeMarkup(pos, null,
+                        Object.assign({}, cell.attrs, { align: align }));
+                }
+                idx++;
+            });
+        });
+        ed.view.dispatch(tr);
+        return true;
+    },
     setTextAlign: function(alignment) {
         if (!this.editor) return;
         // 光标在 divBlock 内 → 更新 divBlock 的 align 属性
         // （TipTap TextAlign 扩展仅作用于 paragraph/heading，不处理 divBlock）
         var divAttrs = this.editor.getAttributes('divBlock');
+        // 光标在表格单元格内 → 整列更新 align（GFM 列对齐语义，保存时由
+        // fromHtml 还原为分隔行 :---: / ---:；段落级对齐在表格内无法往返，
+        // 且单元格内 <p style="text-align"> 会触发 ZZA 破坏表格）
+        var inCell = this.editor.isActive('tableHeader') || this.editor.isActive('tableCell');
         if (divAttrs.align !== undefined) {
             var newAlign = (alignment === 'left') ? null : alignment;
             this.editor.chain().updateAttributes('divBlock', {align: newAlign}).run();
+        } else if (inCell && this.setTableColumnAlign((alignment === 'left') ? null : alignment)) {
+            // 整列已更新（setNodeMarkup 触发 onUpdate 脏标记）
         } else {
             this.editor.commands.setTextAlign(alignment);
         }
