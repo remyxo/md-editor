@@ -96,6 +96,8 @@ private:
     QAction *m_blockquoteAction;
     QAction *m_footnoteAction = nullptr;
     QAction *m_clearFormatAction = nullptr;
+    QAction *m_sourceAction = nullptr;          // 源码切换按钮（图标随模式变化）
+    bool m_sourceMode = false;                  // 当前是否源码模式（重译 tooltip 用）
     QToolButton *m_exportButton = nullptr;
     QMenu *m_exportMenu = nullptr;
     QList<QAction*> m_allActions;

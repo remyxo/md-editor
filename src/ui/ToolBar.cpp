@@ -242,7 +242,7 @@ void ToolBar::setupUi()
     addSeparator();
 
     // === 视图 / 导出 ===
-    makeAction(this, &m_iconPaths, "sourceAction",
+    m_sourceAction = makeAction(this, &m_iconPaths, "sourceAction",
         tr("切换源码模式"), ":/icons/light/source-code.svg");
     // 导出下拉按钮：直接用 QToolButton + InstantPopup
     {
@@ -364,7 +364,9 @@ void ToolBar::retranslateUi()
     findChild<QAction*>("emojiAction")->setToolTip(tr("插入表情"));
     findChild<QAction*>("footnoteAction")->setToolTip(tr("插入脚注"));
 
-    findChild<QAction*>("sourceAction")->setToolTip(tr("切换源码模式"));
+    if (m_sourceAction)
+        m_sourceAction->setToolTip(m_sourceMode ? tr("切换为所见即所得模式")
+                                                : tr("切换源码模式"));
 
     m_exportButton->setToolTip(tr("导出"));
     m_exportMenu->actions().at(0)->setText(tr("导出 PDF..."));
@@ -476,6 +478,7 @@ QMenu *ToolBar::buildColorMenu(bool forText)
 
 void ToolBar::setSourceMode(bool on)
 {
+    m_sourceMode = on;
     // 源码模式下灰化所有编辑/格式化按钮，保留源码切换和导出按钮可用
     for (QAction *a : m_allActions) {
         if (a->objectName() != QStringLiteral("sourceAction")) {
@@ -494,6 +497,19 @@ void ToolBar::setSourceMode(bool on)
     // 对齐/上下标下拉按钮是 QToolButton widget，随编辑按钮一起启停
     if (m_alignButton) m_alignButton->setEnabled(!on);
     if (m_subsupButton) m_subsupButton->setEnabled(!on);
+    // 图标与提示随模式互换：普通态显示源码图标（点击进入源码），
+    // 源码态显示 WYSIWYG 图标（点击返回所见即所得）
+    if (m_sourceAction) {
+        QString lightPath = on ? ":/icons/light/wysiwyg.svg"
+                               : ":/icons/light/source-code.svg";
+        m_iconPaths[m_sourceAction] = lightPath;  // 主题注册表同步，切主题不回退
+        QString path = lightPath;
+        if (m_isDark)
+            path.replace("/light/", "/dark/");
+        m_sourceAction->setIcon(QIcon(path));
+        m_sourceAction->setToolTip(on ? tr("切换为所见即所得模式")
+                                      : tr("切换源码模式"));
+    }
 }
 
 void ToolBar::updateFormatState(const QJsonObject &f)
