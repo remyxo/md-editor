@@ -2,6 +2,20 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.12.4] — 2026-08-23
+
+### 新增
+- **状态栏文件编码显示** — 打开文件时经 FileManager 自动检测编码（BOM → UTF-8 校验 → 系统编码回退），状态栏新增「编码: …」标签显示 `UTF-8 BOM` / `UTF-16 LE/BE` / `UTF-8` / `GBK`（Windows 中文系统经 `GetACP` 映射）；编码逐标签页独立，切换标签、外部重载文件时同步刷新
+- **双击关闭标签页** — 连接 `QTabBar::tabBarDoubleClicked` 复用现有关闭流程（脏文件先弹保存确认，不丢数据）
+- **大纲光标自动高亮** — 编辑器光标移动时随 `cursorChanged` 额外发送 ProseMirror 文档位置 `pos`，OutlineTree 高亮「最后一个 `pos ≤ 光标位置`」的标题并滚入可见区；大纲重建后按最近光标位置恢复高亮。点击大纲由「仅滚动」改为同步 `setTextSelection` 移动光标，高亮随之跟随
+
+### 修复
+- **显式 LaTeX 环境（aligned/matrix/cases 等）往返丢失** — `toHtml` 对多行公式无条件包裹 `aligned`、`fromHtml` 无条件剥离，致用户手写的 `\begin{aligned}` 等被双重包裹或剥离。修复：`toHtml` 对含 `\begin{` 的显式环境不再包裹 `aligned`（仅折叠换行）；`fromHtml` 以「中间无 `&` 且无嵌套 `\begin{`」判别自动包裹的 `aligned` 与显式环境，后者逐字还原 `\begin{…}`/`\end{…}`/`\\` 行分隔；matrix/pmatrix/cases/aligned 逐字往返且二次往返幂等
+- **删除线 `~~…~~` 往返丢失** — Qt `setMarkdown` 把 `~~x~~` 渲染为 `<span text-decoration:line-through>`，而 TipTap Strike 契约是 `<s>`，`fromHtml` 又无还原 → 往返退化为字面 `<span>`。修复：`toHtml` 后处理 line-through span → `<s>`；`fromHtml` 新增 `<s>`/`<del>`/`<strike>`/line-through span → `~~…~~` 占位符还原，`~~H~2~O~~`（删除线含下标）逐字往返
+- **表格空单元格 `||` 往返被重定位** — Qt `setMarkdown` 把 `|1||3|` 的空单元格误解析并重定位到行尾。修复：`toHtml` 新增 `normalizeTableRowForQt`，仅当表格行含空单元格时用反引号/转义感知的 `splitTableCells` 重拼为 `| cell |`（行内代码内的 `||` 不误拆）
+- **块引用多段落间空行丢失** — `>` 空行被 trimmed 过滤致两段引用被合并。修复：`isParagraphLine` 对「仅 `>`」返回 false，两段引用保持独立
+- **UTF-8 BOM 未剥离与写回未保留** — 读入剥离 UTF-8/UTF-16 BOM（无 BOM 先按 UTF-8 校验、无效回退系统编码，解决中文 Windows GBK 文件被当 UTF-8 读乱码）；写回保留原文件 BOM 状态（新文件不带 BOM）
+
 ## [0.12.3] — 2026-08-23
 
 ### 新增
