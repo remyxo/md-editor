@@ -1309,8 +1309,15 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     // 必须先于 ZZHI/ZZFR/ZZSB 等内层占位符还原：div 内部可能含这些占位符
     // （如 <div><span style>…</span></div>），先还原外层 div，内层占位符才能
     // 被后续各自的还原步骤继续处理（与 ZZHI 先于 ZZFR 同理）。
-    for (int i = 0; i < divBackups.size(); ++i)
-        html.replace("ZZDV" + QString::number(i) + "ZZ", divBackups[i]);
+    // 独占段落的占位符须连 <p> 一起替换：Qt setMarkdown 把占位符包在 <p> 中，
+    // 若保留 p 壳，产出 <p><div>…</div></p> 非法嵌套，TipTap 解析时把块级
+    // divBlock 提升出 <p>、却把空 <p> 壳留在原位，渲染为 div 前后各一条空行
+    // （与块级图片解包同类问题，见下方 <p><img/></p> 解包注释）。
+    for (int i = 0; i < divBackups.size(); ++i) {
+        QString ph = QString("ZZDV%1ZZ").arg(i);
+        html.replace(QRegularExpression("<p[^>]*>" + ph + "</p>"), divBackups[i]);
+        html.replace(ph, divBackups[i]); // fallback：占位符未独立成段（混排文本/标题内）
+    }
 
     // 修复 <hN><span font-size:xx-large><div align="X">text</div></span></hN>
     // → <hN style="text-align:X">text</hN>

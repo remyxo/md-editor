@@ -15,6 +15,35 @@ static QString longSpacedText(int words)
 class TestMarkdownHandler : public QObject {
     Q_OBJECT
 private slots:
+    void testDivBlockNotWrappedInParagraph() {
+        // 独占一行的 <div>（块级）还原后不得被 <p> 包裹：
+        // <p><div>…</div></p> 是非法嵌套，TipTap 解析时把块级 divBlock 提升出
+        // <p>、空 <p> 壳留在原位，渲染为 div 前后各一条空行。
+        QString md = "# 这是标题1,一般是文章的标题\n"
+                     "\n"
+                     "这是普通文本。\n"
+                     "这是普通文本。\n"
+                     "\n"
+                     "<div align=\"right\">这是右对齐标题, 通过html标签实现</div>\n"
+                     "\n"
+                     "## 1. 这是标题2，一般表示章节";
+        QString html = MarkdownHandler::toHtml(md);
+        // div 必须原样保留（ZZDV 保护生效）
+        QVERIFY2(html.contains("<div align=\"right\">这是右对齐标题, 通过html标签实现</div>"),
+                 qPrintable("div 应原样保留，实际: " + html));
+        // 不得出现 <p…><div 嵌套（含纯 <p> 形态）
+        static const QRegularExpression pWrapDivRe(
+            "<p\\b[^>]*>\\s*<div\\b");
+        QVERIFY2(!pWrapDivRe.match(html).hasMatch(),
+                 qPrintable("div 不应被 <p> 包裹，实际: " + html));
+        // 完整往返：div 行精确还原
+        QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("<div align=\"right\">这是右对齐标题, 通过html标签实现</div>"),
+                 qPrintable("往返应还原 div 行，实际: " + back));
+        QVERIFY2(!back.contains("ZZDV"),
+                 qPrintable("往返不应泄漏 ZZDV 占位符，实际: " + back));
+    }
+
     void testBasicConversion() {
         QString md = "# Hello\n\nWorld";
         QString html = MarkdownHandler::toHtml(md);
@@ -2566,6 +2595,7 @@ private slots:
         QVERIFY2(md4.contains("> 第一行\n> 第二行"),
                  qPrintable("块引用内软换行不应被拆成两段，实际:\n" + md4));
     }
+
 };
 
 QTEST_MAIN(TestMarkdownHandler)
