@@ -400,8 +400,10 @@ struct ParseState {
     // 使 Word 对每个列表各自重新开始编号；否则同一 numId 的段落会被当作同一序列续编。
     int nextNumId = 1;
     QList<int> numAbstractNums;   // 与 numId 一一对应（numId = 下标 + 1），值为 abstractNumId
+    QList<int> numListIlvls;      // 与 numId 一一对应，值为该列表的嵌套层级（startOverride 需命中该 ilvl）
     bool hasBulletList = false;
     bool hasDecimalList = false;
+    int maxListIlvl = 0;    // 文档中出现过的最大嵌套列表层级（决定 numbering.xml 生成的 ilvl 层数）
     // 图片 media 部件（Task 5：DOCX 图片嵌入 OOXML media）
     struct MediaPart {
         int rId;
@@ -789,12 +791,14 @@ static QString parseHorizontalRule()
            "</w:pPr></w:p>";
 }
 
-static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s)
+static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int ilvl = 0)
 {
     int numId = s.nextNumId++;
     s.numAbstractNums.append(ordered ? 1 : 0);
+    s.numListIlvls.append(ilvl);
     if (ordered) s.hasDecimalList = true;
     else s.hasBulletList = true;
+    if (ilvl > s.maxListIlvl) s.maxListIlvl = ilvl;
 
     QString result;
     while (!r.atEnd()) {
@@ -815,9 +819,37 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s)
                     break;
                 if (tt2 != QXmlStreamReader::StartElement) continue;
                 QString innerTag = r.name().toString().toLower();
+
+                // 嵌套列表：递归解析，ilvl 递增；结果自带 numPr（独立 numId + 当前 ilvl），
+                // 直接追加，不得再套父列表的 numPr（否则仍落回 ilvl=0 与父项同列）。
+                if (innerTag == "ul" || innerTag == "ol") {
+                    result += parseList(r, innerTag == "ol", s, ilvl + 1);
+                    continue;
+                }
+
                 QString inner;
-                if (innerTag == "p" || innerTag == "div") {
-                    inner = parseParagraph(r, innerTag, s);
+                if (innerTag == "p") {
+                    inner = parseParagraph(r, "p", s);
+                } else if (innerTag == "div") {
+                    // 任务项内容容器 <div>（TipTap 渲染为 <li><label>…</label><div>…</div></li>）：
+                    // 迭代其子块。<p> 用 parseParagraph，嵌套 <ul>/<ol> 递归（ilvl+1、自带 numPr）。
+                    // 曾因直接 parseParagraph 让 parseInline 吞掉嵌套列表文字，子任务并入父段、
+                    // 嵌套列表整体消失（「无缩进」与「文字合并」两个症状同源）。
+                    inner.clear();
+                    while (!r.atEnd()) {
+                        auto dt = r.readNext();
+                        if (dt == QXmlStreamReader::EndElement
+                            && r.name().toString().compare(QLatin1String("div"), Qt::CaseInsensitive) == 0)
+                            break;
+                        if (dt != QXmlStreamReader::StartElement) continue;
+                        QString childTag = r.name().toString().toLower();
+                        if (childTag == "p") {
+                            inner += parseParagraph(r, "p", s);
+                        } else if (childTag == "ul" || childTag == "ol") {
+                            inner += parseList(r, childTag == "ol", s, ilvl + 1);
+                        }
+                        // 其他子元素忽略
+                    }
                 } else if (innerTag == "label") {
                     // 提取 checkbox 状态
                     while (!r.atEnd()) {
@@ -839,41 +871,58 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s)
                     // skip
                     continue;
                 }
-                // 任务列表复选框前缀
-                if (!taskPrefix.isEmpty() && inner.startsWith("<w:p>")) {
-                    // 复选框 run 显式指定符号字体：Arial/黑体 无 U+2610/U+2612 字形，
-                    // 缺省回退在部分 Word/WPS 环境不可靠，☐/☒ 会渲染成空白。
-                    QString ckRun = "<w:r><w:rPr><w:rFonts w:ascii=\"Segoe UI Symbol\" w:hAnsi=\"Segoe UI Symbol\" w:cs=\"Segoe UI Symbol\"/></w:rPr><w:t xml:space=\"preserve\">" + taskPrefix + "</w:t></w:r>";
-                    int pPrEnd = inner.indexOf("</w:pPr>");
-                    if (pPrEnd >= 0) {
-                        inner = inner.left(pPrEnd + 8) + ckRun + inner.mid(pPrEnd + 8);
-                    } else {
-                        // <w:p> 共 5 个字符，mid(5) 才跳过整个开标签；mid(4) 会残留一个
-                        // 孤立的 ">" 文本节点（<w:p> 内不允许裸文本），Word 打开时可能
-                        // 丢弃该段或触发修复，导致任务列表复选框丢失、退化为普通列表。
-                        inner = QStringLiteral("<w:p>") + ckRun + inner.mid(5);
-                    }
-                    taskPrefix.clear();
-                }
-                // 包装为列表段落 — 与已有 pPr 合并
-                QString listPPr = "<w:pStyle w:val=\"ListParagraph\"/>"
-                                  "<w:numPr>"
-                                  "<w:ilvl w:val=\"0\"/>"
-                                  "<w:numId w:val=\"" + QString::number(numId) + "\"/>"
-                                  "</w:numPr>";
+                // 分离首个 <w:p> 段落与其余子块：复选框前缀 + 列表 numPr 只作用于首个段落，
+                // 嵌套列表等其余子块（递归已自带 numPr）原样保留，不再被二次包装。
+                QString firstP, rest;
                 if (inner.startsWith("<w:p>")) {
-                    int pPrStart = inner.indexOf("<w:pPr>");
-                    int pPrEnd   = inner.indexOf("</w:pPr>");
-                    if (pPrStart >= 0 && pPrEnd > pPrStart) {
-                        // 已有 pPr：合并列表属性到已有 pPr 开头
-                        QString existing = inner.mid(pPrStart + 7, pPrEnd - pPrStart - 7);
-                        inner = inner.left(pPrStart + 7) + listPPr + existing + inner.mid(pPrEnd);
-                    } else {
-                        // 无 pPr：在 <w:p> 后插入
-                        inner.replace("<w:p>", "<w:p><w:pPr>" + listPPr + "</w:pPr>");
+                    int blockEnd = inner.indexOf("</w:p>");
+                    if (blockEnd >= 0) {
+                        firstP = inner.left(blockEnd + 6);
+                        rest = inner.mid(blockEnd + 6);
                     }
                 }
-                result += inner;
+                if (!firstP.isEmpty()) {
+                    // 任务列表复选框前缀（仅首个段落；已带 numPr 的嵌套列表段落不注入）
+                    if (!taskPrefix.isEmpty() && !firstP.contains("<w:numPr>")) {
+                        // 复选框 run 显式指定符号字体：Arial/黑体 无 U+2610/U+2612 字形，
+                        // 缺省回退在部分 Word/WPS 环境不可靠，☐/☒ 会渲染成空白。
+                        QString ckRun = "<w:r><w:rPr><w:rFonts w:ascii=\"Segoe UI Symbol\" w:hAnsi=\"Segoe UI Symbol\" w:cs=\"Segoe UI Symbol\"/></w:rPr><w:t xml:space=\"preserve\">" + taskPrefix + "</w:t></w:r>";
+                        int pPrEnd = firstP.indexOf("</w:pPr>");
+                        if (pPrEnd >= 0) {
+                            firstP = firstP.left(pPrEnd + 8) + ckRun + firstP.mid(pPrEnd + 8);
+                        } else {
+                            // <w:p> 共 5 个字符，mid(5) 才跳过整个开标签；mid(4) 会残留一个
+                            // 孤立的 ">" 文本节点（<w:p> 内不允许裸文本），Word 打开时可能
+                            // 丢弃该段或触发修复，导致任务列表复选框丢失、退化为普通列表。
+                            firstP = QStringLiteral("<w:p>") + ckRun + firstP.mid(5);
+                        }
+                        taskPrefix.clear();
+                    }
+                    // 列表 numPr（仅首个段落；ilvl 取当前嵌套深度 0=顶层，子列表由递归承载）
+                    if (!firstP.contains("<w:numPr>")) {
+                        QString listPPr = "<w:pStyle w:val=\"ListParagraph\"/>"
+                                          "<w:numPr>"
+                                          "<w:ilvl w:val=\"" + QString::number(ilvl) + "\"/>"
+                                          "<w:numId w:val=\"" + QString::number(numId) + "\"/>"
+                                          "</w:numPr>";
+                        int pPrStart = firstP.indexOf("<w:pPr>");
+                        int pPrEnd   = firstP.indexOf("</w:pPr>");
+                        if (pPrStart >= 0 && pPrEnd > pPrStart) {
+                            // 已有 pPr：合并列表属性到已有 pPr 开头（保持单个 <w:pPr>，否则非法）
+                            QString existing = firstP.mid(pPrStart + 7, pPrEnd - pPrStart - 7);
+                            firstP = firstP.left(pPrStart + 7) + listPPr + existing + firstP.mid(pPrEnd);
+                        } else {
+                            // 无 pPr：在首个 <w:p> 后插入。不可用 QString::replace（会替换所有
+                            // <w:p>，嵌套列表段落将被二次包装成双 numPr），须按 index 精确定位首个。
+                            firstP = QStringLiteral("<w:p><w:pPr>") + listPPr + QStringLiteral("</w:pPr>") + firstP.mid(5);
+                        }
+                    } else {
+                        // 首个块已是嵌套列表段落（父项无自身文本的边界情形）：丢弃悬空复选框
+                        taskPrefix.clear();
+                    }
+                    result += firstP;
+                }
+                result += rest;
             }
         }
     }
@@ -1118,41 +1167,56 @@ static QString makeNumberingXml(const ParseState &s)
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
         "<w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n");
 
-    // 无序列表（bullet）
+    // 无序列表（bullet）：多层定义 ilvl 0..maxListIlvl，每层缩进递增 720 twips（0.5 英寸），
+    // 符号逐层轮换 • ◦ ▪ 以区分层级（hybridMultilevel 支持各层独立 lvlText）。
     if (s.hasBulletList) {
+        static const char *bulletGlyphs[] = {"&#x2022;", "&#x25E6;", "&#x25AA;"};
         xml += "  <w:abstractNum w:abstractNumId=\"0\">\n"
-               "    <w:multiLevelType w:val=\"hybridMultilevel\"/>\n"
-               "    <w:lvl w:ilvl=\"0\">\n"
-               "      <w:start w:val=\"1\"/>\n"
-               "      <w:numFmt w:val=\"bullet\"/>\n"
-               "      <w:lvlText w:val=\"&#x2022;\"/>\n"
-               "      <w:lvlJc w:val=\"left\"/>\n"
-               "      <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\n"
-               "    </w:lvl>\n"
-               "  </w:abstractNum>\n";
+               "    <w:multiLevelType w:val=\"hybridMultilevel\"/>\n";
+        for (int lvl = 0; lvl <= s.maxListIlvl; ++lvl) {
+            xml += "    <w:lvl w:ilvl=\"" + QString::number(lvl) + "\">\n"
+                   "      <w:start w:val=\"1\"/>\n"
+                   "      <w:numFmt w:val=\"bullet\"/>\n"
+                   "      <w:lvlText w:val=\"" + QString(bulletGlyphs[lvl % 3]) + "\"/>\n"
+                   "      <w:lvlJc w:val=\"left\"/>\n"
+                   "      <w:pPr><w:ind w:left=\"" + QString::number(720 + lvl * 720)
+                   + "\" w:hanging=\"360\"/></w:pPr>\n"
+                   "    </w:lvl>\n";
+        }
+        xml += "  </w:abstractNum>\n";
     }
-    // 有序列表（decimal）
+    // 有序列表（decimal）：各层保持 %1. 十进制（对齐 HTML/PDF 中嵌套 <ol> 的渲染），
+    // 缩进随层级递增；每层独立 numId + startOverride 保证各列表从 1 重启。
     if (s.hasDecimalList) {
         xml += "  <w:abstractNum w:abstractNumId=\"1\">\n"
-               "    <w:multiLevelType w:val=\"hybridMultilevel\"/>\n"
-               "    <w:lvl w:ilvl=\"0\">\n"
-               "      <w:start w:val=\"1\"/>\n"
-               "      <w:numFmt w:val=\"decimal\"/>\n"
-               "      <w:lvlText w:val=\"%1.\"/>\n"
-               "      <w:lvlJc w:val=\"left\"/>\n"
-               "      <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\n"
-               "    </w:lvl>\n"
-               "  </w:abstractNum>\n";
+               "    <w:multiLevelType w:val=\"hybridMultilevel\"/>\n";
+        for (int lvl = 0; lvl <= s.maxListIlvl; ++lvl) {
+            xml += "    <w:lvl w:ilvl=\"" + QString::number(lvl) + "\">\n"
+                   "      <w:start w:val=\"1\"/>\n"
+                   "      <w:numFmt w:val=\"decimal\"/>\n"
+                   "      <w:lvlText w:val=\"%1.\"/>\n"
+                   "      <w:lvlJc w:val=\"left\"/>\n"
+                   "      <w:pPr><w:ind w:left=\"" + QString::number(720 + lvl * 720)
+                   + "\" w:hanging=\"360\"/></w:pPr>\n"
+                   "    </w:lvl>\n";
+        }
+        xml += "  </w:abstractNum>\n";
     }
     // 每个列表一个独立 <w:num>（numId=1..N 指向对应 abstractNum）。有序列表额外带
     // <w:lvlOverride>/<w:startOverride>，Word/WPS 才把它当作新序列从 1 重新编号；
     // 否则会按 abstractNumId 续编，后续不相邻列表不重启（MarkMyWord#30 同类问题）。
+    // 嵌套有序列表须把 override 落在其实际 ilvl（顶层为 0、子列表为 1+），否则重启信号不命中。
     for (int i = 0; i < s.numAbstractNums.size(); ++i) {
         const bool ordered = (s.numAbstractNums[i] == 1);
+        QString overrideXml;
+        if (ordered) {
+            overrideXml = QString("<w:lvlOverride w:ilvl=\"%1\"><w:startOverride w:val=\"1\"/></w:lvlOverride>")
+                              .arg(s.numListIlvls[i]);
+        }
         xml += QString("  <w:num w:numId=\"%1\"><w:abstractNumId w:val=\"%2\"/>%3</w:num>\n")
                    .arg(i + 1)
                    .arg(s.numAbstractNums[i])
-                   .arg(ordered ? "<w:lvlOverride w:ilvl=\"0\"><w:startOverride w:val=\"1\"/></w:lvlOverride>" : QString());
+                   .arg(overrideXml);
     }
     xml += "</w:numbering>\n";
     return xml;

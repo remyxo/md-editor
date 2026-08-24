@@ -241,6 +241,118 @@ private slots:
         QVERIFY2(numXml.count("<w:startOverride") == 2, qPrintable(numXml));
     }
 
+    void testNestedListIndentation() {
+        // 回归：嵌套列表（无序/有序/任务）曾丢失缩进——嵌套子项被当作父列表的
+        // ilvl=0 同级项输出（numId 沿用父列表、ilvl 恒为 0），Word 中与父项同列。
+        // 修复：嵌套 <ul>/<ol> 递归解析，ilvl 随嵌套深度递增，numbering.xml 按层定义缩进。
+        // 任务列表的嵌套 <ul> 在 taskItem 的 <div> 内容容器内部（真实 TipTap 结构），
+        // 须同样递归——曾因 parseInline 把子任务文字吞进父段、嵌套列表整体消失。
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx(
+            "<ul><li><p>父级</p>"
+            "<ul><li><p>无序子级</p></li></ul>"
+            "</li></ul>"
+            "<ol><li><p>第一</p>"
+            "<ol><li><p>有序子级</p></li></ol>"
+            "</li></ol>"
+            "<ul data-type=\"taskList\"><li data-type=\"taskItem\"><label><input type=\"checkbox\"></label>"
+            "<div><p>任务</p>"
+            "<ul data-type=\"taskList\"><li data-type=\"taskItem\"><label><input type=\"checkbox\"></label>"
+            "<div><p>任务子级</p></div></li></ul>"
+            "</div></li></ul>",
+            dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QProcess unzip; unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString docXml = QString::fromUtf8(unzip.readAllStandardOutput());
+
+        // 取出包含指定文本的 <w:p>...</w:p> 块，用于断言该段落所属列表层级
+        auto paraOf = [](const QString &xml, const QString &text) {
+            QRegularExpression re("<w:p>([\\s\\S]*?)</w:p>");
+            auto it = re.globalMatch(xml);
+            while (it.hasNext()) {
+                const QString para = it.next().captured(1);
+                if (para.contains(text)) return para;
+            }
+            return QString();
+        };
+
+        // 父级项在 ilvl=0，嵌套子级项必须升到 ilvl=1（根因：曾全部落 0）
+        QVERIFY2(paraOf(docXml, "父级").contains("<w:ilvl w:val=\"0\"/>"), qPrintable(docXml));
+        QVERIFY2(paraOf(docXml, "无序子级").contains("<w:ilvl w:val=\"1\"/>"), qPrintable(docXml));
+        QVERIFY2(paraOf(docXml, "有序子级").contains("<w:ilvl w:val=\"1\"/>"), qPrintable(docXml));
+        QVERIFY2(paraOf(docXml, "任务子级").contains("<w:ilvl w:val=\"1\"/>"), qPrintable(docXml));
+        // 嵌套任务文字不得并入父任务段落（回归：曾因 parseInline 吞掉嵌套列表文字，
+        // 父段 "任务" 与子段 "任务子级" 拼在同一 <w:p> 里）
+        QString parentPara = paraOf(docXml, "任务");
+        QVERIFY2(parentPara.contains("任务"), qPrintable(docXml));
+        QVERIFY2(!parentPara.contains("任务子级"), qPrintable(parentPara));
+        // 嵌套子任务须保留自己的复选框前缀（不并入父段时复选框也不得丢失）
+        QString childPara = paraOf(docXml, "任务子级");
+        QVERIFY2(childPara.contains("☐ "), qPrintable(childPara));
+        QVERIFY2(childPara.contains("Segoe UI Symbol"), qPrintable(childPara));
+        // 三个顶层列表 + 三个嵌套列表 = 六个独立 numId
+        QRegularExpression idRe("<w:numId w:val=\"(\\d+)\"/>");
+        auto it = idRe.globalMatch(docXml);
+        QSet<QString> ids;
+        while (it.hasNext()) ids.insert(it.next().captured(1));
+        QVERIFY2(ids.size() == 6, qPrintable(docXml));
+
+        // numbering.xml 须为嵌套层级定义递增缩进（ilvl=1 → left=1440）
+        unzip.start("unzip", QStringList() << "-p" << out << "word/numbering.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString numXml = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY2(numXml.contains("<w:lvl w:ilvl=\"1\""), qPrintable(numXml));
+        QVERIFY2(numXml.contains("<w:ind w:left=\"1440\" w:hanging=\"360\"/>"), qPrintable(numXml));
+    }
+
+    void testDeepNestedAndMixedListIndentation() {
+        // 三层嵌套（ul→ol→ul 混合）与有序子列表重启：ilvl 随深度递增（0/1/2），
+        // 嵌套有序列表的 startOverride 须落在其实际 ilvl（此处为 1），否则 Word/WPS
+        // 会按 abstractNumId 续编不重启。
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx(
+            "<ul><li><p>根</p>"
+            "<ol><li><p>中间</p>"
+            "<ul><li><p>最深层</p></li></ul>"
+            "</li></ol>"
+            "</li></ul>",
+            dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QProcess unzip; unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString docXml = QString::fromUtf8(unzip.readAllStandardOutput());
+
+        auto paraOf = [](const QString &xml, const QString &text) {
+            QRegularExpression re("<w:p>([\\s\\S]*?)</w:p>");
+            auto it = re.globalMatch(xml);
+            while (it.hasNext()) {
+                const QString para = it.next().captured(1);
+                if (para.contains(text)) return para;
+            }
+            return QString();
+        };
+        QVERIFY2(paraOf(docXml, "根").contains("<w:ilvl w:val=\"0\"/>"), qPrintable(docXml));
+        QVERIFY2(paraOf(docXml, "中间").contains("<w:ilvl w:val=\"1\"/>"), qPrintable(docXml));
+        QVERIFY2(paraOf(docXml, "最深层").contains("<w:ilvl w:val=\"2\"/>"), qPrintable(docXml));
+
+        unzip.start("unzip", QStringList() << "-p" << out << "word/numbering.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString numXml = QString::fromUtf8(unzip.readAllStandardOutput());
+        // 有序子列表（numId=2）的 override 命中 ilvl=1
+        QVERIFY2(numXml.contains("<w:lvlOverride w:ilvl=\"1\"><w:startOverride w:val=\"1\"/></w:lvlOverride>"),
+                 qPrintable(numXml));
+        // 三层缩进定义齐备
+        QVERIFY2(numXml.contains("<w:ind w:left=\"1440\" w:hanging=\"360\"/>"), qPrintable(numXml));
+        QVERIFY2(numXml.contains("<w:ind w:left=\"2160\" w:hanging=\"360\"/>"), qPrintable(numXml));
+    }
+
     void testTaskListCheckboxPrefix() {
         // 任务列表：无序列表（bullet）+ ☐/☒ 前缀 + 文本。复选框 run 显式指定
         // Segoe UI Symbol 字体（Calibri 无 U+2610/U+2612 字形，缺省回退不可靠）。
@@ -468,6 +580,10 @@ private slots:
         if (oldMl.isValid()) s.setValue("export/marginLeft", oldMl); else s.remove("export/marginLeft");
         if (oldMr.isValid()) s.setValue("export/marginRight", oldMr); else s.remove("export/marginRight");
     }
+
+
+
+
 
     void testZipStructureOpcCompliant() {
         // 回归：DOCX 是 OPC 包，不是 ODF——不得写 ODF 式 mimetype 首条目。
