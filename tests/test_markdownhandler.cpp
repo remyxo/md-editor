@@ -44,6 +44,38 @@ private slots:
                  qPrintable("往返不应泄漏 ZZDV 占位符，实际: " + back));
     }
 
+    void testStrikeSubscriptEdgeRoundTrip() {
+        // 删除线内下标贴分隔符边缘时，~~…~~ 与 ~x~ 共用 ~ 字符产生歧义：
+        // ~~H~2~~~ Qt setMarkdown 整体按字面量解析、~~~2~H~~ 甚至输出空段落
+        // 内容全丢。修复：fromHtml 检测内层下标占位符贴删除线首/尾时保留字面
+        // <s>…</s>，往返保真；中部下标仍走 ~~H~2~O~~ 纯 Markdown。
+        struct Case { const char *html; bool wantHtml; };
+        const Case cases[] = {
+            // 下标贴边（末尾/开头/仅下标）→ 保留字面 HTML
+            {"<p><s>H<sub>2</sub></s></p>", true},
+            {"<p><s><sub>2</sub>H</s></p>", true},
+            {"<p><s><sub>2</sub></s></p>", true},
+            // 下标在删除线中部 → 仍转 Markdown（不误伤正常形式）
+            {"<p><s>H<sub>2</sub>O</s></p>", false},
+        };
+        for (const Case &c : cases) {
+            const QString md = MarkdownHandler::fromHtml(c.html).trimmed();
+            if (c.wantHtml) {
+                QVERIFY2(md.startsWith("<s>") && md.endsWith("</s>"),
+                         qPrintable(QString("贴边下标应保留 <s> HTML，实际: %1").arg(md)));
+            } else {
+                QVERIFY2(md.startsWith("~~") && md.endsWith("~~"),
+                         qPrintable(QString("中部下标应转 ~~…~~，实际: %1").arg(md)));
+            }
+            // 完整往返：MD → HTML 须还原出 <s> 与 <sub>，且不得残留歧义 ~~…~~ 字面量
+            const QString back = MarkdownHandler::toHtml(md);
+            QVERIFY2(back.contains("<s>") && back.contains("<sub>2</sub>"),
+                     qPrintable(QString("往返应还原 <s>+<sub>，实际: %1").arg(back)));
+            QVERIFY2(!back.contains("~~~"),
+                     qPrintable(QString("往返不得残留歧义 ~~~，实际: %1").arg(back)));
+        }
+    }
+
     void testBasicConversion() {
         QString md = "# Hello\n\nWorld";
         QString html = MarkdownHandler::toHtml(md);

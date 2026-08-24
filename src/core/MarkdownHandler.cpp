@@ -1674,6 +1674,40 @@ static QString buildInlineCodeMd(const QString &content)
     return fence + body + fence;
 }
 
+// 删除线内联内容还原后若以 ~ 开头或结尾，会与 ~~ 分隔符贴合成 ~~~… 歧义序列，
+// Qt setMarkdown 无法区分下标闭合 ~ 与删除线闭合 ~~：~~H~2~~~ 整体按字面量解析、
+// ~~~2~H~~ 甚至输出空段落内容全丢（往返断裂）。命中时该 <s>/line-through 应保留
+// 字面 HTML 而非转 ~~…~~（TipTap Strike mark 直接解析 <s>/line-through，HTML 兜底
+// 保证往返）。检测对象是内联内容中还原为 ~X~ 的下标占位符 ZZSB，或字面 ~ 贴边。
+static bool strikeEdgeTildeCollision(const QString &inner)
+{
+    static const QRegularExpression phRe("ZZ[A-Z]+[0-9]+ZZ");
+    const QString t = inner.trimmed();
+    if (t.isEmpty()) return false;
+
+    // 首个内容单元：下标占位符 ZZSB，或字面文本以 ~ 开头
+    const QRegularExpressionMatch first = phRe.match(t);
+    const bool firstIsPh = first.hasMatch() && first.capturedStart() == 0;
+    if (firstIsPh) {
+        if (first.captured(0).startsWith("ZZSB")) return true;
+    } else if (t.at(0) == QLatin1Char('~')) {
+        return true;
+    }
+
+    // 末个内容单元：下标占位符 ZZSB，或字面文本以 ~ 结尾
+    auto it = phRe.globalMatch(t);
+    QRegularExpressionMatch last;
+    while (it.hasNext()) last = it.next();
+    const bool lastIsPh = last.hasMatch()
+        && last.capturedStart() + last.capturedLength() == t.length();
+    if (lastIsPh) {
+        if (last.captured(0).startsWith("ZZSB")) return true;
+    } else if (t.endsWith(QLatin1Char('~'))) {
+        return true;
+    }
+    return false;
+}
+
 QString MarkdownHandler::fromHtml(const QString &html)
 {
     // QTextDocument::toMarkdown() 不能正确处理 <code> / <pre>
@@ -2148,7 +2182,11 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (!m.hasMatch()) break;
             QString ph = QString("ZZST%1ZZ").arg(n++);
             placeholders << ph;
-            backups << "~~" + m.captured(2) + "~~";
+            // 内层下标贴删除线分隔符边缘（~X~ 贴 ~~）时 ~~…~~ 不可解析，
+            // 保留字面 <s>…</s>（m.captured(0)，含已占位的内层 ZZSB，逆序还原）
+            QString inner = m.captured(2);
+            backups << (strikeEdgeTildeCollision(inner)
+                        ? m.captured(0) : "~~" + inner + "~~");
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }
@@ -2162,7 +2200,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (!m.hasMatch()) break;
             QString ph = QString("ZZST%1ZZ").arg(n++);
             placeholders << ph;
-            backups << "~~" + m.captured(1) + "~~";
+            QString inner = m.captured(1);
+            backups << (strikeEdgeTildeCollision(inner)
+                        ? m.captured(0) : "~~" + inner + "~~");
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }
