@@ -16,8 +16,9 @@ public:
     FileTree *fileTree() const;
     OutlineTree *outlineTree() const;
 
-    void setCollapsed(bool collapsed);
-    bool isCollapsed() const;
+    // 双开关：目录树/大纲面板独立显隐，全关时侧边栏整体隐藏
+    void setFileTreeVisible(bool visible);
+    void setOutlineVisible(bool visible);
 
     // 语言切换后重设全部文案（Task 10 调用）
     void retranslateUi();
@@ -27,11 +28,13 @@ signals:
 
 private:
     void setupUi();
+    void updateVisibility();
     FileTree *m_fileTree;
     OutlineTree *m_outlineTree;
     QTabWidget *m_tabWidget;
     QPushButton *m_openFolderBtn;
-    bool m_collapsed;
+    bool m_fileTreeVisible = true;
+    bool m_outlineVisible = true;
 };
 
 #endif // MD_EDITOR_SIDEBAR_H

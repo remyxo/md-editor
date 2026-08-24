@@ -78,15 +78,16 @@ void MenuBar::setupUi()
     // === 视图菜单 ===
     m_viewMenu = addMenu(tr("视图(&V)"));
 
-    m_sidebarAct = m_viewMenu->addAction(tr("侧边栏"));
-    m_sidebarAct->setShortcut(QKeySequence("Ctrl+B"));
-    m_sidebarAct->setCheckable(true);
-    m_sidebarAct->setChecked(true);
-    connect(m_sidebarAct, &QAction::triggered, this, &MenuBar::toggleSidebar);
+    m_fileTreeAct = m_viewMenu->addAction(tr("目录树"));
+    m_fileTreeAct->setCheckable(true);
+    m_fileTreeAct->setChecked(true);
+    m_fileTreeAct->setObjectName("fileTreeAction");
+    connect(m_fileTreeAct, &QAction::triggered, this, &MenuBar::toggleFileTree);
 
     m_outlineAct = m_viewMenu->addAction(tr("大纲"));
     m_outlineAct->setCheckable(true);
     m_outlineAct->setChecked(true);
+    m_outlineAct->setObjectName("outlineAction");
     connect(m_outlineAct, &QAction::triggered, this, &MenuBar::toggleOutline);
 
     m_viewMenu->addSeparator();
@@ -204,7 +205,7 @@ void MenuBar::retranslateUi()
     m_replaceAct->setText(tr("替换(&H)"));
 
     m_viewMenu->setTitle(tr("视图(&V)"));
-    m_sidebarAct->setText(tr("侧边栏"));
+    m_fileTreeAct->setText(tr("目录树"));
     m_outlineAct->setText(tr("大纲"));
     m_sourceAct->setText(tr("源码模式"));
     m_fullscreenAct->setText(tr("全屏"));

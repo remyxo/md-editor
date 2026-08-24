@@ -55,3 +55,9 @@ target_include_directories(test_languagemanager PRIVATE ../src)
 # LanguageManager.cpp 用到 QApplication（QTranslator 装载），必须链接 Qt6::Widgets
 target_link_libraries(test_languagemanager PRIVATE Qt6::Test Qt6::Widgets)
 add_test(NAME test_languagemanager COMMAND test_languagemanager)
+
+add_executable(test_sidebar test_sidebar.cpp
+    ../src/ui/SideBar.cpp ../src/ui/FileTree.cpp ../src/ui/OutlineTree.cpp)
+target_include_directories(test_sidebar PRIVATE ../src)
+target_link_libraries(test_sidebar PRIVATE Qt6::Test Qt6::Widgets)
+add_test(NAME test_sidebar COMMAND test_sidebar)

@@ -4,10 +4,12 @@
 #include <QMainWindow>
 #include <QSplitter>
 #include <QCloseEvent>
+#include <utility>
 
 class MenuBar;
 class ToolBar;
 class SideBar;
+class QShortcut;
 class TabWidget;
 class EditorTab;
 class StatusBar;
@@ -90,6 +92,8 @@ private:
     MenuBar *m_menuBar;
     ToolBar *m_toolBar;
     SideBar *m_sideBar;
+    QShortcut *m_sidebarShortcut = nullptr;
+    std::pair<bool, bool> m_lastPaneCombo{true, true};  // Ctrl+B 收起前的面板组合
     TabWidget *m_tabWidget;
     StatusBar *m_statusBar;
     SearchBar *m_searchBar;

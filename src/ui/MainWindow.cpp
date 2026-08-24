@@ -174,10 +174,38 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::exportDocx, this, &MainWindow::onExportDocx);
     connect(m_menuBar, &MenuBar::exportHtml, this, &MainWindow::onExportHtml);
     connect(m_menuBar, &MenuBar::switchTheme, this, &MainWindow::onThemeSwitch);
-    connect(m_menuBar, &MenuBar::toggleSidebar, this, [this]() {
-        m_sideBar->setCollapsed(!m_sideBar->isCollapsed());
+    connect(m_menuBar, &MenuBar::toggleOutline, this, [this](bool visible) {
+        m_sideBar->setOutlineVisible(visible);
+    });
+    connect(m_menuBar, &MenuBar::toggleFileTree, this, [this](bool visible) {
+        m_sideBar->setFileTreeVisible(visible);
+    });
+
+    // Ctrl+B 整体收/展：可见→记住组合并全收；全收→恢复组合
+    m_sidebarShortcut = new QShortcut(QKeySequence("Ctrl+B"), this);
+    connect(m_sidebarShortcut, &QShortcut::activated, this, [this]() {
+        QAction *fileAct = m_menuBar->findChild<QAction *>(QStringLiteral("fileTreeAction"));
+        QAction *outlineAct = m_menuBar->findChild<QAction *>(QStringLiteral("outlineAction"));
+        if (!fileAct || !outlineAct) return;
+        if (fileAct->isChecked() || outlineAct->isChecked()) {
+            m_lastPaneCombo = {fileAct->isChecked(), outlineAct->isChecked()};
+            fileAct->setChecked(false);
+            outlineAct->setChecked(false);
+        } else {
+            fileAct->setChecked(m_lastPaneCombo.first);
+            outlineAct->setChecked(m_lastPaneCombo.second);
+        }
+        // setChecked 不发射 triggered，需手动同步面板
+        m_sideBar->setFileTreeVisible(fileAct->isChecked());
+        m_sideBar->setOutlineVisible(outlineAct->isChecked());
     });
     connect(m_menuBar, &MenuBar::toggleSourceMode, this, &MainWindow::onToggleSourceMode);
+    connect(m_menuBar, &MenuBar::toggleFullscreen, this, [this]() {
+        if (isFullScreen())
+            showNormal();
+        else
+            showFullScreen();
+    });
     connect(m_menuBar, &MenuBar::insertLink, this, &MainWindow::onInsertLink);
     connect(m_menuBar, &MenuBar::insertImage, this, &MainWindow::onInsertImage);
     connect(m_menuBar, &MenuBar::insertTable, this, &MainWindow::onInsertTable);

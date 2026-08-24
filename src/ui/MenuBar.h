@@ -35,8 +35,8 @@ signals:
     void findRequested();
     void replaceRequested();
 
-    void toggleSidebar();
-    void toggleOutline();
+    void toggleFileTree(bool visible);
+    void toggleOutline(bool visible);
     void toggleSourceMode();
     void toggleFullscreen();
 
@@ -76,7 +76,7 @@ private:
     QAction *m_undoAct, *m_redoAct, *m_findAct, *m_replaceAct;
 
     // === 视图菜单动作 ===
-    QAction *m_sidebarAct, *m_outlineAct, *m_sourceAct, *m_fullscreenAct;
+    QAction *m_fileTreeAct, *m_outlineAct, *m_sourceAct, *m_fullscreenAct;
     QMenu *m_themeMenu;
 
     // === 插入菜单动作 ===
