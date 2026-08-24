@@ -36,6 +36,27 @@ function cursorAt(html, pos) {
   return lastCursor;
 }
 
+/** 动态定位：文本 needle 末尾之后的光标位置（避免手算各节点位置） */
+function posAfter(needle) {
+  let hit = null;
+  window.editorApi.editor.state.doc.descendants(function(node, pos) {
+    if (hit !== null || !node.isText) return hit === null;
+    const i = node.text.indexOf(needle);
+    if (i >= 0) { hit = pos + i + needle.length; return false; }
+    return true;
+  });
+  if (hit === null) throw new Error('未找到文本: ' + needle);
+  return hit;
+}
+
+/** 把光标移到 pos 并返回状态栏收到的行列（内容已由调用方设置） */
+function selectAt(pos) {
+  lastCursor = null;
+  window.editorApi.editor.commands.setTextSelection(pos);
+  if (!lastCursor) throw new Error('cursorChanged 未触发（pos=' + pos + '）');
+  return lastCursor;
+}
+
 describe('状态栏行列计算（真实 TipTap 链路）', () => {
   beforeAll(() => {
     document.body.innerHTML = '<div id="editor"></div>';
@@ -132,5 +153,152 @@ describe('状态栏行列计算（真实 TipTap 链路）', () => {
     window.editorApi.editor.commands.setTextSelection(hit);
     expect(lastCursor.line).toBe(5);
     expect(lastCursor.col).toBe(2);   // 't' 之后
+  });
+
+  it('mermaid 图片占 1 行：图后文字为新的下行（268→269 场景）', () => {
+    // <p>渲染效果</p> + mermaid 原子块（内部源码换行不影响：整体占 1 行） + <p>官方文档</p>
+    const html = '<p>渲染效果</p>'
+      + '<pre><code class="language-mermaid">flowchart TD\nA--&gt;B</code></pre>'
+      + '<p>官方文档</p>';
+    window.editorApi.setContent(html);
+    // 光标在「官方文档」末尾 → 段1 + mermaid 1 行 + 本段 = 第 3 行
+    expect(selectAt(posAfter('官方文档')).line).toBe(3);
+    // 点选（NodeSelection）mermaid 图片 → 自身行 2、列 1
+    let mermaidPos = null;
+    window.editorApi.editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'mermaid') { mermaidPos = pos; return false; }
+      return true;
+    });
+    lastCursor = null;
+    window.editorApi.editor.commands.setNodeSelection(mermaidPos);
+    expect(lastCursor.line).toBe(2);
+    expect(lastCursor.col).toBe(1);
+  });
+
+  it('块级图片占 1 行：图后段落行号随之递增（用户样例场景）', () => {
+    // <p>插入的图片：</p> + 块级 image 原子（视觉独占一行） + <p>mermaid流程图：</p>
+    const html = '<p>插入的图片：</p>'
+      + '<img src="580-640x480.jpg" alt="image">'
+      + '<p>mermaid流程图：</p>';
+    window.editorApi.setContent(html);
+    // 光标在「mermaid流程图：」末尾 → 段1 + 图片 1 行 + 本段 = 第 3 行
+    expect(selectAt(posAfter('mermaid流程图：')).line).toBe(3);
+    // 点选（NodeSelection）图片 → 自身行 2、列 1
+    let imagePos = null;
+    window.editorApi.editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'image') { imagePos = pos; return false; }
+      return true;
+    });
+    lastCursor = null;
+    window.editorApi.editor.commands.setNodeSelection(imagePos);
+    expect(lastCursor.line).toBe(2);
+    expect(lastCursor.col).toBe(1);
+  });
+
+  it('块级公式按 latex 源码行数占行（有几行算几行）', () => {
+    // 单行公式占 1 行；三行源码公式占 3 行
+    const html = '<p>引言</p>'
+      + '<div data-type="block-math" data-latex="E=mc^2"></div>'
+      + '<div data-type="block-math" data-latex="a=1\nb=2\nc=3"></div>'
+      + '<p>结语</p>';
+    window.editorApi.setContent(html);
+    // 引言=1，单行公式=2，三行公式=3/4/5，结语=6
+    const lc = selectAt(posAfter('结语'));
+    expect(lc.line).toBe(6);
+    expect(lc.col).toBe(3);   // "结语" 2 字 + 1
+  });
+
+  it('块级公式 toHtml 折叠为 aligned 单行：按 \\ 分隔还原源码行数（用户样例）', () => {
+    // 多行纯公式经 toHtml 折叠为 \begin{aligned}行1 \\ 行2\end{aligned}（无 \n，
+    // HTML 属性无法承载换行）。行数须按还原后的源码行数计，而非折叠后的 1 行。
+    // 样例：两行公式 (x+1)^2=... 与 x=\sum...
+    const html = '<p>引言</p>'
+      + '<div data-type="block-math" data-latex="\\begin{aligned}(x+1)^2=x^2+2x+1 \\\\ x=\\sum_{i=1}^{n} i^{2}\\end{aligned}"></div>'
+      + '<p>结语</p>';
+    window.editorApi.setContent(html);
+    // 引言=1，两行公式=2/3，结语=4
+    const lc = selectAt(posAfter('结语'));
+    expect(lc.line).toBe(4);
+    expect(lc.col).toBe(3);   // "结语" 2 字 + 1
+    // 点选（NodeSelection）公式：head 在块末端，报告块末行（两行公式末行为 3，
+    // 与多行段落光标在块末时报告末行的语义一致；mermaid 单行时首末行相同）
+    let mathPos = null;
+    window.editorApi.editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'blockMath') { mathPos = pos; return false; }
+      return true;
+    });
+    lastCursor = null;
+    window.editorApi.editor.commands.setNodeSelection(mathPos);
+    expect(lastCursor.line).toBe(3);
+  });
+
+  it('块级公式折叠 aligned 三行：按 \\ 数还原为 3 行', () => {
+    const html = '<p>引言</p>'
+      + '<div data-type="block-math" data-latex="\\begin{aligned}a=1 \\\\ b=2 \\\\ c=3\\end{aligned}"></div>'
+      + '<p>结语</p>';
+    window.editorApi.setContent(html);
+    // 引言=1，三行公式=2/3/4，结语=5
+    expect(selectAt(posAfter('结语')).line).toBe(5);
+  });
+
+  it('块级公式显式 aligned 环境（含 & 对齐列）：仅计可见公式行（不含 begin/end）', () => {
+    // 用户显式 \begin{aligned} a &= b \\ c &= d \end{aligned} 折叠为单行（含 &），
+    // \begin{}/\end{} 在 WYSIWYG 渲染不可见，不计行；\\ 分隔的是可见公式行。
+    // 两行公式 = 2 行
+    const html = '<p>引言</p>'
+      + '<div data-type="block-math" data-latex="\\begin{aligned} a &= b \\\\ c &= d \\end{aligned}"></div>'
+      + '<p>结语</p>';
+    window.editorApi.setContent(html);
+    // 引言=1，两行公式=2/3，结语=4
+    expect(selectAt(posAfter('结语')).line).toBe(4);
+  });
+
+  it('块级公式 raw 多行环境输入（含 \\\\\\n）：有 \\\\ 时忽略换行不重复计', () => {
+    // 编辑面板多行输入 \begin{aligned}\nx &= 1 \\\ny &= 2\n\end{aligned}（含 \n 与 \\）。
+    // 行尾 \\\n 属同一行分隔：按可见公式行计 2 行（\\ 数+1），\n 不叠加。
+    const html = '<p>前</p>'
+      + '<div data-type="block-math" data-latex="\\begin{aligned}\nx &= 1 \\\\\ny &= 2\n\\end{aligned}"></div>'
+      + '<p>后</p>';
+    window.editorApi.setContent(html);
+    // 前=1，两行公式=2/3，后=4
+    expect(selectAt(posAfter('后')).line).toBe(4);
+  });
+
+  it('块级公式三行显式 aligned：begin/end 不计行，仅 \\ 分隔的 3 行（用户样例 66→70）', () => {
+    // 用户场景：$$ \begin{aligned} x &= a+b \\ y &= c+d \\ z &= x+y \end{aligned} $$
+    // 折叠为单行含 2 个 \\ → 3 行可见公式（67/68/69），其后的段落行随之后移。
+    const html = '<p>Line 1</p>'
+      + '<div data-type="block-math" data-latex="\\begin{aligned} x &= a + b \\\\ y &= c + d \\\\ z &= x + y \\end{aligned}"></div>'
+      + '<p>Line2</p>';
+    window.editorApi.setContent(html);
+    // Line 1=1，三行公式=2/3/4，Line2=5（公式若误计 begin/end 的 5 行则 Line2 落到 7）
+    expect(selectAt(posAfter('Line2')).line).toBe(5);
+  });
+
+  it('表格按行计行：列数不再被记成行数', () => {
+    // 2 行 3 列：旧实现每个单元格各计 1 行（3 列记 3 行）
+    const html = '<p>前</p>'
+      + '<table><tbody>'
+      + '<tr><th>H1</th><th>H2</th><th>H3</th></tr>'
+      + '<tr><td>a1</td><td>a2</td><td>a3</td></tr>'
+      + '</tbody></table>'
+      + '<p>后</p>';
+    window.editorApi.setContent(html);
+    // 光标在表后段落 → 前=1，表头行=2，数据行=3，后=4
+    expect(selectAt(posAfter('后')).line).toBe(4);
+    // 光标在第 2 行第 3 列 a3 末尾 → 第 3 行；列值在该单元格内从 1 计
+    const inCell = selectAt(posAfter('a3'));
+    expect(inCell.line).toBe(3);
+    expect(inCell.col).toBe(3);   // "a3" 2 字 + 1
+  });
+
+  it('多行单元格抬高整行行高：其后块行号随之递增', () => {
+    // 单元格内 <br>（hardBreak）使该单元格占 2 可视行 → 表格行占 2 行
+    const html = '<p>前</p>'
+      + '<table><tbody><tr><td>x1<br>y1</td><td>z1</td></tr></tbody></table>'
+      + '<p>后</p>';
+    window.editorApi.setContent(html);
+    // 前=1，表格行=2/3（最高单元格 2 行），后=4
+    expect(selectAt(posAfter('后')).line).toBe(4);
   });
 });

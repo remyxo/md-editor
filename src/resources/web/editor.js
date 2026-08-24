@@ -1080,15 +1080,35 @@ window.editorApi = {
     },
 
     // 计算 ProseMirror 文档中位置 pos 的可视行列（状态栏显示）。
-    // 语义：行号按可视文本行计数——每个 textblock（段落/标题/单元格…）占 1 行，
+    // 语义：行号按可视行计数——每个 textblock（段落/标题/代码块…）占 1 行，
     // 块内 hardBreak/brk 与代码块文本中的 '\n' 各追加 1 行（无论光标是否在该块内）；
-    // 非文本块（hr/mermaid/块级公式）不占行号。列值从当前可视行首计数，
-    // 图片/行内公式/kbd 等内联原子占 1 列。返回 { line, col }。
+    // 块级图片/mermaid 图占 1 行（视觉上即独占一行）；块级公式按 latex 源码
+    // 行数占行；表格按行计行（多列不重复计数，多行单元格取最高值）；
+    // hr 不占行号。列值从当前可视行首计数，行内公式/kbd 等内联原子占 1 列。
+    // 返回 { line, col }。
     _lineColAt: function(doc, pos) {
         var self = this, res = { line: 0, col: 1 }, found = false;
         doc.descendants(function(node, start) {
             if (found) return false;                          // 已越过光标所在块
-            if (node.isLeaf) return false;                    // hr/mermaid/块级公式：不占行号
+            var name = node.type.name;
+            if (name === 'tableRow') {                        // 表格行：整行按可视行数计
+                if (pos > start + node.nodeSize - 1) {
+                    res.line += self._rowLineCount(node);
+                    return false;                             // 整行已计完，不下钻
+                }
+                return true;                                  // 光标所在行：下钻定位单元格
+            }
+            if (name === 'tableCell' || name === 'tableHeader') {
+                return pos <= start + node.nodeSize - 1;      // 同行中光标之前的单元格不占行
+            }
+            if (node.isLeaf) {                                // 块级原子：按类型占行
+                var lines = self._leafLineCount(node);
+                if (lines > 0 && pos >= start) {
+                    res.line += lines;
+                    if (pos <= start + node.nodeSize) found = true;  // 点选此原子（NodeSelection 的 head 在节点末端）
+                }
+                return false;
+            }
             if (!node.isTextblock) return true;               // 容器块（列表/引用/表格）：下钻
             if (pos > start + node.nodeSize - 1) {            // 整块在光标之前：计全部可视行
                 res.line += 1 + self._blockLineCount(node);
@@ -1099,8 +1119,56 @@ window.editorApi = {
             self._colInBlock(node, start + 1, pos, res);
             return false;
         });
-        if (res.line === 0) res.line = 1;                     // 空文档兜底
+        if (res.line === 0) res.line = 1;                     // 空文档/仅 hr 兜底
         return res;
+    },
+
+    // 块级原子叶子节点的行数：块级图片/mermaid 图视觉上独占一行，各占 1 行；
+    // 块级公式按 WYSIWYG 可见公式行数占行。\\ 是 LaTeX 行分隔符（aligned/
+    // cases/matrix 等环境每行以 \\ 分隔），行数 = \\ 数 + 1；\begin{}/\end{}
+    // 定界符在渲染中不可见，不计行。data-latex 经 toHtml 折叠为单行（HTML
+    // 属性无法承载换行），\\ 分隔计数不受折叠影响。含 \\ 时忽略 \n（行尾
+    // \\\n 属同一行分隔，不重复计，raw 多行环境输入同样按可见行计）；无 \\
+    // 时按源码行 '\n'+1（编辑面板多行输入）。单行公式 1 行。
+    _leafLineCount: function(node) {
+        if (node.type.name === 'image') return 1;
+        if (node.type.name === 'mermaid') return 1;
+        if (node.type.name === 'blockMath') {
+            var t = (node.attrs.latex || '').trim();
+            var i, rows = 1, hasBreakSep = false;
+            for (i = 0; i < t.length; i++) {
+                if (t.charCodeAt(i) === 92 && t.charCodeAt(i + 1) === 92) {  // '\\'
+                    rows++; i++;                                             // 跳过第二个反斜杠
+                    hasBreakSep = true;
+                }
+            }
+            if (hasBreakSep) return rows;             // 有 \\ → 按可见公式行计
+            for (i = 0; i < t.length; i++)
+                if (t.charCodeAt(i) === 10) rows++;   // 无 \\ → 纯多行源码按 \n 计
+            return rows;
+        }
+        return 0;
+    },
+
+    // 表格行的可视行数：同行各单元格并排不叠加，取最高单元格的行数
+    _rowLineCount: function(row) {
+        var self = this, max = 0;
+        row.forEach(function(cell) {
+            var lines = self._containerLineCount(cell);
+            if (lines > max) max = lines;
+        });
+        return max;
+    },
+
+    // 容器（单元格等）内块级内容的总可视行数（不含光标逻辑，纯计数）
+    _containerLineCount: function(container) {
+        var self = this, lines = 0;
+        container.forEach(function(child) {
+            if (child.isTextblock) lines += 1 + self._blockLineCount(child);
+            else if (child.isLeaf) lines += self._leafLineCount(child);
+            else lines += self._containerLineCount(child);    // 嵌套列表/引用/表格
+        });
+        return lines;
     },
 
     // 文本块内部的可视换行数（hardBreak/brk 节点 + 代码块文本中的 '\n'）
