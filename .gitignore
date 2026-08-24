@@ -10,10 +10,13 @@ qrc_*.cpp
 node_modules/
 session.txt
 Testing/
+# 跨平台图标尺寸对比测试的临时输出图
+tmp-icontest/
 
 # Windows 本地构建（VM）产物与暂存，见 docs/windows-build-vm.md
 /dist/
 /src/resources/icons/*.ico
 # 奇安信终端安全软件在本目录投放的蜜罐/下载文件，防止误提交
-'$QAXHoneypot'/
+# （gitignore 不用引号转义，带引号是字面字符会导致条目不生效）
+$QAXHoneypot/
 /QAXDownload/
