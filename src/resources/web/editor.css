@@ -169,6 +169,20 @@ body.dark .ProseMirror th {
     border-radius: 4px;
 }
 
+/* 列表缩进：顶部全局 reset 清零了浏览器默认的 ul/ol padding，
+   需显式恢复（与 HtmlExporter 导出样式 ul,ol{padding-left:1.5em} 对齐），
+   否则嵌套列表与上级列表项渲染在同一水平位置 */
+.ProseMirror ul:not([data-type="taskList"]),
+.ProseMirror ol {
+    padding-left: 1.5em;
+}
+
+/* 嵌套任务列表：顶层 taskList 用 padding-left:0（flex 复选框对齐），
+   嵌套层需恢复缩进；特异性 (0,2,2) 须高于顶层规则 (0,2,1) 才能覆盖 */
+.ProseMirror li > ul[data-type="taskList"] {
+    padding-left: 1.5em;
+}
+
 /* 任务列表 */
 .ProseMirror ul[data-type="taskList"] {
     list-style: none;
