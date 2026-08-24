@@ -1079,6 +1079,68 @@ window.editorApi = {
         return this._loading || this._mathEditing;
     },
 
+    // 计算 ProseMirror 文档中位置 pos 的可视行列（状态栏显示）。
+    // 语义：行号按可视文本行计数——每个 textblock（段落/标题/单元格…）占 1 行，
+    // 块内 hardBreak/brk 与代码块文本中的 '\n' 各追加 1 行（无论光标是否在该块内）；
+    // 非文本块（hr/mermaid/块级公式）不占行号。列值从当前可视行首计数，
+    // 图片/行内公式/kbd 等内联原子占 1 列。返回 { line, col }。
+    _lineColAt: function(doc, pos) {
+        var self = this, res = { line: 0, col: 1 }, found = false;
+        doc.descendants(function(node, start) {
+            if (found) return false;                          // 已越过光标所在块
+            if (node.isLeaf) return false;                    // hr/mermaid/块级公式：不占行号
+            if (!node.isTextblock) return true;               // 容器块（列表/引用/表格）：下钻
+            if (pos > start + node.nodeSize - 1) {            // 整块在光标之前：计全部可视行
+                res.line += 1 + self._blockLineCount(node);
+                return false;
+            }
+            res.line++;                                       // 光标位于此块内容区（含末尾）
+            found = true;
+            self._colInBlock(node, start + 1, pos, res);
+            return false;
+        });
+        if (res.line === 0) res.line = 1;                     // 空文档兜底
+        return res;
+    },
+
+    // 文本块内部的可视换行数（hardBreak/brk 节点 + 代码块文本中的 '\n'）
+    _blockLineCount: function(block) {
+        var breaks = 0;
+        block.descendants(function(node) {
+            if (node.isText) {
+                var t = node.text;
+                for (var i = t.length - 1; i >= 0; i--)
+                    if (t.charCodeAt(i) === 10) breaks++;
+            } else if (node.type.name === 'hardBreak' || node.type.name === 'brk') {
+                breaks++;
+            }
+            return true;
+        });
+        return breaks;
+    },
+
+    // 统计 textblock 内光标前列值（写入 res.col；跨 hardBreak/'\n' 时同时累加 res.line）
+    _colInBlock: function(block, contentStart, pos, res) {
+        block.descendants(function(node, rel) {
+            var abs = contentStart + rel;
+            if (abs >= pos) return false;                     // 光标之后的内联节点不计
+            if (node.isText) {
+                var segs = node.text.slice(0, pos - abs).split('\n');
+                for (var i = 0; i < segs.length - 1; i++) {   // 代码块内换行：行+1、列重置
+                    res.line++;
+                    res.col = 1;
+                }
+                res.col += segs[segs.length - 1].length;
+            } else if (node.type.name === 'hardBreak' || node.type.name === 'brk') {
+                res.line++;                                   // <br> 视觉换行
+                res.col = 1;
+            } else {
+                res.col++;                                    // 图片/行内公式/kbd 等内联原子：占 1 列
+            }
+            return true;
+        });
+    },
+
     _markDirty: function() {
         if (!this._dirty) {
             this._dirty = true;
@@ -1187,15 +1249,9 @@ window.editorApi = {
             onSelectionUpdate: function(args) {
                 var ed = args.editor;
                 if (self.bridge) {
-                    var pos = ed.state.selection.head, line = 1, col = 1;
-                    ed.state.doc.nodesBetween(0, pos, function(node, start) {
-                        if (start + node.nodeSize <= pos) {
-                            var l = node.textContent.slice(0, pos - start).split('\n');
-                            line += l.length - 1;
-                            col = l[l.length - 1].length + 1;
-                        }
-                    });
-                    self.bridge.cursorChanged(line, col, pos);
+                    var pos = ed.state.selection.head;
+                    var lc = self._lineColAt(ed.state.doc, pos);
+                    self.bridge.cursorChanged(lc.line, lc.col, pos);
                     self.notifyFormat();
                 }
                 self.notifyHeadings();
