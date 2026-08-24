@@ -1285,8 +1285,13 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             html.replace(QString("__IMATH%1__").arg(i), mathSpans[i]);
         // ==highlight== → <mark>（code/math 已受占位符保护，== 在
         // 非代码文本中高亮，代码内的 == 不受影响）
+        // 内容字符类必须允许 =：高亮内含 HTML 标签时（==<s>删</s>高== 经
+        // setMarkdown 后内层变 <span style="…line-through…">）属性里的 = 会被
+        // [^=] 排除导致整组不匹配、== 残留为字面量。放宽为 [^\n] 仍以惰性匹配
+        // 停在首个闭合 ==，相邻高亮 ==a== ==b== 互不吞噬（内容中确实含 = 的
+        // 高亮本就是合法语法）。
         {
-            QRegularExpression re("==([^=\n]+?)==");
+            QRegularExpression re("==([^\n]+?)==");
             html.replace(re, "<mark>\\1</mark>");
         }
         // ~~删除线~~ → <s>：Qt setMarkdown 把 ~~x~~ 渲染为
@@ -1295,9 +1300,38 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         // 已在 setMarkdown 前被 ZZHI 占位符保护，此处残留的 line-through 必来自
         // Qt 的 ~~ 转换，可安全转为 <s>。内层 ZZSB（下标）占位符随 <s> 一并保留，
         // 由后续 ZZSB 还原步骤处理（~~H~2~O~~ → <s>H<sub>2</sub>O</s>）。
-        html.replace(QRegularExpression(
-            R"(<span\b[^>]*\btext-decoration\s*:\s*line-through[^>]*>(.*?)</span>)",
-            QRegularExpression::DotMatchesEverythingOption), "<s>\\1</s>");
+        // 若 span 同时含 font-weight:700 / font-style:italic（删除线 ⚡ 加粗/斜体
+        // 嵌套，如 <strong>粗<s>删</s></strong> 经 setMarkdown 摊平为组合 span），
+        // 必须一并保留——否则 <strong>粗<s>删</s></strong> 往返后「删」丢失加粗。
+        // 外层用 <strong><s>…</s></strong> / <em><s>…</s></em> 表达，TipTap 直接解析。
+        {
+            QRegularExpression lineThroughSpanRe(
+                R"(<span\b[^>]*\btext-decoration\s*:\s*line-through[^>]*>(.*?)</span>)",
+                QRegularExpression::DotMatchesEverythingOption);
+            static const QRegularExpression styleAttrRe(
+                R"a(\bstyle\s*=\s*"([^"]*)")a");
+            int off = 0;
+            while (true) {
+                auto m = lineThroughSpanRe.match(html, off);
+                if (!m.hasMatch()) break;
+                QString content = m.captured(1);
+                QString replacement = QStringLiteral("<s>%1</s>").arg(content);
+                auto sm = styleAttrRe.match(m.captured());
+                QString style = sm.hasMatch() ? sm.captured(1) : QString();
+                const bool hasBold = style.contains(
+                    QRegularExpression("\\bfont-weight\\s*:\\s*700\\b"));
+                const bool hasItalic = style.contains(
+                    QRegularExpression("\\bfont-style\\s*:\\s*italic\\b"));
+                if (hasBold && hasItalic)
+                    replacement = QStringLiteral("<strong><em><s>%1</s></em></strong>").arg(content);
+                else if (hasBold)
+                    replacement = QStringLiteral("<strong><s>%1</s></strong>").arg(content);
+                else if (hasItalic)
+                    replacement = QStringLiteral("<em><s>%1</s></em>").arg(content);
+                html.replace(m.capturedStart(), m.capturedLength(), replacement);
+                off = m.capturedStart() + replacement.length();
+            }
+        }
         // 还原转义等号 ZZES → =（在 ==→<mark> 之后，避免还原的 = 参与匹配）
         for (int i = 0; i < escapedEqBackups.size(); ++i)
             html.replace("ZZES" + QString::number(i) + "ZZ", escapedEqBackups[i]);
@@ -1923,6 +1957,42 @@ QString MarkdownHandler::fromHtml(const QString &html)
         }
     }
 
+    // 2.5) 合并 TipTap 规范化拆开的相邻行内标记（还原嵌套源码往返）。
+    //   ProseMirror 序列化相邻文本 run 时，若后一 run 相比前一 run 新增外层
+    //   mark（如 <strong> 包 <s>、<s> 包 <mark>），会先闭合再重开，把共享外层
+    //   拆成兄弟元素：
+    //     <s>X</s><strong><s>Y</s></strong>     （X=删除线，Y=加粗+删除线）
+    //     <s><mark>X</mark></s><mark>Y</mark>   （X=高亮+删除线，Y=高亮）
+    //   这是 WYSIWYG 的规范形态，但直接转 MD 会得到 ~~X~~<strong><s>Y</s></strong>
+    //   之类的拆分形式，与用户书写的 <s>X<strong>Y</strong></s> /
+    //   <mark><s>X</s>Y</mark> 不一致，源码往返失真。此处按 ProseMirror 的
+    //   逆操作把兄弟 run 合并回嵌套形态（仅当外层/内层标记严格相邻时），
+    //   使源码在 WYSIWYG 往返后保持原样。置于 mark→== 之前：合并产物中的
+    //   <mark> 需在此处仍是原始标签，才能被 step 3 转为 ==…==。
+    {
+        // 共享外层删除线、内层加粗/斜体：<s>X</s><strong><s>Y</s></strong>
+        static const QRegularExpression liftOuterStrike(
+            R"(<((?:s|del|strike))>(.*?)</\1><((?:strong|b|em|i))><\1>(.*?)</\1></\3>)");
+        // 反向：<strong><s>X</s></strong><s>Y</s>
+        static const QRegularExpression liftOuterStrikeRev(
+            R"(<((?:strong|b|em|i))><((?:s|del|strike))>(.*?)</\2></\1><\2>(.*?)</\2>)");
+        // 共享内层高亮、外层删除线：<s><mark>X</mark></s><mark>Y</mark>
+        static const QRegularExpression liftInnerMark(
+            R"(<((?:s|del|strike))><(mark)>([^<]*)</\2></\1><\2>([^<]*)</\2>)");
+        // 反向：<mark>Y</mark><s><mark>X</mark></s>
+        static const QRegularExpression liftInnerMarkRev(
+            R"(<(mark)>([^<]*)</\1><((?:s|del|strike))><\1>([^<]*)</\1></\3>)");
+        // 有限迭代：一次合并可能暴露新的相邻可合并对（如三 run 链式嵌套）
+        for (int iter = 0; iter < 20; ++iter) {
+            const int before = processed.size();
+            processed.replace(liftOuterStrike, R"(<\1>\2<\3>\4</\3></\1>)");
+            processed.replace(liftOuterStrikeRev, R"(<\2><\1>\3</\1>\4</\2>)");
+            processed.replace(liftInnerMark, R"(<\2><\1>\3</\1>\4</\2>)");
+            processed.replace(liftInnerMarkRev, R"(<\1>\2<\3>\4</\3></\1>)");
+            if (processed.size() == before) break;
+        }
+    }
+
     // 3) 高亮 <mark>text</mark> → ==text==
     {
         QRegularExpression re(
@@ -2165,6 +2235,59 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString replacement = QString("<th%1>%2</th>").arg(thAttrs, content);
             processed.replace(m.capturedStart(), m.capturedLength(), replacement);
             off = m.capturedStart() + replacement.length();
+        }
+    }
+
+    // 0) 删除线 ⚡ 加粗/斜体 互嵌保护（HTML 兜底）。
+    //    ~~ 与 **/* 无合法组合能表达嵌套（**粗~~删~~** 被 Qt 拆成两段、内层样式
+    //    丢失），检测 <strong>/<em> 内含 <s|del|strike>、或 <s|del|strike> 内含
+    //    <strong>/<em>，整个外层保留字面 HTML（TipTap Bold/Italic/Strike mark
+    //    直接解析，与 toHtml 侧组合 span → <strong><s>…</s></strong> 对称往返）。
+    //    此时 <sub>/<sup>/<mark> 已为占位符：逆序还原时外层占位符先开、内层后开。
+    //    （<mark> 含 <s> 走 ==…== 语法，不在此保护——toHtml 的 ==→<mark> 已放宽。）
+    {
+        int n = 0;
+        int offset = 0;
+        // <strong>/<em> 内含删除线 → 整层字面 HTML。
+        // 删除线含 <s>/<del>/<strike> 与 <span …line-through…> 两种形态
+        // （后者是外部 HTML / 旧 toHtml 输出），均触发保护。
+        QRegularExpression strongStrikeRe(
+            R"(<((?:strong|b|em|i))\b[^>]*>(.*?)</\1>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = strongStrikeRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            const bool hasStrike = m.captured(2).contains(
+                QRegularExpression(R"(<(?:s|del|strike)\b|<\s*span\b[^>]*line-through)"));
+            if (hasStrike) {
+                QString ph = QString("ZZNS%1ZZ").arg(n++);
+                placeholders << ph;
+                backups << m.captured(0);
+                processed.replace(m.capturedStart(), m.capturedLength(), ph);
+                offset = m.capturedStart() + ph.length();
+            } else {
+                offset = m.capturedStart() + m.capturedLength();
+            }
+        }
+        // <s|del|strike> 内含加粗/斜体 → 整层字面 HTML
+        offset = 0;
+        QRegularExpression strikeStrongRe(
+            R"(<((?:s|del|strike))\b[^>]*>(.*?)</\1>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        while (true) {
+            auto m = strikeStrongRe.match(processed, offset);
+            if (!m.hasMatch()) break;
+            const bool hasFmt = m.captured(2).contains(
+                QRegularExpression(R"(<(?:strong|b|em|i)\b)"));
+            if (hasFmt) {
+                QString ph = QString("ZZNS%1ZZ").arg(n++);
+                placeholders << ph;
+                backups << m.captured(0);
+                processed.replace(m.capturedStart(), m.capturedLength(), ph);
+                offset = m.capturedStart() + ph.length();
+            } else {
+                offset = m.capturedStart() + m.capturedLength();
+            }
         }
     }
 

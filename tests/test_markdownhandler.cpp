@@ -76,6 +76,92 @@ private slots:
         }
     }
 
+    void testNestedStrikeBoldItalicMarkRoundTrip() {
+        // 删除线 ⚡ 加粗/斜体/高亮 互嵌：~~ 与 **/*/== 无合法组合能表达嵌套，
+        // Qt setMarkdown 会把 **粗~~删~~** 拆成两段、内层样式丢失。
+        // 修复：toHtml 的 line-through span → <s> 时保留同 span 的加粗/斜体
+        // （<span font-weight:700;line-through> → <strong><s>…</s></strong>）；
+        // fromHtml 对 加粗/斜体 ⚡ 删除线 嵌套保留整层字面 HTML；
+        // 高亮 ⚡ 删除线 走 ==<s>…</s>…==（toHtml ==→<mark> 正则可含 HTML 属性后还原）。
+        struct Case {
+            const char *html;         // TipTap 侧输入 HTML
+            const char *mdContain;    // fromHtml 输出应包含的子串
+            const char *htmlContain;  // toHtml 往返输出应包含的子串（语义保真）
+            bool wantS;               // 删除线以 <s> 形态还原（否则为 line-through span）
+        };
+        const Case cases[] = {
+            // 加粗>删除线
+            {"<p><strong>粗<s>删</s></strong></p>",
+             "<strong>粗<s>删</s></strong>", "<strong><s>删</s></strong>", true},
+            // 删除线>加粗
+            {"<p><s>删<strong>粗</strong></s></p>",
+             "<s>删<strong>粗</strong></s>", "<strong><s>粗</s></strong>", true},
+            // 斜体>删除线
+            {"<p><em>斜<s>删</s></em></p>",
+             "<em>斜<s>删</s></em>", "<em><s>删</s></em>", true},
+            // 删除线>斜体
+            {"<p><s>删<em>斜</em></s></p>",
+             "<s>删<em>斜</em></s>", "<em><s>斜</s></em>", true},
+            // 高亮>删除线
+            {"<p><mark><s>删</s>高</mark></p>",
+             "==<s>删</s>高==", "<mark><s>删</s>高</mark>", true},
+            // 加粗 > line-through span（外部 HTML / 旧 toHtml 输出的删除线形态）
+            {"<p><strong>粗<span style=\"text-decoration: line-through;\">删</span></strong></p>",
+             "<span style=\"text-decoration: line-through;\">删</span>",
+             "<strong>粗<span style=\"text-decoration: line-through;\">删</span></strong>", false},
+        };
+        for (const Case &c : cases) {
+            const QString md = MarkdownHandler::fromHtml(c.html);
+            QVERIFY2(md.contains(c.mdContain),
+                     qPrintable(QString("fromHtml 应保留嵌套 %1，实际: %2")
+                                .arg(c.mdContain, md)));
+            const QString back = MarkdownHandler::toHtml(md);
+            QVERIFY2(back.contains(c.htmlContain),
+                     qPrintable(QString("toHtml 往返应还原 %1，实际: %2")
+                                .arg(c.htmlContain, back)));
+            // 语义保真：加粗/斜体/高亮 与 删除线 必须同时存在（不得丢内层样式）
+            QVERIFY2(c.wantS ? back.contains("<s>")
+                             : back.contains("line-through"),
+                     qPrintable(QString("往返应保留删除线，实际: %1").arg(back)));
+            QVERIFY2(!back.contains("ZZNS") && !back.contains("ZZST") && !back.contains("ZZMK"),
+                     qPrintable(QString("往返不应泄漏占位符，实际: %1").arg(back)));
+        }
+    }
+
+    void testNestedStrikeTipTapRoundTrip() {
+        // TipTap 对相邻文本 run 序列化时，若后一 run 新增外层 mark，会闭合重开、
+        // 把共享外层拆成兄弟元素（<s>X</s><strong><s>Y</s></strong> /
+        // <s><mark>X</mark></s><mark>Y</mark>）。fromHtml 须按 ProseMirror 的
+        // 逆操作合并回嵌套形态，使源码在 WYSIWYG 往返后保持原样（而非变成
+        // ~~X~~<strong><s>Y</s></strong> / ~~==X==~~==Y== 之类的拆分形式）。
+        struct Case { const char *tapHtml; const char *md; };
+        const Case cases[] = {
+            // 删除线外层、加粗内层（拆成兄弟）
+            {"<p><s>删</s><strong><s>粗</s></strong></p>", "<s>删<strong>粗</strong></s>"},
+            // 高亮外层、删除线内层（拆成兄弟）
+            {"<p><s><mark>删</mark></s><mark>高</mark></p>", "==<s>删</s>高=="},
+            // 反向次序
+            {"<p><mark>高</mark><s><mark>删</mark></s></p>", "==高<s>删</s>=="},
+            // 三 run 链式：一次合并后暴露新的相邻可合并对
+            {"<p><s>a</s><strong><s>b</s></strong><em><s>c</s></em></p>",
+             "<s>a<strong>b</strong><em>c</em></s>"},
+            // 已是规范形态（共享外层删除线内嵌高亮），不得误合并
+            {"<p><s>H<mark>2</mark>O</s></p>", "~~H==2==O~~"},
+        };
+        for (const Case &c : cases) {
+            const QString md = MarkdownHandler::fromHtml(c.tapHtml).trimmed();
+            QVERIFY2(md == c.md,
+                     qPrintable(QString("fromHtml 应合并还原 %1，实际: %2")
+                                .arg(c.md, md)));
+            // 完整往返（MD → HTML → 合并后源码）应稳定于同一源码
+            const QString back = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(md)).trimmed();
+            QVERIFY2(back == c.md,
+                     qPrintable(QString("WYSIWYG 往返应稳定于 %1，实际: %2")
+                                .arg(c.md, back)));
+        }
+    }
+
     void testBasicConversion() {
         QString md = "# Hello\n\nWorld";
         QString html = MarkdownHandler::toHtml(md);
