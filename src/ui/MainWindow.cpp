@@ -704,9 +704,6 @@ void MainWindow::onToggleSourceMode()
                 tab->setSourceMode(true);
                 m_toolBar->setSourceMode(true);
                 m_statusBar->setSourceMode(true);
-                // 源码模式下 editorApi 搜索方法直接 return，给用户提示
-                if (m_searchBar->isVisible())
-                    m_statusBar->showMessage(tr("源码模式暂不支持搜索"), 3000);
                 if (QAction *act = m_menuBar->findChild<QAction *>(
                         QStringLiteral("sourceModeAction")))
                     act->setChecked(true);

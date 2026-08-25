@@ -1067,6 +1067,18 @@ window.editorApi = {
     isSourceMode: false,
     _sourceValue: null,
     _onSourceInput: null,
+    _srcSearch: null,          // 源码模式搜索状态 {query,caseSensitive,regex,wholeWord,matches,current}
+
+    // 源码区随内容撑高：textarea 不再内部滚动（滚动条停在 textarea 右缘、距窗口右缘
+    // ~10%），而是撑到内容高度让页面滚动——滚动条贴窗口右缘，与 WYSIWYG 一致。
+    _resizeSourceView: function() {
+        var sv = document.getElementById('source-view');
+        if (!sv) return;
+        sv.style.height = 'auto';
+        // 先复位再量 scrollHeight；+1 防止高度恰等于内容时出现滚动条抖动
+        sv.style.height = (sv.scrollHeight + 1) + 'px';
+    },
+
     _readOnly: false,
     _lang: 'zh_CN',          // 当前界面语言（setLanguage 更新，与 C++ LanguageManager 同步）
     _imageSeq: 0,            // 占位图 requestId 自增计数
@@ -1822,11 +1834,21 @@ window.editorApi = {
         if (this._readOnly) sourceView.setAttribute('readonly', '');
         else sourceView.removeAttribute('readonly');
         this.isSourceMode = true;
-        // 绑定 input 监听：源码区编辑时实时标记脏状态（对齐 WYSIWYG 的 onUpdate 实时标记）。
+        // 源码区随内容撑高（进源码模式先撑一次，内容已就绪）
+        this._resizeSourceView();
+        // 绑定 input 监听：源码区编辑时实时标记脏状态（对齐 WYSIWYG 的 onUpdate 实时标记），
+        // 并同步撑高 textarea（内容增删都会改变滚动高度）。
         // 程序化 sourceView.value = md 不会触发 input 事件，初始填充安全。
         var api = this;
-        this._onSourceInput = function() { api._markDirty(); };
+        this._onSourceInput = function() { api._resizeSourceView(); api._markDirty(); };
         sourceView.addEventListener('input', this._onSourceInput);
+        // 若 WYSIWYG 搜索处于激活状态，切到源码模式时在 textarea 上继续搜索
+        // （查询与位置从 searchPlugin 状态延续，计数随之更新）。
+        var sp = window.searchPlugin;
+        var st = sp && this.editor ? sp.searchKey.getState(this.editor.state) : null;
+        if (st && st.query) {
+            this._srcStartSearch(st.query, st.flags.caseSensitive, st.flags.regex, st.flags.wholeWord);
+        }
     },
 
     // 退出源码模式（C++ 侧传入已转换好的 HTML）
@@ -1846,6 +1868,9 @@ window.editorApi = {
         sourceView.style.display = 'none';
         editorDiv.style.display = '';
         this.isSourceMode = false;
+        // 清理源码模式搜索状态并恢复 WYSIWYG 计数显示（此时 _notifySearchCount 走
+        // searchPlugin 分支；_srcStop 内部会通知一次，此处无需再单独刷新）。
+        this._srcStop();
         if (changed && !this._dirty) this._markDirty();
         this.notifyFormat();
         this.notifyHeadings();
@@ -1870,9 +1895,155 @@ window.editorApi = {
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     },
-    // === 搜索 ===
+    // === 源码模式搜索 ===
+    // textarea 是纯文本节点，无法像 ProseMirror 用 Decoration 高亮匹配；当前匹配用
+    // 原生选区展示（setSelectionRange）。计数/导航/替换语义与 WYSIWYG 对齐：total 为
+    // 命中总数，current 上报 1-based 当前序号（与 SearchBar 显示一致）。
+    _srcEscapeRegExp: function(s) {
+        return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    },
+    _srcBuildRegex: function() {
+        var s = this._srcSearch;
+        if (!s || !s.query) return null;
+        var flags = s.caseSensitive ? 'g' : 'gi';
+        var pattern = s.regex ? s.query : this._srcEscapeRegExp(s.query);
+        if (s.wholeWord) {
+            // 整词匹配：中英文/数字/下划线均视为词字符，前后不得紧邻词字符。
+            pattern = '(?<![一-龥A-Za-z0-9_])(?:' + pattern + ')(?![一-龥A-Za-z0-9_])';
+        }
+        try { return new RegExp(pattern, flags); } catch (e) { return null; }
+    },
+    _srcFindMatches: function() {
+        var s = this._srcSearch;
+        var sv = document.getElementById('source-view');
+        s.matches = [];
+        s.current = -1;
+        if (!sv || !s.query) return;
+        var re = this._srcBuildRegex();
+        if (!re) return;
+        var m;
+        while ((m = re.exec(sv.value)) !== null) {
+            s.matches.push({ from: m.index, to: m.index + m[0].length });
+            // 零宽匹配（如正则 `^`）会让 lastIndex 停在原地造成死循环，手动推进。
+            if (m[0].length === 0) re.lastIndex++;
+        }
+        if (s.matches.length) s.current = 0;
+    },
+    // 只设选区不聚焦：源码搜索启动由查找框逐键输入触发，聚焦会把输入焦点抢到
+    // textarea 无法继续打字（与 WYSIWYG 打字时不抢焦点一致）。
+    _srcSelectCurrent: function() {
+        var sv = document.getElementById('source-view');
+        var s = this._srcSearch;
+        if (!sv || !s || s.current < 0 || s.current >= s.matches.length) return;
+        var mk = s.matches[s.current];
+        sv.setSelectionRange(mk.from, mk.to);
+    },
+    // 导航/替换后聚焦 textarea 展示当前匹配，并滚动页面使匹配进入视野。
+    _srcShowCurrent: function() {
+        var sv = document.getElementById('source-view');
+        var s = this._srcSearch;
+        if (!sv || !s || s.current < 0 || s.current >= s.matches.length) return;
+        var mk = s.matches[s.current];
+        sv.focus();
+        sv.setSelectionRange(mk.from, mk.to);
+        this._srcScrollToMatch(sv, mk);
+    },
+    // 源码区自动撑高、滚动由页面承载；对无内部滚动的 textarea，setSelectionRange
+    // 不会滚动页面，须按匹配文本位置估算纵坐标手动滚动页面。用与 textarea 同宽、
+    // 同字体的隐藏测量元素（兼容长行折行）。
+    _srcScrollToMatch: function(sv, mk) {
+        var probe = document.getElementById('src-search-probe');
+        if (!probe) {
+            probe = document.createElement('div');
+            probe.id = 'src-search-probe';
+            document.body.appendChild(probe);
+        }
+        var cs = window.getComputedStyle(sv);
+        // textarea 受全局 *{box-sizing:border-box} 约束，测量元素须同用 border-box
+        // 并复制其宽度/内边距/上边框，内容盒宽度才一致，折行才能对上。
+        probe.style.cssText = 'position:absolute;visibility:hidden;left:0;top:0;box-sizing:border-box;' +
+            'white-space:pre-wrap;overflow-wrap:anywhere;';
+        probe.style.width = cs.width;
+        probe.style.paddingTop = cs.paddingTop;
+        probe.style.paddingLeft = cs.paddingLeft;
+        probe.style.paddingRight = cs.paddingRight;
+        probe.style.borderTop = cs.borderTop;
+        probe.style.font = cs.font;
+        probe.textContent = sv.value.slice(0, mk.from);
+        // caret 页面绝对 Y = textarea 顶部(文档坐标) + 测量元素高度(含 padding/border)
+        var caretDocY = sv.getBoundingClientRect().top + window.scrollY + probe.getBoundingClientRect().height;
+        var vh = window.innerHeight;
+        var sy = window.scrollY;
+        if (caretDocY < sy + 120 || caretDocY > sy + vh - 120) {
+            window.scrollTo(0, Math.max(0, caretDocY - vh / 3));
+        }
+    },
+    _srcStartSearch: function(query, caseSensitive, regex, wholeWord) {
+        this._srcSearch = { query: query || '', caseSensitive: !!caseSensitive, regex: !!regex, wholeWord: !!wholeWord, matches: [], current: -1 };
+        this._srcFindMatches();
+        this._srcSelectCurrent();
+        this._notifySearchCount();
+    },
+    _srcSearchNext: function() {
+        var s = this._srcSearch;
+        if (!s || !s.matches.length) return;
+        s.current = (s.current + 1) % s.matches.length;
+        this._srcShowCurrent();
+        this._notifySearchCount();
+    },
+    _srcSearchPrev: function() {
+        var s = this._srcSearch;
+        if (!s || !s.matches.length) return;
+        s.current = (s.current - 1 + s.matches.length) % s.matches.length;
+        this._srcShowCurrent();
+        this._notifySearchCount();
+    },
+    _srcReplaceOne: function(rep) {
+        var sv = document.getElementById('source-view');
+        var s = this._srcSearch;
+        if (!sv || !s || s.current < 0 || s.current >= s.matches.length) return;
+        var mk = s.matches[s.current];
+        // 替换后光标落在替换文本之后，重算匹配并定位到该位置之后的第一处
+        // （对齐 WYSIWYG replaceOne 替换后跳到下一处；末尾无后续则回到第一处）。
+        var cursorAfter = mk.from + rep.length;
+        sv.value = sv.value.slice(0, mk.from) + rep + sv.value.slice(mk.to);
+        this._srcSearch = { query: s.query, caseSensitive: s.caseSensitive, regex: s.regex, wholeWord: s.wholeWord, matches: [], current: -1 };
+        this._srcFindMatches();
+        var ns = this._srcSearch;
+        for (var i = 0; i < ns.matches.length; i++) {
+            if (ns.matches[i].from >= cursorAfter) { ns.current = i; break; }
+        }
+        if (ns.current < 0 && ns.matches.length) ns.current = 0;
+        this._srcShowCurrent();
+        this._resizeSourceView();
+        this._markDirty();
+        this._notifySearchCount();
+    },
+    _srcReplaceAll: function(rep) {
+        var sv = document.getElementById('source-view');
+        var s = this._srcSearch;
+        if (!sv || !s || !s.query) return;
+        var re = this._srcBuildRegex();
+        if (!re) return;
+        // 用函数形式替换，避免替换文本中的 `$` 序列被当作捕获组引用展开。
+        var out = sv.value.replace(re, function() { return rep; });
+        if (out === sv.value) { this._notifySearchCount(); return; }
+        sv.value = out;
+        this._srcSearch = { query: s.query, caseSensitive: s.caseSensitive, regex: s.regex, wholeWord: s.wholeWord, matches: [], current: -1 };
+        this._srcFindMatches();
+        this._resizeSourceView();
+        this._markDirty();
+        this._notifySearchCount();
+    },
+    _srcStop: function() {
+        this._srcSearch = null;
+        this._notifySearchCount();
+    },
+
+    // === 搜索（WYSIWYG 用 searchPlugin，源码模式走上方 textarea 自实现） ===
     startSearch: function (query, caseSensitive, regex, wholeWord) {
-        if (!this.editor || this.isSourceMode) return;
+        if (!this.editor) return;
+        if (this.isSourceMode) { this._srcStartSearch(query, caseSensitive, regex, wholeWord); return; }
         var sp = window.searchPlugin; if (!sp) return;
         sp.requestSearch(this.editor.view, query || '', {
             regex: !!regex, wholeWord: !!wholeWord, caseSensitive: !!caseSensitive
@@ -1882,7 +2053,17 @@ window.editorApi = {
     // 切回标签页恢复搜索：插件 state 逐 tab 独立，若查询参数未变则保留
     // 当前匹配位置（current），仅刷新计数；参数变了才重新搜索。
     resumeSearch: function (query, caseSensitive, regex, wholeWord) {
-        if (!this.editor || this.isSourceMode) return;
+        if (!this.editor) return;
+        if (this.isSourceMode) {
+            // 与 WYSIWYG 同语义：查询参数未变保留当前位置，仅刷新计数；变了才重搜。
+            var s = this._srcSearch;
+            var same = s && s.query === (query || '')
+                && !!s.regex === !!regex && !!s.wholeWord === !!wholeWord
+                && !!s.caseSensitive === !!caseSensitive;
+            if (!same) this._srcStartSearch(query, caseSensitive, regex, wholeWord);
+            else this._notifySearchCount();
+            return;
+        }
         var sp = window.searchPlugin; if (!sp) return;
         var st = sp.searchKey.getState(this.editor.state);
         var same = st && st.query === (query || '')
@@ -1897,13 +2078,15 @@ window.editorApi = {
         this._notifySearchCount();
     },
     searchNext: function () {
-        if (!this.editor || this.isSourceMode) return;
+        if (!this.editor) return;
+        if (this.isSourceMode) { this._srcSearchNext(); return; }
         window.searchPlugin.searchNext(this.editor.view);
         this._focusAfterSearchNav();
         this._notifySearchCount();
     },
     searchPrev: function () {
-        if (!this.editor || this.isSourceMode) return;
+        if (!this.editor) return;
+        if (this.isSourceMode) { this._srcSearchPrev(); return; }
         window.searchPlugin.searchPrev(this.editor.view);
         this._focusAfterSearchNav();
         this._notifySearchCount();
@@ -1928,22 +2111,32 @@ window.editorApi = {
         }
     },
     replaceOne: function (rep) {
-        if (!this.editor || this.isSourceMode) return;
+        if (!this.editor) return;
+        if (this.isSourceMode) { this._srcReplaceOne(rep); return; }
         window.searchPlugin.replaceOne(this.editor.view, rep || '');
         this._notifySearchCount();
     },
     replaceAll: function (rep) {
-        if (!this.editor || this.isSourceMode) return;
+        if (!this.editor) return;
+        if (this.isSourceMode) { this._srcReplaceAll(rep); return; }
         window.searchPlugin.replaceAll(this.editor.view, rep || '');
         this._notifySearchCount();
     },
     stopSearch: function () {
         if (!this.editor) return;
+        if (this.isSourceMode) { this._srcStop(); return; }
         if (window.searchPlugin) window.searchPlugin.clearSearch(this.editor.view);
         this._notifySearchCount();
     },
     _notifySearchCount: function () {
         if (!this.editor || !this.bridge) return;
+        if (this.isSourceMode) {
+            var s = this._srcSearch;
+            var total = s ? s.matches.length : 0;
+            var current = s && s.current >= 0 ? s.current + 1 : 0;
+            this.bridge.searchMatchChanged(total, current);
+            return;
+        }
         var sp = window.searchPlugin;
         var st = sp ? sp.searchCurrent(this.editor.state) : { total: 0, current: 0 };
         this.bridge.searchMatchChanged(st.total, st.current);
