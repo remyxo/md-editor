@@ -61,3 +61,9 @@ add_executable(test_sidebar test_sidebar.cpp
 target_include_directories(test_sidebar PRIVATE ../src)
 target_link_libraries(test_sidebar PRIVATE Qt6::Test Qt6::Widgets)
 add_test(NAME test_sidebar COMMAND test_sidebar)
+
+add_executable(test_collapsiblesection test_collapsiblesection.cpp
+    ../src/ui/CollapsibleSection.cpp)
+target_include_directories(test_collapsiblesection PRIVATE ../src)
+target_link_libraries(test_collapsiblesection PRIVATE Qt6::Test Qt6::Widgets)
+add_test(NAME test_collapsiblesection COMMAND test_collapsiblesection)

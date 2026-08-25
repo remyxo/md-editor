@@ -23,6 +23,7 @@ set(SOURCES
     ui/FileTree.cpp
     ui/OutlineTree.cpp
     ui/SideBar.cpp
+    ui/CollapsibleSection.cpp
     ui/StatusBar.cpp
     ui/SearchBar.cpp
     ui/SettingsDialog.cpp
@@ -54,6 +55,7 @@ set(HEADERS
     ui/FileTree.h
     ui/OutlineTree.h
     ui/SideBar.h
+    ui/CollapsibleSection.h
     ui/StatusBar.h
     ui/SearchBar.h
     ui/SettingsDialog.h
