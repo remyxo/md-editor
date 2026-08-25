@@ -350,6 +350,15 @@ void MainWindow::connectSignals()
                     QString path = tab->webView()->property("filePath").toString();
                     if (!path.isEmpty()) m_fileManager->unwatchFile(path);
                 }
+                // tabClosed 在 removeTab 之前发出：count()<=1 说明这是最后一个标签页，
+                // 关闭后无活动文档——清空大纲并复位状态栏，避免残留上一文档的
+                // 标题结构/行列/字数（大纲只由各标签页桥的 headingsUpdated 推送，
+                // 最后一个标签销毁后无人再推送，须在此主动清空）
+                if (m_tabWidget->count() <= 1) {
+                    m_sideBar->outlineTree()->updateHeadings(QJsonArray());
+                    m_statusBar->updateCursorPosition(1, 1, 0);
+                    m_statusBar->updateWordCount(0, 0, 0);
+                }
             });
 
     // === 文件外部变更 ===
