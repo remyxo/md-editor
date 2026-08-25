@@ -252,11 +252,6 @@ void MenuBar::addRecentFile(const QString &path)
     updateRecentFilesMenu();
 }
 
-void MenuBar::loadRecentFiles()
-{
-    updateRecentFilesMenu();
-}
-
 void MenuBar::updateRecentFilesMenu()
 {
     m_recentFilesMenu->clear();

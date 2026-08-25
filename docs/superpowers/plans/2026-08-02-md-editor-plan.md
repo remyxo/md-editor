@@ -3224,14 +3224,10 @@ git commit -m "feat: 集成 MainWindow + StatusBar + SearchBar，完成 UI 框�
 - 修改：`tests/CMakeLists.txt`、`src/CMakeLists.txt`
 
 **接口：**
-- 产出：`FileManager` 类，封装文件读写、编码检测、自动保存调度
+- 产出：`FileManager` 类，封装文件读写、编码检测
 - 产出方法：
   - `readFile(path)` → `QString` 内容
   - `writeFile(path, content)` → `bool` 成功
-  - `startAutoSave(intervalMs)` / `stopAutoSave()`
-  - `setAutoSaveEnabled(bool)` / `setAutoSaveInterval(int seconds)`
-- 产出信号：`autoSaveTriggered()`
-- 消耗：`QSettings`（配置持久化）
 
 - [ ] **步骤 1：编写 FileManager**
 
@@ -3241,9 +3237,7 @@ git commit -m "feat: 集成 MainWindow + StatusBar + SearchBar，完成 UI 框�
 #define MD_EDITOR_FILEMANAGER_H
 
 #include <QObject>
-#include <QTimer>
 #include <QFileSystemWatcher>
-#include <QSettings>
 
 class FileManager : public QObject {
     Q_OBJECT
@@ -3256,34 +3250,16 @@ public:
     void watchFile(const QString &path);
     void unwatchFile(const QString &path);
 
-    void startAutoSave(const QString &filePath, const QString &content);
-    void stopAutoSave();
-    void setAutoSaveEnabled(bool enabled);
-    void setAutoSaveInterval(int seconds);
-    bool isAutoSaveEnabled() const;
-    int autoSaveInterval() const;
-
-    void saveSettings();
-    void loadSettings();
-
 signals:
     void fileExternallyModified(const QString &path);
-    void autoSaveTriggered(const QString &filePath, const QString &content);
     void fileReadError(const QString &path, const QString &error);
     void fileWriteError(const QString &path, const QString &error);
 
 private slots:
     void onFileChanged(const QString &path);
-    void onAutoSaveTimeout();
 
 private:
     QFileSystemWatcher *m_watcher;
-    QTimer *m_autoSaveTimer;
-    QSettings m_settings;
-    QString m_autoSavePath;
-    QString m_autoSaveContent;
-    bool m_autoSaveEnabled;
-    int m_autoSaveIntervalSec;
 };
 
 #endif // MD_EDITOR_FILEMANAGER_H
@@ -3300,16 +3276,9 @@ private:
 FileManager::FileManager(QObject *parent)
     : QObject(parent)
     , m_watcher(new QFileSystemWatcher(this))
-    , m_autoSaveTimer(new QTimer(this))
-    , m_settings("md-editor", "md-editor")
-    , m_autoSaveEnabled(true)
-    , m_autoSaveIntervalSec(30)
 {
     connect(m_watcher, &QFileSystemWatcher::fileChanged,
             this, &FileManager::onFileChanged);
-    connect(m_autoSaveTimer, &QTimer::timeout,
-            this, &FileManager::onAutoSaveTimeout);
-    loadSettings();
 }
 
 QString FileManager::readFile(const QString &path)
@@ -3368,62 +3337,9 @@ void FileManager::unwatchFile(const QString &path)
     m_watcher->removePath(path);
 }
 
-void FileManager::startAutoSave(const QString &filePath, const QString &content)
-{
-    m_autoSavePath = filePath;
-    m_autoSaveContent = content;
-    if (m_autoSaveEnabled && m_autoSaveIntervalSec > 0) {
-        m_autoSaveTimer->start(m_autoSaveIntervalSec * 1000);
-    }
-}
-
-void FileManager::stopAutoSave()
-{
-    m_autoSaveTimer->stop();
-}
-
-void FileManager::setAutoSaveEnabled(bool enabled)
-{
-    m_autoSaveEnabled = enabled;
-    if (!enabled) {
-        stopAutoSave();
-    }
-}
-
-void FileManager::setAutoSaveInterval(int seconds)
-{
-    m_autoSaveIntervalSec = qBound(10, seconds, 300);
-    if (m_autoSaveTimer->isActive()) {
-        m_autoSaveTimer->setInterval(m_autoSaveIntervalSec * 1000);
-    }
-}
-
-bool FileManager::isAutoSaveEnabled() const { return m_autoSaveEnabled; }
-int FileManager::autoSaveInterval() const { return m_autoSaveIntervalSec; }
-
-void FileManager::saveSettings()
-{
-    m_settings.setValue("autosave/enabled", m_autoSaveEnabled);
-    m_settings.setValue("autosave/interval", m_autoSaveIntervalSec);
-    m_settings.sync();
-}
-
-void FileManager::loadSettings()
-{
-    m_autoSaveEnabled = m_settings.value("autosave/enabled", true).toBool();
-    m_autoSaveIntervalSec = m_settings.value("autosave/interval", 30).toInt();
-}
-
 void FileManager::onFileChanged(const QString &path)
 {
     emit fileExternallyModified(path);
-}
-
-void FileManager::onAutoSaveTimeout()
-{
-    if (!m_autoSavePath.isEmpty()) {
-        emit autoSaveTriggered(m_autoSavePath, m_autoSaveContent);
-    }
 }
 ```
 
@@ -3460,22 +3376,6 @@ private slots:
         QString result = fm.readFile("/nonexistent/path.md");
         QVERIFY(result.isEmpty());
         QCOMPARE(spy.count(), 1);
-    }
-
-    void testAutoSaveSettings() {
-        FileManager fm;
-        fm.setAutoSaveEnabled(false);
-        QVERIFY(!fm.isAutoSaveEnabled());
-
-        fm.setAutoSaveInterval(60);
-        QCOMPARE(fm.autoSaveInterval(), 60);
-
-        // 边界测试
-        fm.setAutoSaveInterval(5);  // 应被 clamp 到 10
-        QCOMPARE(fm.autoSaveInterval(), 10);
-
-        fm.setAutoSaveInterval(500); // 应被 clamp 到 300
-        QCOMPARE(fm.autoSaveInterval(), 300);
     }
 };
 
@@ -3797,8 +3697,6 @@ private:
     void loadSettings();
 
     // 通用
-    QCheckBox *m_autoSaveCheck;
-    QSpinBox *m_autoSaveIntervalSpin;
     QCheckBox *m_restoreSessionCheck;
 
     // 编辑器
@@ -3854,17 +3752,6 @@ void SettingsDialog::setupUi()
     // === 通用 ===
     QWidget *generalTab = new QWidget();
     QVBoxLayout *generalLayout = new QVBoxLayout(generalTab);
-
-    QGroupBox *autoSaveGroup = new QGroupBox("自动保存");
-    QFormLayout *autoSaveForm = new QFormLayout();
-    m_autoSaveCheck = new QCheckBox("启用自动保存");
-    autoSaveForm->addRow(m_autoSaveCheck);
-    m_autoSaveIntervalSpin = new QSpinBox();
-    m_autoSaveIntervalSpin->setRange(10, 300);
-    m_autoSaveIntervalSpin->setSuffix(" 秒");
-    autoSaveForm->addRow("保存间隔:", m_autoSaveIntervalSpin);
-    autoSaveGroup->setLayout(autoSaveForm);
-    generalLayout->addWidget(autoSaveGroup);
 
     QGroupBox *startupGroup = new QGroupBox("启动");
     QVBoxLayout *startupLayout = new QVBoxLayout();
@@ -3935,10 +3822,7 @@ void SettingsDialog::setupUi()
 
 void SettingsDialog::loadSettings()
 {
-    // 从 FileManager 和 QSettings 加载
-    m_autoSaveCheck->setChecked(m_fileManager->isAutoSaveEnabled());
-    m_autoSaveIntervalSpin->setValue(m_fileManager->autoSaveInterval());
-
+    // 从 QSettings 加载
     QSettings settings("md-editor", "md-editor");
     m_restoreSessionCheck->setChecked(
         settings.value("session/restore", true).toBool());
@@ -3958,10 +3842,6 @@ void SettingsDialog::loadSettings()
 void SettingsDialog::onAccepted()
 {
     // 保存设置
-    m_fileManager->setAutoSaveEnabled(m_autoSaveCheck->isChecked());
-    m_fileManager->setAutoSaveInterval(m_autoSaveIntervalSpin->value());
-    m_fileManager->saveSettings();
-
     QSettings settings("md-editor", "md-editor");
     settings.setValue("session/restore", m_restoreSessionCheck->isChecked());
     settings.setValue("editor/font", m_fontCombo->currentText());
@@ -4093,7 +3973,6 @@ cd build && cmake .. && make -j$(nproc) && ./md-editor
 - [ ] 脏标记（●）在编辑后正确显示
 - [ ] 主题切换（亮色/暗色）正常
 - [ ] 设置对话框可打开和保存
-- [ ] 自动保存可配置
 
 - [ ] **步骤 4：提交**
 

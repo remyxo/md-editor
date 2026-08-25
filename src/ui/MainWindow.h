@@ -79,9 +79,6 @@ private:
                               const QString &suggestedName);
     EditorBridge *currentBridge() const;
 
-    // 当前主题偏好模式（system/light/dark）
-    QString currentThemeMode() const;
-
     // 全量刷新各组件界面文本（语言切换后调用）
     void retranslateUi();
 

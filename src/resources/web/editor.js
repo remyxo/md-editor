@@ -1629,7 +1629,6 @@ window.editorApi = {
     addColumnAfter: function() { if (this.editor) this.editor.commands.addColumnAfter(); },
     deleteColumn: function() { if (this.editor) this.editor.commands.deleteColumn(); },
     deleteTable: function() { if (this.editor) this.editor.commands.deleteTable(); },
-    isInTable: function() { return this.editor ? this.editor.isActive('table') : false; },
     insertLink: function() {
         // 工具栏/菜单「插入链接」：与双击编辑链接共用 _linkEditor 对话框
         // （链接文字 + 链接地址两字段），确认后在光标处插入 [文字](URL)
@@ -2254,11 +2253,6 @@ window.editorApi = {
     // 打开 emoji 选择器浮层（C++ 侧传入定位坐标）
     openEmojiPicker: function(x, y) {
         window.editorApi._emojiPicker.open(x, y);
-    },
-
-    // 在光标处插入单个 emoji（供其它入口/测试复用）
-    insertEmoji: function(ch) {
-        if (this.editor) this.editor.commands.insertContent(ch);
     },
 
     // 数学公式编辑面板

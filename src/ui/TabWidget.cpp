@@ -85,8 +85,6 @@ EditorTab *TabWidget::tabAt(int index) const
     return qobject_cast<EditorTab *>(widget(index));
 }
 
-void TabWidget::setTabTitle(int index, const QString &title) { setTabText(index, title); }
-
 void TabWidget::setTabDirty(int index, bool dirty)
 {
     QString title = tabText(index);

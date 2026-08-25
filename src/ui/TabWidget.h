@@ -19,7 +19,6 @@ public:
     EditorTab *currentEditorTab() const;
     EditorTab *tabAt(int index) const;
 
-    void setTabTitle(int index, const QString &title);
     void setTabDirty(int index, bool dirty);
     void markTabSaved(int index, const QString &filePath);
     void retranslateUi();

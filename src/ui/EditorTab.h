@@ -49,7 +49,6 @@ public:
     void setHasSelection(bool has);
     void setLinkUrl(const QString &url);
     void setPermanentReadOnly(bool permanent);
-    bool isPermanentReadOnly() const;
     void setSourceMode(bool on);
     bool isSourceMode() const;
     void runJsCommand(const QString &js);

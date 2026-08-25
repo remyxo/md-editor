@@ -326,11 +326,6 @@ void EditorTab::setPermanentReadOnly(bool permanent)
     m_permanentReadOnly = permanent;
 }
 
-bool EditorTab::isPermanentReadOnly() const
-{
-    return m_permanentReadOnly;
-}
-
 void EditorTab::setSourceMode(bool on)
 {
     m_sourceMode = on;

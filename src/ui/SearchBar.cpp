@@ -143,7 +143,6 @@ void SearchBar::setCount(int total, int current)
 void SearchBar::setReplaceMode(bool on)
 {
     m_replaceRow->setVisible(on);
-    emit replaceModeToggleRequested(on);
 }
 
 void SearchBar::keyPressEvent(QKeyEvent *event)

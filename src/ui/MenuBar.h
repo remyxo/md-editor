@@ -9,7 +9,6 @@ public:
     explicit MenuBar(QWidget *parent = nullptr);
 
     void addRecentFile(const QString &path);
-    void loadRecentFiles();
 
     // 按偏好模式（system/light/dark）勾选主题菜单项
     void setThemeChecked(const QString &mode);
@@ -24,7 +23,6 @@ signals:
     void openRecentFile(const QString &path);
     void saveFile();
     void saveFileAs();
-    void closeTab();
     void exportPdf();
     void exportDocx();
     void exportHtml();

@@ -29,7 +29,6 @@ signals:
     void findPrevRequested();
     void replaceRequested(const QString &rep);
     void replaceAllRequested(const QString &rep);
-    void replaceModeToggleRequested(bool on);
     void closeRequested();
 
 protected:

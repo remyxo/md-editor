@@ -19,7 +19,7 @@
 
 | 层次 | 技术 |
 |------|------|
-| GUI 框架 | Qt 6.4+ (Widgets + WebEngine + WebChannel) |
+| GUI 框架 | Qt 6.8+ (Widgets + WebEngine + WebChannel) |
 | 编辑器内核 | TipTap v3 (基于 ProseMirror) |
 | Markdown 转换 | QTextDocument (setMarkdown/toMarkdown) |
 | 语法高亮 | highlight.js |

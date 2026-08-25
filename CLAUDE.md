@@ -120,9 +120,6 @@ ctest --output-on-failure
 ## 已知问题 & 待完善
 
 - PDF 导出页眉页脚/页码尚未实现（`PdfExporter` 已支持页边距与方向）
-- 自动保存已被移除（0.2.1，因未完整接线；会话恢复仍可用）
-- 标签页交互待补全：中键关闭、Ctrl+1~9 跳转、右键批量关闭
-- 大纲光标自动高亮待实现（当前仅点击跳转）
 - `tiptap-all.js` 更新需在 `src/resources/web/` 下运行 `npx esbuild tiptap-entry.js --bundle --outfile=tiptap-all.js --format=iife`
 
 ## 专题文档

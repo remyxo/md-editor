@@ -832,11 +832,6 @@ void MainWindow::onThemeSwitch(const QString &mode)
     m_menuBar->setThemeChecked(mode);
 }
 
-QString MainWindow::currentThemeMode() const
-{
-    return m_themeMode;
-}
-
 void MainWindow::retranslateUi()
 {
     m_menuBar->retranslateUi();
