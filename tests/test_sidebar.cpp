@@ -1,27 +1,31 @@
 #include <QtTest>
 #include "ui/SideBar.h"
-#include <QTabWidget>
+#include "ui/CollapsibleSection.h"
 #include <QPushButton>
 
-// 侧边栏双开关（目录树/大纲）行为测试
+// 侧边栏双面板（目录树/大纲）独立折叠 + 整体宽度收起行为测试
 class TestSideBar : public QObject {
     Q_OBJECT
 private slots:
-    void initial_state();       // 初始：两面板可见，侧边栏可见
-    void file_only();           // 只目录树：大纲 tab 隐藏，按钮保留
-    void outline_only();        // 只大纲：文件 tab 隐藏，按钮隐藏，停驻页切到 1
-    void all_off();             // 全关：侧边栏整体隐藏
-    void recover_from_all_off();// 从全关恢复目录树：侧边栏重新显示
-    void hiding_current_page(); // 停在大纲页关大纲：切回文件页
-    void recover_lands_on_visible_page(); // 从全关恢复：落到可见页而非隐藏 tab
+    void initial_state();            // 初始两面板展开，侧边栏可见
+    void file_only();                // 只目录树：大纲收起，按钮保留
+    void outline_only();             // 只大纲：目录树收起，按钮隐藏
+    void all_off_collapses_whole();  // 全收：宽度动画到 0
+    void recover_from_all_off();     // 从全收重开目录树：宽度恢复
 private:
-    QTabWidget *tabs(const SideBar &sb) const;
+    CollapsibleSection *fileSection(const SideBar &sb) const;
+    CollapsibleSection *outlineSection(const SideBar &sb) const;
     QPushButton *openBtn(const SideBar &sb) const;
 };
 
-QTabWidget *TestSideBar::tabs(const SideBar &sb) const
+CollapsibleSection *TestSideBar::fileSection(const SideBar &sb) const
 {
-    return sb.findChild<QTabWidget *>();
+    return sb.findChild<CollapsibleSection *>(QStringLiteral("fileTreeSection"));
+}
+
+CollapsibleSection *TestSideBar::outlineSection(const SideBar &sb) const
+{
+    return sb.findChild<CollapsibleSection *>(QStringLiteral("outlineSection"));
 }
 
 QPushButton *TestSideBar::openBtn(const SideBar &sb) const
@@ -34,9 +38,9 @@ void TestSideBar::initial_state()
     SideBar sb;
     sb.show();
     QVERIFY(sb.isVisible());
-    QVERIFY(tabs(sb)->isTabVisible(0));
-    QVERIFY(tabs(sb)->isTabVisible(1));
-    QVERIFY(openBtn(sb)->isVisible());
+    QVERIFY(!fileSection(sb)->isCollapsed());
+    QVERIFY(!outlineSection(sb)->isCollapsed());
+    QVERIFY(openBtn(sb)->isVisibleTo(&sb));
 }
 
 void TestSideBar::file_only()
@@ -44,10 +48,12 @@ void TestSideBar::file_only()
     SideBar sb;
     sb.show();
     sb.setOutlineVisible(false);
-    QVERIFY(!tabs(sb)->isTabVisible(1));
-    QVERIFY(tabs(sb)->isTabVisible(0));
+    QVERIFY(outlineSection(sb)->isCollapsed());
+    QVERIFY(!fileSection(sb)->isCollapsed());
     QVERIFY(sb.isVisible());
-    QVERIFY(openBtn(sb)->isVisibleTo(&sb));   // 按钮跟随目录树
+    QVERIFY(openBtn(sb)->isVisibleTo(&sb));  // 目录树在，按钮保留
+    QTest::qWait(400);
+    QVERIFY(sb.width() > 0);                 // 单面板收起不触发整体收起
 }
 
 void TestSideBar::outline_only()
@@ -55,20 +61,22 @@ void TestSideBar::outline_only()
     SideBar sb;
     sb.show();
     sb.setFileTreeVisible(false);
-    QVERIFY(!tabs(sb)->isTabVisible(0));
-    QVERIFY(tabs(sb)->isTabVisible(1));
+    QVERIFY(fileSection(sb)->isCollapsed());
+    QVERIFY(!outlineSection(sb)->isCollapsed());
     QVERIFY(sb.isVisible());
-    QVERIFY(!openBtn(sb)->isVisibleTo(&sb));  // 无目录树则按钮隐藏
-    QCOMPARE(tabs(sb)->currentIndex(), 1);    // 停驻页自动切到可见页
+    QVERIFY(!openBtn(sb)->isVisibleTo(&sb)); // 无目录树则按钮隐藏
 }
 
-void TestSideBar::all_off()
+void TestSideBar::all_off_collapses_whole()
 {
     SideBar sb;
     sb.show();
     sb.setFileTreeVisible(false);
     sb.setOutlineVisible(false);
-    QVERIFY(!sb.isVisible());
+    QVERIFY(fileSection(sb)->isCollapsed());
+    QVERIFY(outlineSection(sb)->isCollapsed());
+    QTest::qWait(400);
+    QCOMPARE(sb.maximumWidth(), 0);          // 两面板全收 → 宽度收到 0
 }
 
 void TestSideBar::recover_from_all_off()
@@ -77,31 +85,13 @@ void TestSideBar::recover_from_all_off()
     sb.show();
     sb.setFileTreeVisible(false);
     sb.setOutlineVisible(false);
-    QVERIFY(!sb.isVisible());
+    QTest::qWait(400);
     sb.setFileTreeVisible(true);
-    QVERIFY(sb.isVisible());
-    QVERIFY(tabs(sb)->isTabVisible(0));
-}
-
-void TestSideBar::hiding_current_page()
-{
-    SideBar sb;
-    sb.show();
-    tabs(sb)->setCurrentIndex(1);             // 停在大纲页
-    sb.setOutlineVisible(false);
-    QCOMPARE(tabs(sb)->currentIndex(), 0);    // 切回文件页
-}
-
-void TestSideBar::recover_lands_on_visible_page()
-{
-    SideBar sb;
-    sb.show();
-    tabs(sb)->setCurrentIndex(1);             // 停在大纲页
-    sb.setFileTreeVisible(false);
-    sb.setOutlineVisible(false);              // 全关，current 停在隐藏的 1
-    sb.setFileTreeVisible(true);              // 只重开目录树
-    QVERIFY(sb.isVisible());
-    QCOMPARE(tabs(sb)->currentIndex(), 0);    // 落到可见页，不留在隐藏 tab
+    QVERIFY(!fileSection(sb)->isCollapsed());
+    QVERIFY(outlineSection(sb)->isCollapsed());
+    QTest::qWait(400);
+    QVERIFY(sb.width() > 0);                 // 重开 → 宽度恢复
+    QVERIFY(sb.maximumWidth() != 0);
 }
 
 QTEST_MAIN(TestSideBar)
