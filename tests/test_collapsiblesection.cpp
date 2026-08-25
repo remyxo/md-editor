@@ -10,6 +10,7 @@ private slots:
     void collapse_animates_height();  // 收起：高度动画到 0，isCollapsed 立即翻转
     void expand_restores_height();    // 展开：高度动画恢复
     void collapse_immediate_no_animation(); // animate=false 立即生效，不带动画
+    void collapse_immediate_stops_running_animation();  // I2: 立即设置须停掉运行中动画
     void collapsed_signal();          // collapsedChanged 信号
 private:
     QLabel *makeContent(CollapsibleSection &s) const;
@@ -64,6 +65,19 @@ void TestCollapsibleSection::collapse_immediate_no_animation()
     s.setCollapsed(false, false);
     QVERIFY(!s.isCollapsed());
     QVERIFY(s.contentMaxHeight() > 0);        // animate=false：立即恢复大值
+}
+
+void TestCollapsibleSection::collapse_immediate_stops_running_animation()
+{
+    CollapsibleSection s;
+    makeContent(s);
+    s.show();
+    QVERIFY(s.contentMaxHeight() > 0);   // 初始展开
+    s.setCollapsed(true);                // 启动收起动画（进行中）
+    s.setCollapsed(false, false);        // 立即无动画展开
+    QCOMPARE(s.contentMaxHeight(), 10000);
+    QTest::qWait(450);                   // 若僵尸动画未 stop，会继续驱动 maximumHeight 到 0
+    QCOMPARE(s.contentMaxHeight(), 10000);  // 必须保持展开
 }
 
 void TestCollapsibleSection::collapsed_signal()

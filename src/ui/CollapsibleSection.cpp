@@ -80,8 +80,10 @@ void CollapsibleSection::setCollapsed(bool collapsed, bool animate)
     if (m_content) {
         if (animate)
             startHeightAnimation(collapsed ? 0 : kExpandedMax);
-        else
+        else {
+            m_heightAnim->stop();   // 立即设置前停掉进行中的动画，防僵尸动画覆盖
             m_content->setMaximumHeight(collapsed ? 0 : kExpandedMax);
+        }
     }
     emit collapsedChanged(collapsed);
 }
