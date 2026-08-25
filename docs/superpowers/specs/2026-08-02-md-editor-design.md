@@ -333,5 +333,4 @@ make -j$(nproc)
 
 - 具体图标集选择（Feather Icons vs Material Symbols）
 - 各平台默认字体
-- 是否加入"专注模式"—— 根据一阶段用户反馈决定
 - 国际化框架（Qt Linguist）—— 一阶段仅支持简体中文与英语
