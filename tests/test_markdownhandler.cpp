@@ -2213,6 +2213,63 @@ private slots:
         }
     }
 
+    void testTableSingleCellMergeRoundTrip()
+    {
+        // 合并单元格规则（问题4）：
+        // ① 单格行（| 复杂嵌套 |）→ 占满整行（<td colspan="4">），WYSIWYG 合并；往返保真为 | x |。
+        // ② 多格行（| 复杂嵌套 | | | |）→ 不合并（4 个独立单元格，首格内容其余空）；往返保真为 4 格。
+        // ③ 短行（| x | 乙 |）→ 不合并（补满 4 格，尾两格空）。
+        struct { const char *in; const char *htmlNeedle; const char *htmlAbsent; const char *mdRoundTripNeedle; } cases[] = {
+            // ① 单格行合并
+            {"| 列A | 列B | 列C | 列D |\n| --- | --- | --- | --- |\n| 复杂嵌套 |",
+             "colspan=\"4\"", nullptr, "| 复杂嵌套 |"},
+            // ② 多格行（首格内容 + 3 空）不合并
+            {"| 列A | 列B | 列C | 列D |\n| --- | --- | --- | --- |\n| 复杂嵌套 | | | |",
+             nullptr, "colspan=\"4\"", "| 复杂嵌套 |  |  |  |"},
+            // ③ 短行（2 格）不合并，补满 4 格
+            {"| 列A | 列B | 列C | 列D |\n| --- | --- | --- | --- |\n| 复杂嵌套 | 乙 |",
+             nullptr, "colspan=\"3\"", "| 复杂嵌套 | 乙 |  |  |"},
+        };
+        for (const auto &c : cases) {
+            QString md1 = QString::fromUtf8(c.in);
+            QString html = MarkdownHandler::toHtml(md1);
+            if (c.htmlNeedle)
+                QVERIFY2(html.contains(c.htmlNeedle),
+                         qPrintable(QString("toHtml 应含 [%1]，实际:\n%2").arg(c.htmlNeedle, html)));
+            if (c.htmlAbsent)
+                QVERIFY2(!html.contains(c.htmlAbsent),
+                         qPrintable(QString("toHtml 不应含 [%1]（不得合并），实际:\n%2").arg(c.htmlAbsent, html)));
+            QString md2 = MarkdownHandler::fromHtml(html);
+            QVERIFY2(md2.contains(c.mdRoundTripNeedle),
+                     qPrintable(QString("往返应含 [%1]，输入[%2] 实际[%3]")
+                                    .arg(c.mdRoundTripNeedle, c.in, md2)));
+        }
+        // ① 整表精确往返（合并行保持单格行）
+        QString md = QStringLiteral(
+            "| 列A | 列B | 列C | 列D |\n| --- | --- | --- | --- |\n| 复杂嵌套 |");
+        QString roundTrip = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QCOMPARE(roundTrip, md);
+    }
+
+    void testTableMergeStrayPipeLine()
+    {
+        // 回归：正文中的孤立 | x | 行（无分隔行，非表格）不得被 6b 误当成表格 run，
+        // 否则后续真表格的 tableIdx 错位、合并行无法折叠回单格。
+        // 用 4 列表格（| x | 单格行 → colspan=4，可折叠回单格；2 列是 Qt 怪癖不测）。
+        const QString md1 = QStringLiteral(
+            "| 列A | 列B | 列C | 列D |\n| --- | --- | --- | --- |\n| 复杂嵌套 |\n\n"
+            "| 这是段落里的竖线行 |\n\n"
+            "| 列E | 列F | 列G | 列H |\n| --- | --- | --- | --- |\n| 复杂嵌套 |");
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        // 两个表格的单格行都应保持单格（合并往返保真）
+        QCOMPARE(md2.count("| 复杂嵌套 |"), 2);
+        QVERIFY2(!md2.contains("| 复杂嵌套 |  |"),
+                 qPrintable("合并行应折叠回单格，实际:\n" + md2));
+        // 孤立的竖线行保留
+        QVERIFY2(md2.contains("| 这是段落里的竖线行 |"),
+                 qPrintable("孤立竖线行应保留，实际:\n" + md2));
+    }
+
     void testTableSeparatorRoundTrip()
     {
         // Qt toMarkdown 把表格分隔行输出为单连字符（|-|-|），此前归一化正则

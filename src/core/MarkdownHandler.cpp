@@ -199,26 +199,62 @@ static bool isTableLine(const QString &line)
            && t.endsWith(QLatin1Char('|'));
 }
 
-// 规范化表格行中「无空格空单元格」（|1||3|）：Qt setMarkdown 会把相邻 ||
-// 误解析——空单元格被重定位到行尾（数据损坏）。此处用反引号/转义感知的
-// splitTableCells 拆分后重拼，空单元格补单个空格（与 fromHtml 步骤 6 的
-// | cell | 风格一致）。仅当存在空单元格时才重拼，其余表格行（含分隔行）
-// 原样直通，零影响。
-static QString normalizeTableRowForQt(const QString &line)
+// 表格行规范化（防 Qt 空单元格合并 + 空单元格占位符保护，替换旧 normalizeTableRowForQt）。
+// 背景：QTextDocument::setMarkdown 会把 body 行「尾随空单元格」折叠成 colspan
+// （| x | | | | → <td colspan="4">），使 WYSIWYG 把多格行误渲染成合并单元格。
+// 旧实现仅用空格填充空单元格，但空格仍被 Qt 视为空（尾随空格行依旧合并），
+// 故须用非空白占位符（ZZTC*，toHtml 后处理还原为空 <td>）。
+// 规则（与 fromHtml 步骤 6b 对偶）：
+//   - 分隔行：记录列数（colCount），原样直通。
+//   - 恰 1 个显式单元格的行（| x |）：原样直通 → Qt colspan 合并（语义「占满整行」）。
+//   - ≥2 个显式单元格的行：空单元格填 ZZTC 占位符（Qt 视为非空保留为独立单元格），
+//     行短于分隔行列数时补占位符到满列（防末格 colspan 补列）。
+//     另防「无空格空单元格」（|1||3|）被 Qt 重定位到行尾的数据损坏。
+static QString protectTableRowForQt(const QString &line, int &colCount, QStringList &cellBackups)
 {
     if (!isTableLine(line))
         return line;
     QString t = line.trimmed();
     QString inner = t.mid(1, t.length() - 2);
     QStringList cells = splitTableCells(inner);
-    bool hasEmpty = false;
+
+    // 分隔行：记录列数，原样直通
+    static const QRegularExpression sepCellRe(QStringLiteral("^:?-+:?$"));
+    bool isSep = true;
     for (const QString &c : cells)
-        if (c.trimmed().isEmpty()) { hasEmpty = true; break; }
-    if (!hasEmpty)
-        return line;   // 无空单元格（含分隔行），不重拼
+        if (!sepCellRe.match(c.trimmed()).hasMatch()) { isSep = false; break; }
+    if (isSep) {
+        colCount = cells.size();
+        return line;
+    }
+
+    // 恰 1 个显式单元格：原样直通，Qt colspan 合并（占满整行）
+    if (cells.size() == 1)
+        return line;
+
+    // ≥2 个显式单元格：无空单元格且不短行则零改动直通
+    bool needProtect = false;
+    for (const QString &c : cells)
+        if (c.trimmed().isEmpty()) { needProtect = true; break; }
+    if (!needProtect && cells.size() >= colCount)
+        return line;
+
     QStringList padded;
-    for (const QString &c : cells)
-        padded << (" " + c.trimmed() + " ");
+    for (const QString &c : cells) {
+        QString cc = c.trimmed();
+        if (cc.isEmpty()) {
+            QString ph = QStringLiteral("ZZTC") + QString::number(cellBackups.size()) + QStringLiteral("ZZ");
+            cellBackups << ph;
+            padded << (" " + ph + " ");
+        } else {
+            padded << (" " + cc + " ");
+        }
+    }
+    while (padded.size() < colCount) {
+        QString ph = QStringLiteral("ZZTC") + QString::number(cellBackups.size()) + QStringLiteral("ZZ");
+        cellBackups << ph;
+        padded << (" " + ph + " ");
+    }
     return "|" + padded.join('|') + "|";
 }
 
@@ -1045,6 +1081,8 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList bqCodeBlocks;   // 块引用代码块最终 HTML（<pre margin-left…>，后处理还原）
     bool inMathBlock = false;
     bool inTableRegion = false; // 是否处于表格区域（含被惰性延续吸收的纯文本行）
+    int currentTableCols = 0;   // 当前表格分隔行列数（由 protectTableRowForQt 记录，防空单元格合并用）
+    QStringList tableCellBackups; // 表格空单元格占位符 ZZTC*（后处理还原为空 <td>）
     QStringList codeBlocks;  // 每个代码块的最终 HTML（<pre><code class="language-X">…</code></pre>）
     QString codeFenceLang;   // 当前代码块的语言（围栏信息串）
     QStringList codeContent; // 当前代码块的内容行
@@ -1084,6 +1122,8 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         // 纯文本行不打断（按 GFM 吸收为数据行，保证往返保真）。
         if (codeFenceLen == 0 && bqCodeFenceLen == 0 && !inMathBlock) {
             if (isTableLine(line)) {
+                if (!inTableRegion)
+                    currentTableCols = 0;   // 新表格开始：重置列数（分隔行时再设）
                 inTableRegion = true;
             } else if (line.trimmed().isEmpty()
                        || isTableBreakingBlock(line)
@@ -1282,7 +1322,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                 // 隔离：正文后紧跟列表时补空行（与 else 分支一致）
                 if (lastBlock == BT_PARA) processed += '\n';
                 QString cl = line;
-                cl = normalizeTableRowForQt(cl);
+                cl = protectTableRowForQt(cl, currentTableCols, tableCellBackups);
                 cl = extractEscapedEquals(cl, escapedEqBackups);
                 cl = extractSubscripts(cl, subContents);
                 cl = extractFootnoteRefs(cl, footnoteRefs);
@@ -1348,7 +1388,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             if (isListItemLine(line) && lastBlock == BT_PARA)
                 processed += '\n';
             QString cl = line;
-            cl = normalizeTableRowForQt(cl);
+            cl = protectTableRowForQt(cl, currentTableCols, tableCellBackups);
             cl = extractEscapedEquals(cl, escapedEqBackups);
             cl = extractSubscripts(cl, subContents);
             cl = extractFootnoteRefs(cl, footnoteRefs);
@@ -1936,6 +1976,15 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QStringLiteral("<p[^>]*>\\s*(<img\\b[^>]*>)\\s*</p>")),
         QStringLiteral("\\1"));
 
+    // 还原表格空单元格占位符 ZZTC → 空 <td>（≥2 格行防 Qt 合并用，见 protectTableRowForQt）。
+    // 占位符独立成单元格内容，Qt 输出 <td><p…>ZZTCnZZ</p></td>，连同 <p> 壳还原为空单元格，
+    // 与 Qt 自身空单元格（<td></td>）形态一致，供 TipTap/fromHtml 正常解析。
+    html.replace(QRegularExpression(
+        QStringLiteral("<td([^>]*)>\\s*<p[^>]*>ZZTC\\d+ZZ</p>\\s*</td>")),
+        QStringLiteral("<td\\1></td>"));
+    // fallback：占位符未包在 <p> 中时直接清空（防泄漏为字面文本）
+    html.replace(QRegularExpression(QStringLiteral("ZZTC\\d+ZZ")), QString());
+
     return html;
 }
 
@@ -2074,6 +2123,8 @@ QString MarkdownHandler::fromHtml(const QString &html)
     // Qt toMarkdown 从不输出对齐标记（恒 -），必须在此中转，与 Qt 写出
     // 行为解耦（版本无关，见 docs/qt-642-escaping-compat.md 范式）。
     QList<QStringList> tableAligns;
+    // 表格整行合并记录（每表 body 行索引列表，步骤 6b 折叠回单格用）：见下方提取块。
+    QList<QList<int>> tableFullMergeRows;
     QString processed = html;
 
     // 块级占位符统一包裹为 <p>：占位符若为裸文本节点，setHtml 会把它与相邻块
@@ -2804,6 +2855,58 @@ QString MarkdownHandler::fromHtml(const QString &html)
             tableAligns << colAligns;
             offset = tm.capturedStart() + replacement.length();
         }
+        // 提取 tableFullMergeRows：源码单格行（| x |，toHtml 产 <td colspan="N">
+        // 占满所有列）经 Qt toMarkdown 会被展开成 N 格，步骤 6b 据此折叠回单格，
+        // 保证合并单元格往返保真。与 toHtml protectTableRowForQt 的「恰 1 个显式
+        // 单元格 → colspan」规则对偶。判定：数据行首格 colspan == 表头列数（含
+        // colspan 求和），即整行占满。
+        {
+            QRegularExpression tableRegionRe(QStringLiteral("(<table\\b[^>]*>)(.*?)(</table>)"),
+                QRegularExpression::DotMatchesEverythingOption);
+            QRegularExpression rowRe(QStringLiteral("<tr\\b[^>]*>(.*?)</tr>"),
+                QRegularExpression::DotMatchesEverythingOption);
+            QRegularExpression cellRe(QStringLiteral("<t[dh]\\b([^>]*)>(.*?)</t[dh]>"),
+                QRegularExpression::DotMatchesEverythingOption);
+            static const QRegularExpression colspanRe(
+                QStringLiteral("\\bcolspan\\s*=\\s*[\"'](\\d+)[\"']"));
+            int off = 0;
+            while (true) {
+                auto tm = tableRegionRe.match(processed, off);
+                if (!tm.hasMatch()) break;
+                QString region = tm.captured(2);
+                int colCount = 0;
+                QList<int> mergedRows;
+                int roff = 0, rowIdx = 0;
+                while (true) {
+                    auto rm = rowRe.match(region, roff);
+                    if (!rm.hasMatch()) break;
+                    QString row = rm.captured(1);
+                    if (rowIdx == 0) {
+                        // 表头行：列数 = 各格 colspan 之和（无 colspan 即 1）
+                        int coff = 0;
+                        while (true) {
+                            auto cm = cellRe.match(row, coff);
+                            if (!cm.hasMatch()) break;
+                            auto cs = colspanRe.match(cm.captured(1));
+                            colCount += cs.hasMatch() ? cs.captured(1).toInt() : 1;
+                            coff = cm.capturedEnd();
+                        }
+                    } else {
+                        // 数据行：首格 colspan == 列数 → 整行合并（0-based body 索引）
+                        auto cm = cellRe.match(row);
+                        if (cm.hasMatch()) {
+                            auto cs = colspanRe.match(cm.captured(1));
+                            if (cs.hasMatch() && cs.captured(1).toInt() == colCount)
+                                mergedRows << (rowIdx - 1);
+                        }
+                    }
+                    ++rowIdx;
+                    roff = rm.capturedEnd();
+                }
+                tableFullMergeRows << mergedRows;
+                off = tm.capturedEnd();
+            }
+        }
         // 对齐：<p style="text-align:..."> / 标题 text-align → <div align="...">
         // TipTap TextAlign 为段落/标题注入 text-align CSS，toMarkdown 丢弃。
         // 提取对齐值并还原为 <div align="...">（已支持往返），内容 ZZ* 占位符
@@ -3310,6 +3413,59 @@ QString MarkdownHandler::fromHtml(const QString &html)
                     padded << (" " + cell + " ");
                 lines[i] = "|" + padded.join('|') + "|";
             }
+        }
+        md = lines.join('\n');
+    }
+
+    // 6b) 整行合并单元格还原：Qt toMarkdown 把单格行（| x |）产出的
+    //     <td colspan="N"> 展开成 N 格，此处按 setHtml 前记录的 tableFullMergeRows
+    //     折叠回单格（| x |），与 toHtml protectTableRowForQt 的「恰 1 个显式
+    //     单元格 → colspan」规则对偶，保证合并单元格往返保真。
+    //     按连续 |...| 行识别表格区域（与步骤 6 一致），行序表头/分隔/body 一一对应。
+    if (!tableFullMergeRows.isEmpty()) {
+        int tableIdx = 0;
+        QStringList lines = md.split('\n');
+        int i = 0;
+        while (i < lines.size()) {
+            QString t = lines[i].trimmed();
+            if (!(t.startsWith('|') && t.endsWith('|'))) { ++i; continue; }
+            QList<int> run;   // 当前表格的连续表行索引
+            while (i < lines.size()) {
+                QString lt = lines[i].trimmed();
+                if (!(lt.startsWith('|') && lt.endsWith('|'))) break;
+                run << i;
+                ++i;
+            }
+            // 仅真表格（表头 + 分隔行，run[1] 全为 - 等连字符）才消耗 tableIdx；
+            // 段落里的孤立 | x | 行（无分隔行）不是表格，跳过以防与 HTML 表计数错位。
+            static const QRegularExpression sepCellRe(QStringLiteral("^:?-+:?$"));
+            bool isRealTable = run.size() >= 2;
+            if (isRealTable) {
+                QString sepInner = lines[run[1]].trimmed();
+                if (sepInner.startsWith('|') && sepInner.endsWith('|'))
+                    sepInner = sepInner.mid(1, sepInner.length() - 2);
+                else
+                    isRealTable = false;
+                if (isRealTable) {
+                    const QStringList sepCells = splitTableCells(sepInner);
+                    for (const QString &sc : sepCells)
+                        if (!sepCellRe.match(sc.trimmed()).hasMatch()) { isRealTable = false; break; }
+                }
+            }
+            if (!isRealTable)
+                continue;
+            if (tableIdx < tableFullMergeRows.size()) {
+                const QList<int> &merged = tableFullMergeRows[tableIdx];
+                for (int r = 2; r < run.size(); ++r) {   // run[0]=表头 run[1]=分隔 run[2..]=body
+                    if (!merged.contains(r - 2))
+                        continue;
+                    QString inner = lines[run[r]].trimmed();
+                    inner = inner.mid(1, inner.length() - 2);
+                    QStringList cells = splitTableCells(inner);
+                    lines[run[r]] = "| " + cells.value(0).trimmed() + " |";
+                }
+            }
+            ++tableIdx;
         }
         md = lines.join('\n');
     }
