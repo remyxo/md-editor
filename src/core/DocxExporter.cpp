@@ -396,11 +396,12 @@ struct ParseState {
     QString bodyXml;
     QString relsXml;            // document.xml.rels entries
     int nextRId = 1;
-    // 列表编号：每个 <ul>/<ol> 分配独立 numId（指向共享的 abstractNum：0=bullet、1=decimal），
-    // 使 Word 对每个列表各自重新开始编号；否则同一 numId 的段落会被当作同一序列续编。
+    // 列表编号：每个 <ul>/<ol> 分配独立 numId；无序列表共享 abstractNum 0，
+    // 每个有序列表各持一个独立 abstractNum（id 1..N），计数器天然隔离，
+    // 使每个列表各自从 1 重新开始编号，无需 startOverride。
     int nextNumId = 1;
-    QList<int> numAbstractNums;   // 与 numId 一一对应（numId = 下标 + 1），值为 abstractNumId
-    QList<int> numListIlvls;      // 与 numId 一一对应，值为该列表的嵌套层级（startOverride 需命中该 ilvl）
+    int nextAbstractNumId = 0;    // 有序列表独立 abstractNum 分配器（无序固定为 0）
+    QList<int> numAbstractNums;   // 与 numId 一一对应（numId = 下标 + 1），值为该列表引用的 abstractNumId
     bool hasBulletList = false;
     bool hasDecimalList = false;
     int maxListIlvl = 0;    // 文档中出现过的最大嵌套列表层级（决定 numbering.xml 生成的 ilvl 层数）
@@ -794,10 +795,13 @@ static QString parseHorizontalRule()
 static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int ilvl = 0)
 {
     int numId = s.nextNumId++;
-    s.numAbstractNums.append(ordered ? 1 : 0);
-    s.numListIlvls.append(ilvl);
-    if (ordered) s.hasDecimalList = true;
-    else s.hasBulletList = true;
+    if (ordered) {
+        s.numAbstractNums.append(++s.nextAbstractNumId);  // 有序列表独立 abstractNum（id 1..N）
+        s.hasDecimalList = true;
+    } else {
+        s.numAbstractNums.append(0);                      // 无序列表共享 abstractNum 0
+        s.hasBulletList = true;
+    }
     if (ilvl > s.maxListIlvl) s.maxListIlvl = ilvl;
 
     QString result;
@@ -949,6 +953,7 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
     QString tblGrid;
     int colCount = 0;
     bool firstRow = true;
+    int headerCols = 0;   // 表头行列数（无 colgroup 时默认 tblGrid 用，含 colspan 求和）
 
     while (!r.atEnd()) {
         auto tt = r.readNext();
@@ -994,14 +999,19 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
 
                 if (cellTag == "th" || cellTag == "td") {
                     bool isTh = (cellTag == "th");
-                    // 检查对齐（属性须在 parseInline 消费元素前读取）
+                    // 检查对齐与合并跨列（属性须在 parseInline 消费元素前读取）
                     QString cellSty = r.attributes().value("style").toString();
                     QString cellAlign = extractAlign(cellSty);
+                    QString cellSpan = r.attributes().value("colspan").toString();
+                    const int span = cellSpan.toInt();
+                    if (firstRow)
+                        headerCols += (span > 1 ? span : 1);
                     result += "<w:tc>";
                     // 单元格属性：tcPr 无 w:jc 子元素（CT_TcPr 只认 tcW/shd/vAlign 等），
                     // 水平对齐是段落属性，写入下方单元格段落的 <w:pPr>
                     result += "<w:tcPr>";
                     result += "<w:tcW w:w=\"2340\" w:type=\"dxa\"/>";
+                    if (span > 1) result += "<w:gridSpan w:val=\"" + cellSpan + "\"/>";
                     if (isTh) result += "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"D9E2F3\"/>";
                     result += "</w:tcPr>";
 
@@ -1018,9 +1028,12 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
         }
     }
 
-    // 插入 tblGrid（如果有 colgroup，用之；否则用默认列宽）
+    // 插入 tblGrid（如果有 colgroup，用之；否则用表头列数生成默认列宽）
     if (tblGrid.isEmpty()) {
-        tblGrid = "<w:gridCol w:w=\"4680\"/><w:gridCol w:w=\"4680\"/>";
+        QString cols;
+        for (int i = 0; i < (headerCols > 0 ? headerCols : 2); ++i)
+            cols += "<w:gridCol w:w=\"4680\"/>";
+        tblGrid = cols;
     }
     int trPos = result.indexOf("<w:tr>");
     if (trPos >= 0) {
@@ -1167,8 +1180,9 @@ static QString makeNumberingXml(const ParseState &s)
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
         "<w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n");
 
-    // 无序列表（bullet）：多层定义 ilvl 0..maxListIlvl，每层缩进递增 720 twips（0.5 英寸），
-    // 符号逐层轮换 • ◦ ▪ 以区分层级（hybridMultilevel 支持各层独立 lvlText）。
+    // 无序列表（bullet）：共享一个 abstractNum（id=0），多层定义 ilvl 0..maxListIlvl，
+    // 每层缩进递增 720 twips（0.5 英寸），符号逐层轮换 • ◦ ▪ 以区分层级
+    // （hybridMultilevel 支持各层独立 lvlText）。bullet 无可见编号，无跨列表续编问题。
     if (s.hasBulletList) {
         static const char *bulletGlyphs[] = {"&#x2022;", "&#x25E6;", "&#x25AA;"};
         xml += "  <w:abstractNum w:abstractNumId=\"0\">\n"
@@ -1185,16 +1199,23 @@ static QString makeNumberingXml(const ParseState &s)
         }
         xml += "  </w:abstractNum>\n";
     }
-    // 有序列表（decimal）：各层保持 %1. 十进制（对齐 HTML/PDF 中嵌套 <ol> 的渲染），
-    // 缩进随层级递增；每层独立 numId + startOverride 保证各列表从 1 重启。
-    if (s.hasDecimalList) {
-        xml += "  <w:abstractNum w:abstractNumId=\"1\">\n"
+    // 有序列表（decimal）：每个列表一个独立 abstractNum（id 1..N），各层保持 N. 十进制
+    // （对齐 HTML/PDF 中嵌套 <ol> 的渲染），缩进随层级递增。独立计数器保证各列表天然
+    // 从 1 重新编号，无需 startOverride。
+    // 关键：lvlText 必须引用「当前层级自己的序号」——%1 是第 1 级（ilvl=0）的计数器、
+    // %2 是第 2 级（ilvl=1）、%3 是第 3 级（ilvl=2）。曾统一写 "%1."，深层项（ilvl≥1）
+    // 显示的是浅层计数器：嵌套有序列表（ilvl=2）的 numId 从不在 ilvl=0 出现，ilvl=0
+    // 计数器恒为 1，导致所有嵌套项都显示 1（WPS/Word 一致，顶层 ilvl=0 恰好正常）。
+    for (int i = 0; i < s.numAbstractNums.size(); ++i) {
+        const int aid = s.numAbstractNums[i];
+        if (aid == 0) continue;   // 无序列表共享 abstractNum 0，已在上方输出
+        xml += "  <w:abstractNum w:abstractNumId=\"" + QString::number(aid) + "\">\n"
                "    <w:multiLevelType w:val=\"hybridMultilevel\"/>\n";
         for (int lvl = 0; lvl <= s.maxListIlvl; ++lvl) {
             xml += "    <w:lvl w:ilvl=\"" + QString::number(lvl) + "\">\n"
                    "      <w:start w:val=\"1\"/>\n"
                    "      <w:numFmt w:val=\"decimal\"/>\n"
-                   "      <w:lvlText w:val=\"%1.\"/>\n"
+                   "      <w:lvlText w:val=\"%" + QString::number(lvl + 1) + ".\"/>\n"
                    "      <w:lvlJc w:val=\"left\"/>\n"
                    "      <w:pPr><w:ind w:left=\"" + QString::number(720 + lvl * 720)
                    + "\" w:hanging=\"360\"/></w:pPr>\n"
@@ -1202,21 +1223,12 @@ static QString makeNumberingXml(const ParseState &s)
         }
         xml += "  </w:abstractNum>\n";
     }
-    // 每个列表一个独立 <w:num>（numId=1..N 指向对应 abstractNum）。有序列表额外带
-    // <w:lvlOverride>/<w:startOverride>，Word/WPS 才把它当作新序列从 1 重新编号；
-    // 否则会按 abstractNumId 续编，后续不相邻列表不重启（MarkMyWord#30 同类问题）。
-    // 嵌套有序列表须把 override 落在其实际 ilvl（顶层为 0、子列表为 1+），否则重启信号不命中。
+    // 每个列表一个独立 <w:num>（numId=1..N 指向各自的 abstractNum）。有序列表各引用
+    // 独立 abstractNum，计数器天然隔离，无需 lvlOverride/startOverride。
     for (int i = 0; i < s.numAbstractNums.size(); ++i) {
-        const bool ordered = (s.numAbstractNums[i] == 1);
-        QString overrideXml;
-        if (ordered) {
-            overrideXml = QString("<w:lvlOverride w:ilvl=\"%1\"><w:startOverride w:val=\"1\"/></w:lvlOverride>")
-                              .arg(s.numListIlvls[i]);
-        }
-        xml += QString("  <w:num w:numId=\"%1\"><w:abstractNumId w:val=\"%2\"/>%3</w:num>\n")
+        xml += QString("  <w:num w:numId=\"%1\"><w:abstractNumId w:val=\"%2\"/></w:num>\n")
                    .arg(i + 1)
-                   .arg(s.numAbstractNums[i])
-                   .arg(overrideXml);
+                   .arg(s.numAbstractNums[i]);
     }
     xml += "</w:numbering>\n";
     return xml;

@@ -33,10 +33,13 @@ private slots:
     }
 
     void testBuildRenderHtmlIncludesTaskListCss() {
-        // 任务列表复选框与文字须同行：<label> 与 <div> 需 flex 并排，
-        // 否则各占一行（复选框一行、文字一行）。
+        // 任务列表复选框与文字须同行：直接 li 用 flex 并排（复选框一行、文字一行）。
+        // 必须用子代选择器 > 限定直接 li——嵌套在任务项内的通用列表 li（如 列表2-2
+        // 下再嵌 <ol>）若也命中 flex 会被当成 flex 容器，其子元素 p 与嵌套 <ol>
+        // 排成一行、序号消失（导出嵌套列表回归）。
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
-        QVERIFY(out.contains("ul[data-type=\"taskList\"] li{display:flex;align-items:flex-start;gap:8px;}"));
+        QVERIFY(out.contains("ul[data-type=\"taskList\"] > li{display:flex;align-items:flex-start;gap:8px;}"));
+        QVERIFY(out.contains("ul[data-type=\"taskList\"] > li > div > p{margin:0;}"));
     }
 };
 

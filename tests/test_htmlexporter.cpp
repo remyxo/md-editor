@@ -78,12 +78,16 @@ private slots:
     }
 
     void testBodyCssTaskListInlineLayout() {
-        // 任务列表 checkbox 与文字需同行：li 用 flex 布局（镜像 editor.css）
-        QVERIFY(HtmlExporter::bodyCss("light").contains("ul[data-type=\"taskList\"] li{display:flex;"));
-        QVERIFY(HtmlExporter::bodyCss("dark").contains("ul[data-type=\"taskList\"] li{display:flex;"));
-        // 内容段落 margin 归零，避免顶部 .6em 把文字压到复选框下方（对齐）
-        QVERIFY(HtmlExporter::bodyCss("light").contains("ul[data-type=\"taskList\"] li>div p{margin:0;}"));
-        QVERIFY(HtmlExporter::bodyCss("dark").contains("ul[data-type=\"taskList\"] li>div p{margin:0;}"));
+        // 任务列表 checkbox 与文字需同行：直接 li 用 flex 布局（镜像 editor.css）。
+        // 必须用子代选择器 > 限定直接 li——嵌套在任务项内的通用列表 li（如 列表2-2
+        // 下再嵌 <ol>）若也命中 flex 会被当成 flex 容器，其子元素 p 与嵌套 <ol>
+        // 排成一行、序号消失（导出嵌套列表回归）。
+        QVERIFY(HtmlExporter::bodyCss("light").contains("ul[data-type=\"taskList\"] > li{display:flex;"));
+        QVERIFY(HtmlExporter::bodyCss("dark").contains("ul[data-type=\"taskList\"] > li{display:flex;"));
+        // 内容段落 margin 归零，避免顶部 .6em 把文字压到复选框下方（对齐）；
+        // > div > p 只命中任务项内容直接段落，嵌套列表段落不受影响
+        QVERIFY(HtmlExporter::bodyCss("light").contains("ul[data-type=\"taskList\"] > li > div > p{margin:0;}"));
+        QVERIFY(HtmlExporter::bodyCss("dark").contains("ul[data-type=\"taskList\"] > li > div > p{margin:0;}"));
     }
 
     void testRenderScriptUsesTheme() {

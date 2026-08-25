@@ -173,6 +173,20 @@ private slots:
         QVERIFY(xml.contains("2"));
     }
 
+    void testTableColspanGridSpan() {
+        // 整行合并单元格（colspan=4）：必须写 <w:gridSpan w:val="4"/> 到 tcPr，
+        // 且无 colgroup 时默认 tblGrid 按表头列数生成 4 个 gridCol——
+        // 否则 Word 打开是 2 列网格 + 跨 4 列的单元格，结构非法。
+        QString xml = exportDocumentXml(
+            "<table><thead><tr><th>A</th><th>B</th><th>C</th><th>D</th></tr></thead>"
+            "<tbody><tr><td colspan=\"4\">复杂嵌套</td></tr>"
+            "<tr><td>1</td><td>2</td><td>3</td><td>4</td></tr></tbody></table>");
+        QVERIFY2(xml.contains("<w:gridSpan w:val=\"4\"/>"), qPrintable(xml));
+        QCOMPARE(xml.count("<w:gridCol"), 4);   // 默认 grid 按表头 4 列生成
+        // 普通行不产生 gridSpan
+        QVERIFY(!xml.contains("gridSpan w:val=\"1\""));
+    }
+
     void testTableCellAlignmentMovesToParagraph() {
         // 回归：单元格水平对齐是段落属性（<w:pPr>/<w:jc>），不是单元格属性——
         // CT_TcPr 没有 w:jc 子元素，曾把它写进 <w:tcPr> 属 OOXML 违规，
@@ -231,14 +245,19 @@ private slots:
         while (it.hasNext()) ids.insert(it.next().captured(1));
         QVERIFY2(ids.size() == 3, qPrintable(docXml));
 
-        // numbering.xml：bullet + decimal 两个 abstractNum，配三个独立 <w:num> 实例；
-        // 两个有序列表须各带 startOverride 重启信号（否则 Word 按 abstractNumId 续编）。
+        // numbering.xml：共享 bullet abstractNum(0) + 每个有序列表独立 decimal abstractNum，
+        // 配三个独立 <w:num> 实例。两个有序列表各引用自己的 abstractNum（1/2），计数器天然
+        // 从 1 重新编号，无需 startOverride（startOverride 落在嵌套 ilvl 时部分渲染器逐段重启）。
         unzip.start("unzip", QStringList() << "-p" << out << "word/numbering.xml");
         QVERIFY(unzip.waitForFinished(10000));
         QString numXml = QString::fromUtf8(unzip.readAllStandardOutput());
-        QVERIFY2(numXml.count("<w:abstractNum ") == 2, qPrintable(numXml));
+        QVERIFY2(numXml.count("<w:abstractNum ") == 3, qPrintable(numXml));
         QVERIFY2(numXml.count("<w:num ") == 3, qPrintable(numXml));
-        QVERIFY2(numXml.count("<w:startOverride") == 2, qPrintable(numXml));
+        QVERIFY2(!numXml.contains("startOverride"), qPrintable(numXml));
+        // 有序列表 1 → abstractNum 1；任务列表 → abstractNum 0；有序列表 2 → abstractNum 2
+        QVERIFY2(numXml.contains("<w:num w:numId=\"1\"><w:abstractNumId w:val=\"1\"/></w:num>"), qPrintable(numXml));
+        QVERIFY2(numXml.contains("<w:num w:numId=\"2\"><w:abstractNumId w:val=\"0\"/></w:num>"), qPrintable(numXml));
+        QVERIFY2(numXml.contains("<w:num w:numId=\"3\"><w:abstractNumId w:val=\"2\"/></w:num>"), qPrintable(numXml));
     }
 
     void testNestedListIndentation() {
@@ -310,9 +329,8 @@ private slots:
     }
 
     void testDeepNestedAndMixedListIndentation() {
-        // 三层嵌套（ul→ol→ul 混合）与有序子列表重启：ilvl 随深度递增（0/1/2），
-        // 嵌套有序列表的 startOverride 须落在其实际 ilvl（此处为 1），否则 Word/WPS
-        // 会按 abstractNumId 续编不重启。
+        // 三层嵌套（ul→ol→ul 混合）：ilvl 随深度递增（0/1/2），
+        // 嵌套有序列表引用自己的独立 abstractNum（id=1），计数器天然从 1 重启。
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QString out = dir.path() + "/o.docx";
         DocxExporter ex;
@@ -345,9 +363,10 @@ private slots:
         unzip.start("unzip", QStringList() << "-p" << out << "word/numbering.xml");
         QVERIFY(unzip.waitForFinished(10000));
         QString numXml = QString::fromUtf8(unzip.readAllStandardOutput());
-        // 有序子列表（numId=2）的 override 命中 ilvl=1
-        QVERIFY2(numXml.contains("<w:lvlOverride w:ilvl=\"1\"><w:startOverride w:val=\"1\"/></w:lvlOverride>"),
+        // 有序子列表引用独立 abstractNum（id=1），无需 startOverride
+        QVERIFY2(numXml.contains("<w:num w:numId=\"2\"><w:abstractNumId w:val=\"1\"/></w:num>"),
                  qPrintable(numXml));
+        QVERIFY2(!numXml.contains("startOverride"), qPrintable(numXml));
         // 三层缩进定义齐备
         QVERIFY2(numXml.contains("<w:ind w:left=\"1440\" w:hanging=\"360\"/>"), qPrintable(numXml));
         QVERIFY2(numXml.contains("<w:ind w:left=\"2160\" w:hanging=\"360\"/>"), qPrintable(numXml));
@@ -368,6 +387,67 @@ private slots:
         QVERIFY(xml.contains("<w:numPr>"));             // 任务列表用无序列表（bullet）表示
         QVERIFY(xml.contains("Segoe UI Symbol"));       // 复选框 run 指定符号字体
         QVERIFY(!xml.contains("</w:r>>"));              // 无孤立 ">" 残留
+    }
+
+    void testTaskUlOlNestedNumbering() {
+        // 回归：任务列表 → 普通无序列表 → 普通有序列表 三级嵌套（真实 TipTap 结构）。
+        // 三级有序列表两个 item 必须共享同一 numId、引用独立 decimal abstractNum，
+        // Word 才连续编号 1/2；曾因共享 abstractNum + startOverride 落在嵌套 ilvl，
+        // 部分渲染器（LibreOffice/WPS）逐段重启，两项全显示 1。
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx(
+            "<ul data-type=\"taskList\">"
+            "<li data-type=\"taskItem\" data-checked=\"false\">"
+            "<label><input type=\"checkbox\"><span></span></label><div><p>任务1</p></div></li>"
+            "<li data-type=\"taskItem\" data-checked=\"true\"><label><input type=\"checkbox\" checked=\"checked\">"
+            "<span></span></label><div><p>任务2</p><ul><li><p>列表2-1</p></li>"
+            "<li><p>列表2-2</p><ol><li><p>已完成XXX工作，合格率100%</p></li>"
+            "<li><p>已完成YYY工作，成功率99.9%，符合预期</p></li></ol></li></ul></div></li></ul>",
+            dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QProcess unzip; unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString docXml = QString::fromUtf8(unzip.readAllStandardOutput());
+
+        // 三级有序列表两个 item 共享 numId=3、ilvl=2（连续编号 1/2 的前提）
+        auto paraOf = [](const QString &xml, const QString &text) {
+            QRegularExpression re("<w:p>([\\s\\S]*?)</w:p>");
+            auto it = re.globalMatch(xml);
+            while (it.hasNext()) {
+                const QString para = it.next().captured(1);
+                if (para.contains(text)) return para;
+            }
+            return QString();
+        };
+        const QString paraXXX = paraOf(docXml, "已完成XXX工作");
+        const QString paraYYY = paraOf(docXml, "已完成YYY工作");
+        QVERIFY2(paraXXX.contains("<w:ilvl w:val=\"2\"/><w:numId w:val=\"3\"/>"), qPrintable(paraXXX));
+        QVERIFY2(paraYYY.contains("<w:ilvl w:val=\"2\"/><w:numId w:val=\"3\"/>"), qPrintable(paraYYY));
+        QRegularExpression re("<w:numId w:val=\"(\\d+)\"/>");
+        auto it = re.globalMatch(docXml);
+        QSet<QString> ids;
+        while (it.hasNext()) ids.insert(it.next().captured(1));
+        QCOMPARE(ids.size(), 3);   // taskList + 嵌套 ul + 嵌套 ol = 3 个 numId
+
+        // numbering.xml：共享 bullet(0) + 唯一有序列表的独立 abstractNum(1)
+        unzip.start("unzip", QStringList() << "-p" << out << "word/numbering.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString numXml = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY2(numXml.contains("<w:num w:numId=\"3\"><w:abstractNumId w:val=\"1\"/></w:num>"),
+                 qPrintable(numXml));
+        QVERIFY2(!numXml.contains("startOverride"), qPrintable(numXml));
+        // lvlText 须引用当前层级自己的序号：%1=ilvl0、%2=ilvl1、%3=ilvl2。
+        // 曾统一写 "%1."，ilvl=2 的嵌套有序项显示 ilvl=0 计数器（该 numId 从不在
+        // ilvl=0 出现，恒为 1），导致所有嵌套项都显示 1。
+        QRegularExpression lvlRe("<w:lvl w:ilvl=\"2\">\\s*<w:start w:val=\"1\"/>"
+                                 "\\s*<w:numFmt w:val=\"decimal\"/>"
+                                 "\\s*<w:lvlText w:val=\"([^\"]+)\"/>");
+        const auto lvl2 = lvlRe.match(numXml);
+        QVERIFY2(lvl2.hasMatch(), qPrintable(numXml));
+        QVERIFY2(lvl2.captured(1) == "%3.", qPrintable(lvl2.captured(1)));
     }
 
     void testBlockquoteCenteredParagraphSinglePPr() {

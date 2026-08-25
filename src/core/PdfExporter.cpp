@@ -47,9 +47,11 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "color:#555;margin:0.5em 0;}"
         "[data-type=\"block-math\"]{display:block;text-align:center;margin:1em 0;}"
         "ul[data-type=\"taskList\"]{list-style:none;padding-left:0;}"
-        "ul[data-type=\"taskList\"] li{display:flex;align-items:flex-start;gap:8px;}"
-        "ul[data-type=\"taskList\"] li label{margin-top:3px;}"
-        "ul[data-type=\"taskList\"] li>div p{margin:0;}"
+        // 子代选择器 > 限定直接 li：嵌套在任务项内的通用列表 li（如 列表2-2 下再嵌 <ol>）
+        // 若也命中 flex 会被当成 flex 容器，其子元素 p 与嵌套 <ol> 排成一行、序号消失（与 editor.css 对齐）
+        "ul[data-type=\"taskList\"] > li{display:flex;align-items:flex-start;gap:8px;}"
+        "ul[data-type=\"taskList\"] > li label{margin-top:3px;}"
+        "ul[data-type=\"taskList\"] > li > div > p{margin:0;}"
         "}"
         "%2"
         "</style>"
