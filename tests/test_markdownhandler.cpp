@@ -162,6 +162,41 @@ private slots:
         }
     }
 
+    void testDeepNestedListRoundTrip() {
+        // Qt toMarkdown 对 3 层以上嵌套列表的缩进不自洽（第三层 8 空格、第四层
+        // 6 空格，且 8 空格无法被 setMarkdown 重解析），多次往返后深层子列表被
+        // 拍平到父项文本中。修复：通用列表像任务列表一样自绘（子项缩进 = 父项
+        // 内容列），保证深层嵌套往返稳定。
+        struct Case { const char *md; };
+        const Case cases[] = {
+            // 无序>无序>有序（用户报告：二层嵌套有序列表被拍平）
+            {"- 列表1\n- 列表2\n  - 嵌套列表2-1\n  - 嵌套列表2-2\n"
+             "    1. 二层嵌套有序2-2-1\n    2. 二层嵌套有序2-2-2\n"},
+            // 有序>有序>有序
+            {"1. 一层\n  1. 二层\n    1. 三层\n    2. 三层2\n"},
+            // 无序>有序>无序
+            {"- 一层\n  1. 二层\n    1. 三层\n"},
+            // 四层（无序>无序>有序>无序）
+            {"- A\n  - B\n    1. C\n        - D\n"},
+            // 任务列表深层嵌套（回归）
+            {"- [ ] 任务1\n  - [ ] 任务2\n    - [ ] 任务3\n"},
+        };
+        for (const Case &c : cases) {
+            const QString md1 = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(c.md)).trimmed();
+            const QString md2 = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(md1)).trimmed();
+            // 深层子列表不得被拍平到父项文本中
+            QVERIFY2(!md1.contains("嵌套列表2-2 1.") && !md2.contains("嵌套列表2-2 1."),
+                     qPrintable(QString("深层子列表不得拍平，往返1: %1\n往返2: %2")
+                                .arg(md1, md2)));
+            // 两次往返应稳定于同一缩进方案
+            QVERIFY2(md1 == md2,
+                     qPrintable(QString("深层嵌套列表应往返稳定，往返1:\n%1\n往返2:\n%2")
+                                .arg(md1, md2)));
+        }
+    }
+
     void testBasicConversion() {
         QString md = "# Hello\n\nWorld";
         QString html = MarkdownHandler::toHtml(md);
@@ -1042,6 +1077,72 @@ private slots:
         QCOMPARE(html.count("data-type=\"taskList\""), 2);
         QString md2 = MarkdownHandler::fromHtml(html);
         QCOMPARE(md2, md1);
+    }
+
+    void testTaskItemNestedGeneralListRoundTrip() {
+        // 任务条目内嵌通用列表（TipTap taskItem nested:true 的 content 为
+        // 'paragraph block*'，可容纳 <ol>/<ul>）。修复前：1. 行被拍平成条目
+        // 尾部文本并转义为 "1\."，且被空行与前一任务割裂（用户报告）。
+        struct Case { const char *md; bool expectOl; };
+        const Case cases[] = {
+            // 用户报告：任务项尾随普通有序列表（缩进 4 空格）
+            {"- [ ] 任务1\n- [x] 任务2\n  - [ ] 任务2-1\n  - [x] 任务2-2\n"
+             "    1. 已完成XXX工作，合格率100%\n"
+             "    2. 已完成YYY工作，成功率99.9%，符合预期\n", true},
+            // 任务项内嵌无序列表
+            {"- [x] 顶层\n  - 子项A\n  - 子项B\n", false},
+            // 任务项内嵌通用 ul，其 li 再嵌通用 ol（用户报告：往返不失真但
+            // 渲染把三级列表首项拼到二级项同行——CSS 修复见 editor.css）
+            {"- [ ] 任务1\n- [x] 任务2\n  - 列表2-1\n  - 列表2-2\n"
+             "    1. 已完成XXX工作，合格率100%\n"
+             "    2. 已完成YYY工作，成功率99.9%，符合预期\n", true},
+            // 嵌套任务列表中某条目内嵌有序列表（更深的通用列表）
+            {"- [x] 父\n  - [x] 子\n    1. 子项1\n    2. 子项2\n", true},
+            // 通用列表后再接同级任务条目（嵌套与兄弟混排）
+            {"- [x] A\n  - [x] A-1\n    1. sub1\n  - [x] A-2\n", true},
+        };
+        for (const Case &c : cases) {
+            const QString html1 = MarkdownHandler::toHtml(c.md);
+            const QString md1 = MarkdownHandler::fromHtml(html1).trimmed();
+            const QString md2 = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(md1)).trimmed();
+            // 关键：通用列表不得被拍平/转义进任务条目文本
+            QVERIFY2(!md1.contains("1\\.") && !md1.contains("sub1 2."),
+                     qPrintable(QString("任务项内通用列表不得拍平，往返1:\n%1\n\n往返2:\n%2")
+                                .arg(md1, md2)));
+            QVERIFY2(!md2.contains("1\\.") && !md2.contains("sub1 2."),
+                     qPrintable(QString("任务项内通用列表不得拍平，往返1:\n%1\n\n往返2:\n%2")
+                                .arg(md1, md2)));
+            // 两次往返应稳定
+            QVERIFY2(md1 == md2,
+                     qPrintable(QString("任务项内通用列表应往返稳定，往返1:\n%1\n\n往返2:\n%2")
+                                .arg(md1, md2)));
+            // toHtml 应产出嵌套通用列表于任务条目 div 内
+            // （taskList 渲染为 <ul data-type=...>，通用列表为 <ul><li> / <ol><li>）
+            const bool hasNested = c.expectOl
+                ? html1.contains("<ol><li>")
+                : html1.contains("<ul><li>");
+            QVERIFY2(hasNested,
+                     qPrintable("任务项内应产出嵌套通用列表，实际: " + html1));
+        }
+    }
+
+    void testGeneralListNestedTaskListRoundTrip() {
+        // 通用列表内嵌任务列表（用户报告）：修复前任务行被提升到顶层、
+        // 且通用列表下多一个空行。期望：任务列表保持嵌套、无额外空行。
+        const QString md1 =
+            "1. 有序列表1\n2. 有序列表2\n  - [ ] 任务2-1\n  - [x] 任务2-2\n"
+            "    - 已完成XXX工作，合格率100%\n"
+            "    - 已完成YYY工作，成功率99.9%，符合预期\n";
+        const QString html1 = MarkdownHandler::toHtml(md1);
+        // toHtml 应把任务列表嵌进通用列表条目的 <li> 内
+        QVERIFY2(html1.contains("有序列表2</p><ul data-type=\"taskList\">"),
+                 qPrintable("任务列表应嵌套在通用列表条目内，实际: " + html1));
+        const QString md2 = MarkdownHandler::fromHtml(html1).trimmed();
+        QCOMPARE(md2, md1.trimmed());
+        const QString md3 = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(md2)).trimmed();
+        QCOMPARE(md3, md2);   // 多次往返稳定
     }
 
     void testNestedListRoundTrip() {

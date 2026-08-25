@@ -189,13 +189,16 @@ body.dark .ProseMirror th {
     padding-left: 0;
 }
 
-.ProseMirror ul[data-type="taskList"] li {
+/* 用子代选择器 > 限定「直接 li」：任务项 li 是 flex（复选框+内容对齐），
+   但嵌套在任务项内的通用列表 li（列表2-2 等）若也命中 flex 会被当成
+   flex 容器，其子元素 p 与嵌套 <ol> 排成一行，渲染错乱 */
+.ProseMirror ul[data-type="taskList"] > li {
     display: flex;
     align-items: flex-start;
     gap: 8px;
 }
 
-.ProseMirror ul[data-type="taskList"] li label {
+.ProseMirror ul[data-type="taskList"] > li label {
     margin-top: 3px;
 }
 

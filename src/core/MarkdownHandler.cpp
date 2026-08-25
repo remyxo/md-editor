@@ -554,21 +554,78 @@ static QString stripWrapIndent(QString line)
     return line;
 }
 
-struct TaskParseItem {
-    int depth;
-    bool checked;
-    QString text;
+// 统一列表行（任务项或通用列表项）解析出的条目
+struct MdListItem {
+    int depth;      // 缩进层级（每层 2 空格）
+    bool isTask;    // 任务项（- [x]）或通用列表项
+    bool checked;   // 任务项：是否勾选
+    QString text;   // 行内内容（原始文本，待子转换）
+    int listType;   // 通用列表：0=ul, 1=ol
+    int number;     // 通用有序列表：起始编号
 };
 
-// 递归构建一层 taskList HTML：depth 相同的条目互为兄弟，
-// 更深的条目嵌入前一条目内容（div）末尾，符合 TipTap taskItem 的
-// content 'paragraph block*'（nested:true）契约。
-static QString buildTaskListLevel(const QList<TaskParseItem> &items, int &idx,
-                                  int depth, QStringList &subContents)
+// 解析一行 MD 列表行；非列表行返回 false。任务项优先于通用无序（- [x] 形）
+static bool parseMdListLine(const QString &line, MdListItem &out)
 {
-    QString html = QStringLiteral("<ul data-type=\"taskList\">");
-    while (idx < items.size() && items[idx].depth == depth) {
-        const TaskParseItem &it = items[idx++];
+    static const QRegularExpression taskRe(
+        "^(\\s*)[-*+]\\s+\\[([ xX])\\](?:\\s+(.*))?$");
+    static const QRegularExpression olRe(
+        "^(\\s*)(\\d{1,9})[.)]\\s+(\\S.*)$");
+    static const QRegularExpression ulRe(
+        "^(\\s*)[-*+]\\s+(\\S.*)$");
+    auto tm = taskRe.match(line);
+    if (tm.hasMatch()) {
+        out.depth = tm.captured(1).length() / 2;
+        out.isTask = true;
+        out.checked = tm.captured(2).toLower() == "x";
+        out.text = tm.captured(3).trimmed();
+        return true;
+    }
+    auto om = olRe.match(line);
+    if (om.hasMatch()) {
+        out.depth = om.captured(1).length() / 2;
+        out.isTask = false;
+        out.listType = 1;
+        out.number = om.captured(2).toInt();
+        out.text = om.captured(3).trimmed();
+        return true;
+    }
+    auto um = ulRe.match(line);
+    if (um.hasMatch()) {
+        out.depth = um.captured(1).length() / 2;
+        out.isTask = false;
+        out.listType = 0;
+        out.text = um.captured(2).trimmed();
+        return true;
+    }
+    return false;
+}
+
+// 递归构建一层列表容器（任务或通用）HTML。idx 指向本层首个条目；连续同类
+// （同为任务 / 同为同型通用列表）条目组成同一容器；更深的条目递归嵌入上一
+// 容器末尾条目的内容中，符合 TipTap 列表项 content 'paragraph block*'
+// （nested:true）契约 —— 任务条目 div 可容纳通用列表，通用 li 也可容纳任务列表。
+static QString buildMdListContainer(const QList<MdListItem> &items, int &idx,
+                                    int depth, QStringList &subContents)
+{
+    const MdListItem &first = items[idx];
+    const bool isTask = first.isTask;
+    const int listType = isTask ? -1 : first.listType;
+    QString html;
+    if (isTask)
+        html = QStringLiteral("<ul data-type=\"taskList\">");
+    else if (listType == 1)
+        html = first.number > 1
+            ? QStringLiteral("<ol start=\"%1\">").arg(first.number)
+            : QStringLiteral("<ol>");
+    else
+        html = QStringLiteral("<ul>");
+
+    while (idx < items.size()
+           && items[idx].depth == depth
+           && items[idx].isTask == isTask
+           && (isTask || items[idx].listType == listType)) {
+        const MdListItem &it = items[idx++];
         // 条目行内内容借嵌套 QTextDocument 转换（保留粗体/斜体/链接等）；
         // 下标 ~x~ 先占位（Qt 会误判为删除线），由 toHtml 后处理统一还原
         QString inner;
@@ -585,38 +642,54 @@ static QString buildTaskListLevel(const QList<TaskParseItem> &items, int &idx,
             if (inner.isEmpty())
                 inner = QStringLiteral("<p></p>");
         }
-        html += QStringLiteral("<li data-type=\"taskItem\" data-checked=\"")
-                + (it.checked ? QStringLiteral("true") : QStringLiteral("false"))
-                + QStringLiteral("\"><label><input type=\"checkbox\"")
-                + (it.checked ? QStringLiteral(" checked=\"checked\"") : QString())
-                + QStringLiteral("><span></span></label><div>") + inner;
-        if (idx < items.size() && items[idx].depth > depth)
-            html += buildTaskListLevel(items, idx, depth + 1, subContents);
-        html += QStringLiteral("</div></li>");
+        if (isTask) {
+            html += QStringLiteral("<li data-type=\"taskItem\" data-checked=\"")
+                    + (it.checked ? QStringLiteral("true") : QStringLiteral("false"))
+                    + QStringLiteral("\"><label><input type=\"checkbox\"")
+                    + (it.checked ? QStringLiteral(" checked=\"checked\"") : QString())
+                    + QStringLiteral("><span></span></label><div>") + inner;
+        } else {
+            html += QStringLiteral("<li>") + inner;
+        }
+        // 嵌套更深条目：可能有多个不同容器的连续块（如任务列表后紧跟通用列表）
+        if (idx < items.size() && items[idx].depth > depth) {
+            while (idx < items.size() && items[idx].depth > depth) {
+                const int childDepth = items[idx].depth;
+                html += buildMdListContainer(items, idx, childDepth, subContents);
+            }
+        }
+        if (isTask)
+            html += QStringLiteral("</div></li>");
+        else
+            html += QStringLiteral("</li>");
     }
-    html += QStringLiteral("</ul>");
+    html += isTask ? QStringLiteral("</ul>")
+                   : (listType == 1 ? QStringLiteral("</ol>")
+                                    : QStringLiteral("</ul>"));
     return html;
 }
 
-// 一组连续任务列表行 → TipTap taskList 契约 HTML（2 空格缩进表示嵌套）
+// 一组连续列表行（任务项 + 更深缩进的通用列表项）→ TipTap 契约 HTML
+// （2 空格缩进表示嵌套）。绕过 setMarkdown 整体自绘：Qt 的 class=unchecked
+// 格式 TipTap 不认，且任务项内嵌通用列表 Qt setMarkdown 无法产出。
 static QString buildTaskListHtml(const QStringList &taskLines,
                                  QStringList &subContents)
 {
-    static const QRegularExpression lineRe(
-        "^(\\s*)[-*+]\\s+\\[([ xX])\\](?:\\s+(.*))?$");
-    QList<TaskParseItem> items;
+    QList<MdListItem> items;
     int prevDepth = -1; // 首行缩进时钳制到 0，防止归零失败
     for (const QString &l : taskLines) {
-        auto m = lineRe.match(l);
-        if (!m.hasMatch()) continue;
-        int depth = m.captured(1).length() / 2;
-        if (depth > prevDepth + 1) depth = prevDepth + 1; // 防止非法深度跳变
-        items.append({depth, m.captured(2).toLower() == "x",
-                      m.captured(3).trimmed()});
-        prevDepth = depth;
+        MdListItem it;
+        if (!parseMdListLine(l, it)) continue;
+        if (it.depth > prevDepth + 1) it.depth = prevDepth + 1; // 防止非法深度跳变
+        items.append(it);
+        prevDepth = it.depth;
     }
+    if (items.isEmpty()) return QString();
     int idx = 0;
-    return buildTaskListLevel(items, idx, 0, subContents);
+    QString html;
+    while (idx < items.size())   // 顶层可能含多个独立容器（任务后跟通用列表等）
+        html += buildMdListContainer(items, idx, items[idx].depth, subContents);
+    return html;
 }
 
 // fromHtml 方向：从 <ul 开标签位置平衡扫描，返回配对 </ul> 的起始位置；失败返回 -1
@@ -692,6 +765,11 @@ static QString taskItemInlineText(QString content)
     return kept.join("\n");
 }
 
+// 前向声明：定义在下方（generalListInnerToMd 的辅助，任务项内嵌通用列表也用它）
+static int findMatchingListClose(const QString &s, int openTagStart, bool ordered);
+static QString generalListInnerToMd(const QString &inner, int indent,
+                                    bool ordered, int start);
+
 // 任务列表 HTML → GFM markdown（indent 为嵌套层级，每层 2 空格）。
 // 依赖调用顺序：行内代码/上下标/高亮/公式已先行占位保护，条目文本中的
 // ZZ* 占位符原样保留，最终在 fromHtml 逆序还原阶段统一还原。
@@ -730,19 +808,54 @@ static QString taskListInnerToMd(const QString &inner, int indent)
                 content.remove(QRegularExpression(
                     "<label\\b[^>]*>.*?</label>",
                     QRegularExpression::DotMatchesEverythingOption));
-                // 2) 嵌套任务列表递归提取（须在剥离标签前进行）
+                // 2) 嵌套任务列表/通用列表递归提取（须在剥离标签前进行）。
+                //    任务项 div 内可同时含 taskList 与通用 <ul>/<ol>（TipTap
+                //    taskItem content 'paragraph block*'）。按出现位置最早者优先，
+                //    通用列表复用 generalListInnerToMd（缩进 = 任务层级+1 层）。
+                static const QRegularExpression gUlRe(
+                    "<ul\\b(?![^>]*\\bdata-type\\s*=\\s*\"taskList\")[^>]*>");
+                static const QRegularExpression gOlRe("<ol\\b[^>]*>");
+                static const QRegularExpression gOlStartRe(
+                    "\\bstart\\s*=\\s*\"?(\\d+)\"?");
                 QString nestedMd;
                 while (true) {
                     auto um = ulOpenRe.match(content);
-                    if (!um.hasMatch()) break;
-                    int closeStart = findMatchingUlClose(content, um.capturedStart());
-                    if (closeStart < 0) break;
-                    nestedMd += taskListInnerToMd(
-                        content.mid(um.capturedEnd(),
-                                    closeStart - um.capturedEnd()),
-                        indent + 1);
-                    content.remove(um.capturedStart(),
-                                   closeStart + 5 - um.capturedStart()); // 含 </ul>
+                    auto gm = gUlRe.match(content);
+                    auto om = gOlRe.match(content);
+                    const int tp = um.hasMatch() ? um.capturedStart() : -1;
+                    const int gp = gm.hasMatch() ? gm.capturedStart() : -1;
+                    const int op = om.hasMatch() ? om.capturedStart() : -1;
+                    if (tp < 0 && gp < 0 && op < 0) break;
+                    int best = tp, type = 0;   // 0=taskList 1=通用ul 2=通用ol
+                    if (gp >= 0 && (best < 0 || gp < best)) { best = gp; type = 1; }
+                    if (op >= 0 && (best < 0 || op < best)) { best = op; type = 2; }
+                    if (type == 0) {
+                        int closeStart = findMatchingUlClose(content, best);
+                        if (closeStart < 0) break;
+                        nestedMd += taskListInnerToMd(
+                            content.mid(um.capturedEnd(),
+                                        closeStart - um.capturedEnd()),
+                            indent + 1);
+                        content.remove(best, closeStart + 5 - best);   // 含 </ul>
+                    } else if (type == 1) {
+                        int closeStart = findMatchingListClose(content, best, false);
+                        if (closeStart < 0) break;
+                        nestedMd += generalListInnerToMd(
+                            content.mid(gm.capturedEnd(),
+                                        closeStart - gm.capturedEnd()),
+                            (indent + 1) * 2, false, 1);
+                        content.remove(best, closeStart + 5 - best);   // 含 </ul>
+                    } else {
+                        auto sm = gOlStartRe.match(om.captured());
+                        const int s2 = sm.hasMatch() ? sm.captured(1).toInt() : 1;
+                        int closeStart = findMatchingListClose(content, best, true);
+                        if (closeStart < 0) break;
+                        nestedMd += generalListInnerToMd(
+                            content.mid(om.capturedEnd(),
+                                        closeStart - om.capturedEnd()),
+                            (indent + 1) * 2, true, s2);
+                        content.remove(best, closeStart + 5 - best);   // 含 </ol>
+                    }
                 }
                 // 3) 行内内容 → 文本；首行随复选框，续行缩进 2 空格
                 QString text = taskItemInlineText(content);
@@ -762,6 +875,158 @@ static QString taskListInnerToMd(const QString &inner, int indent)
         pos = m.capturedEnd();
     }
     return md;
+}
+
+// fromHtml 方向：从 <ul 或 <ol 开标签位置平衡扫描，返回配对闭合标签起始位置
+static int findMatchingListClose(const QString &s, int openTagStart, bool ordered)
+{
+    const QString tag = ordered ? "ol" : "ul";
+    QRegularExpression tagRe("<(/?)" + tag + "\\b[^>]*>");
+    int depth = 0;
+    int pos = openTagStart;
+    while (true) {
+        auto m = tagRe.match(s, pos);
+        if (!m.hasMatch()) return -1;
+        if (m.captured(1).isEmpty()) ++depth;   // <ul ...> / <ol ...>
+        else if (--depth == 0) return m.capturedStart();
+        pos = m.capturedEnd();
+    }
+}
+
+// 通用列表（<ul>/<ol>，非任务）HTML → GFM markdown。
+// Qt toMarkdown 对 3 层以上嵌套列表的缩进输出不自洽（第三层 8 空格、第四层
+// 6 空格，且 8 空格无法被 setMarkdown 重解析，多次往返后深层子列表被拍平），
+// 故通用列表不走 setHtml→toMarkdown，而是像任务列表一样自绘。
+// 缩进规则：子列表缩进 = 父项内容列（父缩进 + 父 marker 宽，无序 "- "=2、
+// 有序 "N. "=数字位数+2），Qt setMarkdown 可稳定重解析该缩进。
+// 调用前提：行内代码/上下标/高亮/公式/删除线/span 已为 ZZ* 占位符（原样保留），
+// 条目中残留的加粗/斜体/链接由 taskItemInlineText 转 MD 语法。
+// indent 为外层列表起始缩进（顶层 0）；ordered 为列表类型；start 为有序起始编号。
+static QString generalListInnerToMd(const QString &inner, int indent,
+                                    bool ordered, int start)
+{
+    static const QRegularExpression liTagRe("<(/?)li\\b[^>]*>");
+    static const QRegularExpression taskUlRe(
+        "<ul\\b[^>]*\\bdata-type\\s*=\\s*\"taskList\"[^>]*>");
+    static const QRegularExpression gUlRe(
+        "<ul\\b(?![^>]*\\bdata-type\\s*=\\s*\"taskList\")[^>]*>");
+    static const QRegularExpression olOpenRe("<ol\\b[^>]*>");
+    static const QRegularExpression olStartRe("\\bstart\\s*=\\s*\"?(\\d+)\"?");
+
+    QString md;
+    int n = start;
+    int depth = 0;
+    int pos = 0;
+    int itemStart = -1;
+    while (true) {
+        auto m = liTagRe.match(inner, pos);
+        if (!m.hasMatch()) break;
+        if (m.captured(1).isEmpty()) {           // <li ...>
+            if (depth == 0) itemStart = m.capturedEnd();
+            ++depth;
+        } else {                                  // </li>
+            --depth;
+            if (depth == 0 && itemStart >= 0) {
+                QString content = inner.mid(itemStart,
+                                            m.capturedStart() - itemStart);
+                // 当前条目 marker 宽（其内容列 = indent + markerWidth）
+                const int markerWidth = ordered
+                    ? QString::number(n).size() + 2 : 2;
+                // 1) 嵌套列表递归提取（任务列表/通用 <ul>/<ol> 均可、顺序不定；
+                //    须在剥离标签前）。任务列表复用 taskListInnerToMd，
+                //    其 indent 为层级（每层 2 空格）= 条目内容列换算。
+                QString nestedMd;
+                while (true) {
+                    auto tum = taskUlRe.match(content);
+                    auto gum = gUlRe.match(content);
+                    auto om = olOpenRe.match(content);
+                    const int tp = tum.hasMatch() ? tum.capturedStart() : -1;
+                    const int up = gum.hasMatch() ? gum.capturedStart() : -1;
+                    const int op = om.hasMatch() ? om.capturedStart() : -1;
+                    if (tp < 0 && up < 0 && op < 0) break;
+                    int best = tp, type = 0;   // 0=任务列表 1=通用ul 2=通用ol
+                    if (up >= 0 && (best < 0 || up < best)) { best = up; type = 1; }
+                    if (op >= 0 && (best < 0 || op < best)) { best = op; type = 2; }
+                    if (type == 0) {
+                        int c = findMatchingUlClose(content, best);
+                        if (c < 0) break;
+                        nestedMd += taskListInnerToMd(
+                            content.mid(tum.capturedEnd(), c - tum.capturedEnd()),
+                            (indent + markerWidth) / 2);
+                        content.remove(best, c + 5 - best);   // 含 </ul>
+                    } else if (type == 1) {
+                        int c = findMatchingListClose(content, best, false);
+                        if (c < 0) { content.remove(best, 1); continue; }
+                        nestedMd += generalListInnerToMd(
+                            content.mid(gum.capturedEnd(), c - gum.capturedEnd()),
+                            indent + markerWidth, false, 1);
+                        content.remove(best, c + 5 - best);   // 含 </ul>
+                    } else {
+                        auto sm = olStartRe.match(om.captured());
+                        const int s2 = sm.hasMatch() ? sm.captured(1).toInt() : 1;
+                        int c = findMatchingListClose(content, best, true);
+                        if (c < 0) { content.remove(best, 1); continue; }
+                        nestedMd += generalListInnerToMd(
+                            content.mid(om.capturedEnd(), c - om.capturedEnd()),
+                            indent + markerWidth, true, s2);
+                        content.remove(best, c + 5 - best);   // 含 </ol>
+                    }
+                }
+                // 2) 行内内容 → MD 文本
+                QString text = taskItemInlineText(content);
+                QString marker = ordered
+                    ? QString("%1. ").arg(n) : QStringLiteral("- ");
+                QString pad(indent, ' ');
+                md += pad + marker;
+                if (!text.isEmpty()) {
+                    QStringList textLines = text.split('\n');
+                    md += textLines.first();
+                    // 续行缩进 = 条目内容列（缩进 + marker 宽）
+                    QString contPad(indent + markerWidth, ' ');
+                    for (int k = 1; k < textLines.size(); ++k)
+                        md += "\n" + contPad + textLines[k];
+                }
+                md += "\n";
+                if (ordered) ++n;
+                md += nestedMd;
+                itemStart = -1;
+            }
+        }
+        pos = m.capturedEnd();
+    }
+    return md;
+}
+
+// 判断位置 pos 是否处于未闭合的通用列表（<ul>/<ol>，非 taskList）内。
+// fromHtml 步骤 5 用它跳过「嵌在通用列表内的任务列表」——那些由步骤 5b 的
+// generalListInnerToMd 在序列化通用列表时一并处理（保留嵌套缩进），否则
+// 嵌套 taskList 会被步骤 5 提升为顶层占位符，往返缩进/层级失真。
+static bool isInsideGeneralList(const QString &s, int pos)
+{
+    static const QRegularExpression olTagRe("<(/?)ol\\b[^>]*>");
+    static const QRegularExpression ulTagRe(
+        "<(/?)ul\\b(?![^>]*\\bdata-type\\s*=\\s*\"taskList\")[^>]*>");
+    int depth = 0;
+    int scan = 0;
+    while (scan < pos) {
+        auto om = olTagRe.match(s, scan);
+        auto um = ulTagRe.match(s, scan);
+        const int op = om.hasMatch() ? om.capturedStart() : -1;
+        const int up = um.hasMatch() ? um.capturedStart() : -1;
+        if (op < 0 && up < 0) break;
+        // match 从 scan 开始找，结果可能落在 pos 之后——不计入深度，直接终止
+        // （首个标签已越过 pos，后续更不可能在 pos 之前）。
+        if (up < 0 || (op >= 0 && op < up)) {
+            if (op >= pos) break;
+            depth += om.captured(1).isEmpty() ? 1 : -1;
+            scan = om.capturedEnd();
+        } else {
+            if (up >= pos) break;
+            depth += um.captured(1).isEmpty() ? 1 : -1;
+            scan = um.capturedEnd();
+        }
+    }
+    return depth > 0;
 }
 
 QString MarkdownHandler::toHtml(const QString &markdown)
@@ -960,11 +1225,30 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             processed += '\n';
             lastBlock = BT_NONE;
         } else if (isTaskItemLine(line)) {
-            // 任务列表：收集连续行（含缩进嵌套），绕过 setMarkdown 整体转为
-            // TipTap 契约 HTML（Qt 自家 class=unchecked/checked 格式 TipTap 不认）
+            // 任务列表：收集连续行（任务项 + 比最近任务行缩进更深的通用列表行，
+            // 含缩进嵌套），绕过 setMarkdown 整体转为 TipTap 契约 HTML（Qt 自家
+            // class=unchecked/checked 格式 TipTap 不认；任务项内嵌通用列表
+            // Qt setMarkdown 也无法产出）。同层/更浅的通用列表行不吸收，
+            // 仍由通用列表分支独立处理（避免行为回归）。
             QStringList taskLines;
-            while (i < lines.size() && isTaskItemLine(lines[i]))
-                taskLines << lines[i++];
+            int lastTaskIndent = -1;
+            while (i < lines.size()) {
+                const QString &l = lines[i];
+                if (isTaskItemLine(l)) {
+                    taskLines << l;
+                    int ind = 0;
+                    while (ind < l.size() && l.at(ind) == QLatin1Char(' ')) ++ind;
+                    lastTaskIndent = ind;
+                    ++i;
+                } else if (isListItemLine(l) && lastTaskIndent >= 0) {
+                    int ind = 0;
+                    while (ind < l.size() && l.at(ind) == QLatin1Char(' ')) ++ind;
+                    if (ind > lastTaskIndent) { taskLines << l; ++i; }
+                    else break;
+                } else {
+                    break;
+                }
+            }
             --i; // for 循环会 ++i
             // 前一行非空且未以空行结尾时补空行，避免占位符被并入前一区块
             // （同隔离规则：也覆盖 $$ 占位符后紧跟任务列表的情况）
@@ -973,6 +1257,39 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             taskLists << buildTaskListHtml(taskLines, subContents);
             processed += "ZZTL" + QString::number(taskLists.size() - 1) + "ZZ\n";
             lastBlock = BT_LIST;
+        } else if (isListItemLine(line)) {
+            // 通用列表（非任务起始块）：前瞻检查本连续列表块是否含任务项。
+            // 若含（如「通用有序列表下嵌套任务列表」），Qt setMarkdown 无法在
+            // 通用列表下产出 TipTap 任务列表契约（任务行会被拍平/提升），
+            // 整块走统一自绘；否则逐行直通既有路径（保持纯通用列表行为不变）。
+            int j = i;
+            bool hasTask = false;
+            while (j < lines.size() && isListItemLine(lines[j])) {
+                if (isTaskItemLine(lines[j])) { hasTask = true; break; }
+                ++j;
+            }
+            if (hasTask) {
+                QStringList listLines;
+                while (i < lines.size() && isListItemLine(lines[i]))
+                    listLines << lines[i++];
+                --i; // for 循环会 ++i
+                if (!processed.isEmpty() && !processed.endsWith("\n\n"))
+                    processed += '\n';
+                taskLists << buildTaskListHtml(listLines, subContents);
+                processed += "ZZTL" + QString::number(taskLists.size() - 1) + "ZZ\n";
+                lastBlock = BT_LIST;
+            } else {
+                // 隔离：正文后紧跟列表时补空行（与 else 分支一致）
+                if (lastBlock == BT_PARA) processed += '\n';
+                QString cl = line;
+                cl = normalizeTableRowForQt(cl);
+                cl = extractEscapedEquals(cl, escapedEqBackups);
+                cl = extractSubscripts(cl, subContents);
+                cl = extractFootnoteRefs(cl, footnoteRefs);
+                cl = extractHtmlInlineElements(cl, htmlInlineBackups);
+                processed += cl + '\n';
+                lastBlock = BT_LIST;
+            }
         } else if (isImageOnlyLine(line)) {
             // 图片独占行 → 强制独立块级图片（前后空行隔离），使 setMarkdown 产出
             // <p><img/></p>（后处理解包为裸 <img>）。否则 md4c 的 lazy-continuation
@@ -2117,6 +2434,12 @@ QString MarkdownHandler::fromHtml(const QString &html)
         while (true) {
             auto m = ulOpenRe.match(processed, offset);
             if (!m.hasMatch()) break;
+            // 嵌在通用列表内的 taskList 不在此提取（提升会丢失嵌套缩进），
+            // 留给步骤 5b 的 generalListInnerToMd 一并序列化
+            if (isInsideGeneralList(processed, m.capturedStart())) {
+                offset = m.capturedStart() + 1;
+                continue;
+            }
             int closeStart = findMatchingUlClose(processed, m.capturedStart());
             if (closeStart < 0) { offset = m.capturedStart() + 1; continue; }
             QString md2 = taskListInnerToMd(
@@ -2395,7 +2718,12 @@ QString MarkdownHandler::fromHtml(const QString &html)
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
         }
-        // <div>（块级容器，排除 data-type 内部结构）
+        // <div>（块级容器，排除 data-type 内部结构）。
+        // TipTap taskItem 的结构性内容容器 <div>（紧跟 </label>）是编辑器契约
+        // 结构而非用户手写 div，不保护：保留原始标签，由 taskListInnerToMd 的
+        // taskItemInlineText 剥离。否则嵌套任务列表（嵌在通用列表内，经步骤
+        // 5b 的 generalListInnerToMd 序列化）拿到 ZZDV 占位符，条目文本变成
+        // 原始 <div> HTML。
         offset = 0;
         QRegularExpression divRe(
             R"(<div\b(?![^>]*\bdata-type\s*=)[^>]*>(.*?)</div>)",
@@ -2403,6 +2731,11 @@ QString MarkdownHandler::fromHtml(const QString &html)
         while (true) {
             auto m = divRe.match(processed, offset);
             if (!m.hasMatch()) break;
+            const int di = m.capturedStart();
+            if (di >= 8 && processed.mid(di - 8, 8) == QLatin1String("</label>")) {
+                offset = di + 1;
+                continue;
+            }
             QString ph = QString("ZZDV%1ZZ").arg(n++);
             placeholders << ph;
             backups << m.captured();
@@ -2531,6 +2864,51 @@ QString MarkdownHandler::fromHtml(const QString &html)
             brSoftPlaceholders << ph;
             processed.replace(m.capturedStart(), m.capturedLength(), ph);
             offset = m.capturedStart() + ph.length();
+        }
+    }
+
+    // 5b) 通用列表 <ul>/<ol>（非 taskList）→ GFM markdown。
+    //     Qt toMarkdown 对 3 层以上嵌套列表的缩进输出不自洽（见 generalListInnerToMd
+    //     注释），故与任务列表一样在 setHtml 前自绘，占位符 toMarkdown 后还原。
+    //     置于 step N（span/u/kbd/small/div/br 占位保护）之后：列表条目内的
+    //     <span>/<u> 等已是 ZZ* 占位符，taskItemInlineText 剥离标签时不误伤；
+    //     taskList 的 <ul data-type> 已在 step 5 提取，此处剩余 <ul> 均为通用。
+    {
+        int n = 0;
+        int offset = 0;
+        QRegularExpression ulRe(
+            "<ul\\b(?![^>]*\\bdata-type\\s*=\\s*\"taskList\")[^>]*>");
+        QRegularExpression olRe("<ol\\b[^>]*>");
+        QRegularExpression startRe("\\bstart\\s*=\\s*\"?(\\d+)\"?");
+        while (true) {
+            auto um = ulRe.match(processed, offset);
+            auto om = olRe.match(processed, offset);
+            const int up = um.hasMatch() ? um.capturedStart() : -1;
+            const int op = om.hasMatch() ? om.capturedStart() : -1;
+            if (up < 0 && op < 0) break;
+            bool ordered;
+            QRegularExpressionMatch m;
+            int p;
+            if (op < 0 || (up >= 0 && up < op)) { ordered = false; m = um; p = up; }
+            else { ordered = true; m = om; p = op; }
+            int close = findMatchingListClose(processed, p, ordered);
+            if (close < 0) { offset = p + 1; continue; }
+            int start = 1;
+            if (ordered) {
+                auto sm = startRe.match(m.captured());
+                if (sm.hasMatch()) start = sm.captured(1).toInt();
+            }
+            QString md2 = generalListInnerToMd(
+                processed.mid(m.capturedEnd(), close - m.capturedEnd()),
+                0, ordered, start);
+            while (md2.endsWith('\n')) md2.chop(1);
+            QString ph = QString("ZZGL%1ZZ").arg(n++);
+            placeholders << ph;
+            backups << md2;
+            int totalLen = close + 5 - p;   // </ul>/</ol> 均为 5 字符
+            QString wrapped = wrapBlock(ph);
+            processed.replace(p, totalLen, wrapped);
+            offset = p + wrapped.length();
         }
     }
 
