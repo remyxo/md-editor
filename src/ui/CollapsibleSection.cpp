@@ -77,8 +77,12 @@ void CollapsibleSection::setCollapsed(bool collapsed, bool animate)
     updateHeader();
     if (!collapsed && m_content)
         m_content->setVisible(true);
-    if (m_content)
-        startHeightAnimation(collapsed ? 0 : kExpandedMax);
+    if (m_content) {
+        if (animate)
+            startHeightAnimation(collapsed ? 0 : kExpandedMax);
+        else
+            m_content->setMaximumHeight(collapsed ? 0 : kExpandedMax);
+    }
     emit collapsedChanged(collapsed);
 }
 
