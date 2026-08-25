@@ -89,6 +89,11 @@ QToolButton:pressed, QToolButton:checked {
     background-color: #4d4d4d;
 }
 
+/* 侧边栏面板标题栏（CollapsibleSection）：显式亮色文字，与暗色正文文字标准一致 */
+QToolButton#collapsibleHeader {
+    color: #cccccc;
+}
+
 
 /* 文本格式 — 暗色 SVG 图标彩色 */
 QToolButton#boldAction      { color: #8ab4f8; }
@@ -146,7 +151,7 @@ QToolButton:checked {
 QTreeView {
     background-color: #252526;
     border: none;
-    font-size: 13px;
+    font-size: 14px;
     color: #cccccc;
 }
 

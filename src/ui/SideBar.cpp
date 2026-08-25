@@ -3,7 +3,9 @@
 #include "FileTree.h"
 #include "OutlineTree.h"
 #include <QVBoxLayout>
+#include <QSplitter>
 #include <QPropertyAnimation>
+#include <QShowEvent>
 
 SideBar::SideBar(QWidget *parent)
     : QWidget(parent)
@@ -12,6 +14,7 @@ SideBar::SideBar(QWidget *parent)
     , m_fileTree(new FileTree(this))
     , m_outlineTree(new OutlineTree(this))
     , m_openFolderBtn(nullptr)
+    , m_splitter(new QSplitter(Qt::Vertical, this))
     , m_widthAnim(new QPropertyAnimation(this, "maximumWidth", this))
 {
     setMinimumWidth(0);   // 允许宽度动画收到 0
@@ -28,38 +31,50 @@ void SideBar::setupUi()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    m_fileSection->setObjectName(QStringLiteral("fileTreeSection"));
-    m_fileSection->setTitle(tr("目录树"));
-    m_fileSection->setContent(m_fileTree);   // addWidget 会把 FileTree 重挂到 Section
-    layout->addWidget(m_fileSection);
-
-    // 标题栏点击路径：折叠状态变化 → 同步内部可见标志 + 整体收起判断 + 通知菜单勾选
-    connect(m_fileSection, &CollapsibleSection::collapsedChanged, this,
-            [this](bool collapsed) {
-                m_fileTreeVisible = !collapsed;
-                m_openFolderBtn->setVisible(!collapsed);
-                updateWholeCollapse();
-                emit fileTreeVisibleChanged(!collapsed);
-            });
-
+    // 大纲在上、目录树在下，垂直 splitter 分隔（中间可拖动调高）；stretch 3:2 维持 6:4
     m_outlineSection->setObjectName(QStringLiteral("outlineSection"));
     m_outlineSection->setTitle(tr("大纲"));
     m_outlineSection->setContent(m_outlineTree);
-    layout->addWidget(m_outlineSection);
-
-    connect(m_outlineSection, &CollapsibleSection::collapsedChanged, this,
-            [this](bool collapsed) {
-                m_outlineVisible = !collapsed;
-                updateWholeCollapse();
-                emit outlineVisibleChanged(!collapsed);
-            });
+    m_fileSection->setObjectName(QStringLiteral("fileTreeSection"));
+    m_fileSection->setTitle(tr("目录树"));
+    m_fileSection->setContent(m_fileTree);
+    m_splitter->addWidget(m_outlineSection);
+    m_splitter->addWidget(m_fileSection);
+    m_splitter->setStretchFactor(0, 3);
+    m_splitter->setStretchFactor(1, 2);
+    layout->addWidget(m_splitter, 1);
 
     m_openFolderBtn = new QPushButton(tr("打开文件夹..."), this);
     connect(m_openFolderBtn, &QPushButton::clicked, this, &SideBar::openFolderClicked);
     layout->addWidget(m_openFolderBtn);
 
-    // 展开初始态：构造时 setMinimumWidth(0) 允许宽度收到 0，但启动即展开态
-    // 需恢复 240 下限，否则用户在 QSplitter 中可直接拖到 0 且无法自恢复
+    // 标题栏点击路径：折叠状态变化 → 同步可见标志 + 收起面板沉底 + 比例保存/恢复
+    // + 整体收起 + 通知菜单
+    connect(m_outlineSection, &CollapsibleSection::collapsedChanged, this,
+            [this](bool collapsed) {
+                m_outlineVisible = !collapsed;
+                if (collapsed)
+                    rememberExpandedSizes();   // 收起前保存两面板展开时的比例
+                updateSectionOrder();          // 收起面板沉底 / 展开面板复位
+                if (!collapsed)
+                    restoreExpandedSizes();    // 重开后恢复上次展开比例（或 6:4）
+                updateWholeCollapse();
+                emit outlineVisibleChanged(!collapsed);
+            });
+    connect(m_fileSection, &CollapsibleSection::collapsedChanged, this,
+            [this](bool collapsed) {
+                m_fileTreeVisible = !collapsed;
+                m_openFolderBtn->setVisible(!collapsed);   // 「打开文件夹」跟随目录树
+                if (collapsed)
+                    rememberExpandedSizes();
+                updateSectionOrder();
+                if (!collapsed)
+                    restoreExpandedSizes();
+                updateWholeCollapse();
+                emit fileTreeVisibleChanged(!collapsed);
+            });
+
+    // 展开初始态：恢复 240 下限，避免用户拖到 0 无法自恢复
     setMinimumWidth(240);
 
     retranslateUi();
@@ -70,17 +85,12 @@ OutlineTree *SideBar::outlineTree() const { return m_outlineTree; }
 
 void SideBar::setFileTreeVisible(bool visible)
 {
-    m_fileTreeVisible = visible;
-    m_openFolderBtn->setVisible(visible);   // 「打开文件夹」跟随目录树面板展开状态
     m_fileSection->setCollapsed(!visible);
-    updateWholeCollapse();
 }
 
 void SideBar::setOutlineVisible(bool visible)
 {
-    m_outlineVisible = visible;
     m_outlineSection->setCollapsed(!visible);
-    updateWholeCollapse();
 }
 
 // 两面板全收 → 侧边栏宽度收起；任一面板展开（从全收态）→ 宽度展开
@@ -90,6 +100,48 @@ void SideBar::updateWholeCollapse()
     if (bothOff != m_wholeCollapsed) {
         m_wholeCollapsed = bothOff;
         animateWidth(bothOff ? 0 : m_savedWidth);
+    }
+}
+
+// 收起的面板沉底：仅大纲收起且目录树展开时交换两面板（目录树在上、大纲标题栏在下）。
+// 交换后重设 stretch（stretch 按 splitter 索引而非 widget，须跟随新顺序）。
+void SideBar::updateSectionOrder()
+{
+    const bool outlineCollapsed = m_outlineSection->isCollapsed();
+    const bool fileCollapsed = m_fileSection->isCollapsed();
+    const bool wantFileTop = outlineCollapsed && !fileCollapsed;   // 大纲收起 → 目录树移上
+    const bool fileTopNow = (m_splitter->widget(0) == m_fileSection);
+    if (wantFileTop == fileTopNow)
+        return;
+    const QList<int> sizes = m_splitter->sizes();
+    QWidget *b = m_splitter->widget(1);
+    m_splitter->insertWidget(0, b);               // 把底部 widget 移到顶部 → 交换两面板
+    m_splitter->setSizes({sizes[1], sizes[0]});   // 交换时同步交换各自高度
+    m_splitter->setStretchFactor(0, wantFileTop ? 2 : 3);
+    m_splitter->setStretchFactor(1, wantFileTop ? 3 : 2);
+}
+
+// 从「两面板都展开」收起一面时，保存当前展开比例（6:4 或用户拖出的比例）。
+// 被收起面板的 visible 此刻已置 false，故用「另一面板仍展开」判断是否处于
+// 双展开→单展开的过渡；尺寸以 [大纲, 目录树] 自然序保存，动画尚未收缩，仍是展开值。
+void SideBar::rememberExpandedSizes()
+{
+    if (!m_savedSplitSizes.isEmpty())
+        return;
+    if (m_outlineVisible || m_fileTreeVisible)   // 另一面板仍展开（从双展开收起）
+        m_savedSplitSizes = m_splitter->sizes();
+}
+
+// 重开面板至「两面板都展开」时，恢复上次保存的展开比例；否则用默认 6:4。
+// 调用时机须在 updateSectionOrder 之后（此时顺序已复位为 [大纲, 目录树]），
+// 尺寸映射才正确。
+void SideBar::restoreExpandedSizes()
+{
+    if (m_savedSplitSizes.isEmpty())
+        return;
+    if (m_outlineVisible && m_fileTreeVisible) {
+        m_splitter->setSizes(m_savedSplitSizes);
+        m_savedSplitSizes.clear();
     }
 }
 
@@ -107,6 +159,9 @@ void SideBar::animateWidth(int target)
         setMaximumWidth(m_savedWidth);
         m_widthAnim->setStartValue(m_savedWidth);
     } else {
+        // 展开：收起态已 setVisible(false)，须先恢复可见再动画，
+        // 否则动画跑在隐藏 widget 上、QSplitter 也不重挂面板。
+        setVisible(true);
         m_widthAnim->setStartValue(maximumWidth());           // 可能中途 0 或半值
     }
     m_widthAnim->setEndValue(target);
@@ -116,9 +171,13 @@ void SideBar::animateWidth(int target)
 void SideBar::onWidthAnimFinished()
 {
     if (m_wholeCollapsed) {
-        setMaximumWidth(0);                 // 收起完成：保持 0 宽（不 setVisible）
+        setMaximumWidth(0);                 // 收起完成：保持 0 宽
         setMinimumWidth(0);
+        // 隐藏侧边栏让 QSplitter 把腾出的空间分给编辑区（否则只缩到 0 宽，
+        // splitter 不重分配，编辑区旁残留一段空白）。
+        setVisible(false);
     } else {
+        setVisible(true);
         setMaximumWidth(QWIDGETSIZE_MAX);   // 展开完成：恢复可自由调整
         // 下限跟随 m_savedWidth（用户拖窄后收起再展开，不被 240 弹回）
         setMinimumWidth(qMin(m_savedWidth, 240));
@@ -127,8 +186,18 @@ void SideBar::onWidthAnimFinished()
 
 void SideBar::retranslateUi()
 {
-    m_fileSection->setTitle(tr("目录树"));
     m_outlineSection->setTitle(tr("大纲"));
+    m_fileSection->setTitle(tr("目录树"));
     if (m_openFolderBtn)
         m_openFolderBtn->setText(tr("打开文件夹..."));
+}
+
+// 首次显示布局就绪后设初始分隔 6:4（大纲 60% / 目录树 40%），之后用户可拖动调整
+void SideBar::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (!m_initialSplitSet) {
+        m_initialSplitSet = true;
+        m_splitter->setSizes({360, 240});
+    }
 }

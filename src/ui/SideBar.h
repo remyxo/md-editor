@@ -7,10 +7,12 @@
 class CollapsibleSection;
 class FileTree;
 class OutlineTree;
+class QSplitter;
 class QPropertyAnimation;
+class QShowEvent;
 
-// 侧边栏：目录树/大纲两个可独立折叠面板（CollapsibleSection）上下堆叠。
-// 单面板收起 → 收成一条标题栏；两面板全收 → 侧边栏整体宽度动画收起。
+// 侧边栏：大纲在上、目录树在下，垂直 splitter 分隔（中间可拖动调高，初始 6:4）。
+// 单面板收起 → 收成一条标题栏并沉到侧边栏底部；两面板全收 → 侧边栏整体宽度动画收起。
 class SideBar : public QWidget {
     Q_OBJECT
 public:
@@ -19,7 +21,7 @@ public:
     FileTree *fileTree() const;
     OutlineTree *outlineTree() const;
 
-    // 双开关：目录树/大纲面板独立折叠；两面板全收时侧边栏整体宽度收起
+    // 双开关：大纲/目录树面板独立折叠；两面板全收时侧边栏整体宽度收起
     void setFileTreeVisible(bool visible);
     void setOutlineVisible(bool visible);
 
@@ -32,9 +34,15 @@ signals:
     void fileTreeVisibleChanged(bool visible);
     void outlineVisibleChanged(bool visible);
 
+protected:
+    void showEvent(QShowEvent *event) override;   // 首次显示布局就绪后设初始 6:4 分隔
+
 private:
     void setupUi();
     void updateWholeCollapse();
+    void updateSectionOrder();
+    void rememberExpandedSizes();
+    void restoreExpandedSizes();
     void animateWidth(int target);
     void onWidthAnimFinished();
 
@@ -43,11 +51,14 @@ private:
     FileTree *m_fileTree;
     OutlineTree *m_outlineTree;
     QPushButton *m_openFolderBtn;
+    QSplitter *m_splitter;
     QPropertyAnimation *m_widthAnim;
     bool m_fileTreeVisible = true;
     bool m_outlineVisible = true;
     bool m_wholeCollapsed = false;
+    bool m_initialSplitSet = false;
     int m_savedWidth = 240;
+    QList<int> m_savedSplitSizes;   // 两面板都展开时的分隔比例，收起时保存/重开时恢复
 };
 
 #endif // MD_EDITOR_SIDEBAR_H

@@ -6,9 +6,9 @@
 class TestCollapsibleSection : public QObject {
     Q_OBJECT
 private slots:
-    void initial_expanded();          // 初始未收起，内容可展开
-    void collapse_animates_height();  // 收起：高度动画到 0，isCollapsed 立即翻转
-    void expand_restores_height();    // 展开：高度动画恢复
+    void initial_expanded();          // 初始未收起，面板最大高为大值
+    void collapse_animates_height();  // 收起：面板 maxH 动画到标题栏高，isCollapsed 立即翻转
+    void expand_restores_height();    // 展开：面板 maxH 动画恢复大值
     void collapse_immediate_no_animation(); // animate=false 立即生效，不带动画
     void collapse_immediate_stops_running_animation();  // I2: 立即设置须停掉运行中动画
     void collapsed_signal();          // collapsedChanged 信号
@@ -26,32 +26,32 @@ QLabel *TestCollapsibleSection::makeContent(CollapsibleSection &s) const
 void TestCollapsibleSection::initial_expanded()
 {
     CollapsibleSection s;
-    QLabel *lbl = makeContent(s);
+    makeContent(s);
     s.show();
     QVERIFY(!s.isCollapsed());
-    QVERIFY(lbl->maximumHeight() > 0);
+    QVERIFY(s.contentMaxHeight() > s.collapsedHeight());   // 展开：面板最大高为大值
 }
 
 void TestCollapsibleSection::collapse_animates_height()
 {
     CollapsibleSection s;
-    QLabel *lbl = makeContent(s);
+    makeContent(s);
     s.show();
     s.setCollapsed(true);
-    QVERIFY(s.isCollapsed());            // 状态标志立即翻转
-    QTRY_COMPARE(lbl->maximumHeight(), 0);   // 轮询等 300ms 动画完成
+    QVERIFY(s.isCollapsed());                              // 状态标志立即翻转
+    QTRY_COMPARE(s.contentMaxHeight(), s.collapsedHeight());  // 轮询等 300ms 动画到标题栏高
 }
 
 void TestCollapsibleSection::expand_restores_height()
 {
     CollapsibleSection s;
-    QLabel *lbl = makeContent(s);
+    makeContent(s);
     s.show();
     s.setCollapsed(true);
-    QTRY_COMPARE(lbl->maximumHeight(), 0);   // 收起动画完成
+    QTRY_COMPARE(s.contentMaxHeight(), s.collapsedHeight());  // 收起动画完成
     s.setCollapsed(false);
     QVERIFY(!s.isCollapsed());
-    QTRY_VERIFY(lbl->maximumHeight() > 0);   // 轮询等展开动画恢复
+    QTRY_VERIFY(s.contentMaxHeight() > s.collapsedHeight());  // 轮询等展开动画恢复大值
 }
 
 void TestCollapsibleSection::collapse_immediate_no_animation()
@@ -61,10 +61,10 @@ void TestCollapsibleSection::collapse_immediate_no_animation()
     s.show();
     s.setCollapsed(true, false);
     QVERIFY(s.isCollapsed());
-    QCOMPARE(s.contentMaxHeight(), 0);        // animate=false：立即收起，无需等动画
+    QCOMPARE(s.contentMaxHeight(), s.collapsedHeight());  // animate=false：立即收起，无需等动画
     s.setCollapsed(false, false);
     QVERIFY(!s.isCollapsed());
-    QVERIFY(s.contentMaxHeight() > 0);        // animate=false：立即恢复大值
+    QVERIFY(s.contentMaxHeight() > s.collapsedHeight());  // animate=false：立即恢复大值
 }
 
 void TestCollapsibleSection::collapse_immediate_stops_running_animation()
@@ -72,11 +72,11 @@ void TestCollapsibleSection::collapse_immediate_stops_running_animation()
     CollapsibleSection s;
     makeContent(s);
     s.show();
-    QVERIFY(s.contentMaxHeight() > 0);   // 初始展开
+    QVERIFY(s.contentMaxHeight() > s.collapsedHeight());  // 初始展开
     s.setCollapsed(true);                // 启动收起动画（进行中）
     s.setCollapsed(false, false);        // 立即无动画展开
     QCOMPARE(s.contentMaxHeight(), 10000);
-    QTest::qWait(450);                   // 若僵尸动画未 stop，会继续驱动 maximumHeight 到 0
+    QTest::qWait(450);                   // 若僵尸动画未 stop，会继续驱动 maximumHeight 到标题栏高
     QCOMPARE(s.contentMaxHeight(), 10000);  // 必须保持展开
 }
 

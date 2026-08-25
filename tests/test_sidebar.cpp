@@ -3,23 +3,29 @@
 #include "ui/CollapsibleSection.h"
 #include <QPushButton>
 #include <QToolButton>
+#include <QSplitter>
 
-// 侧边栏双面板（目录树/大纲）独立折叠 + 整体宽度收起行为测试
+// 侧边栏双面板（大纲在上、目录树在下，6:4 可拖动）+ 独立折叠沉底 + 整体宽度收起
 class TestSideBar : public QObject {
     Q_OBJECT
 private slots:
     void initial_state();            // 初始两面板展开，侧边栏可见
+    void outline_on_top_six_four();  // 大纲在上、目录树在下，比例约 6:4
     void file_only();                // 只目录树：大纲收起，按钮保留
     void outline_only();             // 只大纲：目录树收起，按钮隐藏
+    void collapsed_sinks_to_bottom();// 任一面板收起，其标题栏沉到侧边栏底部
+    void expand_restores_saved_ratio(); // 只显示目录树后再显示大纲，恢复展开比例
     void all_off_collapses_whole();  // 全收：宽度动画到 0
     void recover_from_all_off();     // 从全收重开目录树：宽度恢复
     void rapid_toggle_preserves_saved_width(); // 展开动画中途再全收，不破坏 m_savedWidth
     void header_collapse_triggers_whole_collapse();   // 标题栏点击收起两面板 → 宽度收起
     void header_collapse_emits_visibility_signals();  // 标题栏点击 → visibleChanged 信号
+    void whole_collapse_hides_widget();               // 全收完成 setVisible(false)，编辑区可回填；重开恢复可见
 private:
     CollapsibleSection *fileSection(const SideBar &sb) const;
     CollapsibleSection *outlineSection(const SideBar &sb) const;
     QPushButton *openBtn(const SideBar &sb) const;
+    QSplitter *splitter(const SideBar &sb) const;
 };
 
 CollapsibleSection *TestSideBar::fileSection(const SideBar &sb) const
@@ -37,6 +43,11 @@ QPushButton *TestSideBar::openBtn(const SideBar &sb) const
     return sb.findChild<QPushButton *>();
 }
 
+QSplitter *TestSideBar::splitter(const SideBar &sb) const
+{
+    return sb.findChild<QSplitter *>();
+}
+
 void TestSideBar::initial_state()
 {
     SideBar sb;
@@ -45,6 +56,20 @@ void TestSideBar::initial_state()
     QVERIFY(!fileSection(sb)->isCollapsed());
     QVERIFY(!outlineSection(sb)->isCollapsed());
     QVERIFY(openBtn(sb)->isVisibleTo(&sb));
+}
+
+// 大纲在上、目录树在下，splitter 默认比例约 6:4（大纲更高），中间分隔可拖动
+void TestSideBar::outline_on_top_six_four()
+{
+    SideBar sb;
+    sb.show();
+    QTest::qWait(100);                      // 等布局 + showEvent 里 setSizes 生效
+    QVERIFY(splitter(sb)->widget(0) == outlineSection(sb));
+    QVERIFY(splitter(sb)->widget(1) == fileSection(sb));
+    const int oh = outlineSection(sb)->height();
+    const int fh = fileSection(sb)->height();
+    QVERIFY(oh > fh);                       // 大纲更高（6:4 → 大纲占多）
+    QVERIFY(oh < fh * 2);                   // 比例不至于极端
 }
 
 void TestSideBar::file_only()
@@ -69,6 +94,47 @@ void TestSideBar::outline_only()
     QVERIFY(!outlineSection(sb)->isCollapsed());
     QVERIFY(sb.isVisible());
     QVERIFY(!openBtn(sb)->isVisibleTo(&sb)); // 无目录树则按钮隐藏
+}
+
+// 任一面板收起 → 其标题栏沉到侧边栏底部（另一面板填满上方）
+void TestSideBar::collapsed_sinks_to_bottom()
+{
+    SideBar sb;
+    sb.show();
+    // 大纲收起 → 目录树在上、大纲标题栏在底部
+    sb.setOutlineVisible(false);
+    QTest::qWait(400);
+    QVERIFY(splitter(sb)->widget(0) == fileSection(sb));
+    QVERIFY(splitter(sb)->widget(1) == outlineSection(sb));
+    QVERIFY(outlineSection(sb)->isCollapsed());
+    // 恢复大纲，再收目录树 → 大纲在上、目录树标题栏在底部
+    sb.setOutlineVisible(true);
+    QTest::qWait(400);
+    sb.setFileTreeVisible(false);
+    QTest::qWait(400);
+    QVERIFY(splitter(sb)->widget(0) == outlineSection(sb));
+    QVERIFY(splitter(sb)->widget(1) == fileSection(sb));
+    QVERIFY(fileSection(sb)->isCollapsed());
+}
+
+// 回归：先只显示目录树（大纲收起），再显示大纲，比例应恢复上次展开比例（大纲 > 目录树），
+// 而非停留在收起时的「目录树占绝大部分」。
+void TestSideBar::expand_restores_saved_ratio()
+{
+    SideBar sb;
+    sb.show();
+    QTest::qWait(100);                      // 等布局 + showEvent 6:4 生效
+    QVERIFY(outlineSection(sb)->height() > fileSection(sb)->height());
+
+    sb.setOutlineVisible(false);            // 先只显示目录树
+    QTest::qWait(400);
+    QVERIFY(outlineSection(sb)->isCollapsed());
+    QVERIFY(fileSection(sb)->height() > outlineSection(sb)->height());   // 目录树占绝大部分
+
+    sb.setOutlineVisible(true);             // 再显示大纲
+    QTest::qWait(400);
+    QVERIFY(!outlineSection(sb)->isCollapsed());
+    QVERIFY(outlineSection(sb)->height() > fileSection(sb)->height());   // 恢复 6:4（大纲更高）
 }
 
 void TestSideBar::all_off_collapses_whole()
@@ -147,6 +213,30 @@ void TestSideBar::header_collapse_triggers_whole_collapse()
     QVERIFY(os->isCollapsed());
     QTRY_COMPARE(sb.maximumWidth(), 0);   // 两面板全收 → 宽度动画收起
     QVERIFY(!openBtn(sb)->isVisibleTo(&sb));  // 目录树收起 → 「打开文件夹」隐藏
+}
+
+// 问题2 回归：两面板全收后宽度动画到 0，必须 setVisible(false) 让 QSplitter
+// 把腾出的空间分给编辑区（否则只缩 0 宽但 splitter 不重分配，编辑区旁残留空白）。
+// 重开任一面板 → setVisible(true) + 宽度恢复。
+void TestSideBar::whole_collapse_hides_widget()
+{
+    SideBar sb;
+    sb.show();
+    QTest::qWait(100);
+    const int before = sb.width();
+    QVERIFY(before > 0);
+
+    sb.setFileTreeVisible(false);
+    sb.setOutlineVisible(false);
+    QTest::qWait(400);
+    QCOMPARE(sb.maximumWidth(), 0);
+    QVERIFY(!sb.isVisible());                 // 收起完成 → 隐藏，让编辑区回填
+
+    sb.setFileTreeVisible(true);              // 重开目录树 → 恢复可见 + 宽度
+    QTest::qWait(400);
+    QVERIFY(sb.isVisible());
+    QVERIFY(sb.width() > 0);
+    QCOMPARE(sb.width(), qMin(before, 240));
 }
 
 void TestSideBar::header_collapse_emits_visibility_signals()
