@@ -42,6 +42,10 @@ void SideBar::setupUi()
     connect(m_openFolderBtn, &QPushButton::clicked, this, &SideBar::openFolderClicked);
     layout->addWidget(m_openFolderBtn);
 
+    // 展开初始态：构造时 setMinimumWidth(0) 允许宽度收到 0，但启动即展开态
+    // 需恢复 240 下限，否则用户在 QSplitter 中可直接拖到 0 且无法自恢复
+    setMinimumWidth(240);
+
     retranslateUi();
 }
 
@@ -75,10 +79,15 @@ void SideBar::updateWholeCollapse()
 
 void SideBar::animateWidth(int target)
 {
+    // 展开动画中途再全收时，width()/maximumWidth() 是瞬态值（如 120），
+    // 若此时覆盖 m_savedWidth 会把好宽度（240）污染成瞬态值，下次展开恢复过窄。
+    // 故先记录动画是否运行：运行中只复用已保存宽度，不重新捕获。
+    const bool wasAnimRunning = (m_widthAnim->state() == QAbstractAnimation::Running);
     m_widthAnim->stop();                 // 快速连续切换：从当前实际值起算
     setMinimumWidth(0);
     if (target == 0) {
-        m_savedWidth = width() > 0 ? width() : m_savedWidth;  // 收起前记录可见宽
+        if (!wasAnimRunning)
+            m_savedWidth = width() > 0 ? width() : m_savedWidth;  // 收起前记录可见宽
         setMaximumWidth(m_savedWidth);
         m_widthAnim->setStartValue(m_savedWidth);
     } else {
@@ -95,7 +104,8 @@ void SideBar::onWidthAnimFinished()
         setMinimumWidth(0);
     } else {
         setMaximumWidth(QWIDGETSIZE_MAX);   // 展开完成：恢复可自由调整
-        setMinimumWidth(240);
+        // 下限跟随 m_savedWidth（用户拖窄后收起再展开，不被 240 弹回）
+        setMinimumWidth(qMin(m_savedWidth, 240));
     }
 }
 
