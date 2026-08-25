@@ -2,6 +2,7 @@
 #include "ui/SideBar.h"
 #include "ui/CollapsibleSection.h"
 #include <QPushButton>
+#include <QToolButton>
 
 // 侧边栏双面板（目录树/大纲）独立折叠 + 整体宽度收起行为测试
 class TestSideBar : public QObject {
@@ -13,6 +14,8 @@ private slots:
     void all_off_collapses_whole();  // 全收：宽度动画到 0
     void recover_from_all_off();     // 从全收重开目录树：宽度恢复
     void rapid_toggle_preserves_saved_width(); // 展开动画中途再全收，不破坏 m_savedWidth
+    void header_collapse_triggers_whole_collapse();   // 标题栏点击收起两面板 → 宽度收起
+    void header_collapse_emits_visibility_signals();  // 标题栏点击 → visibleChanged 信号
 private:
     CollapsibleSection *fileSection(const SideBar &sb) const;
     CollapsibleSection *outlineSection(const SideBar &sb) const;
@@ -127,6 +130,41 @@ void TestSideBar::rapid_toggle_preserves_saved_width()
     QVERIFY(sb.maximumWidth() != 0);
     // 未被中途瞬态宽度污染：宽度下限恢复为首次全收前宽度（取 min 240 截断）
     QCOMPARE(sb.width(), qMin(expected, 240));
+}
+
+void TestSideBar::header_collapse_triggers_whole_collapse()
+{
+    SideBar sb;
+    sb.show();
+    CollapsibleSection *fs = fileSection(sb);
+    CollapsibleSection *os = outlineSection(sb);
+    QToolButton *fileHeader = fs->findChild<QToolButton *>(QStringLiteral("collapsibleHeader"));
+    QToolButton *outlineHeader = os->findChild<QToolButton *>(QStringLiteral("collapsibleHeader"));
+    QVERIFY(fileHeader && outlineHeader);
+    fileHeader->click();    // 标题栏点击 → 目录树收起
+    outlineHeader->click(); // 标题栏点击 → 大纲收起
+    QVERIFY(fs->isCollapsed());
+    QVERIFY(os->isCollapsed());
+    QTRY_COMPARE(sb.maximumWidth(), 0);   // 两面板全收 → 宽度动画收起
+    QVERIFY(!openBtn(sb)->isVisibleTo(&sb));  // 目录树收起 → 「打开文件夹」隐藏
+}
+
+void TestSideBar::header_collapse_emits_visibility_signals()
+{
+    SideBar sb;
+    sb.show();
+    QSignalSpy fileSpy(&sb, &SideBar::fileTreeVisibleChanged);
+    QSignalSpy outlineSpy(&sb, &SideBar::outlineVisibleChanged);
+    QToolButton *fileHeader = fileSection(sb)->findChild<QToolButton *>(QStringLiteral("collapsibleHeader"));
+    QVERIFY(fileHeader);
+    fileHeader->click();
+    QCOMPARE(fileSpy.count(), 1);
+    QCOMPARE(fileSpy.takeFirst().at(0).toBool(), false);
+    QToolButton *outlineHeader = outlineSection(sb)->findChild<QToolButton *>(QStringLiteral("collapsibleHeader"));
+    QVERIFY(outlineHeader);
+    outlineHeader->click();
+    QCOMPARE(outlineSpy.count(), 1);
+    QCOMPARE(outlineSpy.takeFirst().at(0).toBool(), false);
 }
 
 QTEST_MAIN(TestSideBar)

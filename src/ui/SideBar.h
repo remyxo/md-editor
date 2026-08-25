@@ -28,6 +28,9 @@ public:
 
 signals:
     void openFolderClicked();
+    // 面板可见性变化（含标题栏点击路径），供 MainWindow 同步视图菜单勾选
+    void fileTreeVisibleChanged(bool visible);
+    void outlineVisibleChanged(bool visible);
 
 private:
     void setupUi();

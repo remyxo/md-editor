@@ -33,10 +33,26 @@ void SideBar::setupUi()
     m_fileSection->setContent(m_fileTree);   // addWidget 会把 FileTree 重挂到 Section
     layout->addWidget(m_fileSection);
 
+    // 标题栏点击路径：折叠状态变化 → 同步内部可见标志 + 整体收起判断 + 通知菜单勾选
+    connect(m_fileSection, &CollapsibleSection::collapsedChanged, this,
+            [this](bool collapsed) {
+                m_fileTreeVisible = !collapsed;
+                m_openFolderBtn->setVisible(!collapsed);
+                updateWholeCollapse();
+                emit fileTreeVisibleChanged(!collapsed);
+            });
+
     m_outlineSection->setObjectName(QStringLiteral("outlineSection"));
     m_outlineSection->setTitle(tr("大纲"));
     m_outlineSection->setContent(m_outlineTree);
     layout->addWidget(m_outlineSection);
+
+    connect(m_outlineSection, &CollapsibleSection::collapsedChanged, this,
+            [this](bool collapsed) {
+                m_outlineVisible = !collapsed;
+                updateWholeCollapse();
+                emit outlineVisibleChanged(!collapsed);
+            });
 
     m_openFolderBtn = new QPushButton(tr("打开文件夹..."), this);
     connect(m_openFolderBtn, &QPushButton::clicked, this, &SideBar::openFolderClicked);

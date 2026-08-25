@@ -180,6 +180,15 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::toggleFileTree, this, [this](bool visible) {
         m_sideBar->setFileTreeVisible(visible);
     });
+    // 标题栏点击收起面板 → 同步视图菜单勾选（setChecked 不发射 triggered，无环路）
+    connect(m_sideBar, &SideBar::fileTreeVisibleChanged, this, [this](bool visible) {
+        QAction *act = m_menuBar->findChild<QAction *>(QStringLiteral("fileTreeAction"));
+        if (act) act->setChecked(visible);
+    });
+    connect(m_sideBar, &SideBar::outlineVisibleChanged, this, [this](bool visible) {
+        QAction *act = m_menuBar->findChild<QAction *>(QStringLiteral("outlineAction"));
+        if (act) act->setChecked(visible);
+    });
 
     // Ctrl+B 整体收/展：可见→记住组合并全收；全收→恢复组合
     m_sidebarShortcut = new QShortcut(QKeySequence("Ctrl+B"), this);
