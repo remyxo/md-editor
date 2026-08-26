@@ -24,7 +24,12 @@
 })();
 </script>
 <div id="editor"></div>
-<textarea id="source-view" style="display:none"></textarea>
+<!-- 源码视图：textarea 与其后方搜索高亮 overlay 同框叠放。overlay 不渲染文字，只按
+     隐藏 textarea 测得的矩形放高亮底色块（文字以 textarea 为准，底色与文字同源不脱节） -->
+<div id="source-wrap" style="display:none">
+    <div id="source-overlay" aria-hidden="true"></div>
+    <textarea id="source-view"></textarea>
+</div>
 
 <!--
   运行时依赖说明：

@@ -253,17 +253,17 @@ body.dark .ProseMirror mark {
     height: 0;
 }
 
-/* 源码视图（默认隐藏由 HTML inline style 控制，JS 切换时修改） */
-#source-view {
-    width: 100%;
+/* 源码视图（默认隐藏由 HTML inline style 控制，JS 切换时修改）
+   wrapper 相对定位容纳 overlay；textarea 与 overlay 共享排版保证文字逐像素对齐 */
+#source-wrap {
+    position: relative;
     max-width: 80%;
     min-width: 800px;
-    min-height: 100vh;
     margin: 0 auto;
-    display: block;
-    border: none;
-    outline: none;
-    resize: none;
+}
+#source-overlay,
+#source-view {
+    width: 100%;
     padding: 40px 60px;
     font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
     font-size: 18px;
@@ -271,9 +271,40 @@ body.dark .ProseMirror mark {
     color: #333;
     background: #fff;
     tab-size: 4;
+    border: none;
+    outline: none;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    box-sizing: border-box;
 }
-
+#source-view {
+    display: block;
+    position: relative;
+    z-index: 2;
+    margin: 0;
+    resize: none;
+    min-height: 100vh;
+    /* 禁止内部滚动条：撑高由 _resizeSourceView 完成，出现任何滚动条都会偷走
+       内容宽度使折行点与背后 overlay 错位（785 vs 800 即差 15px 每行全错开） */
+    overflow: hidden;
+}
 body.dark #source-view {
+    color: #d4d4d4;
+    background: #1e1e1e;
+}
+/* overlay：绝对铺满容器（top/bottom 双向拉伸，父高为内容驱动时也能盖满）垫在 textarea
+   下方，只放测量出的高亮底色块（.src-mark）；宽度取共享规则 width:100%。 */
+#source-overlay {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1;
+    margin: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+body.dark #source-overlay {
     color: #d4d4d4;
     background: #1e1e1e;
 }
@@ -1003,5 +1034,44 @@ body.dark .ProseMirror .search-match {
     background-color: rgba(255, 213, 79, 0.35);
 }
 body.dark .ProseMirror .search-match-current {
+    background-color: rgba(255, 152, 0, 0.8);
+}
+
+/* WYSIWYG 搜索激活：隐藏编辑器原生选区高亮——选区盖在当前匹配上会把橙色装饰遮成
+   普通色（各匹配看起来一样），隐藏后露出的橙色即当前匹配 */
+body.search-active .ProseMirror ::selection {
+    background: transparent;
+}
+
+/* 源码模式搜索激活：文字以 textarea 为准（可见、caret/插入点与可见文字同排版，
+   Windows 中文字体回退/小数缩放下双排版不再脱节），overlay 垫底只画高亮底色。
+   原生选区透明（当前匹配由 overlay 的 src-search-current 高亮），caret 保留可见 */
+body.src-search-active #source-view {
+    background: transparent;
+    caret-color: #333;
+}
+body.dark.src-search-active #source-view {
+    caret-color: #d4d4d4;
+}
+body.src-search-active #source-view::selection {
+    background: transparent;
+}
+/* 源码模式搜索高亮：overlay 不渲染文字，只放绝对定位的底色块（矩形由隐藏 textarea
+   测量，与可见文字同源不脱节）。全部匹配淡黄、当前匹配橙（对齐 WYSIWYG 配色） */
+#source-overlay .src-mark,
+#source-overlay .src-mark-current {
+    position: absolute;
+    display: block;
+    background-color: rgba(255, 213, 79, 0.45);
+    border-radius: 2px;
+    pointer-events: none;
+}
+#source-overlay .src-mark-current {
+    background-color: rgba(255, 152, 0, 0.7);
+}
+body.dark #source-overlay .src-mark {
+    background-color: rgba(255, 213, 79, 0.35);
+}
+body.dark #source-overlay .src-mark-current {
     background-color: rgba(255, 152, 0, 0.8);
 }

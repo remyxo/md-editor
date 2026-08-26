@@ -232,6 +232,7 @@ void EditorTab::loadFile(const QString &path, const QString &content)
             "var sv=document.getElementById('source-view');"
             "if(!sv)return;"
             "sv.value=`%1`;a._sourceValue=`%1`;"
+            "if(a._srcSearch)a._srcOnSourceEdit();"   // 外部同步不触发 input，手动刷新搜索高亮
             "})()").arg(mdEscaped));
     }
 }

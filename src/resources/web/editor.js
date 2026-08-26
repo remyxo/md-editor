@@ -1827,27 +1827,36 @@ window.editorApi = {
         if (!this.editor) return;
         this._sourceValue = md;
         var sourceView = document.getElementById('source-view');
+        var sourceWrap = document.getElementById('source-wrap');
         var editorDiv = document.getElementById('editor');
         sourceView.value = md;
         editorDiv.style.display = 'none';
-        sourceView.style.display = '';
+        sourceWrap.style.display = '';
         if (this._readOnly) sourceView.setAttribute('readonly', '');
         else sourceView.removeAttribute('readonly');
         this.isSourceMode = true;
+        // 进入源码模式：WYSIWYG 编辑器隐藏，撤下 search-active（源码搜索走 overlay 类）
+        this._syncSearchActiveClass();
         // 源码区随内容撑高（进源码模式先撑一次，内容已就绪）
         this._resizeSourceView();
         // 绑定 input 监听：源码区编辑时实时标记脏状态（对齐 WYSIWYG 的 onUpdate 实时标记），
         // 并同步撑高 textarea（内容增删都会改变滚动高度）。
         // 程序化 sourceView.value = md 不会触发 input 事件，初始填充安全。
         var api = this;
-        this._onSourceInput = function() { api._resizeSourceView(); api._markDirty(); };
+        this._onSourceInput = function() {
+            api._resizeSourceView();
+            api._markDirty();
+            // 手动编辑源码时重算搜索匹配并刷新高亮（否则 overlay 底色停在旧位置）。
+            api._srcOnSourceEdit();
+        };
         sourceView.addEventListener('input', this._onSourceInput);
         // 若 WYSIWYG 搜索处于激活状态，切到源码模式时在 textarea 上继续搜索
         // （查询与位置从 searchPlugin 状态延续，计数随之更新）。
         var sp = window.searchPlugin;
         var st = sp && this.editor ? sp.searchKey.getState(this.editor.state) : null;
         if (st && st.query) {
-            this._srcStartSearch(st.query, st.flags.caseSensitive, st.flags.regex, st.flags.wholeWord);
+            this._srcStartSearch(st.query, st.flags.caseSensitive, st.flags.regex,
+                                 st.flags.wholeWord, st.current);
         }
     },
 
@@ -1855,6 +1864,7 @@ window.editorApi = {
     exitSourceMode: function(html) {
         if (!this.editor) return;
         var sourceView = document.getElementById('source-view');
+        var sourceWrap = document.getElementById('source-wrap');
         var editorDiv = document.getElementById('editor');
         var changed = sourceView.value !== this._sourceValue;
         // 解绑 input 监听，避免退出后残留引用。
@@ -1865,9 +1875,24 @@ window.editorApi = {
         this._loading = true;
         this.editor.commands.setContent(html);
         this._loading = false;
-        sourceView.style.display = 'none';
+        sourceWrap.style.display = 'none';
         editorDiv.style.display = '';
         this.isSourceMode = false;
+        // 源码搜索延续到 WYSIWYG：先把查询同步进插件 state（否则 _notifySearchCount
+        // 读空插件 → 0/0，且 WYSIWYG 高亮与源码查询不一致）。requestSearch 重算当前
+        // 文档的匹配并选中首处。
+        var src = this._srcSearch;
+        if (src && src.query) {
+            var sp = window.searchPlugin;
+            if (sp) sp.requestSearch(this.editor.view, src.query, {
+                regex: src.regex, wholeWord: src.wholeWord, caseSensitive: src.caseSensitive
+            }, src.current);
+        }
+        // 回到 WYSIWYG：同步 search-active（隐藏原生选区露橙色）；此时插件 state 已
+        // 反映源码查询。
+        this._syncSearchActiveClass();
+        // 滚动到延续后的当前匹配（编辑器未聚焦，ProseMirror scrollIntoView 空操作）
+        this._scrollToCurrentWysiwygMatch();
         // 清理源码模式搜索状态并恢复 WYSIWYG 计数显示（此时 _notifySearchCount 走
         // searchPlugin 分支；_srcStop 内部会通知一次，此处无需再单独刷新）。
         this._srcStop();
@@ -1896,9 +1921,11 @@ window.editorApi = {
         }
     },
     // === 源码模式搜索 ===
-    // textarea 是纯文本节点，无法像 ProseMirror 用 Decoration 高亮匹配；当前匹配用
-    // 原生选区展示（setSelectionRange）。计数/导航/替换语义与 WYSIWYG 对齐：total 为
-    // 命中总数，current 上报 1-based 当前序号（与 SearchBar 显示一致）。
+    // textarea 无法像 ProseMirror 用 Decoration 高亮全部匹配，采用「透明文字 + 背后
+    // overlay」方案：overlay 渲染全文并把匹配包 <mark> 着底色（当前匹配橙、其余淡黄，
+    // 对齐 WYSIWYG），textarea 文字置透明露出底色，保留 caret 与输入；原生选区不绘制。
+    // 计数/导航/替换语义与 WYSIWYG 对齐：total 为命中总数，current 上报 1-based
+    // 当前序号（与 SearchBar 显示一致）。
     _srcEscapeRegExp: function(s) {
         return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     },
@@ -1930,13 +1957,21 @@ window.editorApi = {
         if (s.matches.length) s.current = 0;
     },
     // 只设选区不聚焦：源码搜索启动由查找框逐键输入触发，聚焦会把输入焦点抢到
-    // textarea 无法继续打字（与 WYSIWYG 打字时不抢焦点一致）。
+    // textarea 无法继续打字（与 WYSIWYG 打字时不抢焦点一致）；选区未聚焦不绘制，
+    // 配合 _srcScrollToFirst 让第一处匹配进入视野即可。
     _srcSelectCurrent: function() {
         var sv = document.getElementById('source-view');
         var s = this._srcSearch;
         if (!sv || !s || s.current < 0 || s.current >= s.matches.length) return;
         var mk = s.matches[s.current];
         sv.setSelectionRange(mk.from, mk.to);
+    },
+    // 启动搜索把第一处匹配滚入视野（只滚动页面不聚焦，不抢查找框输入焦点）。
+    _srcScrollToFirst: function() {
+        var sv = document.getElementById('source-view');
+        var s = this._srcSearch;
+        if (!sv || !s || s.current < 0) return;
+        this._srcScrollToMatch(sv, s.matches[s.current]);
     },
     // 导航/替换后聚焦 textarea 展示当前匹配，并滚动页面使匹配进入视野。
     _srcShowCurrent: function() {
@@ -1949,39 +1984,246 @@ window.editorApi = {
         this._srcScrollToMatch(sv, mk);
     },
     // 源码区自动撑高、滚动由页面承载；对无内部滚动的 textarea，setSelectionRange
-    // 不会滚动页面，须按匹配文本位置估算纵坐标手动滚动页面。用与 textarea 同宽、
-    // 同字体的隐藏测量元素（兼容长行折行）。
+    // 不会滚动页面，须按匹配文本位置估算纵坐标手动滚动页面。用隐藏的真实 textarea
+    // （与可见者同排版，折行一致）测前缀内容高度得到匹配的文档 Y；前缀以换行结尾时
+    // textarea 会多算一行，追加哨兵字符使结尾换行变成内容换行，测值即全文布局位置。
     _srcScrollToMatch: function(sv, mk) {
-        var probe = document.getElementById('src-search-probe');
-        if (!probe) {
-            probe = document.createElement('div');
-            probe.id = 'src-search-probe';
-            document.body.appendChild(probe);
+        var m = this._srcEnsureMeasureTa();
+        var lineH = 28.8;
+        try {
+            var lh = parseFloat(window.getComputedStyle(sv).lineHeight);
+            if (lh > 0) lineH = lh;
+        } catch (e) { /* 兜底 */ }
+        var caretDocY;
+        if (m) {
+            var wcs = window.getComputedStyle(m.wrap);
+            var padTop = parseFloat(wcs.paddingTop), padBottom = parseFloat(wcs.paddingBottom);
+            m.wrap.value = sv.value.slice(0, mk.from) + 'X';
+            caretDocY = sv.getBoundingClientRect().top + window.scrollY + padTop +
+                (m.wrap.scrollHeight - padTop - padBottom);
+        } else {
+            // 兜底：无测量层时按行号估算（行高 × 行号，仅作近似滚动）
+            var pts = this._srcWrapCache ? this._srcWrapCache.points : null;
+            if (pts && pts.length) {
+                var li = 0;
+                while (li < pts.length - 1 && pts[li + 1] <= mk.from) li++;
+                caretDocY = sv.getBoundingClientRect().top + window.scrollY + li * lineH;
+            } else {
+                caretDocY = sv.getBoundingClientRect().top + window.scrollY;
+            }
         }
-        var cs = window.getComputedStyle(sv);
-        // textarea 受全局 *{box-sizing:border-box} 约束，测量元素须同用 border-box
-        // 并复制其宽度/内边距/上边框，内容盒宽度才一致，折行才能对上。
-        probe.style.cssText = 'position:absolute;visibility:hidden;left:0;top:0;box-sizing:border-box;' +
-            'white-space:pre-wrap;overflow-wrap:anywhere;';
-        probe.style.width = cs.width;
-        probe.style.paddingTop = cs.paddingTop;
-        probe.style.paddingLeft = cs.paddingLeft;
-        probe.style.paddingRight = cs.paddingRight;
-        probe.style.borderTop = cs.borderTop;
-        probe.style.font = cs.font;
-        probe.textContent = sv.value.slice(0, mk.from);
-        // caret 页面绝对 Y = textarea 顶部(文档坐标) + 测量元素高度(含 padding/border)
-        var caretDocY = sv.getBoundingClientRect().top + window.scrollY + probe.getBoundingClientRect().height;
         var vh = window.innerHeight;
         var sy = window.scrollY;
-        if (caretDocY < sy + 120 || caretDocY > sy + vh - 120) {
-            window.scrollTo(0, Math.max(0, caretDocY - vh / 3));
+        // 近视口顶部/底部 2 行内才滚动到垂直居中，中部不动（避免匹配贴边难见）
+        var lineH = 28.8;
+        try {
+            var lh = parseFloat(window.getComputedStyle(sv).lineHeight);
+            if (lh > 0) lineH = lh;
+        } catch (e) { /* 兜底 */ }
+        var edge = 2 * lineH;
+        if (caretDocY < sy + edge || caretDocY > sy + vh - edge) {
+            window.scrollTo(0, Math.max(0, caretDocY - (vh - lineH) / 2));
         }
     },
-    _srcStartSearch: function(query, caseSensitive, regex, wholeWord) {
+    // === 源码模式搜索高亮（测量式） ===
+    // textarea 与普通元素（div/pre）的折行算法存在引擎级差异：同一文本、同宽同字体下，
+    // 折行点偶有 1 字符偏差（Windows 字体回退时更大）。因此「overlay 渲染全文 + <mark>」
+    // 的高亮底色会在部分匹配处与 textarea 可见文字错位（同行横向偏、跨行竖向偏）。
+    // 改为：用隐藏的真实 <textarea> 复刻 #source-view 排版（同一引擎、同一字体回退，
+    // 折行必然一致），测量每个匹配的矩形，再在 overlay 里画绝对定位的底色块。
+    // 底色与可见文字同源，任何平台都不会脱节；current 橙、其余淡黄对齐 WYSIWYG。
+    _srcEnsureMeasureTa: function() {
+        var sv = document.getElementById('source-view');
+        if (!sv) return null;
+        var cs = window.getComputedStyle(sv);
+        var mt = document.getElementById('src-measure-ta');
+        if (!mt) {
+            mt = document.createElement('textarea');
+            mt.id = 'src-measure-ta';
+            mt.setAttribute('rows', '1');
+            mt.style.cssText = 'position:absolute;visibility:hidden;left:-10000px;top:0;' +
+                'min-height:0;height:auto;resize:none;overflow:hidden;box-sizing:border-box;' +
+                'white-space:pre-wrap;overflow-wrap:anywhere;';
+            document.body.appendChild(mt);
+        }
+        // 同步排版：宽度/内边距/字体/行高须与可见 textarea 一致，折行才完全相同
+        mt.style.width = cs.width;
+        mt.style.padding = cs.padding;
+        mt.style.border = cs.border;
+        mt.style.font = cs.font;
+        mt.style.lineHeight = cs.lineHeight;
+        var wt = document.getElementById('src-measure-width-ta');
+        if (!wt) {
+            wt = document.createElement('textarea');
+            wt.id = 'src-measure-width-ta';
+            wt.setAttribute('rows', '1');
+            wt.style.cssText = 'position:absolute;visibility:hidden;left:-10000px;top:0;' +
+                'width:0;padding:0;border:0;min-height:0;height:auto;resize:none;overflow:hidden;' +
+                'white-space:pre;';
+            document.body.appendChild(wt);
+        }
+        wt.style.font = cs.font;
+        wt.style.lineHeight = cs.lineHeight;
+        return { wrap: mt, width: wt, lh: parseFloat(cs.lineHeight),
+                 padTop: parseFloat(cs.paddingTop), padLeft: parseFloat(cs.paddingLeft) };
+    },
+    // 计算 textarea 实际折行点（各行行首字符偏移）。scrollHeight 每次读取都触发重排，
+    // 故按文本缓存（_srcWrapCache）；用整数行数比较，规避小数行高的浮点边界误差。
+    _srcMeasureWrapPoints: function(text) {
+        var m = this._srcEnsureMeasureTa();
+        if (!m) return [0];
+        var lh = m.lh;
+        var wcs = window.getComputedStyle(m.wrap);
+        var pad = parseFloat(wcs.paddingTop) + parseFloat(wcs.paddingBottom);
+        var linesOf = function(prefix) {
+            m.wrap.value = prefix;
+            return Math.round((m.wrap.scrollHeight - pad) / lh);
+        };
+        var total = linesOf(text);
+        if (total <= 0) return [0];
+        var pts = [0];
+        for (var line = 1; line <= total; line++) {
+            var lo = pts[pts.length - 1], hi = text.length;
+            while (lo < hi) {
+                var mid = (lo + hi) >> 1;
+                if (linesOf(text.slice(0, mid)) >= line) hi = mid; else lo = mid + 1;
+            }
+            pts.push(lo);
+        }
+        var out = [];
+        for (var i = 0; i < pts.length; i++) {
+            if (i === 0 || pts[i] !== pts[i - 1]) out.push(pts[i]);
+        }
+        return out;
+    },
+    // 测量一段文本的内容宽度（white-space:pre 不折行，advance 与换行渲染一致）。
+    _srcMeasureLineWidth: function(text) {
+        var m = this._srcEnsureMeasureTa();
+        if (!m) return 0;
+        m.width.value = text;
+        return m.width.scrollWidth;
+    },
+    // 把 [from, to) 按折行点切成逐行段（跨行匹配逐行各画一块底色）。
+    _srcMatchLineSegments: function(wrapPoints, text, from, to) {
+        var segs = [], line = 0;
+        while (line < wrapPoints.length - 1 && wrapPoints[line + 1] <= from) line++;
+        var lineStart = wrapPoints[line];
+        var pos = from;
+        while (pos < to) {
+            var nextStart = line + 1 < wrapPoints.length ? wrapPoints[line + 1] : text.length;
+            var segEnd = Math.min(to, nextStart);
+            segs.push({ line: line, lineStart: lineStart, from: pos, to: segEnd });
+            pos = segEnd;
+            line++;
+            lineStart = nextStart;
+        }
+        return segs;
+    },
+    // 计算所有匹配的底色矩形（相对 textarea 内容盒的 px 偏移 + 尺寸）。
+    _srcMeasureMatchRects: function(wrapPoints, text) {
+        var s = this._srcSearch;
+        var m = this._srcEnsureMeasureTa();
+        if (!s || !m) return [];
+        var lh = m.lh, rects = [];
+        for (var i = 0; i < s.matches.length; i++) {
+            var mk = s.matches[i];
+            var segs = this._srcMatchLineSegments(wrapPoints, text, mk.from, mk.to);
+            for (var j = 0; j < segs.length; j++) {
+                var sg = segs[j];
+                var x = this._srcMeasureLineWidth(text.slice(sg.lineStart, sg.from));
+                var w = this._srcMeasureLineWidth(text.slice(sg.from, sg.to));
+                rects.push({ top: sg.line * lh, left: x, width: Math.max(w, 2), height: lh,
+                             matchIndex: i });
+            }
+        }
+        return rects;
+    },
+    // 取折行点（按文本缓存）：文本未变直接命中；变了先用旧值近似渲染（响应即时编辑），
+    // 并安排延迟重测刷新，避免大文档每次按键都阻塞。
+    _srcGetWrapPoints: function() {
+        var sv = document.getElementById('source-view');
+        if (!sv) return [0];
+        var text = sv.value;
+        if (this._srcWrapCache && this._srcWrapCache.text === text) return this._srcWrapCache.points;
+        if (this._srcWrapCache) {
+            this._srcScheduleWrapRemeasure();
+            return this._srcWrapCache.points;
+        }
+        var pts = this._srcMeasureWrapPoints(text);
+        this._srcWrapCache = { text: text, points: pts };
+        return pts;
+    },
+    _srcScheduleWrapRemeasure: function() {
+        var self = this;
+        if (this._srcWrapTimer) clearTimeout(this._srcWrapTimer);
+        this._srcWrapTimer = setTimeout(function() {
+            self._srcWrapTimer = null;
+            var sv = document.getElementById('source-view');
+            if (!sv || !self._srcSearch || !self._srcSearch.query) return;
+            var text = sv.value;
+            if (text !== (self._srcWrapCache ? self._srcWrapCache.text : '')) {
+                self._srcWrapCache = { text: text, points: self._srcMeasureWrapPoints(text) };
+                self._srcRenderHighlights();
+            }
+        }, 150);
+    },
+    // 渲染源码模式搜索高亮到 overlay：按测量矩形画绝对定位底色块。激活时 textarea
+    // 背景透明、底色透过可见（文字仍由 textarea 绘制，caret 不脱节）；无查询/无匹配
+    // 则清空还原，保持 textarea 正常显示。
+    _srcRenderHighlights: function() {
+        var ov = document.getElementById('source-overlay');
+        var s = this._srcSearch;
+        if (!ov) return;
+        if (!s || !s.query || !s.matches.length) {
+            ov.innerHTML = '';
+            document.body.classList.remove('src-search-active');
+            return;
+        }
+        var sv = document.getElementById('source-view');
+        var m = this._srcEnsureMeasureTa();
+        if (!sv || !m) return;
+        var wrapPoints = this._srcGetWrapPoints();
+        var rects = this._srcMeasureMatchRects(wrapPoints, sv.value);
+        var html = '';
+        for (var i = 0; i < rects.length; i++) {
+            var r = rects[i];
+            var cls = r.matchIndex === s.current ? 'src-mark-current' : 'src-mark';
+            // 相对 overlay 边框盒定位：加上与 textarea 共享的内边距，即落到内容盒同坐标
+            html += '<span class="' + cls + '" style="left:' + (m.padLeft + r.left) + 'px;top:' +
+                    (m.padTop + r.top) + 'px;width:' + r.width + 'px;height:' + r.height + 'px;"></span>';
+        }
+        ov.innerHTML = html;
+        document.body.classList.add('src-search-active');
+    },
+    // 手动编辑源码后重算匹配：当前序号从编辑前位置延续（对齐 WYSIWYG 插件 docChanged
+    // 重算），只刷新 overlay 与计数，不移动用户正在编辑的 caret。
+    _srcOnSourceEdit: function() {
+        var s = this._srcSearch;
+        if (!s || !s.query) return;
+        var oldFrom = (s.matches[s.current] || { from: 0 }).from;
+        this._srcFindMatches();
+        var ns = this._srcSearch;
+        if (ns.matches.length) {
+            var idx = 0;
+            for (var i = 0; i < ns.matches.length; i++) {
+                if (ns.matches[i].from >= oldFrom) { idx = i; break; }
+            }
+            ns.current = Math.min(idx, ns.matches.length - 1);
+        }
+        this._srcRenderHighlights();
+        this._notifySearchCount();
+    },
+    _srcStartSearch: function(query, caseSensitive, regex, wholeWord, startIndex) {
         this._srcSearch = { query: query || '', caseSensitive: !!caseSensitive, regex: !!regex, wholeWord: !!wholeWord, matches: [], current: -1 };
         this._srcFindMatches();
+        // 跨模式切回时保留原 current 位置（钳制到有效范围），默认 0（首处）
+        var s = this._srcSearch;
+        if (s.matches.length && typeof startIndex === 'number' && startIndex >= 0) {
+            s.current = Math.min(startIndex, s.matches.length - 1);
+        }
         this._srcSelectCurrent();
+        this._srcScrollToFirst();
+        this._srcRenderHighlights();
         this._notifySearchCount();
     },
     _srcSearchNext: function() {
@@ -1989,6 +2231,7 @@ window.editorApi = {
         if (!s || !s.matches.length) return;
         s.current = (s.current + 1) % s.matches.length;
         this._srcShowCurrent();
+        this._srcRenderHighlights();
         this._notifySearchCount();
     },
     _srcSearchPrev: function() {
@@ -1996,6 +2239,7 @@ window.editorApi = {
         if (!s || !s.matches.length) return;
         s.current = (s.current - 1 + s.matches.length) % s.matches.length;
         this._srcShowCurrent();
+        this._srcRenderHighlights();
         this._notifySearchCount();
     },
     _srcReplaceOne: function(rep) {
@@ -2015,6 +2259,7 @@ window.editorApi = {
         }
         if (ns.current < 0 && ns.matches.length) ns.current = 0;
         this._srcShowCurrent();
+        this._srcRenderHighlights();
         this._resizeSourceView();
         this._markDirty();
         this._notifySearchCount();
@@ -2031,16 +2276,62 @@ window.editorApi = {
         sv.value = out;
         this._srcSearch = { query: s.query, caseSensitive: s.caseSensitive, regex: s.regex, wholeWord: s.wholeWord, matches: [], current: -1 };
         this._srcFindMatches();
+        this._srcRenderHighlights();
         this._resizeSourceView();
         this._markDirty();
         this._notifySearchCount();
     },
     _srcStop: function() {
         this._srcSearch = null;
+        // 清空折行缓存与延迟重测定时器，避免残留任务在下次搜索时误刷新
+        this._srcWrapCache = null;
+        if (this._srcWrapTimer) { clearTimeout(this._srcWrapTimer); this._srcWrapTimer = null; }
+        // 清空 overlay 高亮并移除 src-search-active（恢复 textarea 正常文字/底色）
+        this._srcRenderHighlights();
         this._notifySearchCount();
     },
 
     // === 搜索（WYSIWYG 用 searchPlugin，源码模式走上方 textarea 自实现） ===
+    // 滚动到文档位置 pos：近视口顶部/底部 2 行内居中，中部则不动。编辑器未聚焦时
+    // ProseMirror tr.scrollIntoView 是空操作（scrollToSelection 要求编辑器持有 DOM
+    // 焦点），导航后聚焦又走最小滚动贴边——这里统一手动滚窗口，不抢查找框焦点。
+    _scrollSearchMatchIntoView: function(pos) {
+        if (!this.editor) return;
+        var coords;
+        try { coords = this.editor.view.coordsAtPos(pos); } catch (e) { return; }
+        if (!coords || !isFinite(coords.top)) return;
+        var vh = window.innerHeight, sy = window.scrollY;
+        var lineH = 30;
+        try {
+            var lh = parseFloat(window.getComputedStyle(this.editor.view.dom).lineHeight);
+            if (lh > 0) lineH = lh;
+        } catch (e) { /* 兜底 */ }
+        var edge = 2 * lineH;                 // 顶部/底部各 2 行
+        var docTop = coords.top + sy, docBottom = coords.bottom + sy;
+        if (docTop < sy + edge || docBottom > sy + vh - edge) {
+            var matchH = Math.max(lineH, docBottom - docTop);
+            window.scrollTo(0, Math.max(0, docTop - (vh - matchH) / 2));
+        }
+    },
+    // 滚动到 WYSIWYG 当前匹配（按当前插件 state 的 matches[current]）。
+    _scrollToCurrentWysiwygMatch: function() {
+        if (!this.editor) return;
+        var sp = window.searchPlugin;
+        var st = sp ? sp.searchKey.getState(this.editor.state) : null;
+        if (!st || !st.matches.length || st.current < 0) return;
+        this._scrollSearchMatchIntoView(st.matches[st.current].from);
+    },
+    // 同步 body.search-active：WYSIWYG 搜索激活时隐藏编辑器原生选区高亮，露出当前匹配
+    // 橙色装饰（否则聚焦时浏览器选区色块盖住橙色，各匹配看起来一样）。
+    _syncSearchActiveClass: function() {
+        var on = false;
+        if (!this.isSourceMode) {
+            var sp = window.searchPlugin;
+            var st = sp && this.editor ? sp.searchKey.getState(this.editor.state) : null;
+            on = !!(st && st.query && st.matches.length);
+        }
+        document.body.classList.toggle('search-active', on);
+    },
     startSearch: function (query, caseSensitive, regex, wholeWord) {
         if (!this.editor) return;
         if (this.isSourceMode) { this._srcStartSearch(query, caseSensitive, regex, wholeWord); return; }
@@ -2048,6 +2339,9 @@ window.editorApi = {
         sp.requestSearch(this.editor.view, query || '', {
             regex: !!regex, wholeWord: !!wholeWord, caseSensitive: !!caseSensitive
         });
+        // 初始搜索跳到第一处匹配（编辑器未聚焦，scrollIntoView 空操作，须手动滚动）
+        this._scrollToCurrentWysiwygMatch();
+        this._syncSearchActiveClass();
         this._notifySearchCount();
     },
     // 切回标签页恢复搜索：插件 state 逐 tab 独立，若查询参数未变则保留
@@ -2074,7 +2368,10 @@ window.editorApi = {
             sp.requestSearch(this.editor.view, query || '', {
                 regex: !!regex, wholeWord: !!wholeWord, caseSensitive: !!caseSensitive
             });
+            // 参数变了：跳到新查询的第一处匹配（编辑器未聚焦，scrollIntoView 空操作）
+            this._scrollToCurrentWysiwygMatch();
         }
+        this._syncSearchActiveClass();
         this._notifySearchCount();
     },
     searchNext: function () {
@@ -2094,21 +2391,16 @@ window.editorApi = {
     // 搜索导航后聚焦：可编辑用 focus 命令（显示选区）；
     // 只读模式下 TipTap focus 命令内部 editable && 才聚焦、ProseMirror 选区
     // 同步（selectionToDOM）也要求编辑器在焦点链上，均不生效——须 view.focus()
-    // 强制聚焦 DOM，选区才能写入并显示；再主动滚动到当前匹配（tr.scrollIntoView
-    // 依赖选区宿主，聚焦前已派发的事务滚动可能丢失）。
+    // 强制聚焦 DOM，选区才能写入并显示。聚焦后统一用 _scrollSearchMatchIntoView
+    // 按「近顶/底 2 行才居中」滚动（focus 命令默认 scrollIntoView 是最小滚动贴边，
+    // 须传 scrollIntoView:false 关闭，避免覆盖我们的滚动）。
     _focusAfterSearchNav: function () {
         if (this._readOnly) {
             this.editor.view.focus();
-            var st = window.searchPlugin.searchKey.getState(this.editor.state);
-            if (st && st.matches.length && st.current >= 0) {
-                var m = st.matches[st.current];
-                var pos = this.editor.view.domAtPos(m.from);
-                var el = pos.node.nodeType === 3 ? pos.node.parentElement : pos.node;
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
         } else {
-            this.editor.commands.focus();   // 焦点移入编辑器，显示匹配处选区
+            this.editor.commands.focus(null, { scrollIntoView: false });
         }
+        this._scrollToCurrentWysiwygMatch();
     },
     replaceOne: function (rep) {
         if (!this.editor) return;
@@ -2126,6 +2418,7 @@ window.editorApi = {
         if (!this.editor) return;
         if (this.isSourceMode) { this._srcStop(); return; }
         if (window.searchPlugin) window.searchPlugin.clearSearch(this.editor.view);
+        this._syncSearchActiveClass();
         this._notifySearchCount();
     },
     _notifySearchCount: function () {
