@@ -2067,11 +2067,21 @@ window.editorApi = {
         return { wrap: mt, width: wt, lh: parseFloat(cs.lineHeight),
                  padTop: parseFloat(cs.paddingTop), padLeft: parseFloat(cs.paddingLeft) };
     },
-    // 计算 textarea 实际折行点（各行行首字符偏移）。scrollHeight 每次读取都触发重排，
-    // 故按文本缓存（_srcWrapCache）；用整数行数比较，规避小数行高的浮点边界误差。
-    _srcMeasureWrapPoints: function(text) {
+    // 计算 textarea 实际折行点（各行行首字符偏移），异步分块执行。scrollHeight 每次
+    // 读取都触发重排，大文档无缓存时的首次测量若同步跑会阻塞模式切换数秒，故：
+    //   1) 每行在上限 [上一行行首, 上限] 内二分找「行数 ≥ line」的第一个前缀长度；
+    //      上限按上一行长度预估（不足则倍增），等效于全范围二分但探针更少、且探针前缀
+    //      更短。窗口界定的二分与全范围二分结果一致（行数随前缀长度单调不减）。
+    //   2) 每块预算约一帧（16ms），到点让出主线程下一帧继续；测量完成后回填缓存并
+    //      刷新高亮，模式切换不阻塞。
+    // 同一文本已排队则复用；文本中途变更/搜索停止用递增代号（_srcWrapGen）作废旧任务
+    // （测量层 _srcEnsureMeasureTa 是共享的，不能并发跑两个任务互相污染）。
+    _srcEnsureAsyncWrapPoints: function(text) {
+        var self = this;
+        var gen = (this._srcWrapGen = (this._srcWrapGen || 0) + 1);
+        this._srcWrapPending = text;
         var m = this._srcEnsureMeasureTa();
-        if (!m) return [0];
+        if (!m) return;
         var lh = m.lh;
         var wcs = window.getComputedStyle(m.wrap);
         var pad = parseFloat(wcs.paddingTop) + parseFloat(wcs.paddingBottom);
@@ -2080,21 +2090,47 @@ window.editorApi = {
             return Math.round((m.wrap.scrollHeight - pad) / lh);
         };
         var total = linesOf(text);
-        if (total <= 0) return [0];
-        var pts = [0];
-        for (var line = 1; line <= total; line++) {
-            var lo = pts[pts.length - 1], hi = text.length;
-            while (lo < hi) {
-                var mid = (lo + hi) >> 1;
-                if (linesOf(text.slice(0, mid)) >= line) hi = mid; else lo = mid + 1;
+        if (total <= 0) {
+            this._srcWrapCache = { text: text, points: [0] };
+            this._srcWrapPending = null;
+            return;
+        }
+        var pts = [0], line = 1, prevLineLen = 0;
+        var BUDGET = 16;
+        function nextChunk() {
+            if (gen !== self._srcWrapGen) return;   // 已被更新的测量取代，作废
+            var t0 = performance.now();
+            while (line <= total) {
+                var prev = pts[pts.length - 1];
+                var win = Math.max(prevLineLen * 2, 200);
+                var hi = Math.min(text.length, prev + win);
+                while (hi < text.length && linesOf(text.slice(0, hi)) < line) {
+                    win *= 2;
+                    hi = Math.min(text.length, prev + win);
+                }
+                var lo = prev;
+                while (lo < hi) {
+                    var mid = (lo + hi) >> 1;
+                    if (linesOf(text.slice(0, mid)) >= line) hi = mid; else lo = mid + 1;
+                }
+                pts.push(lo);
+                prevLineLen = lo - prev;
+                line++;
+                if (performance.now() - t0 > BUDGET) break;
             }
-            pts.push(lo);
+            if (line > total) {
+                var out = [];
+                for (var i = 0; i < pts.length; i++) {
+                    if (i === 0 || pts[i] !== pts[i - 1]) out.push(pts[i]);
+                }
+                self._srcWrapCache = { text: text, points: out };
+                self._srcWrapPending = null;
+                self._srcRenderHighlights();
+                return;
+            }
+            setTimeout(nextChunk, 0);
         }
-        var out = [];
-        for (var i = 0; i < pts.length; i++) {
-            if (i === 0 || pts[i] !== pts[i - 1]) out.push(pts[i]);
-        }
-        return out;
+        setTimeout(nextChunk, 0);
     },
     // 测量一段文本的内容宽度（white-space:pre 不折行，advance 与换行渲染一致）。
     _srcMeasureLineWidth: function(text) {
@@ -2142,16 +2178,17 @@ window.editorApi = {
     // 并安排延迟重测刷新，避免大文档每次按键都阻塞。
     _srcGetWrapPoints: function() {
         var sv = document.getElementById('source-view');
-        if (!sv) return [0];
+        if (!sv) return null;
         var text = sv.value;
         if (this._srcWrapCache && this._srcWrapCache.text === text) return this._srcWrapCache.points;
         if (this._srcWrapCache) {
             this._srcScheduleWrapRemeasure();
             return this._srcWrapCache.points;
         }
-        var pts = this._srcMeasureWrapPoints(text);
-        this._srcWrapCache = { text: text, points: pts };
-        return pts;
+        // 无缓存：发起异步分块测量，先返回 null（渲染跳过、textarea 保持正常显示），
+        // 测量完成后回填缓存并自动刷新高亮——大文档进源码模式不再同步阻塞数秒
+        if (this._srcWrapPending !== text) this._srcEnsureAsyncWrapPoints(text);
+        return null;
     },
     _srcScheduleWrapRemeasure: function() {
         var self = this;
@@ -2162,8 +2199,7 @@ window.editorApi = {
             if (!sv || !self._srcSearch || !self._srcSearch.query) return;
             var text = sv.value;
             if (text !== (self._srcWrapCache ? self._srcWrapCache.text : '')) {
-                self._srcWrapCache = { text: text, points: self._srcMeasureWrapPoints(text) };
-                self._srcRenderHighlights();
+                self._srcEnsureAsyncWrapPoints(text);
             }
         }, 150);
     },
@@ -2183,6 +2219,7 @@ window.editorApi = {
         var m = this._srcEnsureMeasureTa();
         if (!sv || !m) return;
         var wrapPoints = this._srcGetWrapPoints();
+        if (!wrapPoints) return;   // 异步测量未完成：保持现状（textarea 正常显示），完成后回填刷新
         var rects = this._srcMeasureMatchRects(wrapPoints, sv.value);
         var html = '';
         for (var i = 0; i < rects.length; i++) {
@@ -2283,8 +2320,11 @@ window.editorApi = {
     },
     _srcStop: function() {
         this._srcSearch = null;
-        // 清空折行缓存与延迟重测定时器，避免残留任务在下次搜索时误刷新
+        // 清空折行缓存与延迟重测定时器，并递增代号作废进行中的异步分块测量
+        // （共享测量层，残留任务若继续跑会在下次搜索时误刷新）
         this._srcWrapCache = null;
+        this._srcWrapPending = null;
+        if (this._srcWrapGen) this._srcWrapGen++;
         if (this._srcWrapTimer) { clearTimeout(this._srcWrapTimer); this._srcWrapTimer = null; }
         // 清空 overlay 高亮并移除 src-search-active（恢复 textarea 正常文字/底色）
         this._srcRenderHighlights();
