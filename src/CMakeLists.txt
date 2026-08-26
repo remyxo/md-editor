@@ -85,6 +85,16 @@ if(APPLE)
         target_sources(${PROJECT_NAME} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/md-editor.icns")
     endif()
+    # 文档类型图标（.md/.markdown 的 Finder 图标，区别于应用图标；.icns 由 CI 的
+    # generate-icons-macos.sh 生成，Info.plist 的 CFBundleDocumentTypes 由
+    # package-macos.sh 用 PlistBuddy 注入引用）
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/text-markdown.icns")
+        set_source_files_properties(
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/text-markdown.icns"
+            PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+        target_sources(${PROJECT_NAME} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/text-markdown.icns")
+    endif()
 else()
     # WIN32：链接为 GUI 子系统 exe（WinMain 入口由 Qt6 入口点库自动提供，main() 不用改）。
     # 缺此标志是控制台子系统——Windows 双击启动会附带一个黑色空控制台窗口。

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Folded paper background -->
+  <path d="M28 8h50l30 30v74c0 4.4-3.6 8-8 8H28c-4.4 0-8-3.6-8-8V16c0-4.4 3.6-8 8-8z" fill="#f6f5f4"/>
+  <!-- Folded corner -->
+  <path d="M78 8v22c0 4.4 3.6 8 8 8h22z" fill="#deddda"/>
+  <!-- Text lines on the right -->
+  <g fill="#d5d3cf">
+    <rect x="34" y="28" width="36" height="4" rx="2"/>
+    <rect x="34" y="36" width="36" height="4" rx="2"/>
+    <rect x="34" y="44" width="60" height="4" rx="2"/>
+    <rect x="82" y="52" width="12" height="4" rx="2"/>
+    <rect x="82" y="60" width="12" height="4" rx="2"/>
+    <rect x="82" y="68" width="12" height="4" rx="2"/>
+    <rect x="82" y="76" width="12" height="4" rx="2"/>
+    <rect x="82" y="84" width="12" height="4" rx="2"/>
+    <rect x="82" y="92" width="12" height="4" rx="2"/>
+    <rect x="82" y="100" width="12" height="4" rx="2"/>
+  </g>
+  <!-- Badge aligned with Word's blue box top -->
+  <rect x="6" y="36" width="52" height="50" rx="4" fill="#7b6b8d"/>
+  <text x="32" y="71" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700" fill="#ffffff" text-anchor="middle" letter-spacing="2">MD</text>
+</svg>

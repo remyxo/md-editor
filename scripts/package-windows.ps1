@@ -31,6 +31,11 @@ New-Item -ItemType Directory -Force -Path $dist | Out-Null
 # 2. 拷贝 exe 到暂存目录
 Copy-Item $exe $dist
 
+# 2.2 文档图标（.md/.markdown 文件类型 DefaultIcon 用，NSIS 安装器注册引用；
+#      由 generate-icons-win.ps1 生成，缺文件时跳过并告警）
+$docIcon = Join-Path $root "src\resources\icons\text-markdown.ico"
+if (Test-Path $docIcon) { Copy-Item $docIcon $dist } else { Write-Warning "text-markdown.ico 不存在，文档图标将缺失（先跑 generate-icons-win.ps1）" }
+
 # 2.5 PE 子系统校验：必须是 GUI(2)。若是控制台(3)（add_executable 漏 WIN32 标志），
 #     双击启动会附带一个黑色空控制台窗口——此处拦截，防止回归出厂
 $fs = [System.IO.File]::OpenRead((Join-Path $dist "md-editor.exe"))

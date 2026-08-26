@@ -17,6 +17,38 @@ else
     macdeployqt "$APP" -always-overwrite
 fi
 
+# 1.5 注入 Markdown 文档类型声明（.md/.markdown → text-markdown.icns 图标），
+#     使 Finder 中由本应用处理的 md 文档显示文档图标而非应用图标。
+#     icon 在 Contents/Resources/text-markdown.icns（src/CMakeLists.txt 打包）。
+#     CFBundleTypeRole=Editor + LSHandlerRank=Owner：声明本应用为 md 默认处理者
+#     （最终默认与否仍由用户「打开方式」决定，macOS 按此机制授权）。
+PLIST="$APP/Contents/Info.plist"
+PLBUDDY="/usr/libexec/PlistBuddy"
+# 先删后加保证幂等（重复打包不报 key 已存在）
+"$PLBUDDY" -c "Delete :CFBundleDocumentTypes" "$PLIST" 2>/dev/null || true
+"$PLBUDDY" -c "Delete :UTImportedTypeDeclarations" "$PLIST" 2>/dev/null || true
+"$PLBUDDY" -c "Add :CFBundleDocumentTypes array" "$PLIST"
+"$PLBUDDY" -c "Add :CFBundleDocumentTypes:0 dict" "$PLIST"
+"$PLBUDDY" -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string 'Markdown 文档'" "$PLIST"
+"$PLBUDDY" -c "Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Editor" "$PLIST"
+"$PLBUDDY" -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string Owner" "$PLIST"
+"$PLBUDDY" -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions array" "$PLIST"
+"$PLBUDDY" -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:0 string md" "$PLIST"
+"$PLBUDDY" -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:1 string markdown" "$PLIST"
+"$PLBUDDY" -c "Add :CFBundleDocumentTypes:0:CFBundleTypeIconFile string text-markdown" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations array" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0 dict" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0:UTTypeIdentifier string com.md-editor.markdown" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0:UTTypeDescription string 'Markdown 文档'" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0:UTTypeConformsTo array" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0:UTTypeConformsTo:0 string public.plain-text" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0:UTTypeConformsTo:1 string public.text" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0:UTTypeTagSpecification dict" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension array" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension:0 string md" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension:1 string markdown" "$PLIST"
+"$PLBUDDY" -c "Add :UTImportedTypeDeclarations:0:UTTypeIconFile string text-markdown" "$PLIST"
+
 # 2. 重新 ad-hoc 签名（未公证，用户首次需「右键→打开」）
 codesign --force --deep --sign - "$APP"
 
