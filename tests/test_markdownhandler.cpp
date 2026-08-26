@@ -2556,6 +2556,107 @@ private slots:
                  qPrintable("往返后内层 ```cpp 应作为字面内容保留，实际: " + html2));
     }
 
+    void testUnclosedHtmlTagNoSwallow()
+    {
+        // 未闭合的 HTML 容器标签（<script>/<hr>/<b> 等，全文无同名 </tag> 配对）会
+        // 让 Qt setMarkdown 把其后全部内容当 HTML 块吞噬到文末（数据丢失）。
+        // 修复：toHtml 中把未闭合标签转义为字面实体（<tag> → &lt;tag&gt;），
+        // 受支持的标签（配对闭合、void <br>、自闭合 <img/>）保持原样。
+        const QString md = QStringLiteral(
+            "**问题**: `codeFenceLang` 拼接进属性。如 ``` ```<script> ```），则产生 XSS。\n"
+            "**建议**: `codeFenceLang` 调用 `toHtmlEscaped()` 再拼接。\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        // 关键 token 一个都不能丢（修复前整段被 Qt 吞掉）
+        QVERIFY2(html.contains("XSS"),
+                 qPrintable("后半段正文被吞噬，实际: " + html));
+        QVERIFY(html.contains("建议"));
+        QVERIFY(html.contains("toHtmlEscaped"));
+        // <script> 应转义为实体（字面显示，不产生可执行标签）
+        QVERIFY2(html.contains("&lt;script&gt;"),
+                 qPrintable("<script> 应转义为实体，实际: " + html));
+        QVERIFY(!html.contains("<script>"));
+        // 往返内容保留，且往返结果稳定（MD1 == MD2，不逐次累积）
+        const QString back1 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back1.contains("XSS") && back1.contains("建议"),
+                 qPrintable("往返丢失内容，实际: " + back1));
+        const QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back1));
+        QVERIFY2(back1 == back2,
+                 qPrintable("往返不稳定（内容逐次累积），MD1: " + back1 + " MD2: " + back2));
+    }
+
+    void testUnclosedHtmlTagKeepsSupportedTags()
+    {
+        // 未闭合标签转义不能误伤可正常往返的标签：配对闭合（<b>x</b>、<a href>…</a>）、
+        // void <br>、自闭合 <img/>。
+        const QString md = QStringLiteral(
+            "a <b>x</b> c <a href=\"u\">y</a> <br> <img src=\"i\"/> <hr> TAIL\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        // 配对 <b> 由 Qt 原生转 <strong>，<a>、<br> 保留；未闭合 <hr> 转义为实体
+        QVERIFY2(html.contains("<strong>x</strong>"),
+                 qPrintable("配对 <b> 应转 <strong>，实际: " + html));
+        QVERIFY(html.contains("<a href=\"u\">y</a>"));
+        QVERIFY(html.contains("<br>"));
+        QVERIFY2(html.contains("&lt;hr&gt;"),
+                 qPrintable("未闭合 <hr> 应转义，实际: " + html));
+        QVERIFY(html.contains("TAIL"));
+        // 往返后 TAIL 仍在（修复前被吞）
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("TAIL"),
+                 qPrintable("往返后尾部丢失，实际: " + back));
+    }
+
+    void testLiteralBrmarkerPreserved()
+    {
+        // 源文档字面 "BRMARKER"（含行内代码内）不能被软换行后处理误替换为 <br>。
+        // 修复前：后处理 html.replace("BRMARKER", "<br data-brk>") 把用户字面文本
+        // 一并替换（如 audit 文档中的 `BRMARKER` 示例）。修复：改用带序号的
+        // ZZBR<n>ZZ 占位符，与用户文本不冲突。
+        const QString md = QStringLiteral(
+            "a BRMARKER b\nc `BRMARKER` d\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("BRMARKER"),
+                 qPrintable("字面 BRMARKER 应保留，实际: " + html));
+        // 两行正文间的软换行仍应工作
+        QVERIFY2(html.contains("<br data-brk>"),
+                 qPrintable("软换行应正常，实际: " + html));
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY(back.contains("BRMARKER"));
+    }
+
+    void testCodeBlockPlaceholderCollisionWithUserText()
+    {
+        // 真实代码块的占位符 ZZCB0ZZ 与用户字面文本 ZZCB0ZZ 冲突：还原时不得把
+        // 用户字面文本误替换成代码块 HTML（往返数据丢失）。修复：占位符序号
+        // 避开源文档/已产出内容中的同串（collisionFreePlaceholder）。
+        const QString md = QStringLiteral(
+            "```cpp\nint x;\n```\n\n**问题**：字面 `ZZCB0ZZ` 文本。TAIL\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("ZZCB0ZZ"),
+                 qPrintable("用户字面 ZZCB0ZZ 应保留，实际: " + html));
+        QVERIFY(html.contains("int x"));
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("ZZCB0ZZ") && back.contains("int x") && back.contains("TAIL"),
+                 qPrintable("往返应保留全部内容，实际: " + back));
+    }
+
+    void testIndentedParaBetweenListItemsRoundTrip()
+    {
+        // 两列表项之间的缩进段落：Qt setMarkdown 把带前导空格的段落当列表项
+        // lazy continuation 吸收进 <ol>（<ol> 内非法 <p>），fromHtml 的 toMarkdown
+        // 丢弃该段（往返数据丢失）。修复：跨空行紧跟列表的缩进段落剥离前导空格
+        // 成为独立段落；紧邻列表项无空行的缩进行（真正的续行）保留缩进。
+        const QString md = QStringLiteral(
+            "1. item one\n\n   建议建立完整的测试套件。\n\n2. item two\n");
+        const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("建议建立完整的测试套件"),
+                 qPrintable("列表间段落应往返保留，实际: " + back));
+        // lazy continuation（无空行）仍是列表项内容
+        const QString md2 = QStringLiteral("- item one\n   continuation text\n");
+        const QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2));
+        QVERIFY2(back2.contains("continuation"),
+                 qPrintable("lazy continuation 应保留为列表项内容，实际: " + back2));
+    }
+
     void testCodeBlockAdjacentBlockMathRoundTrip()
     {
         // 源码块（含 $$ 块级公式演示）紧邻真实块级公式：

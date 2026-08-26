@@ -290,6 +290,62 @@ static QString unescapeHtmlEntities(const QString &s)
     return r;
 }
 
+// 为占位符取不与源文本冲突的串：占位符形如 ZZ<名><n>ZZ，若源文档（markdown）或已
+// 产出内容（processed）已含该串（如用户文档字面 "ZZCB0ZZ"），跳过该序号，否则后处理
+// html.replace(ph, backup) 会把用户字面文本一并误替换（往返数据损坏）。n 从 base 起
+// 递增直至无冲突；返回的占位符串由调用方存储，还原时按存储值回填（序号可非连续）。
+static QString collisionFreePlaceholder(const QString &name, int base,
+                                        const QString &markdown, const QString &processed)
+{
+    int n = base;
+    QString ph;
+    do {
+        ph = QString("ZZ%1%2ZZ").arg(name).arg(n++);
+    } while (markdown.contains(ph) || processed.contains(ph));
+    return ph;
+}
+
+// 转义「未闭合的 HTML 标签」为字面实体（<tag> → &lt;tag&gt;）。
+// Qt setMarkdown 遇到段落内未闭合的容器标签（<b>、<script>、<hr>、<span> 等，
+// 全文无同名 </tag> 配对）时，会把其后全部内容当 HTML 块吞噬到文末，造成数据
+// 丢失（往返保真违规）。可正常往返的标签保持原样：
+//   - 配对闭合的：<b>x</b>、<div>x</div>、<a href>…</a>（Qt 原生转为 <strong> 等）
+//   - void <br>（含 <br/>、<br />）
+//   - 自闭合的：<img src="x"/>
+// 已转义的形态跳过：`\<tag>`（Qt toMarkdown 对字面 <tag> 的规范转义，须保持稳定
+// 不二次处理）与 `&lt;tag&gt;`（实体文本）。负向断言 (?<![\&\\]) 排除 `<` 紧跟
+// `&`/`\` 的匹配。块级 <div> 与受支持内联标签（<span style>/<u>/<kbd>/<small>）
+// 在此前已占位保护，不经过本函数；本函数须在占位保护之后执行。
+static void escapeUnclosedHtmlTags(QString &s)
+{
+    static const QRegularExpression tagRe("(?<![\\&\\\\])<[a-zA-Z/][^<>]*>");
+    int off = 0;
+    while (true) {
+        auto m = tagRe.match(s, off);
+        if (!m.hasMatch()) break;
+        const QString tok = m.captured();
+        const bool isClosing = tok.startsWith("</");
+        // 提取标签名（<b> → b，<a href> → a，</div> → div）
+        int nameEnd = tok.indexOf(QRegularExpression("[\\s>]"), 1);
+        if (nameEnd < 0) nameEnd = tok.length() - 1;
+        const QString name = isClosing ? tok.mid(2, nameEnd - 2) : tok.mid(1, nameEnd - 1);
+        const QString nameL = name.toLower();
+        const bool isBr = nameL == "br";
+        const bool isSelfClosing = tok.contains("/>");
+        const bool hasClose = !isClosing && QRegularExpression(
+            "</" + QRegularExpression::escape(name) + "\\b")
+                .match(s, m.capturedEnd()).hasMatch();
+        if (isClosing || isBr || isSelfClosing || hasClose) {
+            off = m.capturedEnd();
+            continue;
+        }
+        // 未闭合容器标签 → 转义 < > 为实体，Qt 不再当标签解析
+        const QString inner = tok.mid(1, tok.length() - 2);
+        s.replace(m.capturedStart(), m.capturedLength(), "&lt;" + inner + "&gt;");
+        off = m.capturedStart() + inner.length() + 8;   // &lt;(4) + inner + &gt;(4)
+    }
+}
+
 // 提取下标 ~x~（Pandoc 语法）为占位符。
 // Qt 的 markdown 解析器把单个 ~x~ 当作删除线（text-decoration:line-through），
 // 必须在 setMarkdown 前替换为占位符，后处理时再还原为 <sub>。
@@ -1067,10 +1123,11 @@ static bool isInsideGeneralList(const QString &s, int pos)
 
 QString MarkdownHandler::toHtml(const QString &markdown)
 {
-    // 预处理：两行正文间单 \n → 行末嵌入 BRMARKER
+    // 预处理：两行正文间单 \n → 行末嵌入软换行占位符 ZZBR<n>ZZ
     // QTextDocument::setMarkdown() 不支持硬换行（<br>、  \n、\ 均被忽略）
-    // 用纯文本标记 BRMARKER 嵌入行末，后处理时替换为 <br>
-    static const QString MARKER = QStringLiteral("BRMARKER");
+    // 用纯文本占位符嵌入行末，后处理时替换为 <br data-brk>。占位符带序号，避免
+    // 与用户文档中字面 "BRMARKER" 文本冲突（此前固定字符串会被后处理误替换，
+    // 破坏字面文本/行内代码，如 audit 文档中的 `BRMARKER`）。
 
     QStringList lines = markdown.split('\n');
     QString processed;
@@ -1084,6 +1141,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     int currentTableCols = 0;   // 当前表格分隔行列数（由 protectTableRowForQt 记录，防空单元格合并用）
     QStringList tableCellBackups; // 表格空单元格占位符 ZZTC*（后处理还原为空 <td>）
     QStringList codeBlocks;  // 每个代码块的最终 HTML（<pre><code class="language-X">…</code></pre>）
+    QStringList codeBlockPhs; // 每个代码块的占位符串（与 codeBlocks 一一对应，可能被撞号跳过非连续）
     QString codeFenceLang;   // 当前代码块的语言（围栏信息串）
     QStringList codeContent; // 当前代码块的内容行
     QStringList subContents; // 下标内容（~x~），后处理还原为 <sub>
@@ -1094,6 +1152,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList escapedEqBackups;  // 转义等号 \= → ZZES 保护
     QStringList htmlInlineBackups; // 原始 HTML 内联标签（<span style> / <u>）
     QStringList hrMarkers;       // 水平线 --- → 占位符保护（后处理还原为 <hr/>）
+    int brSoftCount = 0;         // 软换行占位符 ZZBR<n>ZZ 计数（后处理还原为 <br data-brk>）
 
     QStringList mathBlocks;  // 收集 $$ 块的内容
     QStringList mathLines;    // 当前 $$ 块的行
@@ -1192,7 +1251,12 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                 codeFenceLang = line.mid(fenceLen).trimmed();
                 codeFenceLen = fenceLen;
                 codeContent.clear();
-                processed += "ZZCB" + QString::number(codeBlocks.size()) + "ZZ\n";
+                // 占位符序号须避开源文档/已产出内容中的字面同串（如 audit 文档
+                // 里示例的 `ZZCB0ZZ`），否则还原时用户文本被误替换。串存 codeBlockPhs，
+                // 与 codeBlocks 一一对应，还原时按存储值回填。
+                codeBlockPhs << collisionFreePlaceholder(
+                    "CB", codeBlocks.size(), markdown, processed);
+                processed += codeBlockPhs.last() + "\n";
             } else if (fenceLen >= codeFenceLen && line.mid(fenceLen).trimmed().isEmpty()) {
                 // 闭合代码块：本行为纯反引号且长度 >= 开启围栏
                 QString content = codeContent.join('\n');
@@ -1368,7 +1432,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             cl = extractSubscripts(cl, subContents);
             cl = extractFootnoteRefs(cl, footnoteRefs);
             cl = extractHtmlInlineElements(cl, htmlInlineBackups);
-            processed += cl + " " + MARKER + "\n";
+            processed += cl + " " + "ZZBR" + QString::number(brSoftCount++) + "ZZ\n";
             lastBlock = BT_PARA;
         } else if (isDashHrLine(line) && lastBlock != BT_PARA) {
             // 水平线 ---：占位保护，避免 Qt setMarkdown 折叠连续 --- 或灾难性
@@ -1388,6 +1452,21 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             if (isListItemLine(line) && lastBlock == BT_PARA)
                 processed += '\n';
             QString cl = line;
+            // 去缩进：跨空行紧跟列表的缩进段落——Qt setMarkdown 会把带前导空格的
+            // 段落当列表项 lazy continuation 吸收进 <ol>（产出 <ol> 内非法 <p>，
+            // 位于两列表项之间），fromHtml 的 toMarkdown 丢弃该段落（往返数据
+            // 丢失）。剥离前导空格使其成为独立段落；紧邻列表项无空行的缩进行是
+            // 真正的续行（同列表项内容），保留缩进。
+            if (isParagraphLine(line) && !line.isEmpty() && line[0].isSpace()
+                && i > 0 && lines[i - 1].trimmed().isEmpty()) {
+                int j = i - 1;
+                while (j >= 0 && lines[j].trimmed().isEmpty()) --j;
+                if (j >= 0 && isListItemLine(lines[j])) {
+                    int ws = 0;
+                    while (ws < line.size() && line[ws].isSpace()) ++ws;
+                    cl = line.mid(ws);
+                }
+            }
             cl = protectTableRowForQt(cl, currentTableCols, tableCellBackups);
             cl = extractEscapedEquals(cl, escapedEqBackups);
             cl = extractSubscripts(cl, subContents);
@@ -1452,6 +1531,12 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             processed.replace("\x01CODE" + QString::number(i) + "\x01", codes[i]);
     }
 
+    // 转义未闭合的 HTML 标签（见 escapeUnclosedHtmlTags）：Qt setMarkdown 会把
+    // 段落内未闭合的 <tag> 当 HTML 块吞噬其后内容到文末（数据丢失）。须在行内
+    // 代码与 <div> 占位保护之后执行——此时受支持的标签已全部占位，剩余未闭合
+    // 标签才安全转义为实体。
+    escapeUnclosedHtmlTags(processed);
+
     QTextDocument doc;
     doc.setMarkdown(processed);
     QString html = doc.toHtml();
@@ -1459,8 +1544,9 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     // 后处理 1: 还原代码块占位符 ZZCB → <pre><code class="language-X">…</code></pre>
     //   代码块内容在预处理阶段已整体收集并 HTML 转义，未经过 setMarkdown，
     //   因此可正确保留嵌套围栏（如 ```markdown 内嵌 ```mermaid）。
+    //   占位符串用 codeBlockPhs（collisionFreePlaceholder 存储值，序号可能非连续）。
     for (int i = 0; i < codeBlocks.size(); ++i) {
-        QString ph = QString("ZZCB%1ZZ").arg(i);
+        const QString ph = codeBlockPhs[i];
         html.replace(QRegularExpression("<p[^>]*>" + ph + "</p>"), codeBlocks[i]);
         html.replace(ph, codeBlocks[i]); // fallback：占位符未独立成段时
     }
@@ -1483,16 +1569,20 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         html.replace(ph, "<hr/>"); // fallback：占位符未独立成段时
     }
 
-    // 后处理 2: BRMARKER → <br data-brk>（标记以区分用户手写 <br>）
-    // 嵌入处 cl + " " + MARKER 在标记前补了一个空格作为隔离符，防止标记被
+    // 后处理 2: ZZBR<n>ZZ → <br data-brk>（占位符以区分用户手写 <br>）
+    // 嵌入处 cl + " " + 占位符 在标记前补了一个空格作为隔离符，防止标记被
     // 前文行尾标点（*、_、` 等）吞入内联结构；setMarkdown 又在标记后（原换行处）
     // 生成一个空格。这两个空格都是标记机制的伪影，替换时必须一并删除，否则
-    // 残留为软换行行尾空格，破坏往返保真。故先匹配「空格+标记+空格」消费两侧
-    // 空格，再降级匹配仅一侧有空格的情形。
-    html.replace(" " + MARKER + " ", "<br data-brk>");
-    html.replace(" " + MARKER, "<br data-brk>");
-    html.replace(MARKER + " ", "<br data-brk>");
-    html.replace(MARKER, "<br data-brk>");
+    // 残留为软换行行尾空格，破坏往返保真。故先匹配「空格+占位符+空格」消费两侧
+    // 空格，再降级匹配仅一侧有空格的情形。占位符带序号，用户文档中字面
+    // "BRMARKER"（含行内代码内）不会被误替换。
+    for (int i = 0; i < brSoftCount; ++i) {
+        const QString ph = "ZZBR" + QString::number(i) + "ZZ";
+        html.replace(" " + ph + " ", "<br data-brk>");
+        html.replace(" " + ph, "<br data-brk>");
+        html.replace(ph + " ", "<br data-brk>");
+        html.replace(ph, "<br data-brk>");
+    }
 
     // 还原任务列表占位符 ZZTL → TipTap taskList 契约 HTML
     //   先于 mark/上下标/行内公式转换还原，条目文本中的相应语法也能被转换；
@@ -2219,7 +2309,11 @@ QString MarkdownHandler::fromHtml(const QString &html)
             code.remove(QRegularExpression("<[^>]*>"));
             code = unescapeHtmlEntities(code);
             code = code.trimmed();
-            QString ph = QString("ZZCB%1ZZ").arg(n++);
+            // 占位符序号须避开输入 HTML/已产出内容中的字面同串（如文档里示例的
+            // `ZZCB0ZZ`），否则还原时用户文本被误替换。序号存 placeholders（可非
+            // 连续），还原按存储值回填；n 仍作数组序号递增。
+            QString ph = collisionFreePlaceholder("CB", n, html, processed);
+            ++n;
             placeholders << ph;
             // 围栏长度取「内容中最长连续反引号序列 + 1」（至少 3），
             // 保证嵌套围栏（如外层 markdown 内含 ```cpp）往返后仍能正确闭合。
