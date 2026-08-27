@@ -1153,6 +1153,9 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     QStringList htmlInlineBackups; // 原始 HTML 内联标签（<span style> / <u>）
     QStringList hrMarkers;       // 水平线 --- → 占位符保护（后处理还原为 <hr/>）
     int brSoftCount = 0;         // 软换行占位符 ZZBR<n>ZZ 计数（后处理还原为 <br data-brk>）
+    int listBlankCount = 0;      // 列表项间空行注释占位 ZZLB<n>ZZ 计数（强制拆分列表）
+    int blankLineCount = 0;      // 段落间连续空行占位 ZZBL<n>ZZ 计数（还原为 <p><br></p>）
+    QStringList blankLinePhs;    // 实际占位符串（collisionFree 跳号，序号可非连续）
 
     QStringList mathBlocks;  // 收集 $$ 块的内容
     QStringList mathLines;    // 当前 $$ 块的行
@@ -1326,7 +1329,54 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             processed += '\n';   // 行被移除，留空行维持段落分隔
             lastBlock = BT_NONE;
         } else if (line.trimmed().isEmpty()) {
+            const bool prevWasList = (lastBlock == BT_LIST);
+            // 段落间连续空行保护（&nbsp; 空行方案）：Qt setMarkdown 会把段落之间
+            // 的多个空行（a\n\n\nb）折叠成单个段落分隔，空行信息丢失；且纯空行
+            // 不可移植（标准 md 渲染器折叠多空行）。当两个非空块之间有 K 个空行
+            // 且 K≥2 时，保留 1 个作段落分隔，其余 K-1 个替换为占位符行，
+            // setMarkdown 后还原为 <p></p>（空段落）；fromHtml 把空段落还原为
+            // 字面 &nbsp; 行（跨编辑器可移植的空行，见后处理 1.6）。
+            // 仅当：前面已有内容 + 上一块非列表 + 下一非空行非列表项。
+            // 列表项间空行走下方 ZZLB 注释逻辑（机制不同，互不干扰）。
+            int k = 1;
+            while (i + k < lines.size() && lines[i + k].trimmed().isEmpty()) ++k;
+            const int j = i + k;
+            const bool hasPrevContent = !processed.trimmed().isEmpty();
+            const bool paraBlank = (k >= 2 && hasPrevContent && !prevWasList
+                                    && j < lines.size()
+                                    && !isListItemLine(lines[j])
+                                    && !isTaskItemLine(lines[j]));
             processed += '\n';
+            if (paraBlank) {
+                // 每个占位符行独占一个段落：行后必须补段落分隔空行，否则
+                // md4c 把「占位符行\n下一行」当作软换行合并进同一段落，
+                // 还原后 b 被吸进 <p><br> b</p>（往返数据错乱）。
+                for (int b = 0; b < k - 1; ++b) {
+                    const QString ph = collisionFreePlaceholder(
+                        "BL", blankLineCount, markdown, processed);
+                    ++blankLineCount;
+                    blankLinePhs << ph;
+                    processed += ph + '\n';
+                    processed += '\n';
+                }
+                i += k - 1;   // for 循环 ++i 后落到下一非空行
+            } else if (prevWasList) {
+                // 列表项间空行保护：Qt setMarkdown 会把「列表项之间用空行分隔」折叠成
+                // 同一 <ol>/<ul> 内相邻 <li>，空行信息丢失（往返后列表项变相邻）。
+                // 插入 HTML 注释占位强制拆分列表（缩进对齐下一列表项层级）；注释被
+                // Qt setMarkdown 丢弃，产出独立的 <ol>/<ul> 块（有序列表自动带 start），
+                // fromHtml 的 toMarkdown 还原为列表项间的空行。
+                // 仅当：上一块是列表 + 下一非空行是列表项。
+                // 列表项后跟段落/标题时 Qt 本身保留空行，不触发。
+                // 仅顶层列表项（缩进 0）触发：嵌套项间空行即便拆分成独立嵌套
+                // <ul>，Qt toMarkdown 也会把相邻嵌套 <ul> 合并回去（空行仍丢，
+                // 且会造成 WYSIWYG 与保存不一致），故不处理嵌套层级。
+                if (j < lines.size() && isListItemLine(lines[j])
+                    && !lines[j][0].isSpace()) {
+                    processed += "<!-- ZZLB" + QString::number(listBlankCount++)
+                                 + "ZZ -->\n";
+                }
+            }
             lastBlock = BT_NONE;
         } else if (isTaskItemLine(line)) {
             // 任务列表：收集连续行（任务项 + 比最近任务行缩进更深的通用列表行，
@@ -1567,6 +1617,17 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QString ph = QString("ZZHR%1ZZ").arg(i);
         html.replace(QRegularExpression("<p[^>]*>" + ph + "</p>"), "<hr/>");
         html.replace(ph, "<hr/>"); // fallback：占位符未独立成段时
+    }
+
+    // 后处理 1.6: 还原段落间连续空行占位符 ZZBL → <p></p>（空段落）
+    //   源码 K 个连续空行（不可移植，标准 md 折叠）→ K-1 个占位符段落，此处
+    //   还原为空段落，fromHtml 识别空段落并还原为字面 &nbsp; 行（跨编辑器
+    //   可移植的空行）。必须还原为 <p></p> 而非 <p><br></p>：<br> 在段内产生
+    //   换行，空段落渲染成 2 行高（实测 61px ≈ 2 行），视觉间距翻倍无规律；
+    //   <p></p> 与 TipTap Enter 原生空段落一致（1 行高 31px），渲染正确。
+    for (const QString &ph : blankLinePhs) {
+        html.replace(QRegularExpression("<p[^>]*>" + ph + "</p>"), "<p></p>");
+        html.replace(ph, QString()); // fallback：占位符未独立成段时删除
     }
 
     // 后处理 2: ZZBR<n>ZZ → <br data-brk>（占位符以区分用户手写 <br>）
@@ -2215,6 +2276,11 @@ QString MarkdownHandler::fromHtml(const QString &html)
     QList<QStringList> tableAligns;
     // 表格整行合并记录（每表 body 行索引列表，步骤 6b 折叠回单格用）：见下方提取块。
     QList<QList<int>> tableFullMergeRows;
+    // 段落空行占位符 ZZBL*（&nbsp; 空行方案）：识别空段落（<p></p> / <p><br></p> /
+    // <p>&nbsp;</p> 含 NBSP 字符）替换为占位符段落，toMarkdown 后占位符独占一行，
+    // 还原时替换为字面 &nbsp; 行（跨编辑器可移植空行）。与 placeholders 分开记录
+    // （还原是整行替换而非文本替换）。
+    QStringList blankLinePhs;
     QString processed = html;
 
     // 块级占位符统一包裹为 <p>：占位符若为裸文本节点，setHtml 会把它与相邻块
@@ -3035,6 +3101,80 @@ QString MarkdownHandler::fromHtml(const QString &html)
             processed.replace(m.capturedStart(), m.capturedLength(), replacement);
             offset = m.capturedStart() + replacement.length();
         }
+        // 空段落保护（&nbsp; 空行方案）：<p></p> / <p><br></p> / <p>&nbsp;</p>
+        // （含 NBSP 字符）→ 占位符段落。
+        // WYSIWYG 空行 = 空段落（TipTap getHTML 输出 <p></p>；toHtml 的连续空行
+        // 保护还原为 <p><br></p>；源码字面 &nbsp; 行经 setMarkdown 成 NBSP 段落）。
+        // Qt setHtml 丢弃空段落（多空行塌缩成 1）、把 &nbsp; 实体转成 NBSP 字符
+        // （toMarkdown 输出字符而非可移植的 &nbsp; 实体），故在 setHtml 前统一
+        // 识别并替换为占位符段落；toMarkdown 后占位符独占一行，还原时替换为
+        // 字面 &nbsp; 行——跨编辑器可移植（Joplin/MarkText 等把 &nbsp; 行渲染为空行）。
+        // 必须位于 brRe 之前：<p><br></p> 的 <br> 尚未被替换成 ZZBR。
+        // 对齐处理之后：带 text-align 的空段落先被 <div align> 保护，不重复识别。
+        // 跳过列表容器内（空列表项由列表自绘路径处理，避免空行数重复计算）。
+        {
+            auto insideListContainer = [](const QString &s, int pos) {
+                int lastOpen = -1, lastClose = -1;
+                for (const QString &tag : {QStringLiteral("<li"), QStringLiteral("<ul"),
+                                            QStringLiteral("<ol")}) {
+                    const int o = s.lastIndexOf(tag, pos);
+                    if (o > lastOpen) lastOpen = o;
+                }
+                for (const QString &tag : {QStringLiteral("</li>"), QStringLiteral("</ul>"),
+                                            QStringLiteral("</ol>")}) {
+                    const int c = s.lastIndexOf(tag, pos);
+                    if (c > lastClose) lastClose = c;
+                }
+                return lastOpen > lastClose;
+            };
+            // 内容为「空白/NBSP* + 可选 br + 空白/NBSP*」的段落视为空段落。
+            // \s 匹配 Unicode 空白（含 NBSP 字符 U+00A0）；&nbsp; 实体单独列备选。
+            QRegularExpression emptyPRe(
+                R"(<p\b[^>]*>(?:(?:\s|&nbsp;)*(?:<br\s*/?>)?(?:\s|&nbsp;)*)</p>)");
+            int blOff = 0, blN = 0;
+            while (true) {
+                auto m = emptyPRe.match(processed, blOff);
+                if (!m.hasMatch()) break;
+                const int p = m.capturedStart();
+                if (!insideListContainer(processed, p)) {
+                    const QString ph = collisionFreePlaceholder(
+                        "BL", blN, html, processed);
+                    ++blN;
+                    blankLinePhs << ph;
+                    const QString replacement = QStringLiteral("<p>%1</p>").arg(ph);
+                    processed.replace(p, m.capturedLength(), replacement);
+                    blOff = p + replacement.length();
+                } else {
+                    blOff = m.capturedEnd();
+                }
+            }
+        }
+        // 行内连续 NBSP（WYSIWYG 多空格）→ 占位符 → 还原 &nbsp; 实体。
+        // 用户 WYSIWYG 输入连续空格（ProseMirror 以 NBSP 保留）序列化为
+        // &nbsp; 实体；Qt toMarkdown 把实体转成 NBSP 字符（源码不可见、不可移植），
+        // 故在 setHtml 前保护为占位符，还原时输出字面 &nbsp; 实体。仅保护连续
+        // 2+ 个（单空格往返安全，无需转义）。空段落保护已消费整段 NBSP 的段落，
+        // 此处剩余的 &nbsp; 必为行内（与其他文本混排）。
+        {
+            QRegularExpression nbspRe(R"((?:&nbsp;|\x{00a0}){2,})");
+            int nbspOff = 0, nbspN = 0;
+            while (true) {
+                auto m = nbspRe.match(processed, nbspOff);
+                if (!m.hasMatch()) break;
+                const QString cap = m.captured(0);
+                int cnt = 0;
+                for (const QChar &c : cap)
+                    if (c == QChar(0x00a0)) ++cnt;
+                cnt += cap.count(QStringLiteral("&nbsp;"));
+                const QString ph = collisionFreePlaceholder(
+                    "NB", nbspN, html, processed);
+                ++nbspN;
+                placeholders << ph;
+                backups << QStringLiteral("&nbsp;").repeated(cnt);
+                processed.replace(m.capturedStart(), m.capturedLength(), ph);
+                nbspOff = m.capturedStart() + ph.length();
+            }
+        }
         // <br> 硬换行（不含 data-brk 标记——BRMARKER 生成的由 toMarkdown 处理）
         offset = 0;
         QRegularExpression brRe(
@@ -3321,6 +3461,26 @@ QString MarkdownHandler::fromHtml(const QString &html)
         md.replace(QRegularExpression("([^\\n])" + ph), "\\1\n\n" + ph);
         // 后方有同行内容（后一字符非换行）→ 后插空行
         md.replace(QRegularExpression(ph + "([^\\n])"), ph + "\n\n\\1");
+    }
+
+    // 3.5) 还原段落空行占位符 ZZBL：占位符独占的行 → 字面 &nbsp; 行。
+    //      toMarkdown 输出为「段落 + 空行 + ZZBLnZZ + 空行 + 段落」，占位符行
+    //      替换为 &nbsp; 后即成为跨编辑器可移植的空行（Joplin/MarkText 等把
+    //      &nbsp; 行渲染为空行；纯空行会被标准 md 渲染器折叠）。M 个空段落 →
+    //      M 个 &nbsp; 行，与 WYSIWYG 空段落数一致。
+    //      必须位于 \n{3,} 压缩与反换行之后：此时刻占位符均单行文本，替换才
+    //      不破坏块结构；若放压缩之前，还原出的多换行会被压缩成 1 空行。
+    if (!blankLinePhs.isEmpty()) {
+        QStringList lines = md.split('\n');
+        QStringList out;
+        out.reserve(lines.size());
+        for (const QString &ln : lines) {
+            if (blankLinePhs.contains(ln.trimmed()))
+                out << QStringLiteral("&nbsp;");
+            else
+                out << ln;
+        }
+        md = out.join(QLatin1Char('\n'));
     }
 
     // 4) 还原占位符（逆序：后入先还原，防止嵌套占位符丢失）

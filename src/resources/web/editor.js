@@ -1313,6 +1313,48 @@ window.editorApi = {
                 },
                 handleDrop: function(view, event) {
                     return window.editorApi._handleImageClipboard(view, event, true);
+                },
+                // 软换行拆段清理：在 <br data-brk> 紧邻处按 Enter 拆段时，brk 节点会
+                // 残留在新段落首/尾（渲染成多余空行，保存往返成双空行）。正确行为是
+                // 拆出干净的段落分隔（单个空行）：先删除紧邻光标的 brk 节点，再拆段。
+                handleKeyDown: function(view, event) {
+                    if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey
+                        || event.metaKey || event.altKey)
+                        return false;
+                    var sel = view.state.selection;
+                    if (!sel.empty || !sel.$from.parent.isTextblock) return false;
+                    var $from = sel.$from;
+                    var nb = $from.nodeBefore, na = $from.nodeAfter;
+                    var brkBefore = !!(nb && nb.type.name === 'brk');
+                    var brkAfter = !!(na && na.type.name === 'brk');
+                    if (!brkBefore && !brkAfter) return false;
+                    var pos = $from.pos;
+                    var from = brkBefore ? pos - 1 : pos;
+                    var to = brkBefore ? pos : pos + 1;
+                    var ed = window.editorApi && window.editorApi.editor;
+                    if (!ed) return false;
+                    // 先删除相邻 brk，光标定位到删除处（= from），再按默认 Enter 拆段。
+                    // 两步在同一链式事务中：deleteRange → setTextSelection → splitBlock。
+                    ed.chain()
+                        .deleteRange({ from: from, to: to })
+                        .setTextSelection(from)
+                        .splitBlock()
+                        .run();
+                    return true;
+                },
+                // 连续空格保真：用户输入空格时，若前一字符已是空格（普通空格或
+                // NBSP），把本次空格替换为 NBSP（U+00A0）。如此连续空格在文档中
+                // 为「1 普通空格 + (N-1) 个 NBSP」，getHTML 序列化为 &nbsp; 实体，
+                // fromHtml 还原为字面 &nbsp;，跨编辑器可移植；普通单空格仍为
+                // 普通空格，源码可读。Qt toMarkdown 会折叠普通连续空格
+                // （Line1    text → Line1 text），不在此处理则往返丢空格。
+                handleTextInput: function(view, from, to, text) {
+                    if (text !== ' ' || from <= 0 || from !== to) return false;
+                    var doc = view.state.doc;
+                    var prevChar = doc.textBetween(from - 1, from);
+                    if (prevChar !== ' ' && prevChar !== '\u00A0') return false;
+                    view.dispatch(view.state.tr.insertText('\u00A0', from, to));
+                    return true;
                 }
             },
             onUpdate: function(args) {

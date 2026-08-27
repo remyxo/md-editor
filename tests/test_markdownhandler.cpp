@@ -1,5 +1,6 @@
 #include <QTest>
 #include <QRegularExpression>
+#include <QFile>
 #include "../src/core/MarkdownHandler.h"
 
 // 构造含空格、长度远超 80 列的测试文本。QTextDocument::toMarkdown() 硬编码
@@ -2556,6 +2557,7 @@ private slots:
                  qPrintable("往返后内层 ```cpp 应作为字面内容保留，实际: " + html2));
     }
 
+
     void testUnclosedHtmlTagNoSwallow()
     {
         // 未闭合的 HTML 容器标签（<script>/<hr>/<b> 等，全文无同名 </tag> 配对）会
@@ -2655,6 +2657,128 @@ private slots:
         const QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2));
         QVERIFY2(back2.contains("continuation"),
                  qPrintable("lazy continuation 应保留为列表项内容，实际: " + back2));
+    }
+
+    void testListBlankLineBetweenItemsRoundTrip()
+    {
+        // 列表项之间的空行：Qt setMarkdown 把「1. a\n\n2. b」折叠成同一 <ol> 内
+        // 相邻 <li>，空行信息丢失（往返后列表项变相邻）。修复：toHtml 在列表项间
+        // 空行处插入 HTML 注释占位强制拆分列表（Qt 产出独立 <ol>/<ul>，有序列表
+        // 自动带 start 编号），fromHtml 的 toMarkdown 还原为列表项间的空行。
+        // 仅顶层列表项（缩进 0）触发；嵌套项间空行受 Qt toMarkdown 合并限制不处理。
+        const QString md = QStringLiteral(
+            "1. item one\n\n2. item two\n\n3. item three\n");
+        const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("1. item one\n\n2. item two\n\n3. item three"),
+                 qPrintable("列表项间空行应往返保留，实际: " + back));
+        // 无序列表
+        const QString md2 = QStringLiteral("- a\n\n- b\n");
+        const QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2));
+        QVERIFY2(back2.contains("- a\n\n- b"),
+                 qPrintable("无序列表项间空行应保留，实际: " + back2));
+        // 相邻列表项（无空行）不应新增空行
+        const QString md3 = QStringLiteral("1. a\n2. b\n3. c\n");
+        const QString back3 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md3));
+        QVERIFY2(back3.contains("1. a\n2. b\n3. c"),
+                 qPrintable("无空行列表不应新增空行，实际: " + back3));
+    }
+
+    void testListBlankLineAfterSubListRoundTrip()
+    {
+        // 子列表后空行再接下一顶层项（审计文档第五节常见结构）：
+        // 空行在「子列表最后一项」与「下一顶层列表项」之间，需拆分为两个顶层列表。
+        const QString md = QStringLiteral(
+            "2. item two\n   - sub one\n   - sub two\n\n3. item three\n");
+        const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("sub two\n\n3. item three"),
+                 qPrintable("子列表后空行应保留，实际: " + back));
+    }
+
+    void testParagraphMultipleBlankLinesRoundTrip()
+    {
+        // 段落之间的多个空行：Qt setMarkdown 把「a\n\n\nb」（2 空行）折叠成单个
+        // 段落分隔，空行信息丢失。且纯空行不可移植——标准 md 渲染器（GFM/Joplin
+        // 之外的多数）把多空行折叠成 1。修复：空行用字面 &nbsp; 独占一行表示
+        // （Joplin/MarkText 等跨编辑器把 &nbsp; 行渲染为空行）。toHtml 把连续
+        // 空行中除段落分隔外的部分替换为 ZZBL 占位符行，setMarkdown 后还原为
+        // <p></p>（空段落）；fromHtml 识别空段落，占位符行还原为 &nbsp; 行。
+        // N 空行 → 段落分隔 + (N-1) 个 &nbsp; 行，往返稳定。
+        const QString md2 = QStringLiteral("a\n\n\nb\n");
+        const QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2));
+        QVERIFY2(back2.contains("a\n\n&nbsp;\n\nb"),
+                 qPrintable("段落间 2 空行应转为 1 个 &nbsp; 行，实际: " + back2));
+        const QString md3 = QStringLiteral("a\n\n\n\nb\n");
+        const QString back3 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md3));
+        QVERIFY2(back3.contains("a\n\n&nbsp;\n\n&nbsp;\n\nb"),
+                 qPrintable("段落间 3 空行应转为 2 个 &nbsp; 行，实际: " + back3));
+        // 单个空行（段落分隔）应保持纯空行（不转 &nbsp;）
+        const QString md1 = QStringLiteral("a\n\nb\n");
+        const QString back1 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1));
+        QVERIFY2(back1.contains("a\n\nb"),
+                 qPrintable("段落间 1 空行应保持，实际: " + back1));
+        // 相邻段落（软换行，无空行）不应新增空行
+        const QString md0 = QStringLiteral("a\nb\n");
+        const QString back0 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md0));
+        QVERIFY2(back0.contains("a\nb"),
+                 qPrintable("软换行不应新增空行，实际: " + back0));
+    }
+
+    void testEmptyParagraphFromHtmlRoundTrip()
+    {
+        // WYSIWYG 空行 = 空段落（TipTap getHTML 输出 <p></p>；toHtml 的空行保护
+        // 输出 <p></p>；源码字面 &nbsp; 行经 setMarkdown 成 NBSP 段落）。
+        // Qt setHtml 丢弃空段落、把 &nbsp; 实体转成 NBSP 字符（不可移植），故
+        // fromHtml 在 setHtml 前识别空段落替换为占位符段落，toMarkdown 后
+        // 占位符行还原为字面 &nbsp; 行。M 个空段落 → M 个 &nbsp; 行。
+        const QString h1 = QStringLiteral(
+            "<p>a</p><p></p><p>b</p>");   // 1 空段落
+        const QString md1 = MarkdownHandler::fromHtml(h1);
+        QVERIFY2(md1.contains("a\n\n&nbsp;\n\nb"),
+                 qPrintable("单空段落应还原为 1 个 &nbsp; 行，实际: " + md1));
+        const QString h2 = QStringLiteral(
+            "<p>a</p><p></p><p></p><p>b</p>");   // 2 空段落
+        const QString md2 = MarkdownHandler::fromHtml(h2);
+        QVERIFY2(md2.contains("a\n\n&nbsp;\n\n&nbsp;\n\nb"),
+                 qPrintable("双空段落应还原为 2 个 &nbsp; 行，实际: " + md2));
+        // <p><br></p>（用户手写 <br> 单独成段等场景）同样识别为空段落
+        const QString h3 = QStringLiteral(
+            "<p>a</p><p><br></p><p>b</p>");
+        const QString md3 = MarkdownHandler::fromHtml(h3);
+        QVERIFY2(md3.contains("a\n\n&nbsp;\n\nb"),
+                 qPrintable("<p><br></p> 空段落应还原为 1 个 &nbsp; 行，实际: " + md3));
+        // <p>&nbsp;</p>（源码 &nbsp; 行经 toHtml+TipTap 的产物）同样识别
+        const QString h4 = QStringLiteral(
+            "<p>a</p><p>&nbsp;</p><p>b</p>");
+        const QString md4 = MarkdownHandler::fromHtml(h4);
+        QVERIFY2(md4.contains("a\n\n&nbsp;\n\nb"),
+                 qPrintable("<p>&nbsp;</p> 空段落应还原为 &nbsp; 行，实际: " + md4));
+    }
+
+    void testInlineMultipleNbspRoundTrip()
+    {
+        // 行内连续空格：Qt toMarkdown 折叠普通连续空格（Line1   text → Line1
+        // text），往返丢空格。WYSIWYG 连续空格以 NBSP 保存（TipTap 序列化为
+        // &nbsp; 实体），fromHtml 需保护连续 2+ NBSP → 字面 &nbsp; 实体，
+        // 跨编辑器可移植。单空格无需转义（往返安全）。
+        const QString h2 = QStringLiteral("<p>Line1&nbsp;&nbsp;text</p>");
+        const QString md2 = MarkdownHandler::fromHtml(h2);
+        QVERIFY2(md2.contains("Line1&nbsp;&nbsp;text"),
+                 qPrintable("行内 2 NBSP 应还原为 2 个 &nbsp; 实体，实际: " + md2));
+        const QString h3 = QStringLiteral("<p>Line1&nbsp;&nbsp;&nbsp;text</p>");
+        const QString md3 = MarkdownHandler::fromHtml(h3);
+        QVERIFY2(md3.contains("Line1&nbsp;&nbsp;&nbsp;text"),
+                 qPrintable("行内 3 NBSP 应还原为 3 个 &nbsp; 实体，实际: " + md3));
+        // 全链路：源码 &nbsp; 实体 → 往返保持
+        const QString mdSrc = QStringLiteral("Line1&nbsp;&nbsp;&nbsp;text\n");
+        const QString back = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(mdSrc));
+        QVERIFY2(back.contains("Line1&nbsp;&nbsp;&nbsp;text"),
+                 qPrintable("行内 &nbsp; 实体全链路往返应保持，实际: " + back));
+        // 单空格不转义
+        const QString h1 = QStringLiteral("<p>Line1&nbsp;text</p>");
+        const QString md1 = MarkdownHandler::fromHtml(h1);
+        QVERIFY2(!md1.contains("\\&nbsp;"),
+                 qPrintable("单 NBSP 不应被转义为 \\&nbsp;，实际: " + md1));
     }
 
     void testCodeBlockAdjacentBlockMathRoundTrip()
