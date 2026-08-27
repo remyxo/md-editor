@@ -2,6 +2,18 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.13.0] — 2026-08-27
+
+### 新增
+- **空行与多空格往返保真（字面 `&nbsp;` 可移植空行方案）** — WYSIWYG 空行以字面 `&nbsp;` 独占行表示（Joplin/MarkText 等跨编辑器兼容）：`toHtml` 把段落间连续空行（K≥2）保留 1 个作段落分隔、其余转 `<p></p>` 空段落占位符；`fromHtml` 把空段落逐行还原为字面 `&nbsp;` 行（1:1 无增删）；连续空格输入转为「1 普通空格 + (N-1) NBSP」防 Qt `toMarkdown` 折叠丢空格；brk 软换行紧邻处按 Enter 拆段先清理 brk 节点；列表项间空行以 ZZLB 注释占位强制拆分列表，往返保留
+- **切换源码模式视口定位到光标所在标题** — 进入源码模式记录光标所在 heading 序号，在 MD 中按序号定位标题行（跳过代码块围栏内的行），复用测量式滚动把视口垂直居中到该标题；光标在正文段落时定位到所在章节标题
+
+### 修复
+- **表格空单元格往返泄漏 ZZBL 占位符** — TipTap 把空 `<td></td>` 序列化为 `<td><p></p></td>`（单元格必须含段落节点），`fromHtml` 的空段落保护只跳过列表容器、不跳过表格容器，把单元格内空段落替换成 ZZBL 占位符后进入 `| … |` 行、还原时整行不等于占位符 → 泄漏（如 `ZZBL2ZZ` 出现在表格行）。修复：空段落保护同样跳过 table/td/th/tr/tbody 等表格容器，空单元格保留为 `| |`
+- **源码字面 `&nbsp;` 行往返失真** — 无空行分隔时（`Line 1\n&nbsp;\nLine 2`）`&nbsp;` 行被 Qt `setMarkdown` 当同一段内软换行，往返后空行前带空格、多空行漂移。修复：`toHtml` 把独立成行的字面 `&nbsp;` 实体当空行生成占位符（还原为空段落），`&nbsp;` 行各自 1 空段、两侧纯空行不折叠；`isParagraphLine` 排除 `&nbsp;` 行避免相邻正文触发软换行标记；`emptyPRe` 显式纳入 NBSP 字符（Qt 正则 `\s` 实测不匹配 U+00A0），空段落统一还原为字面 `&nbsp;` 行
+- **最后一行是标题时源码模式往返多出一行 `&nbsp;`** — 双层根因：① `exitSourceMode` 用 TipTap 原生 `commands.setContent`，末尾块为标题/表格时自动追加 `<p></p>`；② StarterKit 内置 trailingNode 扩展，任何 transaction 后末尾非可输入块都自动追加空段。修复：`exitSourceMode` 改用与 `loadFile` 一致的重建方式 `setContent`，并禁用 trailingNode（末尾标题内按 Enter 仍正常新建段落）
+- **切回 WYSIWYG 大纲跳末尾但视口在开头** — 切回后光标被放到文档末尾（commands.setContent/trailingNode 追加），大纲高亮跟随到末尾而视口停在顶部。修复：进入源码模式记录光标位置，退出重建后恢复（`setTextSelection` 触发 `cursorChanged` 驱动大纲高亮，`scrollIntoView block:start` 与大纲点击跳转一致）
+
 ## [0.12.4] — 2026-08-23
 
 ### 新增
