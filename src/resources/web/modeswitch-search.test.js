@@ -15,8 +15,10 @@ function loadEditor() {
 
 let calls = [];
 beforeAll(() => {
-  // jsdom 未实现 window.scrollTo，桩掉避免 stderr 噪音
+  // jsdom 未实现 window.scrollTo 与 Element.scrollIntoView，桩掉避免报错
+  // （exitSourceMode 恢复光标位置时调用 scrollIntoView）
   window.scrollTo = () => {};
+  window.HTMLElement.prototype.scrollIntoView = () => {};
   document.body.innerHTML =
     '<div id="editor"></div>' +
     '<div id="source-wrap" style="display:none">' +

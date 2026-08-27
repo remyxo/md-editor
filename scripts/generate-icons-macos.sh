@@ -11,7 +11,8 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 gen_icns() {
     local svg="$1" out="$2"
     local iconset_dir
-    iconset_dir="$(mktemp -d)"
+    # iconutil 要求 iconset 目录以 .iconset 结尾，否则报 "Invalid Iconset"
+    iconset_dir="$(mktemp -d)/icon.iconset"
     mkdir -p "$iconset_dir"
 
     # 生成 iconset 所需各尺寸 PNG（16/32/128/256/512 及各自 @2x）
