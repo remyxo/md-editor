@@ -3097,6 +3097,67 @@ private slots:
                  qPrintable("块引用内软换行不应被拆成两段，实际:\n" + md4));
     }
 
+    void testTableEmptyCellNoPlaceholderLeak()
+    {
+        // 表格空单元格往返不得泄漏 ZZBL 占位符。
+        // TipTap 把空 <td></td> 序列化为 <td><p></p></td>（单元格必须含段落
+        // 节点）。fromHtml 的空段落保护若作用于表格容器内，占位符会进入
+        // | ... | 行，还原时整行不等于占位符 → 泄漏（用户见到 ZZBL2ZZ）。
+        const QString tipTapTable =
+            QStringLiteral("<table><tbody><tr>"
+                           "<td colspan=\"1\" rowspan=\"1\"><p>斜粗体</p></td>"
+                           "<td colspan=\"1\" rowspan=\"1\"><p></p></td>"
+                           "</tr></tbody></table>");
+        const QString md = MarkdownHandler::fromHtml(tipTapTable);
+        QVERIFY2(!md.contains("ZZBL"),
+                 qPrintable("空单元格不得泄漏 ZZBL 占位符，实际: " + md));
+        QVERIFY2(md.contains("| 斜粗体 |"),
+                 qPrintable("表格行应保留，实际: " + md));
+
+        // 完整往返：表格空单元格经 toHtml → fromHtml 稳定，无占位符泄漏
+        const QString round =
+            MarkdownHandler::fromHtml(MarkdownHandler::toHtml(
+                QStringLiteral("| 斜粗体 | |\n|---|---|\n| a | |")));
+        QVERIFY2(!round.contains("ZZBL"),
+                 qPrintable("往返不得泄漏 ZZBL 占位符，实际:\n" + round));
+        QVERIFY2(round.contains("| 斜粗体 |"),
+                 qPrintable("往返应保留表格，实际:\n" + round));
+
+        // 表格前后空行（字面 &nbsp; 行）仍应还原为 &nbsp;，不受表格内跳过影响
+        const QString around =
+            MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(QStringLiteral(
+                    "前置\n\n&nbsp;\n\n| a | b |\n|---|---|\n| c | d |\n\n&nbsp;\n\n后置")));
+        QVERIFY2(around.count(QStringLiteral("\n&nbsp;\n")) == 2,
+                 qPrintable("表格前后空行应保留为 &nbsp;，实际:\n" + around));
+    }
+
+    void testNbspLineIsBlankBlock()
+    {
+        // 源码字面 &nbsp; 行（用户显式空段）经 toHtml 应为独立空段落，而非被
+        // Qt setMarkdown 当成同一段内软换行（&nbsp; 前后无空行分隔时，如
+        // "Line 1\n&nbsp;\nLine 2" 曾产出 <p>Line 1<br data-brk>&nbsp;<br data-brk>Line 2</p>，
+        // 往返后空行前带空格/多空行漂移）。
+        const QString md1 = QStringLiteral("Line 1\n&nbsp;\nLine 2");
+        const QString html1 = MarkdownHandler::toHtml(md1);
+        QVERIFY2(html1.contains("<p></p>"),
+                 qPrintable("&nbsp; 行应转独立空段落，实际: " + html1));
+        QVERIFY2(!html1.contains("Line 1<br"),
+                 qPrintable("Line 1 段尾不应有软换行污染，实际: " + html1));
+        // 往返稳定：字面 &nbsp; 行保留（规范化前后空行分隔）
+        const QString back1 = MarkdownHandler::fromHtml(html1);
+        QVERIFY2(back1.contains("\n\n&nbsp;\n\n"),
+                 qPrintable("往返应得 &nbsp; 空行，实际:\n" + back1));
+
+        // &nbsp; 行两侧已有空行分隔 → 仍为 1 个空段（不得折叠成 2 个）
+        const QString html2 = MarkdownHandler::toHtml(
+            QStringLiteral("a\n\n&nbsp;\n\nb"));
+        const int emptyP2 = html2.count(QStringLiteral("<p></p>"));
+        QVERIFY2(emptyP2 == 1,
+                 qPrintable("两侧空行的 &nbsp; 应仍 1 空段，实际 "
+                            + QString::number(emptyP2) + " 个: " + html2));
+    }
+
 };
 
 QTEST_MAIN(TestMarkdownHandler)

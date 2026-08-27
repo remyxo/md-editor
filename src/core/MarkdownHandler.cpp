@@ -128,9 +128,23 @@ static QString stripBlockquotePrefix(const QString &line)
     return line;
 }
 
+// 判断是否为独立成行的字面 &nbsp; 实体（用户显式空段标记）：trimmed 后恰为
+// 单个 &nbsp;。WYSIWYG 空段落对应源码里的字面 &nbsp; 行（跨编辑器可移植），
+// toHtml 须把它当作空行生成占位符（还原为空段落），否则 Qt setMarkdown 把
+// 它当同一段落内的软换行（&nbsp; 前无空行分隔时），往返后空段丢失/失真。
+// &nbsp;&nbsp; 等多实体是行内连续空格语义，不属于空行，不匹配。
+static bool isNbspLiteralLine(const QString &line)
+{
+    return line.trimmed() == QLatin1String("&nbsp;");
+}
+
 static bool isParagraphLine(const QString &line)
 {
     if (line.isEmpty()) return false;
+    // 字面 &nbsp; 空行（用户显式空段）：非正文行。否则相邻正文行会把它当
+    // 下一段落行触发软换行（ZZBR → <br data-brk>）——toHtml 空行分支已把
+    // &nbsp; 行当空行处理生成占位符，此处须排除避免重复/错位标记。
+    if (isNbspLiteralLine(line)) return false;
     QString trimmed = line.trimmed();
     QChar c = trimmed[0];
     if (c == '`') {
@@ -1328,30 +1342,56 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             }
             processed += '\n';   // 行被移除，留空行维持段落分隔
             lastBlock = BT_NONE;
-        } else if (line.trimmed().isEmpty()) {
+        } else if (line.trimmed().isEmpty() || isNbspLiteralLine(line)) {
             const bool prevWasList = (lastBlock == BT_LIST);
-            // 段落间连续空行保护（&nbsp; 空行方案）：Qt setMarkdown 会把段落之间
-            // 的多个空行（a\n\n\nb）折叠成单个段落分隔，空行信息丢失；且纯空行
+            // 段落间空行保护（&nbsp; 空行方案）：Qt setMarkdown 会把段落之间的
+            // 多个空行（a\n\n\nb）折叠成单个段落分隔，空行信息丢失；且纯空行
             // 不可移植（标准 md 渲染器折叠多空行）。当两个非空块之间有 K 个空行
             // 且 K≥2 时，保留 1 个作段落分隔，其余 K-1 个替换为占位符行，
             // setMarkdown 后还原为 <p></p>（空段落）；fromHtml 把空段落还原为
             // 字面 &nbsp; 行（跨编辑器可移植的空行，见后处理 1.6）。
             // 仅当：前面已有内容 + 上一块非列表 + 下一非空行非列表项。
             // 列表项间空行走下方 ZZLB 注释逻辑（机制不同，互不干扰）。
+            // 字面 &nbsp; 行（isNbspLiteralLine）是用户显式空段，恒生成占位符
+            // （即使 K=1，否则被 setMarkdown 当作同一段内软换行）；纯空行保留
+            // 1 个作段落分隔，其余折叠为占位符。二者混合时 &nbsp; 行优先占位。
             int k = 1;
-            while (i + k < lines.size() && lines[i + k].trimmed().isEmpty()) ++k;
+            int nbspInSeq = isNbspLiteralLine(line) ? 1 : 0;
+            while (i + k < lines.size()) {
+                const QString &nl = lines[i + k];
+                if (nl.trimmed().isEmpty() || isNbspLiteralLine(nl)) {
+                    if (isNbspLiteralLine(nl)) ++nbspInSeq;
+                    ++k;
+                } else break;
+            }
             const int j = i + k;
             const bool hasPrevContent = !processed.trimmed().isEmpty();
-            const bool paraBlank = (k >= 2 && hasPrevContent && !prevWasList
+            const bool paraBlank = ((nbspInSeq > 0 || k >= 2) && hasPrevContent
+                                    && !prevWasList
                                     && j < lines.size()
                                     && !isListItemLine(lines[j])
                                     && !isTaskItemLine(lines[j]));
             processed += '\n';
             if (paraBlank) {
+                // 占位符数：字面 &nbsp; 行（用户显式空段）各自生成 1 个占位符；
+                // 纯空行按连续段折叠——每段长度 L，保留 1 个作段落分隔、L-1 个
+                // 折叠为占位符（与原「K 空行 → K-1 占位符」一致；&nbsp; 行两侧
+                // 的单空行是段落分隔，不折叠，避免 `a\n\n&nbsp;\n\nb` 多出空段）。
                 // 每个占位符行独占一个段落：行后必须补段落分隔空行，否则
                 // md4c 把「占位符行\n下一行」当作软换行合并进同一段落，
                 // 还原后 b 被吸进 <p><br> b</p>（往返数据错乱）。
-                for (int b = 0; b < k - 1; ++b) {
+                int nPh = 0, pureRun = 0;
+                for (int t = 0; t < k; ++t) {
+                    if (isNbspLiteralLine(lines[i + t])) {
+                        if (pureRun >= 2) nPh += pureRun - 1;
+                        pureRun = 0;
+                        ++nPh;                     // &nbsp; 行本身 → 1 占位符
+                    } else {
+                        ++pureRun;
+                    }
+                }
+                if (pureRun >= 2) nPh += pureRun - 1;
+                for (int b = 0; b < nPh; ++b) {
                     const QString ph = collisionFreePlaceholder(
                         "BL", blankLineCount, markdown, processed);
                     ++blankLineCount;
@@ -3113,24 +3153,39 @@ QString MarkdownHandler::fromHtml(const QString &html)
         // 对齐处理之后：带 text-align 的空段落先被 <div align> 保护，不重复识别。
         // 跳过列表容器内（空列表项由列表自绘路径处理，避免空行数重复计算）。
         {
+            // 跳过列表容器内（空列表项由列表自绘路径处理，避免空行数重复计算）。
+            // 同样跳过表格容器内：TipTap 把空单元格序列化为 <td><p></p></td>
+            // （单元格必须含段落节点），其中的空段落是「空单元格内容」而非空行；
+            // 若替换成 ZZBL 占位符，toMarkdown 后占位符进入 | ... | 行，
+            // 还原时整行不等于占位符 → 泄漏（如 ZZBL2ZZ 出现在表格行）。
+            // 表格外的空段落（表格前后空行）不受影响，正常保护还原为 &nbsp;。
             auto insideListContainer = [](const QString &s, int pos) {
                 int lastOpen = -1, lastClose = -1;
                 for (const QString &tag : {QStringLiteral("<li"), QStringLiteral("<ul"),
-                                            QStringLiteral("<ol")}) {
+                                            QStringLiteral("<ol"), QStringLiteral("<table"),
+                                            QStringLiteral("<td"), QStringLiteral("<th"),
+                                            QStringLiteral("<tr"), QStringLiteral("<tbody"),
+                                            QStringLiteral("<thead"), QStringLiteral("<tfoot")}) {
                     const int o = s.lastIndexOf(tag, pos);
                     if (o > lastOpen) lastOpen = o;
                 }
                 for (const QString &tag : {QStringLiteral("</li>"), QStringLiteral("</ul>"),
-                                            QStringLiteral("</ol>")}) {
+                                            QStringLiteral("</ol>"), QStringLiteral("</table>"),
+                                            QStringLiteral("</td>"), QStringLiteral("</th>"),
+                                            QStringLiteral("</tr>"), QStringLiteral("</tbody>"),
+                                            QStringLiteral("</thead>"), QStringLiteral("</tfoot>")}) {
                     const int c = s.lastIndexOf(tag, pos);
                     if (c > lastClose) lastClose = c;
                 }
                 return lastOpen > lastClose;
             };
             // 内容为「空白/NBSP* + 可选 br + 空白/NBSP*」的段落视为空段落。
-            // \s 匹配 Unicode 空白（含 NBSP 字符 U+00A0）；&nbsp; 实体单独列备选。
+            // 注意 Qt 正则的 \s 不匹配 NBSP 字符 U+00A0（实测），而空段落内容
+            // 既可能是 &nbsp; 实体（TipTap getHTML 的空段落），也可能是 NBSP
+            // 字符（toHtml setMarkdown 把字面 &nbsp; 行转成的段落），二者均须
+            // 显式列入备选；识别后统一还原为字面 &nbsp; 行（跨编辑器可移植）。
             QRegularExpression emptyPRe(
-                R"(<p\b[^>]*>(?:(?:\s|&nbsp;)*(?:<br\s*/?>)?(?:\s|&nbsp;)*)</p>)");
+                R"(<p\b[^>]*>(?:(?:\s|&nbsp;|\x{00a0})*(?:<br\s*/?>)?(?:\s|&nbsp;|\x{00a0})*)</p>)");
             int blOff = 0, blN = 0;
             while (true) {
                 auto m = emptyPRe.match(processed, blOff);
