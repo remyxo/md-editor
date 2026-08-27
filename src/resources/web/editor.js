@@ -1244,7 +1244,14 @@ window.editorApi = {
                 codeBlock: false,
                 hardBreak: false,
                 heading: { levels: [1, 2, 3, 4, 5, 6] },
-                link: { openOnClick: false }
+                link: { openOnClick: false },
+                // 禁用 trailingNode：它会在任何 transaction 后，若文档末尾块是
+                // 标题/表格等非可输入节点，自动追加空段落 <p></p>（保证可继续
+                // 输入）。但这破坏往返保真——源码切换/光标移动后 getContent 多出
+                // 尾随空段，fromHtml 转成 &nbsp; 行（「最后一行是标题时莫名插入
+                // &nbsp;」）。loadFile 重建编辑器时构造期不触发追加，故表现不一致。
+                // 禁用后末尾块原样保留；在末尾块内按 Enter 仍可正常新建段落。
+                trailingNode: false
             }),
             TipTapTableKit.configure({ resizable: true }),
             TipTapTaskList,
@@ -1867,6 +1874,24 @@ window.editorApi = {
     // 进入源码模式（C++ 侧传入已转换好的 Markdown）
     enterSourceMode: function(md) {
         if (!this.editor) return;
+        // 记录进入源码模式前的光标位置，退出重建后恢复（内容未大改则回到原处，
+        // 大纲高亮与视口随之一致）。
+        this._srcEntryPos = this.editor.state.selection.head;
+        // 记录光标所在 heading 序号（0-based，-1 表示光标前无任何标题），进入
+        // 源码模式时据此滚动定位。基于 PM heading 节点顺序——与 fromHtml 输出的
+        // MD 标题行一一对应（表格/引用块内的 heading 是边缘场景，序号可能略偏）。
+        this._srcEntryHeadingIdx = -1;
+        {
+            var pos = this.editor.state.selection.head;
+            var n = 0;
+            this.editor.state.doc.descendants(function(node, start) {
+                if (node.type.name === 'heading') {
+                    if (start >= pos) return false;   // 光标在该标题之前，后续不更新
+                    this._srcEntryHeadingIdx = n++;
+                }
+                return true;
+            }.bind(this));
+        }
         this._sourceValue = md;
         var sourceView = document.getElementById('source-view');
         var sourceWrap = document.getElementById('source-wrap');
@@ -1881,6 +1906,9 @@ window.editorApi = {
         this._syncSearchActiveClass();
         // 源码区随内容撑高（进源码模式先撑一次，内容已就绪）
         this._resizeSourceView();
+        // 视口定位到光标所在标题（撑高后再量，测量才准确；搜索激活时随后
+        // _srcStartSearch 的滚动会覆盖此定位，搜索优先）。
+        this._scrollSourceToEntryHeading();
         // 绑定 input 监听：源码区编辑时实时标记脏状态（对齐 WYSIWYG 的 onUpdate 实时标记），
         // 并同步撑高 textarea（内容增删都会改变滚动高度）。
         // 程序化 sourceView.value = md 不会触发 input 事件，初始填充安全。
@@ -1902,24 +1930,68 @@ window.editorApi = {
         }
     },
 
+    // 进入源码模式时把视口滚动到光标所在标题：在 MD 中按 heading 序号定位标题行
+    // （跳过代码块围栏内的行，避免「``` 内的 # 注释」误判为标题），再复用
+    // _srcScrollToMatch 的测量式滚动（隐藏真实 textarea 复刻排版量前缀高度）。
+    // 序号 -1（光标前无标题）或未找到标题行时不滚动。
+    _scrollSourceToEntryHeading: function() {
+        if (this._srcEntryHeadingIdx < 0) return;
+        var sv = document.getElementById('source-view');
+        if (!sv) return;
+        var idx = this._srcEntryHeadingIdx;
+        var lines = sv.value.split('\n');
+        var offset = 0, seen = 0, target = -1, inCode = false;
+        var fenceRe = /^\s*(?:```+|~~~+)/;
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (fenceRe.test(line)) {
+                inCode = !inCode;
+            } else if (!inCode && /^#{1,6}\s/.test(line)) {
+                if (seen === idx) { target = offset; break; }
+                seen++;
+            }
+            offset += line.length + 1;
+        }
+        if (target >= 0) this._srcScrollToMatch(sv, { from: target });
+    },
+
     // 退出源码模式（C++ 侧传入已转换好的 HTML）
     exitSourceMode: function(html) {
         if (!this.editor) return;
         var sourceView = document.getElementById('source-view');
         var sourceWrap = document.getElementById('source-wrap');
-        var editorDiv = document.getElementById('editor');
         var changed = sourceView.value !== this._sourceValue;
         // 解绑 input 监听，避免退出后残留引用。
         if (this._onSourceInput) {
             sourceView.removeEventListener('input', this._onSourceInput);
             this._onSourceInput = null;
         }
-        this._loading = true;
-        this.editor.commands.setContent(html);
-        this._loading = false;
+        // 用与 loadFile 一致的重建方式加载 toHtml 输出：TipTap 原生命令
+        // commands.setContent 在末尾块为标题/表格等非段落块时会自动追加空段落
+        // <p></p>（ProseMirror 要求文档末尾有可输入节点），切回 WYSIWYG 往返后
+        // fromHtml 把该空段转成 &nbsp; 行 →「最后一行是标题时莫名插入 &nbsp;」。
+        // 重建方式按 HTML 原样渲染、不追加；初始光标在文档开头，大纲高亮与视口
+        // 一致（不再跳末尾）。
+        this.setContent(html);
         sourceWrap.style.display = 'none';
-        editorDiv.style.display = '';
+        document.getElementById('editor').style.display = '';
         this.isSourceMode = false;
+        // 恢复进入源码模式前的光标位置：重建 setContent 后光标落在文档开头，
+        // setTextSelection 触发 onSelectionUpdate → cursorChanged → 大纲高亮跟随；
+        // scrollIntoView 把视口滚到光标处（block:'start' 与大纲点击跳转 scrollToPos
+        // 一致，标题位于视口顶部），解决「大纲跳末尾但视口在开头」不同步。
+        if (this._srcEntryPos !== undefined && this._srcEntryPos !== null) {
+            var entry = this._srcEntryPos;
+            this._srcEntryPos = undefined;
+            var size = this.editor.state.doc.content.size;
+            var target = Math.min(Math.max(entry, 0), Math.max(size - 1, 0));
+            this.editor.commands.setTextSelection(target);
+            var dom = this.editor.view.domAtPos(target);
+            if (dom && dom.node) {
+                var el = dom.node.nodeType === 3 ? dom.node.parentElement : dom.node;
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
         // 源码搜索延续到 WYSIWYG：先把查询同步进插件 state（否则 _notifySearchCount
         // 读空插件 → 0/0，且 WYSIWYG 高亮与源码查询不一致）。requestSearch 重算当前
         // 文档的匹配并选中首处。
