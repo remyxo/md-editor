@@ -3132,6 +3132,50 @@ private slots:
                  qPrintable("表格前后空行应保留为 &nbsp;，实际:\n" + around));
     }
 
+    void testLiteralPlaceholderTextCoexistsRoundTrip()
+    {
+        // 用户文档字面包含占位符形态文本（ZZSB0ZZ），与同前缀真实元素
+        // （下标 ~2~）共存时，往返不得互相污染：占位符生成必须跳过源文中
+        // 已存在的串，否则还原阶段 html.replace(生成的占位符, …) 会把用户
+        // 字面文本一并误替换（往返数据损坏）。
+        const QString md = QStringLiteral(
+            "水的化学式是 H~2~O。\n"
+            "\n"
+            "字面占位符文本 ZZSB0ZZ 是文档示例。");
+        const QString html = MarkdownHandler::toHtml(md);
+        // 用户字面 ZZSB0ZZ 必须原样存活于 HTML（不被当下标占位符误替换）
+        QVERIFY2(html.contains("ZZSB0ZZ"),
+                 qPrintable("用户字面 ZZSB0ZZ 应原样保留，实际: " + html));
+        // 真实下标只应还原出一处 <sub>2</sub>（字面文本不得被误转）
+        QCOMPARE(html.count("<sub>2</sub>"), 1);
+        // 完整往返：逐字还原
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("字面占位符文本 ZZSB0ZZ 是文档示例"),
+                 qPrintable("往返应原样保留字面占位符文本，实际: " + back));
+        QCOMPARE(back.trimmed(), md);
+    }
+
+    void testStrikeAndLiteralAsteriskNoPlaceholderCollision()
+    {
+        // ZZST 前缀双占用回归：fromHtml 中删除线 <s> 保护（计数 n）与步骤 D
+        // 字面孤立 * 保护（计数 nSt）各自从 0 独立编号，同一文档两者共存时
+        // 生成相同占位符 ZZST0ZZ 承载两份不同备份，LIFO 还原把全部替换为
+        // 后入者 → 删除线内容丢失。碰撞检测应使后生成者跳号。
+        const QString html = QStringLiteral(
+            "<p><s>已删除</s> 以及 2*3=6</p>");
+        const QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains("~~已删除~~"),
+                 qPrintable("删除线应还原为 ~~已删除~~，实际: " + md));
+        QVERIFY2(md.contains("2\\*3=6"),
+                 qPrintable("字面 * 应还原为 \\*，实际: " + md));
+        // 完整往返：<s> 与字面 * 均保真
+        const QString back = MarkdownHandler::toHtml(md);
+        QVERIFY2(back.contains("<s>已删除</s>"),
+                 qPrintable("往返应还原 <s>，实际: " + back));
+        QVERIFY2(back.contains("2*3=6") || back.contains("2\\*3=6"),
+                 qPrintable("往返应保留字面 *，实际: " + back));
+    }
+
     void testNbspLineIsBlankBlock()
     {
         // 源码字面 &nbsp; 行（用户显式空段）经 toHtml 应为独立空段落，而非被
