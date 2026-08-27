@@ -343,6 +343,7 @@ static QString collisionFreePlaceholder(const QString &name, int base,
 static void escapeUnclosedHtmlTags(QString &s)
 {
     static const QRegularExpression tagRe("(?<![\\&\\\\])<[a-zA-Z/][^<>]*>");
+    static const QRegularExpression nameEndRe("[\\s>]");
     int off = 0;
     while (true) {
         auto m = tagRe.match(s, off);
@@ -350,7 +351,7 @@ static void escapeUnclosedHtmlTags(QString &s)
         const QString tok = m.captured();
         const bool isClosing = tok.startsWith("</");
         // 提取标签名（<b> → b，<a href> → a，</div> → div）
-        int nameEnd = tok.indexOf(QRegularExpression("[\\s>]"), 1);
+        int nameEnd = tok.indexOf(nameEndRe, 1);
         if (nameEnd < 0) nameEnd = tok.length() - 1;
         const QString name = isClosing ? tok.mid(2, nameEnd - 2) : tok.mid(1, nameEnd - 1);
         const QString nameL = name.toLower();
@@ -1948,6 +1949,10 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                 QRegularExpression::DotMatchesEverythingOption);
             static const QRegularExpression styleAttrRe(
                 R"a(\bstyle\s*=\s*"([^"]*)")a");
+            static const QRegularExpression boldStyleRe(
+                "\\bfont-weight\\s*:\\s*700\\b");
+            static const QRegularExpression italicStyleRe(
+                "\\bfont-style\\s*:\\s*italic\\b");
             int off = 0;
             while (true) {
                 auto m = lineThroughSpanRe.match(html, off);
@@ -1956,10 +1961,8 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                 QString replacement = QStringLiteral("<s>%1</s>").arg(content);
                 auto sm = styleAttrRe.match(m.captured());
                 QString style = sm.hasMatch() ? sm.captured(1) : QString();
-                const bool hasBold = style.contains(
-                    QRegularExpression("\\bfont-weight\\s*:\\s*700\\b"));
-                const bool hasItalic = style.contains(
-                    QRegularExpression("\\bfont-style\\s*:\\s*italic\\b"));
+                const bool hasBold = style.contains(boldStyleRe);
+                const bool hasItalic = style.contains(italicStyleRe);
                 if (hasBold && hasItalic)
                     replacement = QStringLiteral("<strong><em><s>%1</s></em></strong>").arg(content);
                 else if (hasBold)
@@ -2155,6 +2158,13 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         QRegularExpression spanStyleRe(
             QStringLiteral("<span\\b[^>]*\\bstyle\\s*=\\s*\"([^\"]*)\"[^>]*>(.*?)</span>"),
             QRegularExpression::DotMatchesEverythingOption);
+        static const QRegularExpression boldStyleRe(
+            "\\bfont-weight\\s*:\\s*700\\b");
+        static const QRegularExpression italicStyleRe(
+            "\\bfont-style\\s*:\\s*italic\\b");
+        static const QRegularExpression colorStyleRe("\\bcolor\\s*:");
+        static const QRegularExpression bgColorStyleRe(
+            "\\bbackground-color\\s*:");
         int off = 0;
         while (true) {
             auto m = spanStyleRe.match(html, off);
@@ -2163,10 +2173,10 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             QString content = m.captured(2);
             int len = m.capturedLength();
 
-            bool hasBold = style.contains(QRegularExpression("\\bfont-weight\\s*:\\s*700\\b"));
-            bool hasItalic = style.contains(QRegularExpression("\\bfont-style\\s*:\\s*italic\\b"));
-            bool hasColor = style.contains(QRegularExpression("\\bcolor\\s*:"));
-            bool hasBg = style.contains(QRegularExpression("\\bbackground-color\\s*:"));
+            bool hasBold = style.contains(boldStyleRe);
+            bool hasItalic = style.contains(italicStyleRe);
+            bool hasColor = style.contains(colorStyleRe);
+            bool hasBg = style.contains(bgColorStyleRe);
 
             if ((hasBold || hasItalic) && !hasColor && !hasBg) {
                 QString replacement = content;
@@ -2475,6 +2485,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
         QRegularExpression preRe(
             R"(<pre[^>]*>(.*?)</pre>)",
             QRegularExpression::DotMatchesEverythingOption);
+        static const QRegularExpression langRe(
+            "class=\"language-([^\"]+)\"");
+        static const QRegularExpression stripTagRe("<[^>]*>");
         int n = 0;
         int searchFrom = 0;
         while (true) {
@@ -2504,10 +2517,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString code = lines.join('\n');
             // 提取语言（TipTap codeBlock 输出 <code class="language-xxx">）
             QString lang;
-            QRegularExpression langRe("class=\"language-([^\"]+)\"");
             auto lm = langRe.match(code);
             if (lm.hasMatch()) lang = lm.captured(1);
-            code.remove(QRegularExpression("<[^>]*>"));
+            code.remove(stripTagRe);
             code = unescapeHtmlEntities(code);
             code = code.trimmed();
             // 占位符序号须避开输入 HTML/已产出内容中的字面同串（如文档里示例的
