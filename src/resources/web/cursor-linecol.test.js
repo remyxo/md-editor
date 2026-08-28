@@ -301,4 +301,14 @@ describe('状态栏行列计算（真实 TipTap 链路）', () => {
     // 前=1，表格行=2/3（最高单元格 2 行），后=4
     expect(selectAt(posAfter('后')).line).toBe(4);
   });
+
+  it('syncFormatState 主动上报光标：切标签页时状态栏行列刷新（无选中变更也上报）', () => {
+    // 切标签页只调 syncFormatState（不产生 onSelectionUpdate），状态栏行列须由
+    // notifyCursor 主动推送当前 selection.head——否则保留上一标签页的旧值。
+    window.editorApi.setContent('<p>hello</p><p>world</p>');
+    window.editorApi.editor.commands.setTextSelection(13);   // world 末尾，仅作初始态
+    lastCursor = null;
+    window.editorApi.syncFormatState();
+    expect(lastCursor).toEqual({ line: 2, col: 6, pos: 13 });
+  });
 });

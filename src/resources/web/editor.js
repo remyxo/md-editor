@@ -2646,6 +2646,17 @@ window.editorApi = {
         this.notifyFormat();
         this.notifyHeadings();
         this.notifyWordCount();
+        this.notifyCursor();
+    },
+
+    // 主动上报当前光标位置（切标签页时 C++ 调 syncFormatState 刷新状态栏行列/大纲高亮；
+    // 光标位置只在 onSelectionUpdate 被动推送，切回已加载标签页不会触发，须主动查询）
+    notifyCursor: function() {
+        if (!this.editor || !this.bridge) return;
+        var ed = this.editor;
+        var pos = ed.state.selection.head;
+        var lc = this._lineColAt(ed.state.doc, pos);
+        this.bridge.cursorChanged(lc.line, lc.col, pos);
     },
 
     // 确保链接悬浮提示 DOM 存在
