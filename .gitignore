@@ -1,5 +1,7 @@
 build/
 build-deb/
+build-debug/
+build-prof/
 .cache/
 .claude/
 .superpowers/
@@ -12,6 +14,9 @@ session.txt
 Testing/
 # 跨平台图标尺寸对比测试的临时输出图
 tmp-icontest/
+
+# 排查 Qt 转义兼容下载的 Qt 6.8.2 源码与打包文件
+qt6-base-*/
 
 # Windows 本地构建（VM）产物与暂存，见 docs/windows-build-vm.md
 /dist/
