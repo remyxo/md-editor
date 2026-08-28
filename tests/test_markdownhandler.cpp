@@ -1,4 +1,5 @@
 #include <QTest>
+#include <QElapsedTimer>
 #include <QRegularExpression>
 #include <QFile>
 #include "../src/core/MarkdownHandler.h"
@@ -3200,6 +3201,120 @@ private slots:
         QVERIFY2(emptyP2 == 1,
                  qPrintable("两侧空行的 &nbsp; 应仍 1 空段，实际 "
                             + QString::number(emptyP2) + " 个: " + html2));
+    }
+
+    void testEmphMarkerSpaceBeforeFullwidthPunctHealed()
+    {
+        // 旧版反换行在强调标记边界折行时误补空格，产生 "**审查结论** ：" 形态损坏。
+        // 该空格是段落内唯一折行点，会触发 QTextMarkdownWriter 的 i=j+1 吞字 bug
+        // （续行恰满 80 列时吞掉断点处的 。/token 字符）。fromHtml 定向归一化
+        // 「加粗/斜体闭合 + 空格 + 全角标点」为无空格，使往返自愈且保句号。
+        const QString md = QStringLiteral(
+            "**审查结论** ：该项目具有很高的工程质量，往返保真机制设计优秀，实现完善。"
+            "主要优化空间在于性能优化、边缘情况覆盖和代码可维护性改进。"
+            "建议优先处理性能问题和增加更多边界测试用例。\n"
+            "**审查人**：AI Code Reviewer");
+        const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        // 空格自愈
+        QVERIFY2(back.contains("**审查结论**："),
+                 qPrintable("损坏空格应自愈，实际:\n" + back));
+        QVERIFY2(!back.contains("**审查结论** ："),
+                 qPrintable("损坏空格不应残留，实际:\n" + back));
+        // 句号保留（i=j+1 吞字 bug 回归守卫）
+        QVERIFY2(back.contains("边界测试用例。"),
+                 qPrintable("句号不得被吞，实际:\n" + back));
+        // 无占位符泄漏
+        QVERIFY2(!back.contains("ZZ"),
+                 qPrintable("不应有占位符泄漏，实际:\n" + back));
+        // 多轮往返稳定
+        const QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back));
+        QCOMPARE(back2, back);
+    }
+
+    void testEmphMarkerSpaceKeepsLegitSpaces()
+    {
+        // 定向归一化仅限「加粗/斜体闭合 + 空格 + 全角标点」。加粗后接合法
+        // ASCII 空格（**Bold** text）或普通 CJK 空格（**加粗** 中文）是合法
+        // 排版，不得被修复误伤。
+        const QString md1 = QStringLiteral("**Bold** text with spaces");
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md1)), md1);
+        const QString md2 = QStringLiteral("**加粗** 中文内容带空格");
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2)), md2);
+        const QString md3 = QStringLiteral("**审查结论**：无空格直连");
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md3)), md3);
+    }
+
+    void testLongBoldCjkRoundTripNoPeriodLoss()
+    {
+        // 长加粗段落 + 后续行：此前 toMarkdown 在 `**审查结论**` 标记边界折行后，
+        // 续行恰满 80 列时吞掉「用例。」的句号（i=j+1 bug），且旧内容形态下还会
+        // 拦腰拆占位符 token 泄漏 "ZZBK ZZ"。修复后两者均不发生。
+        const QString md = QStringLiteral(
+            "**审查结论** ：很高的工程质量，往返保真机制设计优秀，实现完善。"
+            "主要优化空间在于性能优化、边缘情况覆盖和代码可维护性改进。"
+            "建议优先处理性能问题和增加更多边界测试用例。\n"
+            "**审查人**：AI Code Reviewer");
+        const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("边界测试用例。"),
+                 qPrintable("句号不得被吞，实际:\n" + back));
+        QVERIFY2(!back.contains("ZZBK"),
+                 qPrintable("不得泄漏 ZZBK 占位符，实际:\n" + back));
+        QVERIFY2(back.contains("**审查人**：AI Code Reviewer"),
+                 qPrintable("后续行加粗不得被拆，实际:\n" + back));
+        // 斜体同规（</em> + 空格 + 全角标点同样自愈）
+        const QString mdEm = QStringLiteral("*斜体结论* ：短文本");
+        const QString backEm = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(mdEm));
+        QVERIFY2(backEm.contains("*斜体结论*："),
+                 qPrintable("斜体后全角标点空格应自愈，实际:\n" + backEm));
+    }
+
+    void testLargeDocumentRoundTripBenchmark()
+    {
+        // 大文档（约 10k 行）往返计时基准：此前项目无任何性能基准，
+        // 一切性能讨论无数据支撑。本测试建立基线并设宽松上限防大幅退化。
+        // 文档混合标题/段落/行内格式/列表/代码块，覆盖主要占位符管线。
+#ifndef QT_NO_DEBUG
+        // Debug 构建的 QString/正则开销数倍于 Release，计时结果无意义且会误触上限
+        QSKIP("计时基准仅 Release 构建运行");
+#endif
+        const int N = 900;  // 每轮约 11 行 → 约 10k 行
+        QString md;
+        md.reserve(N * 400);
+        for (int i = 0; i < N; ++i) {
+            md += QStringLiteral("## 章节 %1\n").arg(i);
+            md += QStringLiteral("\n");
+            md += QStringLiteral("这是第 %1 段正文，含 **加粗**、*斜体* 与 "
+                                 "`行内代码`，以及足够长度用于触发 80 列折行"
+                                 "的词汇序列 甲 乙 丙 丁 戊 己 庚 辛。\n").arg(i);
+            md += QStringLiteral("\n");
+            md += QStringLiteral("- 列表项 %1-A\n- 列表项 %1-B\n- 列表项 %1-C\n").arg(i);
+            md += QStringLiteral("\n");
+            md += QStringLiteral("```cpp\nint f%1() { return %1; }\n```\n").arg(i);
+            md += QStringLiteral("\n");
+        }
+
+        QElapsedTimer timer;
+        timer.start();
+        const QString html = MarkdownHandler::toHtml(md);
+        const qint64 toHtmlMs = timer.elapsed();
+        const QString back = MarkdownHandler::fromHtml(html);
+        const qint64 totalMs = timer.elapsed();
+        qDebug() << "基准: ~10k 行文档 toHtml" << toHtmlMs
+                 << "ms, fromHtml" << (totalMs - toHtmlMs)
+                 << "ms, 往返合计" << totalMs << "ms";
+
+        // 正确性守卫：标题与行内代码数量不得在往返中丢失
+        QCOMPARE(back.count(QStringLiteral("## 章节")), N);
+        QCOMPARE(back.count(QStringLiteral("`行内代码`")), N);
+        // 宽松上限防大幅退化（数量级回归才失败）。
+        // 基线（2026-08-27，本地 Release，Qt 6.8.2，Debian 13）：
+        //   修复前 toHtml ≈ 11.3s，fromHtml ≈ 17s，往返合计 ≈ 28.4s
+        //   （根因：逐次 match(s, offset)/replace 的 O(K·n) 模式 + 每行现构造正则）
+        //   修复后 toHtml ≈ 253ms，fromHtml ≈ 254ms，往返合计 ≈ 507ms
+        // 上限取修复后基线 ~10 倍余量：正常 CI 差异远低于此，而任何 O(K·n)
+        // 模式回归（回到秒级）都会被捕获。
+        QVERIFY2(totalMs < 10000,
+                 qPrintable(QStringLiteral("10k 行往返超时: %1 ms").arg(totalMs)));
     }
 
 };
