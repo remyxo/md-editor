@@ -179,7 +179,9 @@ void QtMarkdownWriter::writeFrame(const QTextFrame *frame)
                     m_linePrefixWritten = false;
                 }
             }
-            int endingCol = writeBlock(block, !table, table && tableRow == 0,
+            // 改动 6：m_wrapEnabled=false 时全部块按 wrap=false 处理——与
+            // 标题/代码块相同的既有不折行路径，逐块单行输出
+            int endingCol = writeBlock(block, !table && m_wrapEnabled, table && tableRow == 0,
                                        nextIsDifferent && !block.textList());
             m_doubleNewlineWritten = false;
             if (table) {

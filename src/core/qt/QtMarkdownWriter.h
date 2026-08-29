@@ -10,16 +10,19 @@
 // 高发，数据不可恢复）。vendor 后可从源头去除折行，并使序列化行为在
 // Qt 6.8.2 → 6.10.2 及未来版本间完全固定（本项目兼容性原则）。
 //
-// 【相对原版的改动】（保持行为等价，逐项列出以便对照上游 diff）：
+// 【相对原版的改动】（逐项列出以便对照上游 diff）：
 //   1. 类名 QTextMarkdownWriter → QtMarkdownWriter（避免与 Qt 内部符号冲突）
 //   2. 删除私有头依赖（qtextdocumentlayout_p.h / qtextdocument_p.h /
 //      qtextimagehandler_p.h / qtextmarkdownimporter_p.h —— 实现已逐一核对，
 //      前三者全文零使用；第四者仅用 FeatureFrontMatter 枚举值 0x100000，
-//      以本文件 kFrontMatterFeature 常量替换）
+//      以 kFrontMatterFeature 常量替换）
 //   3. 日志类别改为 mdeditor.markdownwriter（原 qt.text.markdown.writer 为
 //      Qt 内部类别名，vendored 副本不复用）
 //   4. 删除 Q_GUI_EXPORT / QT_BEGIN_NAMESPACE 等 Qt 构建体系宏
 //   5. LGPL-3.0/GPL-2.0/GPL-3.0 多许可与版权声明原样保留（合规要求）
+//   6. 【功能改动】新增 setWrapEnabled(bool)：false 时关闭 80 列折行，
+//      每块输出单行（vendor 的根本目的）。默认 true，与上游行为完全等价
+//      （等价性由 tests/test_qtmarkdownwriter.cpp 回归验证）
 //
 // 【许可证合规】本文件为 Qt Company 的 LGPL 作品副本，修改处以上方注释
 // 标注。LGPL-3.0 第 4 条允许修改与再分发，须保留本版权与许可声明并标注
@@ -40,6 +43,9 @@ class QtMarkdownWriter
 {
 public:
     QtMarkdownWriter(QTextStream &stream, QTextDocument::MarkdownFeatures features);
+    // 关闭/开启 80 列折行（默认开启，与 QTextDocument::toMarkdown() 等价；
+    // 关闭后每块单行输出，见文件头改动清单第 6 条）
+    void setWrapEnabled(bool wrap) { m_wrapEnabled = wrap; }
     bool writeAll(const QTextDocument *document);
 #if QT_CONFIG(itemmodel)
     void writeTable(const QAbstractItemModel *table);
@@ -65,6 +71,7 @@ private:
     QString m_codeBlockFence;
     int m_wrappedLineIndent = 0;
     int m_lastListIndent = 1;
+    bool m_wrapEnabled = true;  // 改动 6：默认 true 保持上游行为
     bool m_doubleNewlineWritten = false;
     bool m_linePrefixWritten = false;
     bool m_indentedCodeBlock = false;

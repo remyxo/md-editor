@@ -29,11 +29,12 @@ private:
         return r;
     }
 
-    static QString vendoredSerialize(const QTextDocument &doc)
+    static QString vendoredSerialize(const QTextDocument &doc, bool wrap = true)
     {
         QString md;
         QTextStream ts(&md);
         QtMarkdownWriter w(ts, QTextDocument::MarkdownDialectGitHub);
+        w.setWrapEnabled(wrap);
         w.writeAll(&doc);
         return md;
     }
@@ -194,6 +195,59 @@ private slots:
                            + QString(tail, QLatin1Char('r')));
             }
         }
+    }
+    // ---- 去折行（setWrapEnabled(false)）性质测试 ----
+
+    // 上游折行的强切吞字路径（二次窗口 wi<i 时 i=j+1 吞掉断点字符，中文
+    // 稀疏空格高发）：去折行后单行输出，字节保真且幂等。
+    // 单块文档输出以 \n\n 结尾（块间空行约定，与 toMarkdown 一致）
+    void testNoWrapSwallowCases() {
+        const QStringList cases = {
+            QString(30, QChar(0x6C49)) + " " + QString(100, QChar(0x5B57)),
+            QString(60, QLatin1Char('A')) + " " + QString(200, QLatin1Char('B')),
+        };
+        for (const QString &md : cases) {
+            QTextDocument doc;
+            doc.setMarkdown(md);
+            const QString out = vendoredSerialize(doc, false);
+            QCOMPARE(out, md + "\n\n");
+            QTextDocument doc2;
+            doc2.setMarkdown(out);
+            QCOMPARE(vendoredSerialize(doc2, false), out);
+        }
+    }
+
+    // 长列表项/引用块去折行后单行输出（不再产生 \n·· / \n> 续行）。
+    // 列表项以 \n 结尾、引用块以 \n\n 结尾（writeFrame 结尾空行约定）
+    void testNoWrapSingleLineBlocks() {
+        {
+            QTextDocument doc;
+            const QString item = QStringLiteral("item ").repeated(30) + "tail";
+            doc.setMarkdown("- " + item);
+            QCOMPARE(vendoredSerialize(doc, false), QString("- ") + item + "\n");
+        }
+        {
+            QTextDocument doc;
+            const QString text = QStringLiteral("quote ").repeated(20) + "tail";
+            doc.setMarkdown("> " + text);
+            QCOMPARE(vendoredSerialize(doc, false), QString("> ") + text + "\n\n");
+        }
+    }
+
+    // MarkdownHandler 记忆中的折行伪影用例：特定折行点下 strong 闭合与
+    // CJK 间空格丢失（**加粗** 混排 → **加粗**混排）。去折行后该段单行
+    // 输出且空格保真。（`**`==`**` 的 strong 在 setMarkdown 解析层被 md4c
+    // 链式丢弃，系已知缺陷，由 MarkdownHandler 的 wrapDiscardedEmphCode
+    // 在 HTML 层补包，与本测试无关）
+    void testNoWrapBoldCjkNoSpaceLoss() {
+        const QString md = QStringLiteral("路径（如 **`==`**→… 与 **加粗** 混排。");
+        QTextDocument doc;
+        doc.setMarkdown(md);
+        const QString out = vendoredSerialize(doc, false);
+        // 单行段落：仅尾随空行，段内无换行
+        const QStringList lines = out.split('\n');
+        QCOMPARE(lines.size(), 3);  // 内容行 + 尾随 \n\n 产生的两个空元素
+        QVERIFY(lines.constFirst().contains("**加粗** 混排"));
     }
 };
 

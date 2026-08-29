@@ -66,7 +66,7 @@ vendored 文件 SPDX 头为 `LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.
 ## 后续步骤（待审后执行）
 
 1. ✅ 步骤 1-2：vendor 行为保持版 + 等价性验证（本文件所述）
-2. 步骤 3：`writeBlock` 去折行改造（`wrap=false` 或 `ColumnLimit` 可配置），独立提交
-3. 步骤 4：MarkdownHandler 两处 `toMarkdown()` 调用点（`fromHtml` 主链路 ：4305、DOCX/导出链路 ：3551）切换到 vendored writer
+2. ✅ 步骤 3：`setWrapEnabled(bool)` 去折行开关（默认 true 保持等价；`false` 时 `writeFrame` 对全部块传 `wrap=false`，复用标题/代码块的既有不折行路径，逐块单行输出）。性质测试：强切吞字用例字节保真且幂等、长列表项/引用单行、折行伪影空格丢失用例修复
+3. 步骤 4：MarkdownHandler 两处 `toMarkdown()` 调用点（`fromHtml` 主链路 ：4305、脚注内容链路 ：3551）切换到 vendored writer
 4. 步骤 5：`fromHtml` 的折行合并补丁（`isWrapContinuation` 等）退役，独立提交
 5. 步骤 6：全量回归（ctest + 真实 TipTap 端到端 + 大文档性能）
