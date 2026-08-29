@@ -838,62 +838,10 @@ static bool isListItemLine(const QString &line)
     return re.match(line).hasMatch();
 }
 
-// 判断某行是否为「80 列折行」产生的续行（应拼回上一行），而非新的块起始。
-// 反换行（fromHtml）用它区分：合法软换行已全部被 ZZ* 占位符保护，
-// 故非空行之间的单 \n 只能是块边界或折行。块起始（返回 false）：
-//   空行、列表项（数字./-/* 后跟内容）、块引用空行（仅 ">"）、
-//   标题/表格/围栏/水平线（toMarkdown 输出中恒被空行隔开，正常不作为
-//   非空行的后继出现，保守起见一并排除）。
-static bool isWrapContinuation(const QString &line)
-{
-    if (line.isEmpty()) return false;
-    const QString t = line.trimmed();
-    if (t.isEmpty()) return false;
-    if (t == QLatin1String(">")) return false;   // 块引用空行（段落分隔）
-    if (isListItemLine(line)) return false;       // 列表项边界
-    if (t.startsWith(QLatin1Char('#')) || t.startsWith(QLatin1Char('|')))
-        return false;                             // 标题 / 表格
-    if (t.startsWith("```") || t.startsWith("~~~")) return false; // 代码围栏
-    static const QRegularExpression hrRe("^(-{3,}|\\*{3,}|_{3,})\\s*$");
-    if (hrRe.match(t).hasMatch()) return false;   // 水平线
-    return true;
-}
-
-// 去掉折行续行的上下文缩进前缀：块引用 "> " 与列表项前导空格。
-// 折行发生在词边界，续行首字符必为词首（非空格），故去掉缩进是安全的。
-static QString stripWrapIndent(QString line)
-{
-    if (line.startsWith("> "))
-        line.remove(0, 2);
-    else if (line.startsWith(QLatin1Char('>')))
-        line.remove(0, 1);
-    while (line.startsWith(QLatin1Char(' ')))
-        line.remove(0, 1);
-    return line;
-}
-
-// 反换行判定：行尾是否为未转义的强调/加粗闭合标记（** 或 *）。
-// QTextDocument::toMarkdown（md4c）把 strong/em 序列化为 *（** 与 *，不用 _），
-// 并在这类标记边界制造 80 列折行点：长段落 "**审查结论**" 后接 CJK（无空格）时
-// 折行落在闭标记后，反换行若补空格即产生 "**审查结论** ：" 假空格；同理折行落
-// 在下一加粗的【开标记】后会把 "**审查人**" 拆成 "** 审查人**"。这些折行处
-// 无空格被吞，拼回时不补空格。字面 * 在 md 输出中恒为转义 \*，故行尾未转义的
-// 裸 * 必为真实标记。仅判定 *：行尾 _ 恒为字面文本（如 foo_bar），加入会误判
-// 空格折行（"foo_bar baz" 折在空格处时行尾正是 foo_bar）。
-static bool endsWithEmphMarker(const QString &line)
-{
-    int i = line.size();
-    while (i > 0 && line[i - 1] == QLatin1Char('*'))
-        --i;
-    const int stars = line.size() - i;
-    if (stars == 0)
-        return false;
-    // 末尾连续 * 前是反斜杠 → 字面转义 \*，非标记
-    if (i > 0 && line[i - 1] == QLatin1Char('\\'))
-        return false;
-    // 1=斜体、2=加粗、3=加粗+斜体（***）；字面 * 在输出中恒为 \*，未转义即标记
-    return stars >= 1 && stars <= 3;
-}
+// 判断某行是否为「80 列折行」产生的续行——该判定及其消费方（反换行合并
+// 循环）已随折行根治退役：序列化改用 vendored QtMarkdownWriter 并关闭
+// 折行（serializeMarkdownNoWrap），不再产生折行续行。历史机制详见
+// docs/vendor-qt-markdown-writer.md。
 
 // 统一列表行（任务项或通用列表项）解析出的条目
 struct MdListItem {
@@ -3061,7 +3009,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
     QStringList placeholders, backups;
     // <br data-brk>（编辑器软换行）占位符：与 backups 分开记录，因其还原需按
     // 所在行上下文决定缩进（段落 \n / 有序列表 \n···· / 无序列表 \n··），
-    // 无法在保护阶段预先确定。反换行后统一按行上下文还原。
+    // 无法在保护阶段预先确定，统一按行上下文还原。
     QStringList brSoftPlaceholders;
     // 表格列对齐记录（每表每列："center"/"right"/"left"/空）：setHtml 前从
     // TipTap 的 <td>/<th> style 提取，步骤 6 分隔行规范化时注回。
@@ -4036,8 +3984,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
             offset = m.capturedStart() + ph.length();
         }
         // <br data-brk>（编辑器软换行）：同样在 setHtml 前保护为占位符，
-        // 否则 toMarkdown 把它转成 \n / \n····，与 80 列折行字节级不可区分，
-        // 反换行会误拼回、丢失软换行。占位符存活到反换行之后，再按上下文还原。
+        // 否则 toMarkdown 把它转成 \n / \n····，软换行语义与块边界不可区分
+        // （历史上还须与 80 列折行区分，折行已由 vendored writer 根治）。
+        // 占位符存活到序列化之后，再按上下文还原。
         offset = 0;
         QRegularExpression brSoftRe(
             R"re(<br\b[^>]*\bdata-brk[^>]*>)re");
@@ -4344,46 +4293,12 @@ QString MarkdownHandler::fromHtml(const QString &html)
     // 自身不含换行；若放到还原之后，会破坏代码块/公式内用户有意保留的空行。
     md.replace(QRegularExpression("\\n{3,}"), "\n\n");
 
-    // 反换行：QTextDocument::toMarkdown() 硬编码 80 列换行（ColumnLimit = 80，
-    // 无公开 API 可关闭），把含空格的长段落/列表项/引用块在词边界折成多行
-    // （段落 \n、有序列表 \n····、无序列表 \n··、引用块 \n> ）。这些折行会把
-    // 列表项拆成多块、把段落拆成多行（再次加载时被 BRMARKER 提升为 <br>），
-    // 破坏往返保真。合法软换行（<br>/<br data-brk>）已在前用 ZZ* 占位符保护，
-    // 故此处的单 \n 只能是块边界或折行；逐行把折行拼回单行，仅保留块边界。
-    // 拼回分隔：md4c 在词边界/空格处折行。空格处折行会吞掉该空格 → 补一个空格；
-    // 强调/加粗标记边界折行（行尾未转义 *）无空格被吞 → 不补（见 endsWithEmphMarker）。
-    {
-        QStringList lines = md.split('\n');
-        QStringList out;
-        for (int i = 0; i < lines.size(); ++i) {
-            QString cur = lines[i];
-            // 内容行后若紧跟折行续行，则一直拼回（续行缩进用单个空格还原）。
-            // 块引用空行（">"）是段落分隔，不参与拼接。
-            while (!cur.isEmpty()
-                   && cur.trimmed() != QLatin1String(">")
-                   && i + 1 < lines.size()
-                   && isWrapContinuation(lines[i + 1])) {
-                QString next = stripWrapIndent(lines[i + 1]);
-                // md4c 折行在词边界；续行若以转义列表标记开头（\+ \- \1. \1)），
-                // 是 80 列折行产生的行首转义（防止续行被误解析为列表项），拼回后
-                // 该标记已回到行中，转义多余，去掉反斜杠还原字面字符。用户原文档
-                // 字面 "\+" 在续行会被 md4c 双重转义为 "\\+"，不受此规则影响；
-                // \* \# \_ 等涉及强调/标题序列的转义保留原样（沿用标题行处理策略）。
-                static const QRegularExpression wrappedMarkerRe(
-                    R"(^\\([+\-]|\d{1,9}[.)]))");
-                if (wrappedMarkerRe.match(next).hasMatch())
-                    next.remove(0, 1);
-                // 折行拼回：空格处折行（md4c 吞掉空格）→ 补空格；强调/加粗标记
-                // 边界折行（行尾未转义 *，无空格被吞）→ 不补。见 endsWithEmphMarker。
-                if (!endsWithEmphMarker(cur))
-                    cur += QLatin1Char(' ');
-                cur += next;
-                ++i;
-            }
-            out << cur;
-        }
-        md = out.join(QLatin1Char('\n'));
-    }
+    // （反换行已退役）toMarkdown 的 80 列折行由 vendored QtMarkdownWriter
+    // 关闭（serializeMarkdownNoWrap，见 docs/vendor-qt-markdown-writer.md），
+    // 序列化不再产生折行续行，原「逐行拼回折行」补丁（isWrapContinuation /
+    // stripWrapIndent / endsWithEmphMarker + wrappedMarkerRe 转义剥离）随之
+    // 删除。合法软换行仍由 ZZBK 占位符保护（见上文 brSoftRe 块），段内
+    // 单 \n 不复存在，\n 只可能是块边界。
 
     // 3) 修复被合并进同一段落的块级占位符（必须在还原前）：
     //    setHtml 中相邻块级元素的占位符之间 \n 是软换行，QTextDocument 将其
@@ -4426,7 +4341,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //      替换为 &nbsp; 后即成为跨编辑器可移植的空行（Joplin/MarkText 等把
     //      &nbsp; 行渲染为空行；纯空行会被标准 md 渲染器折叠）。M 个空段落 →
     //      M 个 &nbsp; 行，与 WYSIWYG 空段落数一致。
-    //      必须位于 \n{3,} 压缩与反换行之后：此时刻占位符均单行文本，替换才
+    //      必须位于 \n{3,} 压缩之后：此时刻占位符均单行文本，替换才
     //      不破坏块结构；若放压缩之前，还原出的多换行会被压缩成 1 空行。
     if (!blankLinePhs.isEmpty()) {
         QStringList lines = md.split('\n');
@@ -4488,7 +4403,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //     段落/引用 → \n；有序列表项 → \n····（4 空格，对齐两位数序号）；
     //     无序列表项 → \n··（2 空格）。缩进 = 行首前导空格 + 列表项续行缩进，
     //     保证嵌套列表项续行仍留在原项内。
-    //     必须放在反换行之后：此刻列表项已拼回单行，行首列表标记可直接判定。
+    //     列表项恒为单行输出（折行已根治），行首列表标记可直接判定。
     for (const QString &ph : brSoftPlaceholders) {
         int idx = 0;
         while ((idx = md.indexOf(ph, idx)) >= 0) {
