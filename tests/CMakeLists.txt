@@ -77,3 +77,11 @@ add_executable(test_collapsiblesection test_collapsiblesection.cpp
 target_include_directories(test_collapsiblesection PRIVATE ../src)
 target_link_libraries(test_collapsiblesection PRIVATE Qt6::Test Qt6::Widgets)
 add_test(NAME test_collapsiblesection COMMAND test_collapsiblesection)
+
+# 往返保真矩阵回归（全元素覆盖/嵌套矩阵/多轮收敛/失真链诊断，
+# 见 tests/test_roundtrip_matrix.cpp 文件头说明）
+add_executable(test_roundtrip_matrix test_roundtrip_matrix.cpp
+    ../src/core/MarkdownHandler.cpp ../src/core/qt/QtMarkdownWriter.cpp)
+target_include_directories(test_roundtrip_matrix PRIVATE ../src)
+target_link_libraries(test_roundtrip_matrix PRIVATE Qt6::Test Qt6::Gui)
+add_test(NAME test_roundtrip_matrix COMMAND test_roundtrip_matrix)

@@ -104,9 +104,10 @@ private slots:
             // 删除线>斜体
             {"<p><s>删<em>斜</em></s></p>",
              "<s>删<em>斜</em></s>", "<em><s>斜</s></em>", true},
-            // 高亮>删除线
+            // 高亮>删除线（mark 备份内层 MD 等价标签换回 MD 语法：
+            // ==~~删~~高== 重载后 mark 正则还原 <mark><s>删</s>高</mark>，4 轮稳定）
             {"<p><mark><s>删</s>高</mark></p>",
-             "==<s>删</s>高==", "<mark><s>删</s>高</mark>", true},
+             "==~~删~~高==", "<mark><s>删</s>高</mark>", true},
             // 加粗 > line-through span（外部 HTML / 旧 toHtml 输出的删除线形态）
             {"<p><strong>粗<span style=\"text-decoration: line-through;\">删</span></strong></p>",
              "<span style=\"text-decoration: line-through;\">删</span>",
@@ -140,10 +141,10 @@ private slots:
         const Case cases[] = {
             // 删除线外层、加粗内层（拆成兄弟）
             {"<p><s>删</s><strong><s>粗</s></strong></p>", "<s>删<strong>粗</strong></s>"},
-            // 高亮外层、删除线内层（拆成兄弟）
-            {"<p><s><mark>删</mark></s><mark>高</mark></p>", "==<s>删</s>高=="},
-            // 反向次序
-            {"<p><mark>高</mark><s><mark>删</mark></s></p>", "==高<s>删</s>=="},
+            // 高亮外层、删除线内层（拆成兄弟；mark 备份换回 MD 语法 ~~）
+            {"<p><s><mark>删</mark></s><mark>高</mark></p>", "==~~删~~高=="},
+            // 反向次序（mark 备份换回 MD 语法 ~~）
+            {"<p><mark>高</mark><s><mark>删</mark></s></p>", "==高~~删~~=="},
             // 三 run 链式：一次合并后暴露新的相邻可合并对
             {"<p><s>a</s><strong><s>b</s></strong><em><s>c</s></em></p>",
              "<s>a<strong>b</strong><em>c</em></s>"},

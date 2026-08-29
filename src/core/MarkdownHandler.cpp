@@ -539,7 +539,14 @@ static QString extractSubscripts(QString line, QStringList &out, QStringList &ph
 {
     // 静态缓存正则：每正文行调用一次，现构造会累积 O(行数×构造开销)
     static const QRegularExpression codeSpanRe("`([^`]+)`");
-    static const QRegularExpression re("(?<!~)~(?!~)([^~\\n]+?)(?<!~)~(?!~)");
+    // 内容允许 ~~ 双波浪单元（如 ~**~~x~~**~ = 下标包删除线）：md4c 会吞掉
+    // 无法配对的外层 ~（sub 层整层丢失），故必须在此先行提取。单元化配对
+    // 保证纯删除线 ~~x~~ 不受影响（pos0 被 (?!~) 拦截、pos1 被 (?<!~) 拦截）；
+    // 闭侧 (?<!~)/(?!~) 守卫与内容 ~~ 单元消费的组合使 `~~H~2~O~~` 的内层
+    // ~2~ 提取行为与旧版 [^~]+? 完全一致（~ 后紧跟 ~ 的位置永不成为开/闭符）。
+    // 注意：奇数长度 ~ run（~a~~~b~）无法被单元配对消化，闭侧守卫拦截 →
+    // 不提取（fromHtml 侧 escapeSubDelimsForBackup 对奇数 run 转义，对称防失配）。
+    static const QRegularExpression re("(?<!~)~(?!~)((?:[^~\\n]|~~)+?)(?<!~)~(?!~)");
     // 1) 暂存行内代码片段（反引号内的 ~x~ 原样保留）
     QStringList codes;
     int off = 0;
@@ -2128,13 +2135,20 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             return out;
         };
         auto protectEmphCode = [&](const QRegularExpression &re, const char *prefix,
-                                   const char *tag) {
+                                   const char *tag, bool adjStarIsChain) {
             // 链式结构判定：从强调符起始向前扫描，若在遇到 code span（反引号）
             // 或行首前先遇到 `*`，则该强调符是「code 间文本加粗」链的闭合/开启符
             // （如 `code1`**（约 **`code2`**）——md4c 把 code 间的文本加粗且往返
             // 稳定），不应保护——保护会偷走配对、破坏链条。
             // 仅在「前面没有 `*` 配对、md4c 必然丢弃加粗/分段斜体」的隔离强调上保护。
-            auto isChainDelimiter = [&processed](int pos) -> bool {
+            // adjStarIsChain：匹配起点紧邻 `*`（开符 run 比本趟正则消费的更长）
+            // 时的定性，两趟语义不同——
+            //   加粗趟 false：***`x`*** 的复合定界符直包 code，md4c 全部丢弃，
+            //     按隔离保护（矩阵回归 bold(italic(code)) 抓获）；
+            //   斜体趟 true：加粗趟已先扫过同一 run（保护的已变占位符，剩下的
+            //     星号即链式放行），此处内层 * 若再保护会偷走 run 星号破坏链条
+            //     （`**（约 **`b`**` 退化为 <em><em><code>，用户链式用例回归）。
+            auto isChainDelimiter = [&processed, adjStarIsChain](int pos) -> bool {
                 for (int i = pos - 1; i >= 0; --i) {
                     const QChar c = processed.at(i);
                     if (c == QLatin1Char('\n')) return false;   // 行首：新强调上下文
@@ -2150,7 +2164,11 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                         }
                         if (bs % 2 == 1)
                             continue;   // 转义星号，非强调符
-                        return true;    // 真实强调符：链式
+                        if (i == pos - 1)
+                            // 紧邻匹配起点的真实星号（开符 run 比本趟正则消费的
+                            // 更长）：定性交 adjStarIsChain，两趟语义见声明处注释
+                            return adjStarIsChain;
+                        return true;    // 真实强调符（有文本相隔）：链式
                     }
                 }
                 return false;  // 串首：隔离
@@ -2204,11 +2222,12 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         // 大量 `**` 触发 O(n²) 回溯，见 markdownhandler-okn-perf-fix 同源教训）。
         protectEmphCode(
             QRegularExpression(R"(\*\*([^*`\n]*+(?:`[^`\n]+`[^*`\n]*+)+)\*\*)"),
-            "EC", "strong");
-        // 斜体：*…*，同上（加粗先占位后，剩余 `*` 不构成误匹配）
+            "EC", "strong", false);
+        // 斜体：*…*，同上（加粗先占位后，剩余 `*` 不构成误匹配）；紧邻星号
+        // 视为链式（加粗趟已扫过同一 run，见 protectEmphCode 声明处注释）
         protectEmphCode(
             QRegularExpression(R"(\*([^*`\n]*+(?:`[^`\n]+`[^*`\n]*+)+)\*)"),
-            "EM", "em");
+            "EM", "em", true);
         // 删除线：~~…~~ 包裹行内代码 → 占位符保护。md4c 对 ~~`code`~~ 直接丢弃
         // 删除线（只留 <span monospace>code</span>）、对 ~~X `code` Y~~ 在 code 处
         // 分段重编码（删除线丢在 code 上），与 `*`/`**` 同源缺陷，故同样整段占位
@@ -2784,7 +2803,18 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     // 必须先于 ZZFR/ZZSB 还原：ZZHI 占位符内容可能含 <span>/<u> 内部的
     // ZZSB/ZZFR 占位符（如 <span>~2~</span>、<u>[^1]</u>），先开外层标签，
     // 内层占位符才能被后续 ZZFR/ZZSB 还原步骤继续处理。
-    batchReplaceExact(html, htmlInlinePhs, htmlInlineBackups);
+    // 多趟循环：嵌套字面 HTML（如 ==<sub>a<u>u</u>b</sub>== 重载时 uRe 先提
+    // 内层 <u>、subRe 再把含 ZZHI0ZZ 的 <sub> 整段提为外层占位符）外层备份
+    // 内嵌内层占位符，还原注入后单趟 batchReplaceExact 已扫过——新注入的内层
+    // 占位符需下一趟消解。趟数 = 嵌套深度（上限兜底防失控，正常 ≤ 2-3 趟）。
+    for (int hiPass = 0; hiPass < 8; ++hiPass) {
+        bool anyLeft = false;
+        for (const QString &ph : htmlInlinePhs) {
+            if (html.contains(ph)) { anyLeft = true; break; }
+        }
+        if (!anyLeft) break;
+        batchReplaceExact(html, htmlInlinePhs, htmlInlineBackups);
+    }
     // 还原脚注引用占位符 ZZFR → <sup data-type="footnoteRef">
     batchReplaceExact(html, footnoteRefPhs, footnoteRefs);
 
@@ -2797,7 +2827,13 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         if (bodyClose >= 0) html.insert(bodyClose, container);
         else html += container;
     }
-    // 恢复下标占位符 ZZSB → <sub>（内容来自原始 markdown，需 HTML 转义）
+    // 恢复下标占位符 ZZSB → <sub>。内容来自原始 markdown 文本，须「标记感知
+    // 转义」：受支持的内联 HTML 标签（与行级 ZZHI 保护同一约定）与既有
+    // &xxx; 实体原样保留，仅转义不构成良构标签的裸 '<'。盲目全量 esc() 有
+    // 两个往返失真（矩阵回归 sub(html) 抓获）：
+    //   ① 内容中用户手写的 <u> 等标签被转成 &lt;u&gt; 字面文本，语义丢失；
+    //   ② fromHtml 侧按原文回传 sub 内容，已实体化的 & 每轮再转义翻倍
+    //     （~a&lt;b~ → ~a&amp;lt;b~ → ~a&amp;amp;lt;b~ → …）无界累积，永不收敛。
     // 注意：必须在脚注容器追加之后执行——脚注定义内容可能含 ZZSB 占位符。
     // 下标内容含行内代码（~`code`~，extractSubscripts 已把代码反引号原样还原进
     // 内容）：code span 须包成 <sub><code>…</code></sub>，否则按字面文本存入
@@ -2806,9 +2842,41 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     if (!subContents.isEmpty()) {
         QStringList subBackups;
         subBackups.reserve(subContents.size());
+        // 标签家族与行级 extractHtmlInlineElements 的 ZZHI 保护集对齐，另加
+        // strong/b/em/i/del/s/strike/a/font（TipTap 富文本序列化常见输出）。
+        // '>' 与裸 '&' 对 HTML 文本无害且保往返字节稳定（fromHtml 原文回传，
+        // 不做实体解码），不转义；code span 内容仍走全量 esc——fromHtml 的
+        // buildInlineCodeMd(unescapeHtmlEntities(...)) 与之成对。
+        static const QRegularExpression markupRe(QStringLiteral(
+            "(</?(?:span|u|kbd|small|mark|sub|sup|br|strong|b|em|i|code|"
+            "del|s|strike|a|font)\\b[^<>]*>"
+            "|&(?:[a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#[xX][0-9a-fA-F]+);)"),
+            QRegularExpression::CaseInsensitiveOption);
+        auto escAware = [](const QString &s) {
+            QString e;
+            e.reserve(s.size());
+            int i = 0;
+            auto it = markupRe.globalMatch(s);
+            while (it.hasNext()) {
+                auto m = it.next();
+                e += QString(s.mid(i, m.capturedStart() - i)).replace('<', "&lt;");
+                e += m.captured(0);
+                i = m.capturedEnd();
+            }
+            e += s.mid(i).replace('<', "&lt;");
+            return e;
+        };
         auto esc = [](const QString &s) {
             QString e = s;
             return e.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        };
+        // 文本段 ^x^ 成对 → <sup>（与全局后处理 ^x^→<sup> 对称）：sub 内容在
+        // 备份中，全局后处理扫不到——不转换则 ~^x^~ 的 sup 语义整层丢失
+        // （矩阵回归 mark(sub(sup)) 抓获）。置于 escAware 后按段应用：code span
+        // 段仍走全量 esc 保持字面；转义 \^ 已是 ZZED 占位符（无裸 ^）不误触发。
+        static const QRegularExpression supPairRe("\\^([^\\^\\n]+?)\\^");
+        auto segToHtml = [&escAware, &supPairRe](const QString &seg) {
+            return escAware(seg).replace(supPairRe, QStringLiteral("<sup>\\1</sup>"));
         };
         static const QRegularExpression codeRe("`([^`]+)`");
         for (const QString &c : subContents) {
@@ -2817,12 +2885,12 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             auto it = codeRe.globalMatch(c);
             while (it.hasNext()) {
                 auto m = it.next();
-                e += esc(c.mid(i, m.capturedStart() - i));
+                e += segToHtml(c.mid(i, m.capturedStart() - i));
                 e += QStringLiteral("<code>") + esc(m.captured(1))
                      + QStringLiteral("</code>");
                 i = m.capturedEnd();
             }
-            e += esc(c.mid(i));
+            e += segToHtml(c.mid(i));
             subBackups << "<sub>" + e + "</sub>";
         }
         batchReplaceExact(html, subPhs, subBackups);
@@ -2973,6 +3041,46 @@ static QString buildInlineCodeMd(const QString &content)
 // ~~~2~H~~ 甚至输出空段落内容全丢（往返断裂）。命中时该 <s>/line-through 应保留
 // 字面 HTML 而非转 ~~…~~（TipTap Strike mark 直接解析 <s>/line-through，HTML 兜底
 // 保证往返）。检测对象是内联内容中还原为 ~X~ 的下标占位符 ZZSB，或字面 ~ 贴边。
+// mark/sup 备份内容中的 MD 等价标签 → MD 语法（防备份冻结为字面 HTML）。
+// mark/sup 的内容在 toHtml 侧经过 setMarkdown 富解析（==**x**== → <mark><strong>），
+// fromHtml 侧若把内层 <strong>/<s>/<sub> 等原样留在备份里，往返一次后用户的
+// MD 语法退化为字面 HTML（矩阵回归 mark(bold)/sup(strike) 簇抓获）。对称还原：
+// 有 MD 等价语法的标签换回 MD 语法，无等价的（<u>/<span>/<kbd>…）保留字面
+// （与 ZZHI 保护约定一致）。selfTag 为 wrapper 自身标签名——同族嵌套
+// （====x==== / ^^x^^）定界符粘连歧义，保留字面。code 不转：<code> 在
+// fromHtml 更早的行内代码提取步已占位化，不会出现在此处内容中。
+static QString mdEquivTagsToSyntax(const QString &s, const char *selfTag)
+{
+    struct Fam {
+        const char *tags;    // 标签 alternation
+        const char *open;    // MD 开定界符
+        const char *close;   // MD 闭定界符
+    };
+    static const Fam fams[] = {
+        {"strong|b",      "**", "**"},
+        {"em|i",          "*",  "*"},
+        {"s|del|strike",  "~~", "~~"},
+        {"mark",          "==", "=="},
+        {"sub",           "~",  "~"},
+        {"sup",           "^",  "^"},
+    };
+    QString r = s;
+    for (const Fam &f : fams) {
+        if (qstrncmp(f.tags, selfTag, qstrlen(selfTag)) == 0)
+            continue;   // 同族嵌套歧义，保留字面
+        const QRegularExpression re(
+            QStringLiteral("<(%1)\\b[^>]*>(.*?)</\\1>")
+                .arg(QLatin1String(f.tags)),
+            QRegularExpression::DotMatchesEverythingOption);
+        globalReplaceWith(r, re,
+            [&f](const QRegularExpressionMatch &m) {
+                return QString::fromLatin1(f.open) + m.captured(2)
+                       + QString::fromLatin1(f.close);
+            });
+    }
+    return r;
+}
+
 static bool strikeEdgeTildeCollision(const QString &inner)
 {
     static const QRegularExpression phRe("ZZ[A-Z]+[0-9]+ZZ");
@@ -3030,6 +3138,44 @@ static QString escapeExtDelimsOutsideTags(const QString &s, bool escapeCaret)
         } else {
             r += c;
         }
+    }
+    return r;
+}
+
+// 下标备份的字面 ~ 转义（fromHtml <sub> → ~x~，与 escapeExtDelimsOutsideTags
+// 同族但更精细）：extractSubscripts 已支持内容含成对 ~~ 单元（见其注释），
+// 内部偶数长度的 ~ run 保持字面即可对称重摄取——~**~~x~~**~ 直接字节保真
+// 往返；仅两类 run 须转义：
+//   ① 贴内容边缘（首/末单元与定界符 ~ 粘连）：~~ 开头产出 ~~~ 围栏开启行，
+//      ~~ 结尾被 extractSubscripts 闭侧 (?<!~) 拦截，均无法重新配对；
+//   ② 奇数长度：~~ 单元成对消化后残留单 ~，内容生长在 run 处中断、闭符
+//      错位（~a~b~ 的 ~a~ 先配对、b~ 残留——旧版全量转义防的正是这个）。
+// 标签内部不转义（同一状态机约定）；字面 ^ 不转义（toHtml 行级抽取早于
+// sup 后处理，天然惰性，~a^b~ 逐字节稳定）。
+static QString escapeSubDelimsForBackup(const QString &s)
+{
+    QString r;
+    r.reserve(s.size());
+    bool inTag = false;
+    int i = 0;
+    while (i < s.size()) {
+        const QChar c = s.at(i);
+        if (c == QLatin1Char('<')) inTag = true;
+        else if (c == QLatin1Char('>')) inTag = false;
+        if (!inTag && c == QLatin1Char('~')) {
+            int j = i;
+            while (j < s.size() && s.at(j) == QLatin1Char('~')) ++j;   // run [i,j)
+            const bool atEdge = (i == 0 || j == s.size());
+            if (!atEdge && (j - i) % 2 == 0) {
+                r += s.mid(i, j - i);          // 内部偶数 run：字面保真
+            } else {
+                for (int k = 0; k < j - i; ++k) r += QStringLiteral("\\~");
+            }
+            i = j;
+            continue;
+        }
+        r += c;
+        ++i;
     }
     return r;
 }
@@ -3416,8 +3562,11 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 QString ph = collisionFreePlaceholder(collisions, "MK", n++);
                 placeholders << ph;
                 // 高亮内容中的字面 ^/~/~~ 须转义：==\^x\^== 的 mark 内容以字面 ^
-                // 还原为备份后，第二轮 toHtml 的 ^x^→<sup> 后处理会在 == 内误触发
-                backups << "==" + escapeExtDelimsOutsideTags(m.captured(1), true) + "==";
+                // 还原为备份后，第二轮 toHtml 的 ^x^→<sup> 后处理会在 == 内误触发。
+                // 内层 MD 等价标签换回 MD 语法（mdEquivTagsToSyntax，防冻结）
+                backups << "==" + mdEquivTagsToSyntax(
+                             escapeExtDelimsOutsideTags(m.captured(1), true), "mark")
+                             + "==";
                 return ph;
             });
     }
@@ -3445,7 +3594,10 @@ QString MarkdownHandler::fromHtml(const QString &html)
     }
 
     // 上下标 <sub>/<sup> → Pandoc ~x~/^x^（toMarkdown 会丢弃 sub/sup 标签）
-    //   Pandoc 上下标内容为纯文本，剥离内部富文本标签
+    //   内部富文本标签原样保留（escapeExtDelimsOutsideTags 标签感知，只转义
+    //   标签外的 ~/^）：toHtml 侧 ZZSB 备份为标记感知转义（受支持标签直通），
+    //   此处对称直通使 ~a<u>u</u>b~ / ^a<u>u</u>b^ 往返字节保真；此前剥离
+    //   <[^>]*> 会丢内部标签（^a<u>u</u>b^ → ^aub^，矩阵回归 sup(html) 抓获）
     {
         int n = 0;
         QRegularExpression subRe(R"(<sub[^>]*>(.*?)</sub>)",
@@ -3454,13 +3606,17 @@ QString MarkdownHandler::fromHtml(const QString &html)
             [&n, &collisions, &placeholders, &backups]
             (const QRegularExpressionMatch &m) {
                 QString text = m.captured(1);
-                text.remove(QRegularExpression("<[^>]*>"));
                 QString ph = collisionFreePlaceholder(collisions, "SB", n++);
                 placeholders << ph;
-                // 下标内容转义字面 ~（~a\~b~ 的备份若带裸 ~，重载时 [^~] 字符类
-                // 会把 ~a~ 先配对、b~ 残留）；字面 ^ 惰性（行级抽取早于 sup 后
+                // 下标内容：先内层 MD 等价标签换回 MD 语法（mdEquivTagsToSyntax，
+                // 与 mark/sup 备份同一防冻结处理；sub 同族跳过），再做贴边/奇数
+                // ~ run 转义（escapeSubDelimsForBackup，内部成对 ~~ 保字面使
+                // ~**~~x~~**~ 字节保真）。顺序必须「先转换后转义」：<s>x</s> 贴
+                // 内容边缘时转换出 ~~ 与定界符 ~ 粘成 ~~~（围栏开启行），转换在
+                // 前才能让转义捕获该贴边 run；字面 ^ 惰性（行级抽取早于 sup 后
                 // 处理），不转义以保 ~a^b~ 逐字节稳定
-                backups << "~" + escapeExtDelimsOutsideTags(text, false) + "~";
+                backups << "~" + escapeSubDelimsForBackup(
+                             mdEquivTagsToSyntax(text, "sub")) + "~";
                 return ph;
             });
         QRegularExpression supRe(R"(<sup[^>]*>(.*?)</sup>)",
@@ -3470,12 +3626,14 @@ QString MarkdownHandler::fromHtml(const QString &html)
             [&n, &collisions, &placeholders, &backups]
             (const QRegularExpressionMatch &m) {
                 QString text = m.captured(1);
-                text.remove(QRegularExpression("<[^>]*>"));
                 QString ph = collisionFreePlaceholder(collisions, "SP", n++);
                 placeholders << ph;
                 // 上标内容转义字面 ^ 与 ~：^a\^b^ 重载时 ^..^ 会提前在 a 处闭合；
-                // ^a\~b~c^ 的成对 ~ 会先被行级 extractSubscripts 吃掉把 sup 拆裂
-                backups << "^" + escapeExtDelimsOutsideTags(text, true) + "^";
+                // ^a\~b~c^ 的成对 ~ 会先被行级 extractSubscripts 吃掉把 sup 拆裂。
+                // 内层 MD 等价标签换回 MD 语法（mdEquivTagsToSyntax，防冻结）；
+                // 换出的 ~x~ 在重载时被 extractSubscripts 先行提取，往返对称
+                backups << "^" + mdEquivTagsToSyntax(
+                             escapeExtDelimsOutsideTags(text, true), "sup") + "^";
                 return ph;
             });
     }
