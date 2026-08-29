@@ -22,7 +22,7 @@ vendor 该 writer 后可从源头去除折行（后续独立提交），并使�
 
 1. 类名 `QTextMarkdownWriter` → `QtMarkdownWriter`（避免与 Qt 内部符号冲突）
 2. 删除 4 个私有头依赖（前三个全文零使用；`qtextmarkdownimporter_p.h` 仅用其 `FeatureFrontMatter` 枚举值，以 `.cpp` 内常量 `kFrontMatterFeature = 0x100000` 替换，值已与上游核对）
-3. 日志类别 `qt.text.markdown.writer` → `mdeditor.markdownwriter`
+3. 日志类别 `qt.text.markdown.writer` → `mdeditor.markdownwriter`，且默认级别降为 `QtWarningMsg`——Qt 内置规则默认关闭 `qt.*` 类别的 debug（原类别因此静默），改名脱离该规则后若不降级，`qCDebug` 会每次序列化逐块刷日志（journald/终端逐条写均阻塞 GUI 线程）。排查时用 `QT_LOGGING_RULES="mdeditor.markdownwriter.debug=true"` 显式打开
 4. 删除 `QT_BEGIN_NAMESPACE` / `QT_END_NAMESPACE` / `Q_GUI_EXPORT` 等 Qt 构建体系宏；私有头 include 改为等价公共头（`<QtGui/QTextList>` 等）
 5. `.cpp` 顶部定义 `QT_USE_QSTRINGBUILDER`——上游文件在 Qt 自身构建体系下启用该宏编译，其 `QChar + QChar` 表达式依赖它（QStringBuilder 语义与普通 `+` 一致，无行为差异）
 6. **`setWrapEnabled(bool)`**：`writeFrame` 传给 `writeBlock` 的 wrap 参数追加 `m_wrapEnabled` 与运算（默认 `true`，与上游完全等价——等价性测试即回归防线；`false` 时全部块单行输出）

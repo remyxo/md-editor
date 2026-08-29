@@ -9,7 +9,9 @@
 //   1. include "qtextmarkdownwriter_p.h" → "QtMarkdownWriter.h"；删除 4 个
 //      私有头 include（.h 注释第 2 条），补 <QtGui/QTextList> 等公共头
 //   2. QT_BEGIN_NAMESPACE / QT_END_NAMESPACE 删除；类名同步改 QtMarkdownWriter
-//   3. 日志类别 qt.text.markdown.writer → mdeditor.markdownwriter
+//   3. 日志类别 qt.text.markdown.writer → mdeditor.markdownwriter，且默认级别
+//      降为 QtWarningMsg：Qt 内置规则默认关闭 qt.* 类别的 debug（原类别静默），
+//      改名后须显式降级才能保持同等静默（否则 qCDebug 每块刷日志，见下方声明）
 //   4. FeatureFrontMatter 以 kFrontMatterFeature 常量替换（0x100000，
 //      原 qtextmarkdownimporter_p.h:49）
 
@@ -32,7 +34,11 @@
 
 using namespace Qt::StringLiterals;
 
-Q_LOGGING_CATEGORY(lcMDW, "mdeditor.markdownwriter")
+// 默认级别 QtWarningMsg：与上游类别 qt.text.markdown.writer 的实际静默一致
+// （Qt 内置规则 qt.*.debug=false；改名脱离该规则后若不显式降级，qCDebug 会
+// 每次序列化逐块刷日志——journald/终端逐条写均阻塞 GUI 线程）。需要排查时用
+// QT_LOGGING_RULES="mdeditor.markdownwriter.debug=true" 显式打开。
+Q_LOGGING_CATEGORY(lcMDW, "mdeditor.markdownwriter", QtWarningMsg)
 
 // 原 QTextMarkdownImporter::FeatureFrontMatter（私有枚举，qtextmarkdownimporter_p.h:49）
 static constexpr int kFrontMatterFeature = 0x100000;

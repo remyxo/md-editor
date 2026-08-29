@@ -17,7 +17,8 @@
 //      前三者全文零使用；第四者仅用 FeatureFrontMatter 枚举值 0x100000，
 //      以 kFrontMatterFeature 常量替换）
 //   3. 日志类别改为 mdeditor.markdownwriter（原 qt.text.markdown.writer 为
-//      Qt 内部类别名，vendored 副本不复用）
+//      Qt 内部类别名，vendored 副本不复用），且默认级别 QtWarningMsg——
+//      Qt 内置规则默认关闭 qt.* 的 debug，改名后须显式降级保持同等静默
 //   4. 删除 Q_GUI_EXPORT / QT_BEGIN_NAMESPACE 等 Qt 构建体系宏
 //   5. LGPL-3.0/GPL-2.0/GPL-3.0 多许可与版权声明原样保留（合规要求）
 //   6. 【功能改动】新增 setWrapEnabled(bool)：false 时关闭 80 列折行，
