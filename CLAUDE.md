@@ -92,7 +92,7 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 | `src/core/EditorBridge.cpp` | C++/JS 通信核心 |
 | `src/ui/EditorTab.cpp` | QWebEngineView 封装 + 中文右键菜单 |
 | `src/app/ThemeManager.cpp` | QSS 主题加载（light/dark 实际主题） |
-| `src/app/SystemThemeWatcher.cpp` | 系统深浅色检测（D-Bus portal，跟随系统模式） |
+| `src/app/SystemThemeWatcher.cpp` | 系统深浅色检测（QStyleHints::colorScheme，Qt 6.5+ 跨平台 API） |
 | `src/resources/web/editor.js` | TipTap 初始化 + editorApi + 状态同步 |
 | `src/resources/web/tiptap-entry.js` | esbuild 打包入口，需 npm + esbuild 重建 |
 | `src/resources/web/vendored-lowlight-plugin.js` | vendored 代码块高亮 plugin（异步分批 + 增量重算，见 docs/vendor-lowlight-plugin.md） |
