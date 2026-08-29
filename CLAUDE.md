@@ -98,6 +98,7 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 | `src/resources/themes/light.qss` | 亮色主题 QSS |
 | `src/resources/themes/dark.qss` | 暗色主题 QSS |
 | `src/core/MarkdownHandler.cpp` | MD↔HTML 转换（基于 QTextDocument） |
+| `src/core/qt/QtMarkdownWriter.{h,cpp}` | vendored Qt 序列化器（去 80 列折行 + 版本固定，见 docs/vendor-qt-markdown-writer.md） |
 | `src/core/FileManager.cpp` | 文件 I/O + 文件监控 |
 | `src/core/DocxExporter.cpp` | DOCX 导出（基于 QTextDocument + zip） |
 | `src/core/HtmlExporter.cpp` | 自包含 HTML 导出（资源 base64 内联） |
@@ -133,3 +134,4 @@ ctest --output-on-failure
 - **[Qt 转义兼容（6.8.2→6.10.2）](docs/qt-642-escaping-compat.md)** — 各版本 toMarkdown 转义差异 / 占位符保护范式 / 容器验证法
 - **[跨平台等宽字体与行内代码往返](docs/cross-platform-monospace-font.md)** — FixedFont 族名平台相关（monospace/Courier New/Menlo）/ Linux 测不出 Windows bug / monoSpanFamilyPattern 动态匹配
 - **[代码块围栏往返机制](docs/code-fence-roundtrip.md)** — 嵌套围栏三坑：解析层围栏长度 / 序列化层反引号数推断 / 占位符段落重排粘连
+- **[vendor QtMarkdownWriter 说明](docs/vendor-qt-markdown-writer.md)** — 80 列折行根治 / 与上游等价性验证 / 上游同步 diff 流程 / LGPL 义务与 GPL-3.0 决策

@@ -199,6 +199,30 @@ private slots:
         }
     }
 
+    void testNoFoldByteStableRoundTrip() {
+        // 去折行回归（vendored QtMarkdownWriter 关闭 80 列折行，见
+        // docs/vendor-qt-markdown-writer.md）：这些用例曾触发 QTextMarkdownWriter
+        // 折行家族缺陷——强切吞字（稀疏空格二次窗口 i=j+1 吞断点字符，中文高发、
+        // 数据不可恢复）、特定折行点下 strong 闭合与 CJK 间空格丢失、列表/引用
+        // 续行拆块。折行关闭后首轮即字节保真。
+        struct Case { const char *name; QString md; };
+        const Case cases[] = {
+            {"CJK稀疏空格强切", QString(30, QChar(0x6C49)) + " " + QString(100, QChar(0x5B57))},
+            {"ASCII稀疏空格强切", QString(60, QLatin1Char('A')) + " " + QString(200, QLatin1Char('B'))},
+            {"strong闭合空格", QStringLiteral("路径（如 **`==`**→… 与 **加粗** 混排。")},
+            {"长列表项", "- " + QStringLiteral("item ").repeated(40) + "tail"},
+            {"长引用块", "> " + QStringLiteral("quote ").repeated(30) + "tail"},
+            {"管道字符不拆行", QStringLiteral("filler ").repeated(12) + "issue | pipe tail"},
+        };
+        for (const Case &c : cases) {
+            const QString back = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(c.md)).trimmed();
+            QVERIFY2(back == c.md.trimmed(),
+                     qPrintable(QString("去折行用例 %1 应首轮字节保真，实际:\n%2")
+                                .arg(c.name, back)));
+        }
+    }
+
     void testBasicConversion() {
         QString md = "# Hello\n\nWorld";
         QString html = MarkdownHandler::toHtml(md);
