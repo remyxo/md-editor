@@ -14,9 +14,30 @@ var TipTapCode = window.TipTapExtensionCode;
 // 往返塌陷成 `code`）。extend 放开共存，使 `*`code`*`/`**`code`**` 等形态在
 // WYSIWYG 中真正可表示、getHTML 原样序列化（fromHtml/toHtml 均已覆盖两序）。
 var CodeAllowingMarks = TipTapCode && TipTapCode.extend({ excludes: '' });
-// 扩展 CodeBlockLowlight，附加自定义 NodeView（语言标签 + 复制按钮 + 语言切换）
+// 扩展 CodeBlockLowlight，附加自定义 NodeView（语言标签 + 复制按钮 + 语言切换），
+// 并把上游「同步全量」高亮 plugin 替换为 vendored 异步增量版（vendored-lowlight-plugin.js）：
+// 上游 state.init 对文档全部代码块同步 lowlight.highlight（56 块 ~440ms 阻塞加载），
+// 且 apply 无增量（代码块内每次击键全量重算所有块 → 打字卡顿）
 var CodeBlockLowlightWithNodeView = TipTapCodeBlockLowlight && TipTapCodeBlockLowlight.extend({
-    addNodeView: function() { return codeBlockNodeView; }
+    addNodeView: function() { return codeBlockNodeView; },
+    addProseMirrorPlugins: function() {
+        var parent = this.parent ? this.parent() : [];
+        if (!window.AsyncLowlightPlugin) return parent;   // vendored 未加载：退回上游同步行为
+        // 上游 plugin 的 key 形如 'lowlight$N'，过滤掉避免与异步版双重叠加
+        var kept = parent.filter(function(p) {
+            return !(typeof p.key === 'string' && p.key.indexOf('lowlight$') === 0);
+        });
+        if (kept.length === parent.length) {
+            console.warn('vendored lowlight: 上游 plugin key 未匹配，退回同步高亮');
+            return parent;
+        }
+        kept.push(window.AsyncLowlightPlugin({
+            name: this.name,
+            lowlight: this.options.lowlight,
+            defaultLanguage: this.options.defaultLanguage
+        }));
+        return kept;
+    }
 });
 // 扩展 Image，附加自定义 NodeView（attrs.src 存原始路径保往返保真，渲染时经 _resolveImageSrc 解析为 localimg://）
 // 必须用 addNodeView 而非 editorProps.nodeViews：TipTap 会用各扩展的 addNodeView 生成 nodeViews
@@ -37,6 +58,26 @@ var TipTapMark = window.TipTapMark;
 var _mermaidIdSeq = 0;
 // 活动中的 Mermaid NodeView 画笔集合，用于主题切换后重绘
 var _mermaidViews = [];
+// Mermaid SVG 结果缓存：(主题, 源码) → SVG HTML，LRU 上限 32。
+// 退出源码模式重建编辑器 / 重进同一文档时命中缓存免重画
+// （每张图渲染 ~160ms，大文档 10 图可省 ~1.6s）
+var MERMAID_CACHE_LIMIT = 32;
+var _mermaidSvgCache = [];   // [{ key, html }]，头部最新
+function _mermaidCacheGet(key) {
+    for (var i = 0; i < _mermaidSvgCache.length; i++) {
+        if (_mermaidSvgCache[i].key === key) {
+            var e = _mermaidSvgCache.splice(i, 1)[0];   // 提到头部（LRU）
+            _mermaidSvgCache.unshift(e);
+            return e.html;
+        }
+    }
+    return null;
+}
+function _mermaidCachePut(key, html) {
+    _mermaidSvgCache.unshift({ key: key, html: html });
+    if (_mermaidSvgCache.length > MERMAID_CACHE_LIMIT)
+        _mermaidSvgCache.length = MERMAID_CACHE_LIMIT;
+}
 
 // HTML 文本转义（渲染失败回退 / 错误信息展示用）
 function _escapeText(s) {
@@ -682,7 +723,33 @@ function mermaidNodeView(ref) {
     dom.setAttribute('data-mermaid', '');
     _setI18nTitle(dom, 'mermaid.editTip');
 
+    // 待渲染观察（离屏时挂起，进入视口/手动 paint 时取消）
+    var ioPending = null;
+
+    function applySvgHtml(html) {
+        dom.innerHTML = html;
+        var svg = dom.querySelector('svg');
+        if (svg) {
+            _fixNegativeRects(svg);
+            // _sanitizeMermaidSvg 已将 width="100%" 替换为
+            // viewBox 宽度 → 窄图按自然尺寸显示；
+            // max-width:100% 保证宽图（甘特图等）不超出编辑区宽度
+            svg.style.maxWidth = '100%';
+            svg.style.height = 'auto';
+        }
+    }
+
+    function showPending() {
+        dom.innerHTML = '';
+        var ph = document.createElement('div');
+        ph.className = 'mermaid-pending';
+        _setI18n(ph, 'mermaid.pending');
+        dom.appendChild(ph);
+    }
+
     function paint(source) {
+        // 手动渲染（可见触发/编辑改源/主题重绘）时取消挂起的可见性观察
+        if (ioPending) { ioPending.disconnect(); ioPending = null; }
         dom.innerHTML = '';
         if (!(source && source.trim())) {
             // 空态：创建带 data-i18n 的元素，setLanguage 时全量重刷
@@ -703,18 +770,17 @@ function mermaidNodeView(ref) {
             return;
         }
         _ensureMermaidInited();
+        // 缓存命中：直接注入（重建编辑器时免重画，~160ms/图）
+        var themeKey = document.body.classList.contains('dark') ? 'dark' : 'light';
+        var cacheKey = themeKey + '\x00' + source;
+        var cached = _mermaidCacheGet(cacheKey);
+        if (cached !== null) { applySvgHtml(cached); return; }
+        showPending();
         var id = 'mermaid-render-' + (++_mermaidIdSeq);
         window.mermaid.render(id, source).then(function(res) {
-            dom.innerHTML = _sanitizeMermaidSvg(res.svg || '');
-            var svg = dom.querySelector('svg');
-            if (svg) {
-                _fixNegativeRects(svg);
-                // _sanitizeMermaidSvg 已将 width="100%" 替换为
-                // viewBox 宽度 → 窄图按自然尺寸显示；
-                // max-width:100% 保证宽图（甘特图等）不超出编辑区宽度
-                svg.style.maxWidth = '100%';
-                svg.style.height = 'auto';
-            }
+            var html = _sanitizeMermaidSvg(res.svg || '');
+            _mermaidCachePut(cacheKey, html);
+            applySvgHtml(html);
         }).catch(function(err) {
             dom.innerHTML = '<pre class="mermaid-fallback mermaid-error"><code>'
                 + _escapeText(source)
@@ -723,11 +789,31 @@ function mermaidNodeView(ref) {
         });
     }
 
-    paint(node.attrs.source);
+    // 可见优先：离屏图只显示占位，进入视口（含上下预渲染带）才渲染。
+    // 长文档首屏若 10 图中仅 2-3 图可见，省去离屏图渲染 ~1.2s 的主线程挤占；
+    // 无 IntersectionObserver 的环境（jsdom 等）降级立即渲染
+    if (window.IntersectionObserver && window.mermaid) {
+        showPending();
+        var io = new IntersectionObserver(function(entries) {
+            for (var i = 0; i < entries.length; i++) {
+                if (!entries[i].isIntersecting) continue;
+                io.disconnect();
+                if (ioPending === io) ioPending = null;
+                paint(node.attrs.source);
+                return;
+            }
+        }, { rootMargin: '600px 0px' });   // 视口上下各 ~一屏的预渲染带
+        ioPending = io;
+        io.observe(dom);
+    } else {
+        paint(node.attrs.source);
+    }
 
-    // 注册画笔，供主题切换后重绘
+    // 注册画笔，供主题切换后重绘（isPending：离屏占位图由主题切换跳过，
+    // 保持占位，可见时以新主题渲染）
     var entry = {
         getSource: function() { return node.attrs.source; },
+        isPending: function() { return !!ioPending; },
         paint: paint
     };
     _mermaidViews.push(entry);
@@ -753,17 +839,20 @@ function mermaidNodeView(ref) {
         deselectNode: function() { dom.classList.remove('ProseMirror-selectednode'); },
         ignoreMutation: function() { return true; }, // SVG 内部变更不触发重渲染
         destroy: function() {
+            if (ioPending) { ioPending.disconnect(); ioPending = null; }
             var i = _mermaidViews.indexOf(entry);
             if (i >= 0) _mermaidViews.splice(i, 1);
         }
     };
 }
 
-// 主题切换后重绘所有活动的 Mermaid 图表（单图失败静默，不影响主题切换）
+// 主题切换后重绘所有活动的 Mermaid 图表（单图失败静默，不影响主题切换）。
+// 离屏占位图（isPending）跳过：保持占位，可见时自然以新主题渲染
 function _repaintMermaidViews() {
     if (!window.mermaid) return;
     _ensureMermaidInited();
     _mermaidViews.forEach(function(entry) {
+        if (entry.isPending && entry.isPending()) return;
         try { entry.paint(entry.getSource()); } catch (e) { /* 忽略 */ }
     });
 }
@@ -984,6 +1073,7 @@ var I18N = {
     'mermaid.previewHint': '（输入 Mermaid 源码预览图表）',
     'mermaid.renderFail': '渲染失败：',
     'mermaid.empty': '（空图表，双击编辑）',
+    'mermaid.pending': '图表待渲染（滚动至此处时显示）',
     'codeLang.search': '搜索语言...',
     'codeLang.auto': '自动检测',
     'codeLang.current': ' (当前)',
@@ -1023,6 +1113,7 @@ var I18N = {
     'mermaid.previewHint': '(Enter Mermaid source to preview)',
     'mermaid.renderFail': 'Render failed: ',
     'mermaid.empty': '(Empty diagram, double-click to edit)',
+    'mermaid.pending': 'Diagram pending (renders when scrolled into view)',
     'codeLang.search': 'Search language...',
     'codeLang.auto': 'Auto Detect',
     'codeLang.current': ' (current)',
@@ -1071,6 +1162,8 @@ window.editorApi = {
     _mathEditing: false,
     isSourceMode: false,
     _sourceValue: null,
+    _warmed: false,          // 序列化预热是否已做（见 warmup）
+    _warmTries: 0,           // 预热因编辑器聚焦而推迟的重试次数
     _onSourceInput: null,
     _srcSearch: null,          // 源码模式搜索状态 {query,caseSensitive,regex,wholeWord,matches,current}
 
@@ -1907,7 +2000,15 @@ window.editorApi = {
         var sourceWrap = document.getElementById('source-wrap');
         var editorDiv = document.getElementById('editor');
         sourceView.value = md;
-        editorDiv.style.display = 'none';
+        // 隐藏 WYSIWYG 编辑器但保留其布局（keep-warm）：visibility:hidden 不把
+        // 子树移出布局树，负 margin 抵消占位使源码区顶到页面顶部（视觉等同
+        // display:none）。退出时恢复无需全量重排（大文档 ~130ms → ~60ms），
+        // 代码块高亮/mermaid/KaTeX 的渲染结果也原样保留。代价：源码模式期间
+        // 页面滚动高度取两视图较高者（源码大幅删短时下方有留白）。
+        // 隐藏前读取高度（此刻布局干净，读取免费）；负 margin 随窗口缩放重测
+        // （见 _onSrcWinResize），否则编辑器高度变化后源码区位置漂移。
+        editorDiv.style.marginBottom = (-editorDiv.offsetHeight) + 'px';
+        editorDiv.style.visibility = 'hidden';
         sourceWrap.style.display = '';
         if (this._readOnly) sourceView.setAttribute('readonly', '');
         else sourceView.removeAttribute('readonly');
@@ -1930,6 +2031,14 @@ window.editorApi = {
             api._srcOnSourceEdit();
         };
         sourceView.addEventListener('input', this._onSourceInput);
+        // keep-warm 适配：窗口缩放改变隐藏编辑器的高度，负 margin 需随之更新
+        // （否则源码区位置漂移）。缩放时编辑器布局本就要重算，此处只补一次测量。
+        this._onSrcWinResize = function() {
+            var ed = document.getElementById('editor');
+            if (ed) ed.style.marginBottom = (-ed.offsetHeight) + 'px';
+            api._resizeSourceView();
+        };
+        window.addEventListener('resize', this._onSrcWinResize);
         // 若 WYSIWYG 搜索处于激活状态，切到源码模式时在 textarea 上继续搜索
         // （查询与位置从 searchPlugin 状态延续，计数随之更新）。
         var sp = window.searchPlugin;
@@ -1971,20 +2080,34 @@ window.editorApi = {
         var sourceView = document.getElementById('source-view');
         var sourceWrap = document.getElementById('source-wrap');
         var changed = sourceView.value !== this._sourceValue;
-        // 解绑 input 监听，避免退出后残留引用。
+        // 解绑 input 与 resize 监听，避免退出后残留引用。
         if (this._onSourceInput) {
             sourceView.removeEventListener('input', this._onSourceInput);
             this._onSourceInput = null;
         }
-        // 用与 loadFile 一致的重建方式加载 toHtml 输出：TipTap 原生命令
-        // commands.setContent 在末尾块为标题/表格等非段落块时会自动追加空段落
-        // <p></p>（ProseMirror 要求文档末尾有可输入节点），切回 WYSIWYG 往返后
-        // fromHtml 把该空段转成 &nbsp; 行 →「最后一行是标题时莫名插入 &nbsp;」。
-        // 重建方式按 HTML 原样渲染、不追加；初始光标在文档开头，大纲高亮与视口
-        // 一致（不再跳末尾）。
-        this.setContent(html);
+        if (this._onSrcWinResize) {
+            window.removeEventListener('resize', this._onSrcWinResize);
+            this._onSrcWinResize = null;
+        }
+        // 源码未编辑（changed === false）：传入的 html 是当前文档的往返结果，
+        // 内存中的 TipTap 文档就是该显示的内容——直接复用，跳过重建。
+        // 不变式：_sourceValue 始终镜像编辑器文档（enterSourceMode 由 getContent
+        // 转换而来；外部文件重载时 EditorTab 同时更新 textarea 与 _sourceValue），
+        // 故 value 未偏离 _sourceValue 时复用必然正确。收益：① 大文档免
+        // setContent 全量重建（代码块高亮/mermaid/KaTeX NodeView，可 >1s）；
+        // ② 撤销历史不被清零（看一眼源码再切回可继续撤销）；③ 脏标记不被
+        // setContent 误清（未保存的 WYSIWYG 编辑不因进出源码而丢保存提示）。
+        // 源码已编辑：用与 loadFile 一致的重建方式加载 toHtml 输出（TipTap 原生
+        // 命令 commands.setContent 在末尾块为标题/表格等非段落块时会自动追加空
+        // 段落 <p></p>，ProseMirror 要求文档末尾有可输入节点；重建方式按 HTML
+        // 原样渲染、不追加，避免「最后一行是标题时莫名插入 &nbsp;」）。
+        if (changed) this.setContent(html);
         sourceWrap.style.display = 'none';
-        document.getElementById('editor').style.display = '';
+        // keep-warm 恢复：只清 visibility 与负 margin（布局大部分保留，
+        // 远快于 display:none 恢复的全量重排）
+        var editorDiv2 = document.getElementById('editor');
+        editorDiv2.style.visibility = '';
+        editorDiv2.style.marginBottom = '';
         this.isSourceMode = false;
         // 恢复进入源码模式前的光标位置：重建 setContent 后光标落在文档开头，
         // setTextSelection 触发 onSelectionUpdate → cursorChanged → 大纲高亮跟随；
@@ -2027,8 +2150,42 @@ window.editorApi = {
         this.notifyHistory();
     },
 
+    // 退出源码模式入口（C++ 调用，未编辑时免 toHtml 转换）：
+    // 源码未编辑 → 在本调用内直接走 exitSourceMode 快速路径（复用内存文档），
+    //   返回 true，C++ 无需再做 toHtml 与 HTML 传输；
+    // 源码已编辑 → 返回当前源码 MD，C++ toHtml 后调 exitSourceMode(html) 重建。
+    // 检查与分支在同一趟 JS 执行内完成，无竞态窗口。
+    exitSourceModeOrGetMd: function() {
+        var sv = document.getElementById('source-view');
+        if (!sv) return true;                       // 无源码区：按未编辑处理
+        if (sv.value === this._sourceValue) {
+            this.exitSourceMode(null);              // 未编辑：html 参数不会被用到
+            return true;
+        }
+        return sv.value;
+    },
+
+    // 空闲预热序列化：冷 JIT 下首次 getContent 在大文档上可达 ~1s（首次切入
+    // 源码模式的可感知停顿）。加载完成数秒后（C++ 侧触发，仅大文档）做一次
+    // 丢弃式 getHTML，把成本移到用户尚未操作的时机。编辑器持有焦点（正在
+    // 输入）时推迟重试（最多 4 次），不打断输入。
+    warmup: function() {
+        if (!this.editor || this._warmed) return;
+        if (document.activeElement === this.editor.view.dom) {
+            if (this._warmTries < 4) {
+                this._warmTries++;
+                var api = this;
+                setTimeout(function() { api.warmup(); }, 3000);
+            }
+            return;
+        }
+        this._warmed = true;
+        try { this.editor.getHTML(); } catch (e) { /* 预热失败无碍 */ }
+    },
+
     // 获取源码区当前内容（C++ 侧用于 MD→HTML 转换）
     getSourceContent: function() {
+
         var sv = document.getElementById('source-view');
         return sv ? sv.value : '';
     },

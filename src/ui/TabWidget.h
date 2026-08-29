@@ -14,7 +14,7 @@ public:
     explicit TabWidget(QWidget *parent = nullptr);
 
     EditorTab *openNewTab();
-    EditorTab *openFileTab(const QString &path, const QString &content);
+    EditorTab *openFileTab(const QString &path, const QString &content, bool lazy = false);
     EditorTab *openHelpTab(const QString &title, const QString &mdContent);
     EditorTab *currentEditorTab() const;
     EditorTab *tabAt(int index) const;

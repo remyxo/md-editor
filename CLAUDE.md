@@ -95,6 +95,7 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 | `src/app/SystemThemeWatcher.cpp` | 系统深浅色检测（D-Bus portal，跟随系统模式） |
 | `src/resources/web/editor.js` | TipTap 初始化 + editorApi + 状态同步 |
 | `src/resources/web/tiptap-entry.js` | esbuild 打包入口，需 npm + esbuild 重建 |
+| `src/resources/web/vendored-lowlight-plugin.js` | vendored 代码块高亮 plugin（异步分批 + 增量重算，见 docs/vendor-lowlight-plugin.md） |
 | `src/resources/themes/light.qss` | 亮色主题 QSS |
 | `src/resources/themes/dark.qss` | 暗色主题 QSS |
 | `src/core/MarkdownHandler.cpp` | MD↔HTML 转换（基于 QTextDocument） |
@@ -135,3 +136,4 @@ ctest --output-on-failure
 - **[跨平台等宽字体与行内代码往返](docs/cross-platform-monospace-font.md)** — FixedFont 族名平台相关（monospace/Courier New/Menlo）/ Linux 测不出 Windows bug / monoSpanFamilyPattern 动态匹配
 - **[代码块围栏往返机制](docs/code-fence-roundtrip.md)** — 嵌套围栏三坑：解析层围栏长度 / 序列化层反引号数推断 / 占位符段落重排粘连
 - **[vendor QtMarkdownWriter 说明](docs/vendor-qt-markdown-writer.md)** — 80 列折行根治 / 与上游等价性验证 / 上游同步 diff 流程 / LGPL 义务与 GPL-3.0 决策
+- **[vendor lowlight plugin 说明](docs/vendor-lowlight-plugin.md)** — 代码块高亮异步化（init 零高亮 / 空闲分批 / step 相交增量）/ 高亮缓存与 PluginKey 单例 / 上游同步与保底降级

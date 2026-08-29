@@ -10,6 +10,7 @@
 #include <QDebug>
 #include <QContextMenuEvent>
 #include <QAction>
+#include <QTimer>   // 大文档加载后的序列化冷 JIT 预热
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFileInfo>
@@ -198,6 +199,8 @@ QWebEngineView *EditorTab::webView() const { return m_webView; }
 void EditorTab::loadFile(const QString &path, const QString &content)
 {
     Q_UNUSED(path)
+    // 立即加载：作废未决的惰性内容（如外部变更重载先于激活发生，防止陈旧覆盖）
+    m_pendingContent.clear();
     if (m_pageLoaded) {
         // MD → HTML 转换
         QString fullHtml = MarkdownHandler::toHtml(content);
@@ -218,7 +221,16 @@ void EditorTab::loadFile(const QString &path, const QString &content)
         escaped.replace("`", "\\`");
         escaped.replace("$", "\\$");
         QString js = QString("window.editorApi.setContent(`%1`);").arg(escaped);
-        runJsCommand(js);
+        m_webView->page()->runJavaScript(js);
+        // 大文档冷 JIT 预热：加载 1.5 秒后空闲跑一次丢弃式 getHTML，消除首次
+        // 切换源码模式 ~1s 的冷 JIT 停顿（编辑器聚焦时 JS 侧自动推迟重试）
+        if (content.size() >= 8192) {
+            QTimer::singleShot(1500, this, [this]() {
+                if (m_pageLoaded && m_webView)
+                    m_webView->page()->runJavaScript(
+                        QStringLiteral("window.editorApi.warmup()"));
+            });
+        }
 
         // 外部文件变更时若处于源码模式，同步刷新 textarea 内容
         // setContent 仅更新 WYSIWYG 编辑器，源码区 <textarea> 需单独更新
@@ -241,6 +253,22 @@ void EditorTab::setFilePath(const QString &path)
 {
     m_webView->setProperty("filePath", path);
     pushDocDir();   // 页面已就绪则立即推送；否则由 onPageLoadFinished 补推
+}
+
+void EditorTab::setPendingContent(const QString &md)
+{
+    m_pendingContent = md;
+}
+
+// 加载未决的惰性内容（仅当页面就绪；由 TabWidget 在本 tab 成为当前标签页时调用）
+bool EditorTab::flushPendingContent()
+{
+    if (m_pendingContent.isNull() || !m_pageLoaded)
+        return false;
+    QString content = m_pendingContent;
+    m_pendingContent.clear();
+    loadFile(QString(), content);
+    return true;
 }
 
 void EditorTab::setEncoding(const QString &encoding)

@@ -38,6 +38,9 @@ public:
     void loadFile(const QString &path, const QString &content);
     void setFilePath(const QString &path);
     void setEncoding(const QString &encoding);
+    // 惰性加载：会话恢复时非活动标签页只登记内容，激活（成为当前标签页）时才加载
+    void setPendingContent(const QString &md);
+    bool flushPendingContent();
     QString encoding() const;
     void setEditorTheme(const QString &theme);
     void setEditorLanguage(const QString &lang);
@@ -67,6 +70,7 @@ private:
     QWebChannel *m_webChannel;
     EditorBridge *m_bridge;
     bool m_pageLoaded;
+    QString m_pendingContent;   // 惰性加载的待载内容（非活动标签页，激活时 flush）
     bool m_permanentReadOnly = false;
     bool m_sourceMode = false;
 };

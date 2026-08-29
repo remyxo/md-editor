@@ -619,6 +619,24 @@ body.dark .link-editor-remove-btn:hover {
     font-style: italic;
     padding: 24px 0;
 }
+/* 可见优先渲染的占位（离屏待渲染 / 渲染进行中）：最小高度防滚动条大幅跳动 */
+.ProseMirror .mermaid-block .mermaid-pending {
+    min-height: 180px;
+    max-width: 480px;
+    margin: 4px auto;
+    padding: 0 12px;
+    border: 1px dashed #c8c8c8;
+    border-radius: 6px;
+    color: #999;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+body.dark .ProseMirror .mermaid-block .mermaid-pending {
+    border-color: #3d3d3d;
+    color: #666;
+}
 /* 库缺失/渲染失败：回退显示源码 */
 .ProseMirror .mermaid-block .mermaid-fallback {
     display: inline-block;

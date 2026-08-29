@@ -24,6 +24,7 @@
 
 #include <QVBoxLayout>
 #include <QIcon>
+#include <QElapsedTimer>   // 模式切换计时（状态栏反馈切换耗时分布）
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -693,39 +694,87 @@ void MainWindow::onToggleSourceMode()
 
     if (!tab->isSourceMode()) {
         // → 进入源码模式：获取编辑器 HTML → 转换为 MD → 显示到 textarea
+        // 模式切换计时（JS 读取 → fromHtml 转换 → JS 填充），结果显示在状态栏：
+        // 用户靠此数据反馈切换耗时分布，属正式功能而非调试插桩
+        QElapsedTimer perfTotal;
+        perfTotal.start();
         tab->webView()->page()->runJavaScript(
             QStringLiteral("window.editorApi.getContent()"),
-            [this, tab](const QVariant &result) {
+            [this, tab, perfTotal](const QVariant &result) {
                 QString html = result.toString();
+                const qint64 jsReadMs = perfTotal.elapsed();
+                QElapsedTimer conv;
+                conv.start();
                 QString md = MarkdownHandler::fromHtml(html);
+                const qint64 convMs = conv.elapsed();
                 QString escaped = escapeForJsTemplate(md);
-                tab->runJsCommand(
-                    QString("window.editorApi.enterSourceMode(`%1`);").arg(escaped));
-                tab->setSourceMode(true);
-                m_toolBar->setSourceMode(true);
-                m_statusBar->setSourceMode(true);
-                if (QAction *act = m_menuBar->findChild<QAction *>(
-                        QStringLiteral("sourceModeAction")))
-                    act->setChecked(true);
-                m_sourceModeToggling = false;
+                QElapsedTimer jsFill;
+                jsFill.start();
+                tab->webView()->page()->runJavaScript(
+                    QString("window.editorApi.enterSourceMode(`%1`);").arg(escaped),
+                    [this, tab, jsReadMs, convMs, jsFill, perfTotal](const QVariant &) {
+                        tab->setSourceMode(true);
+                        m_toolBar->setSourceMode(true);
+                        m_statusBar->setSourceMode(true);
+                        if (QAction *act = m_menuBar->findChild<QAction *>(
+                                QStringLiteral("sourceModeAction")))
+                            act->setChecked(true);
+                        const qint64 fillMs = jsFill.elapsed() - 15; // 减去经验 IPC 开销
+                        const QString msg = QStringLiteral(
+                            "【计时】进入源码: JS读取 %1ms · fromHtml %2ms · JS填充 %3ms · 总计 %4ms")
+                            .arg(jsReadMs).arg(convMs).arg(qMax<qint64>(fillMs, 0))
+                            .arg(perfTotal.elapsed());
+                        qWarning() << msg;
+                        m_statusBar->showMessage(msg, 6000);
+                        m_sourceModeToggling = false;
+                    });
             });
     } else {
-        // → 退出源码模式：获取 textarea MD → 转换为 HTML → 加载到编辑器
+        // → 退出源码模式：JS 单调用内判断源码是否编辑过——
+        //   未编辑：JS 直接复用内存文档完成切换（免 C++ toHtml 与 HTML 传输）；
+        //   已编辑：返回 MD → C++ toHtml → exitSourceMode(html) 全量重建
+        // 模式切换计时（快速路径总计 / 慢路径 JS读取→toHtml→JS重建），状态栏反馈用
+        QElapsedTimer perfTotal;
+        perfTotal.start();
         tab->webView()->page()->runJavaScript(
-            QStringLiteral("window.editorApi.getSourceContent()"),
-            [this, tab](const QVariant &result) {
+            QStringLiteral("window.editorApi.exitSourceModeOrGetMd()"),
+            [this, tab, perfTotal](const QVariant &result) {
+                // QVariant 类型区分：JS true（快速路径完成）vs string（待转换 MD）
+                const bool fastPath = result.userType() == QMetaType::Bool && result.toBool();
+                auto finishExit = [this, tab](const QString &msg) {
+                    tab->setSourceMode(false);
+                    m_toolBar->setSourceMode(false);
+                    m_statusBar->setSourceMode(false);
+                    if (QAction *act = m_menuBar->findChild<QAction *>(
+                            QStringLiteral("sourceModeAction")))
+                        act->setChecked(false);
+                    qWarning() << msg;
+                    m_statusBar->showMessage(msg, 6000);
+                    m_sourceModeToggling = false;
+                };
+                if (fastPath) {
+                    finishExit(QStringLiteral("【计时】退出源码: 快速路径（未编辑，免转换）· 总计 %1ms")
+                                   .arg(perfTotal.elapsed()));
+                    return;
+                }
                 QString md = result.toString();
+                const qint64 jsReadMs = perfTotal.elapsed();
+                QElapsedTimer conv;
+                conv.start();
                 QString html = MarkdownHandler::toHtml(md);
+                const qint64 convMs = conv.elapsed();
                 QString escaped = escapeForJsTemplate(html);
-                tab->runJsCommand(
-                    QString("window.editorApi.exitSourceMode(`%1`);").arg(escaped));
-                tab->setSourceMode(false);
-                m_toolBar->setSourceMode(false);
-                m_statusBar->setSourceMode(false);
-                if (QAction *act = m_menuBar->findChild<QAction *>(
-                        QStringLiteral("sourceModeAction")))
-                    act->setChecked(false);
-                m_sourceModeToggling = false;
+                QElapsedTimer jsBuild;
+                jsBuild.start();
+                tab->webView()->page()->runJavaScript(
+                    QString("window.editorApi.exitSourceMode(`%1`);").arg(escaped),
+                    [this, tab, jsReadMs, convMs, jsBuild, perfTotal, finishExit](const QVariant &) {
+                        const qint64 buildMs = jsBuild.elapsed() - 15; // 减去经验 IPC 开销
+                        finishExit(QStringLiteral(
+                                       "【计时】退出源码: JS读取 %1ms · toHtml %2ms · JS重建 %3ms · 总计 %4ms")
+                                       .arg(jsReadMs).arg(convMs).arg(qMax<qint64>(buildMs, 0))
+                                       .arg(perfTotal.elapsed()));
+                    });
             });
     }
 }
@@ -1150,36 +1199,41 @@ void MainWindow::restoreSession()
         return;
 
     const QStringList openFiles = settings.value("session/openFiles").toStringList();
-    if (openFiles.isEmpty()) {
+    // 两段式恢复：先筛出存在的文件，再按活动标签位置决定立即/惰性加载
+    QStringList restoreList;
+    for (const QString &path : openFiles) {
+        if (!path.isEmpty() && QFile::exists(path))
+            restoreList << path;   // 跳过未命名的空白标签
+    }
+    if (restoreList.isEmpty()) {
         m_tabWidget->openNewTab();
         return;
     }
 
-    // 恢复标签页（跳过未命名的空白标签页）
-    for (const QString &path : openFiles) {
-        if (path.isEmpty()) {
-            continue; // 不恢复未命名的空白标签
-        } else if (QFile::exists(path)) {
-            QString encoding;
-            QString content = m_fileManager->readFile(path, &encoding);
-            EditorTab *tab = m_tabWidget->openFileTab(path, content);
-            tab->setFilePath(path);
-            tab->setEncoding(encoding);
-            m_fileManager->watchFile(path);
-            m_menuBar->addRecentFile(path);
-        }
-    }
-
-    // 若所有文件都不存在或均为空，创建一个空白标签页
-    if (m_tabWidget->count() == 0) {
-        m_tabWidget->openNewTab();
-    }
-
-    // 恢复活动标签页
+    // 非活动标签页惰性加载：启动只加载当前要看的标签页内容，其余标签页登记
+    // 待载内容、切到时才加载（重文档会话免多页并行 setContent 的启动停顿）
     int activeTab = settings.value("session/activeTab", 0).toInt();
-    if (activeTab >= 0 && activeTab < m_tabWidget->count()) {
-        m_tabWidget->setCurrentIndex(activeTab);
+    if (activeTab < 0 || activeTab >= restoreList.size())
+        activeTab = 0;
+    QList<QPair<EditorTab *, QString>> lazyTabs;
+    for (int i = 0; i < restoreList.size(); ++i) {
+        const QString &path = restoreList.at(i);
+        QString encoding;
+        QString content = m_fileManager->readFile(path, &encoding);
+        const bool isActive = (i == activeTab);
+        EditorTab *tab = m_tabWidget->openFileTab(path, isActive ? content : QString(),
+                                                  !isActive);
+        tab->setFilePath(path);
+        tab->setEncoding(encoding);
+        m_fileManager->watchFile(path);
+        m_menuBar->addRecentFile(path);
+        if (!isActive) lazyTabs.append(qMakePair(tab, content));
     }
+
+    // 恢复活动标签页，随后登记惰性内容（避免 openFileTab 过程中的临时激活误触发加载）
+    m_tabWidget->setCurrentIndex(activeTab);
+    for (const auto &p : lazyTabs)
+        p.first->setPendingContent(p.second);
 
     // 恢复窗口几何信息
     QByteArray geometry = settings.value("session/geometry").toByteArray();

@@ -21,6 +21,9 @@ import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import TextAlign from '@tiptap/extension-text-align';
 import { createLowlight, common } from 'lowlight';
+// ProseMirror 底层模块：vendored-lowlight-plugin.js 构造异步高亮 plugin 用
+import { Plugin as PMStatePlugin, PluginKey as PMStatePluginKey } from '@tiptap/pm/state';
+import { Decoration as PMViewDecoration, DecorationSet as PMViewDecorationSet } from '@tiptap/pm/view';
 
 // 搜索（纯函数 matcher + ProseMirror plugin）
 import { searchMatcher, isWordChar, escapeRegExp } from './searchMatcher.js';
@@ -57,6 +60,9 @@ window.TipTapExtensionSuperscript = Superscript;
 window.TipTapExtensionTextAlign = TextAlign;
 window.TipTapMigrateMathStrings = migrateMathStrings;
 window.lowlight = createLowlight(common);
+// vendored-lowlight-plugin.js（异步代码块高亮）构造 plugin 用
+window.ProseMirrorState = { Plugin: PMStatePlugin, PluginKey: PMStatePluginKey };
+window.ProseMirrorView = { Decoration: PMViewDecoration, DecorationSet: PMViewDecorationSet };
 window.searchMatcher = searchMatcher;
 window.searchPlugin = {
   createSearchPlugin: createSearchPlugin,

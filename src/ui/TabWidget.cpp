@@ -40,7 +40,7 @@ EditorTab *TabWidget::openNewTab()
     return tab;
 }
 
-EditorTab *TabWidget::openFileTab(const QString &path, const QString &content)
+EditorTab *TabWidget::openFileTab(const QString &path, const QString &content, bool lazy)
 {
     int tabId = m_nextTabId++;
     EditorTab *tab = new EditorTab(tabId, this);
@@ -49,8 +49,18 @@ EditorTab *TabWidget::openFileTab(const QString &path, const QString &content)
     int index = addTab(tab, fi.fileName());
     setCurrentIndex(index);
     setTabToolTip(index, path);
-    connect(tab, &EditorTab::pageLoadFinished, this,
-            [tab, content](bool ok) { if (ok) tab->loadFile("", content); });
+    if (lazy) {
+        // 惰性加载：页面就绪且本 tab 已是当前标签页时才加载登记的待载内容
+        // （内容随后由调用方 setPendingContent 登记；激活切换在 onCurrentChanged flush）
+        connect(tab, &EditorTab::pageLoadFinished, this,
+                [this, tab](bool ok) {
+                    if (ok && indexOf(tab) == currentIndex())
+                        tab->flushPendingContent();
+                });
+    } else {
+        connect(tab, &EditorTab::pageLoadFinished, this,
+                [tab, content](bool ok) { if (ok) tab->loadFile("", content); });
+    }
     connect(tab->bridge(), &EditorBridge::dirtyStateChanged, this,
             [this, tab](bool dirty, int) {
                 int idx = indexOf(tab);
@@ -149,7 +159,11 @@ void TabWidget::onCurrentChanged(int index)
 {
     if (index >= 0) {
         EditorTab *tab = tabAt(index);
-        if (tab) emit currentTabChanged(tab->bridge()->tabId());
+        if (tab) {
+            // 惰性加载 flush：切换到尚未加载内容的标签页时在此加载
+            tab->flushPendingContent();
+            emit currentTabChanged(tab->bridge()->tabId());
+        }
     }
 }
 

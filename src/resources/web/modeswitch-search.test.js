@@ -52,7 +52,10 @@ describe('模式切换搜索计数', () => {
 
   it('源码模式搜索 → 切回 WYSIWYG → 计数延续', () => {
     calls = [];
-    // 先进入源码模式搜索
+    // 生产流程：enterSourceMode 的 md 由当前文档转换而来，exitSourceMode 未
+    // 编辑时不再重建编辑器（快速路径），故测试中文档内容须与 md 对应
+    window.editorApi.setContent('<p>aaa bbb</p><p>aaa</p><p>bbb aaa</p>');
+    // 进入源码模式搜索
     window.editorApi.enterSourceMode('aaa bbb\n\naaa\n\nbbb aaa\n');
     window.editorApi.startSearch('aaa', false, false, false);
     const afterSource = calls[calls.length - 1];
