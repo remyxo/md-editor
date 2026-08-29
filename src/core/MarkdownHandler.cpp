@@ -140,6 +140,19 @@ static bool isNbspLiteralLine(const QString &line)
     return line.trimmed() == QLatin1String("&nbsp;");
 }
 
+// 水平线标签行（<hr> / <hr/> / <hr />，可带首尾空白，大小写不敏感）。
+// 与 --- 同语义（帮助文档约定「<hr> 与 --- 等价」），须同样占位保护：
+// <hr> 无 </hr> 配对，不占位会被 escapeUnclosedHtmlTags 当未闭合容器标签
+// 转义为字面文本（往返变 \<hr\>，帮助文档承诺失效）。行内混排的 <hr>
+// （text <hr> text）不在此列，保持现状按文本转义。
+static bool isHrTagLine(const QString &line)
+{
+    static const QRegularExpression re(
+        "^\\s*<hr\\s*/?\\s*>\\s*$",
+        QRegularExpression::CaseInsensitiveOption);
+    return re.match(line).hasMatch();
+}
+
 static bool isParagraphLine(const QString &line)
 {
     if (line.isEmpty()) return false;
@@ -174,6 +187,10 @@ static bool isParagraphLine(const QString &line)
             return false;
         return true;
     }
+    // 水平线标签行（<hr>）：非正文行。否则「正文\n<hr>\n正文」会把 <hr> 行当
+    // 段落延续拼软换行标记，<hr> 不再走占位保护（escapeUnclosedHtmlTags
+    // 转义为文本，帮助文档「<hr> 与 --- 等价」失效）。
+    if (isHrTagLine(line)) return false;
     return c != '#' && c != '-' && c != '|'
            && !(c >= '0' && c <= '9' && trimmed.length() > 1
                 && trimmed[1] == '.');
@@ -456,6 +473,27 @@ static void batchReplaceExact(QString &s, const QStringList &search,
 // 在此前已占位保护，不经过本函数；本函数须在占位保护之后执行。
 static void escapeUnclosedHtmlTags(QString &s)
 {
+    // 行内代码段先暂存：code span 内是字面文本——CommonMark 规定实体不解码、
+    // 标签不解析，`<tag>` 不是 HTML 标签，不得转义。否则 `<hr>` 等行内代码
+    // 显示为字面 &lt;hr&gt;（md4c 不解码 code 内实体，转义产物直通显示；帮助
+    // 文档语法指南的「`<hr>` 与 --- 等价」曾因此显示错误）。哨兵用独立前缀
+    // \x01EUT——\x01CODE* 是强调包裹 code 机制跨函数传递的占位符（后处理 0
+    // 消费），此处不得撞号。分隔符判定须与 md4c 的 CommonMark run 规则一致
+    // （开/闭 run 等长、闭 run 后不紧跟反引号）：简单成对 `` `x` `` 会在
+    // `` ``` ```<script> ``` `` 这类多反引号串中错配内层，把 md4c 判定为裸露
+    // 正文的 <script> 暂存起来，转义循环看不见 → Qt 吞噬其后全文。
+    QStringList codes;
+    static const QRegularExpression csRe("(`+)([^`\n]+)\\1(?!`)");
+    int csOff = 0;
+    while (true) {
+        const auto cm = csRe.match(s, csOff);
+        if (!cm.hasMatch()) break;
+        codes << cm.captured(0);   // 含反引号的整个 span（还原时原样回填）
+        const QString ph = "\x01EUT" + QString::number(codes.size() - 1) + "\x01";
+        s.replace(cm.capturedStart(), cm.capturedLength(), ph);
+        csOff = cm.capturedStart() + ph.length();
+    }
+
     static const QRegularExpression tagRe("(?<![\\&\\\\])<[a-zA-Z/][^<>]*>");
     static const QRegularExpression nameEndRe("[\\s>]");
     int off = 0;
@@ -483,6 +521,10 @@ static void escapeUnclosedHtmlTags(QString &s)
         s.replace(m.capturedStart(), m.capturedLength(), "&lt;" + inner + "&gt;");
         off = m.capturedStart() + inner.length() + 8;   // &lt;(4) + inner + &gt;(4)
     }
+
+    // 还原行内代码段（内容未参与转义）
+    for (int i = 0; i < codes.size(); ++i)
+        s.replace("\x01EUT" + QString::number(i) + "\x01", codes[i]);
 }
 
 // 提取下标 ~x~（Pandoc 语法）为占位符。
@@ -1947,15 +1989,24 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             ++brSoftCount;
             processed += cl + " " + brSoftPhs.last() + "\n";
             lastBlock = BT_PARA;
-        } else if (isDashHrLine(line) && lastBlock != BT_PARA) {
-            // 水平线 ---：占位保护，避免 Qt setMarkdown 折叠连续 --- 或灾难性
-            // 误解析。--- 紧跟前文段落（无空行）时是 setext 二级标题下划线，
-            // 非水平线，此时 lastBlock==BT_PARA 不满足条件，落入 else 分支原样直通。
-            const QString ph = collisionFreePlaceholder(collisions, 
+        } else if (isDashHrLine(line) || isHrTagLine(line)) {
+            // 水平线 --- / <hr>：占位保护，避免 Qt setMarkdown 折叠连续 --- 或
+            // 灾难性误解析；<hr> 标签无 </hr> 配对，不占位会被 escapeUnclosedHtmlTags
+            // 转义为字面文本。--- 紧跟前文段落（无空行）时 CommonMark 视为 setext
+            // 二级标题下划线；本编辑器按「编辑区语义优先」处理为水平线（同块引用
+            // 隔离先例，有意偏离标准——用户写 --- 意图几乎总是分隔线，setext 标题
+            // 可用 ## 书写）。占位符是文本段落：与前文段落不隔断会被当同段延续
+            //（还原后 <hr/> 与前文同 <p>，非法嵌套）；与后文正文不隔断同理，
+            // 两侧仅在紧邻时补空行。
+            if (lastBlock == BT_PARA && !processed.endsWith("\n\n"))
+                processed += '\n';
+            const QString ph = collisionFreePlaceholder(collisions,
                 "HR", hrMarkers.size());
             hrPhs << ph;
             hrMarkers << "<hr/>";
             processed += ph + '\n';
+            if (!next.isEmpty() && isParagraphLine(next))
+                processed += '\n';
             lastBlock = BT_NONE;
         } else {
             // 隔离：列表后紧跟正文时补空行（同上）

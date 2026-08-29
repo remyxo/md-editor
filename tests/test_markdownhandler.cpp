@@ -2215,11 +2215,12 @@ private slots:
 
     void testSetextHeadingNotTreatedAsHr()
     {
-        // 正文\n---（无空行）是 setext 二级标题，非水平线，不应被占位保护。
-        // 正文\n=== 是 setext 一级标题，此前被误判为正文行，在标题与下划线之间
-        // 插入幽灵 <br data-brk>。二者往返均应规范化为 ATX 形式，且无幽灵软换行。
+        // 正文\n===（无空行）是 setext 一级标题，规范化为 ATX（# 标题），且无
+        // 幽灵 <br data-brk>（历史 bug：曾被误判为正文行插入幽灵软换行）。
+        // 正文\n--- 的语义 2026-08-29 反转：按「编辑区语义优先」处理为水平线
+        //（用户写 --- 意图几乎总是分隔线；setext 二级标题可用 ## 书写），
+        // 对应用例移入 testHrAfterParagraphRoundTrip。
         struct { const char *in; const char *expect; } cases[] = {
-            {"标题\n---\n", "## 标题"},
             {"标题\n===\n", "# 标题"},
         };
         for (const auto &c : cases) {
@@ -2237,6 +2238,51 @@ private slots:
                      qPrintable(QString("setext 标题应规范化，输入[%1] 实际[%2]")
                                     .arg(c.in, md2)));
         }
+    }
+
+    void testHrAfterParagraphRoundTrip()
+    {
+        // 正文\n---（无空行）：CommonMark 视为 setext 二级标题下划线，本编辑器
+        // 按「编辑区语义优先」处理为水平线——占位前补空行隔断，往返语义保真
+        //（分隔线不丢，代价是格式规范化为空行分隔）。--- 与 <hr> 标签等价
+        //（帮助文档约定），<hr> 同走水平线路径；不占位会被 escapeUnclosedHtmlTags
+        // 当未闭合容器转义为字面文本（往返变 \<hr\>）。占位符是文本段落，
+        // 前后紧跟正文都会被并为同段（<hr/> 与正文同 <p>，非法嵌套），两侧隔断。
+        struct { const char *in; const char *expect; } cases[] = {
+            {"3\n---\n4", "3\n\n---\n\n4"},
+            {"标题\n---\n", "标题\n\n---"},
+            {"x\n\n---\ny", "x\n\n---\n\ny"},
+            {"<hr>", "---"},
+            {"<hr/>", "---"},
+            {"<HR>", "---"},          // 大小写不敏感
+            {"a\n\n<hr>\n\nb", "a\n\n---\n\nb"},
+            {"a\n<hr>\nb", "a\n\n---\n\nb"},
+        };
+        for (const auto &c : cases) {
+            QString md1 = QString::fromUtf8(c.in);
+            QString html = MarkdownHandler::toHtml(md1);
+            QVERIFY2(!html.contains("\\<hr\\>"),
+                     qPrintable(QString("<hr> 不应被转义为文本，输入[%1] HTML[%2]")
+                                    .arg(c.in, html)));
+            QString md2 = MarkdownHandler::fromHtml(html);
+            QVERIFY2(md2 == QString::fromUtf8(c.expect),
+                     qPrintable(QString("水平线语义往返，输入[%1] 实际[%2]")
+                                    .arg(c.in, md2)));
+        }
+        // <hr/> 与正文同 <p> 的非法嵌套不得出现（hr 必须独立成块）
+        static const QRegularExpression hrInP1("<p\\b[^>]*>[^<]*<hr\\b");
+        static const QRegularExpression hrInP2("<hr\\b[^>]*>[^<]*</p>");
+        for (const char *in : {"3\n---\n4", "x\n\n---\ny", "a\n<hr>\nb"}) {
+            QString h = MarkdownHandler::toHtml(QString::fromUtf8(in));
+            QVERIFY2(!hrInP1.match(h).hasMatch() && !hrInP2.match(h).hasMatch(),
+                     qPrintable(QString("<hr/> 不得嵌于 <p> 内，输入[%1] HTML[%2]")
+                                    .arg(QString::fromUtf8(in), h)));
+        }
+        // 行内混排 <hr>（text <hr> more）不属水平线行，维持现状：按字面文本转义
+        QString inlineMd2 = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml("text <hr> more"));
+        QVERIFY2(inlineMd2.contains("\\<hr\\>"),
+                 qPrintable(QString("行内 <hr> 应保持文本转义，实际[%1]").arg(inlineMd2)));
     }
 
     void testTableSingleCellMergeRoundTrip()
@@ -3828,6 +3874,24 @@ private slots:
         // 模式回归（回到秒级）都会被捕获。
         QVERIFY2(totalMs < 10000,
                  qPrintable(QStringLiteral("10k 行往返超时: %1 ms").arg(totalMs)));
+    }
+
+    void testInlineCodeTagNotDoubleEscaped()
+    {
+        // 行内代码内的字面标签（`<hr>`）是 code span 文本，不是 HTML 标签：
+        // escapeUnclosedHtmlTags 不得转义——md4c 按 CommonMark 不解码 code 内
+        // 实体，转义产物 `&lt;hr&gt;` 直通显示为字面文本。帮助文档语法指南
+        // 受此影响：「分割线：`<hr>` 与 `---` 等价」显示成了 `&lt;hr&gt;`。
+        // 断言双重转义标志（&amp;lt;）不出现；code 内容以单次转义形态存在。
+        const QString md = QStringLiteral(
+            "分割线：`<hr>` 与 `---` 等价，`<sub>`/`<sup>`/`<mark>` 同理。");
+        const QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(!html.contains("&amp;lt;") && !html.contains("&amp;gt;"),
+                 qPrintable(QString("行内代码内标签不应双重转义，HTML[%1]").arg(html)));
+        QVERIFY2(html.contains("&lt;hr&gt;") && html.contains("&lt;sub&gt;"),
+                 qPrintable(QString("code 内容应单次转义存在，HTML[%1]").arg(html)));
+        // 往返保真（code span 内容原样回）
+        QCOMPARE(MarkdownHandler::fromHtml(html), md);
     }
 
 };
