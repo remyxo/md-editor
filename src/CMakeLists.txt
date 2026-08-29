@@ -9,6 +9,7 @@ set(SOURCES
     core/ImageManager.cpp
     core/LocalImageSchemeHandler.cpp
     core/MarkdownHandler.cpp
+    core/qt/QtMarkdownWriter.cpp
     core/PdfExporter.cpp
     core/DocxExporter.cpp
     core/miniz/miniz.c
@@ -42,6 +43,7 @@ set(HEADERS
     core/ImageManager.h
     core/LocalImageSchemeHandler.h
     core/MarkdownHandler.h
+    core/qt/QtMarkdownWriter.h
     core/PdfExporter.h
     core/DocxExporter.h
     core/MermaidRenderer.h

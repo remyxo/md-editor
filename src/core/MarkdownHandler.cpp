@@ -5,6 +5,7 @@
 #include <QVector>
 #include <QFontDatabase>
 #include <initializer_list>
+#include "qt/QtMarkdownWriter.h"
 
 // 行是否仅为 <br> 等硬换行标签（含属性及自闭合写法）
 // 用于 BRMARKER 逻辑：<br> 本身即是换行，其前后 \n 不应再触发 BRMARKER
@@ -3034,6 +3035,21 @@ static QString escapeExtDelimsOutsideTags(const QString &s, bool escapeCaret)
     return r;
 }
 
+// QTextDocument → Markdown：vendored QtMarkdownWriter，关闭 80 列折行。
+// QTextDocument::toMarkdown() 硬编码折行（无 API 关闭）且稀疏空格场景
+// 强切吞字；折行关闭后每块单行输出。默认 GitHub 方言下 vendored writer
+// 与 doc.toMarkdown() 逐字节等价（tests/test_qtmarkdownwriter.cpp 回归），
+// 动机、改动清单与 LGPL 合规见 docs/vendor-qt-markdown-writer.md。
+static QString serializeMarkdownNoWrap(const QTextDocument &doc)
+{
+    QString md;
+    QTextStream ts(&md);
+    QtMarkdownWriter writer(ts, QTextDocument::MarkdownDialectGitHub);
+    writer.setWrapEnabled(false);
+    writer.writeAll(&doc);
+    return md;
+}
+
 QString MarkdownHandler::fromHtml(const QString &html)
 {
     // 占位符碰撞索引：源 HTML 中全部 ZZ\w+ZZ 形态子串，供 collisionFreePlaceholder
@@ -3545,10 +3561,10 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 } else {
                     contentHtml = defInner;
                 }
-                // inline HTML → MD（嵌套 QTextDocument）
+                // inline HTML → MD（嵌套 QTextDocument，同样关闭折行）
                 QTextDocument d;
                 d.setHtml(contentHtml);
-                QString cm2 = d.toMarkdown();
+                QString cm2 = serializeMarkdownNoWrap(d);
                 while (cm2.endsWith('\n')) cm2.chop(1);
                 mdBlock += "[^" + id + "]: " + cm2 + "\n";
                 doff = dm.capturedEnd();
@@ -4302,7 +4318,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
 
     QTextDocument doc;
     doc.setHtml(processed);
-    QString md = doc.toMarkdown();
+    QString md = serializeMarkdownNoWrap(doc);
 
     // 去除 ATX 标题行首"块级列表标记"的多余反斜杠转义。
     // QTextDocument::toMarkdown()（md4c）为防止有序/无序列表误解析，
