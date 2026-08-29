@@ -9,6 +9,11 @@ var TipTapHighlight = window.TipTapExtensionHighlight;
 var TipTapImage = window.TipTapExtensionImage;
 var TipTapPlaceholder = window.TipTapExtensionPlaceholder;
 var TipTapCodeBlockLowlight = window.TipTapExtensionCodeBlockLowlight;
+var TipTapCode = window.TipTapExtensionCode;
+// 默认 Code mark 的 excludes:"_" 会丢弃包裹 code 的强调/加粗 mark（`*`code`*`
+// 往返塌陷成 `code`）。extend 放开共存，使 `*`code`*`/`**`code`**` 等形态在
+// WYSIWYG 中真正可表示、getHTML 原样序列化（fromHtml/toHtml 均已覆盖两序）。
+var CodeAllowingMarks = TipTapCode && TipTapCode.extend({ excludes: '' });
 // 扩展 CodeBlockLowlight，附加自定义 NodeView（语言标签 + 复制按钮 + 语言切换）
 var CodeBlockLowlightWithNodeView = TipTapCodeBlockLowlight && TipTapCodeBlockLowlight.extend({
     addNodeView: function() { return codeBlockNodeView; }
@@ -1242,6 +1247,9 @@ window.editorApi = {
         var exts = [
             TipTapStarterKit.configure({
                 codeBlock: false,
+                // 禁用默认 Code mark（excludes:"_" 塌陷 `*`code`*`），下方推
+                // CodeAllowingMarks（excludes:'' 允许强调/加粗等与 code 共存）
+                code: false,
                 hardBreak: false,
                 heading: { levels: [1, 2, 3, 4, 5, 6] },
                 link: { openOnClick: false },
@@ -1253,6 +1261,8 @@ window.editorApi = {
                 // 禁用后末尾块原样保留；在末尾块内按 Enter 仍可正常新建段落。
                 trailingNode: false
             }),
+            // 自定义 Code mark（允许与强调/加粗等 mark 共存）紧随 StarterKit 注册
+            CodeAllowingMarks,
             TipTapTableKit.configure({ resizable: true }),
             TipTapTaskList,
             TipTapTaskItem.configure({ nested: true }),

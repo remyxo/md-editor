@@ -8,6 +8,7 @@
  */
 import { Editor, Extension, InputRule, Node, Mark } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
+import Code from '@tiptap/extension-code';
 import { TableKit } from '@tiptap/extension-table';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
@@ -47,6 +48,9 @@ window.TipTapExtensionHighlight = Highlight;
 window.TipTapExtensionImage = Image;
 window.TipTapExtensionPlaceholder = Placeholder;
 window.TipTapExtensionCodeBlockLowlight = CodeBlockLowlight;
+// 单独导出 Code mark：默认 excludes:"_" 会丢弃包裹 code 的强调/加粗 mark
+//（`*`code`*` 往返塌陷），editor.js 用 Code.extend({ excludes: '' }) 放开共存。
+window.TipTapExtensionCode = Code;
 window.TipTapExtensionMathematics = Mathematics;
 window.TipTapExtensionSubscript = Subscript;
 window.TipTapExtensionSuperscript = Superscript;

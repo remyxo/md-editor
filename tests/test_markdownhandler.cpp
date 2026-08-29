@@ -3268,6 +3268,495 @@ private slots:
                  qPrintable("斜体后全角标点空格应自愈，实际:\n" + backEm));
     }
 
+    void testLongInlineCodeRunNoTokenSplit()
+    {
+        // 密集相邻行内代码（占位符长串，如文档里列出全部占位符前缀）：
+        // QTextMarkdownWriter 80 列折行在长行无空格断点时，会拦腰拆占位符 token
+        // 并吞掉断点字符（i=j+1 吞字 bug）。此前 `ZZCD13ZZ` 被拆成 `ZZCD 3ZZ`
+        // （中间数字丢失、空格插入）。修复：行内元素占位符追加尾随空格，给出
+        // 合法折行点，还原时随 token 一起消费。
+        const QString md = QStringLiteral(
+            "`collisionFreePlaceholder` 目前仅 6 处使用（代码块 `CB`、fromHtml 部分 `CB`、"
+            "`A`、`BL` 等）。其余占位符（`ZZHR`/`ZZBQ`/`ZZMK`/`ZZFR`/`ZZSB`/`ZZSP`/"
+            "`ZZCD`/`ZZIC`/`ZZTL`/`ZZFD`/`ZZNS`/`ZZST`/`ZZHS`/`ZZUL`/`ZZKD`/`ZZSM`/"
+            "`ZZDV`/`ZZEQ`/`ZZLT`/`ZZGT`/`ZZLM` 等）仍以固定模式生成。");
+        const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        // 全部占位符前缀代码段逐字节保留
+        QCOMPARE(back, md);
+        QVERIFY2(!back.contains("ZZCD "),
+                 qPrintable("不得出现 token 拆分残留，实际:\n" + back));
+        // 多轮稳定
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+    }
+
+    void testEmphWrappedInlineCodeRoundTrip()
+    {
+        // md4c 不把 `*`/`**` 直接包裹 code span 解析为强调（加粗丢弃、斜体在
+        // code 处分段重编码）。toHtml 侧「强调包裹代码」保护绕开：直接包裹与
+        // 跨句包裹均还原为统一 <strong>/<em> 包 <code> HTML，fromHtml 正确还原。
+        // 含 `==`（mark 标记字面量）内容的 code 不得被当作 mark 语法——占位符保护
+        // 后内容在 <code> 内，还原时原样回引号。
+        const struct { const char *name; const char *md; } cases[] = {
+            // 直接包裹（code 紧贴强调符）
+            {"direct-bold", "文字 **`code`** 尾"},
+            {"direct-em", "*`code`* 单独"},
+            // code 内容含 mark 标记字面量（== 往返曾塌陷成 `code` 丢强调）
+            {"em-mark-eq", "*`==`*"},
+            {"strong-mark-eq", "**`==`**"},
+            // 跨句包裹（强调区间内嵌 code span）
+            {"span-em", "*本报告为只读审查产物，含 `src/core/FileManager.cpp` 文本*"},
+            {"span-strong", "**加粗文本含 `toHtmlEscaped()` 与 `unescapeHtmlEntities` 结尾**"},
+            {"span-em-multi", "*`a` 与 `b` 文本*"},
+            // 混排：普通强调 + code + 强调代码
+            {"mixed", "强调 `code` 与 **`粗体`** 混排"},
+        };
+        for (const auto &c : cases) {
+            const QString md = QString::fromUtf8(c.md);
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, md);
+            // 多轮稳定
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+    }
+
+    void testEscapedEmphDelimiterNoBackslashAccumulation()
+    {
+        // 转义字面量 `\*\*\`\<mark\>`\*\*`（= 字面 **`<mark>`**）：此前 emphCode
+        // 保护正则不校验强调符是否被反斜杠转义，把 `\*` 当真实强调符保护，还原出
+        // 夹带反斜杠的 <em>/<code>，反复往返反斜杠指数累积（\*\* → \*\\* → …）。
+        // 修复：开/闭强调符两侧查转义（前有奇数个 \ 即字面量），跳过保护交 md4c。
+        const QString md = QStringLiteral("\\*\\*\\`\\<mark\\>\\`\\*\\*");
+        QString results[4];
+        results[0] = md;
+        for (int round = 1; round < 4; ++round)
+            results[round] = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(results[round - 1]));
+        // 收敛：R3 == R2（不再逐轮漂移）。首轮可能有规范级转义归一（孤单个
+        // 反引号不需转义，\` 与 ` 语义等价），但不得有反斜杠累积增长。
+        QCOMPARE(results[3], results[2]);
+        QVERIFY2(!results[3].contains("\\\\"),
+                 qPrintable("反斜杠不得累积，实际:\n" + results[3]));
+    }
+
+    void testEmphCodeSpaceBoundedRoundTrip()
+    {
+        // `** `code`**`（** 后空格）：md4c 按 CommonMark 边界规则判为字面
+        // （** 后空格非强调符）→ 转义 \*\*；但 WYSIWYG TipTap 输入规则生成真实
+        // 加粗，两条路径不一致。2026-08-28 决策：emphCode 保护去掉空格边界跳过，
+        // 空格包裹的强调+代码也归一为强调（空格保留在区间内），往返逐字节一致。
+        const struct { const char *name; const char *md; } cases[] = {
+            {"space-after-open", "** `code`**"},
+            {"space-before-close", "**`code` **"},
+            {"space-both", "** `code` **"},
+            {"space-entity", "** `&lt;mark&gt;`**"},
+            {"space-em", "* `code`*"},
+            {"space-mixed", "文字 ** `粗` 体**"},
+        };
+        for (const auto &c : cases) {
+            const QString md = QString::fromUtf8(c.md);
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, md);
+            // 多轮稳定
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+    }
+
+    void testStrikeMarkSubSupWrappedCodeRoundTrip()
+    {
+        // 与 `*`/`**` 同源缺陷的其它包裹符环绕行内代码：
+        // - `~~`code`~~`：md4c 直接丢弃删除线（只留 <code>），~~X `code` Y~~
+        //   在 code 处分段重编码（code 丢删除线）。toHtml 侧删除线包裹代码
+        //   保护还原为 <s>…<code>…</code>…</s>，往返闭环。
+        // - `==`code`==` / `^`code`^`：fromHtml 侧行内代码保护必须先于 mark/sup
+        //   转换执行，否则 <code> 未占位化、mark/sup 抽取后反引号丢失
+        //   （==`code`== 曾塌陷成 ==code==、^`code`^ 曾塌成 ^code^）。
+        // - `~`code`~`：extractSubscripts 曾把代码占位符 \x01CODE 原样存进
+        //   下标备份，还原时 <sub>\x01CODE0\x01</sub> 令牌泄漏；修复后还原为
+        //   <sub><code>…</code></sub>（code 内容含 < 时正确转义，往返不漂移）。
+        const struct { const char *name; const char *md; } cases[] = {
+            // 删除线直接包裹 code
+            {"strike-direct", "~~`code`~~"},
+            {"strike-mixed", "~~X `code` Y~~"},
+            {"strike-multi", "文字~~`a`~~尾 ~~`b`~~"},
+            // 链式删除线（code 间文本删除线，~~X~~ 无 code span，不得被保护偷配）
+            {"strike-chain", "`c1`~~X~~`c2`"},
+            // mark / sup / sub 包裹 code
+            {"mark", "==`code`=="},
+            {"sup", "^`code`^"},
+            {"sub", "~`code`~"},
+            // sub 内 code 含 HTML 特殊字符（< 转义后不得漂移累积 &amp;）
+            {"sub-html-char", "~`a<b`~"},
+            // 嵌套与混排
+            // bold 内嵌 strike 包 code：md4c 链式不解析，~~ 字面残留在 strong
+            // 文本中，HTML 层与转义字面 \~~ 同型（TipTap parse→serialize 抹平
+            // 任何区分标记），fromHtml 无法区分来源、统一输出转义形式（转义
+            // 是唯一无二义规范：本引擎与 cmark-gfm 均显示字面 ~~；裸形式在本
+            // 引擎字面、GitHub 上却是删除线，与编辑器所见不一致）。项目内渲染
+            // 语义不变，首轮归一后收敛——期望值在下方循环特判。
+            {"bold-wrap-strike", "**bold~~`code`~~**"},
+            {"strike-wrap-bold-lit", "~~`code`**bold**~~"},
+            // 相邻删除线区间（~~ 相邻边界，往返须稳定）。md4c 把第二对 ~~ 的
+            // 前半吃作第一区间的闭合符，X~~ 为字面残余，与转义 \~~ 同型
+            // （HTML 有损消歧）→ 归一为转义形式；孤立 ~~ 在本引擎与 cmark-gfm
+            // 下渲染本就一致，语义不变，round2+ 收敛（下方循环特判）
+            {"strike-adjacent", "~~`code` 与 ~~X~~ 并列"},
+        };
+        for (const auto &c : cases) {
+            const QString md = QString::fromUtf8(c.md);
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            if (QString::fromUtf8(c.name) == QLatin1String("bold-wrap-strike")) {
+                // HTML 有损消歧：~~ 字面残留与转义 \~~ 同型，归一为转义形式
+                QCOMPARE(back, QStringLiteral("**bold\\~~`code`\\~~**"));
+            } else if (QString::fromUtf8(c.name) == QLatin1String("strike-adjacent")) {
+                // 同上：X~~ 字面残余归一为 X\~~
+                QCOMPARE(back, QStringLiteral("~~`code` 与 ~~X\\~~ 并列"));
+            } else {
+                QCOMPARE(back, md);
+            }
+            // 多轮稳定
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+    }
+
+    void testInlineCodeSpaceAfterBareHtml()
+    {
+        // 裸 HTML（TipTap getHTML 路径，无 Qt pre-wrap style）：占位符尾随空格
+        // 与 code 后的原空格合并，QTextDocument 折叠双空格后 restore 会吞掉
+        // 唯一空格（`code` Y → `code`Y）。此路径 toHtml→fromHtml 全 HTML
+        // 单测测不出（pre-wrap 保留双空格）。修复：仅当 </code> 后紧跟
+        // 「非空白、非标签」字符时追加尾随空格，紧跟空白用裸占位符。
+        const struct { const char *name; const char *html; const char *want; } cases[] = {
+            // code 后接 ASCII 空格（最易触发）
+            {"ascii-space", "<p>X <code>code</code> Y</p>", "X `code` Y"},
+            // code 后接全角标点（需尾随空格防折行拆 token）
+            {"fullwidth-punct", "<p>X <code>code</code>。Y</p>", "X `code`。Y"},
+            // 相邻 code + 后接空格（不得在 code 间插空格）
+            {"adjacent-codes", "<p>X <code>a</code><code>b</code> Y</p>", "X `a``b` Y"},
+            // 段尾 code
+            {"para-end", "<p>X <code>code</code></p>", "X `code`"},
+        };
+        for (const auto &c : cases) {
+            const QString back = MarkdownHandler::fromHtml(QString::fromUtf8(c.html));
+            QCOMPARE(back, QString::fromUtf8(c.want));
+        }
+    }
+
+    void testInlineCodeAroundEmphMarkers()
+    {
+        // 行内代码紧邻强调标记（`*`code`*` / `**`code`**` 形态）：
+        // md4c 不把 `*`/`**` 包裹 code span 解析为强调，往返后字面星号转义。
+        // toHtml 强调包裹代码保护（见 testEmphWrappedInlineCodeRoundTrip）使该形态
+        // 逐字节往返；此处同时锁定普通代码与强调代码混排不互相污染。
+        const QString md = QStringLiteral(
+            "*斜体 `code` 测试* 与 `plain` 相邻");
+        const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QCOMPARE(back, md);
+        // 多轮稳定
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+    }
+
+    void testEscapedExtDelimRoundTrip()
+    {
+        // 转义字面扩展定界符（\^ \~ \~~）往返保真。md4c 会消费反斜杠转义
+        //（\^ → 字面 ^），使转义与未转义形态在 HTML 层不可区分：
+        // - \^：toHtml 后处理 ^x^→<sup> 把转义字面量重新解释为上标（语义丢失）
+        // - \~：extractSubscripts 不查前导 \，把转义 ~ 当下标定界符（反斜杠
+        //   残留累积 \\~，HTML 泄漏 \<sub>）
+        // - \~~：md4c 解析成 ~+code+<s>~</s> 混合形态（二轮泄漏 &lt;s&gt;）
+        // 修复：行级提取 \~~/\~/\^ → ZZED 占位（代码段先暂存；反斜杠 run 奇偶
+        // 校验防 \\~ 误配），定界符以字面文本穿过 setMarkdown 与全部后处理，
+        // 末尾统一还原；fromHtml D 步对字面 ^/~/~~ 输出转义形式（与既有
+        // * / == 保护同范式），mark 步备份内容同样转义，往返逐字节一致。
+        const struct { const char *name; const char *md; } cases[] = {
+            // 转义 ^（上标定界符）包 code / 纯文本 / 单个
+            {"esc-caret-code", "\\^`code`\\^"},
+            {"esc-caret-text", "\\^text\\^"},
+            {"esc-caret-single", "5\\^2 单个"},
+            // 转义 ~（下标定界符）
+            {"esc-tilde-code", "\\~`code`\\~"},
+            {"esc-tilde-text", "\\~text\\~"},
+            {"esc-tilde-single", "约 \\~5 个"},
+            // 转义 ~~（删除线定界符）
+            {"esc-strike-code", "\\~~`code`\\~~"},
+            {"esc-strike-text", "\\~~text\\~~"},
+            // 混排（三种定界符同段）
+            {"mixed", "文字 \\^a\\^ 与 \\~b\\~ 与 \\~~c\\~~ 混排"},
+            // 代码段内的 \~/\^ 是字面文本（code span 原样保留，不参与转义保护）
+            {"code-literal-esc", "`\\~x~` 与 `\\^y^`"},
+            // 转义定界符在 mark 区间内（==\^x\^==：mark 备份内容不得裸输出 ^）
+            {"mark-content-esc", "==\\^x\\^=="},
+            // 转义定界符在其它包裹区间内（对应各备份构造点）：
+            // - strong：不占位、经 setHtml→toMarkdown，字面量由 D 步转义
+            {"strong-content-esc", "**\\^x\\^**"},
+            {"em-content-esc", "*\\~x\\~*"},
+            // - strike：ZZST 备份内容（~~…~~）不得裸输出 ^
+            {"strike-content-esc", "~~\\^x\\^~~"},
+            // - sub：ZZSB 备份内容（~…~）不得裸输出 ~（重载时 [^~] 提前配对）
+            {"sub-content-esc", "~a\\~b~"},
+            // - sup：ZZSP 备份内容（^…^）不得裸输出 ^/~（重载时提前闭合/被拆裂）
+            {"sup-content-esc", "^a\\^b^"},
+            // 注：^a\~b~c^（转义+裸混写）允许首轮归一——HTML 层 <sup>a~b~c</sup>
+            // 已无法区分哪个 ~ 原本转义（有损中间表示），只能统一输出转义形式
+            {"sup-content-tilde", "^a\\~b~c^"},
+            // 双反斜杠 + 定界符：\\^ = 字面 \ + 裸 ^，语义等价归一为 \\+\^，
+            // 不得把第二个 \ 当转义符误配（反斜杠奇偶校验）
+            {"double-bs-caret", "a\\\\^b"},
+        };
+        for (const auto &c : cases) {
+            const QString md = QString::fromUtf8(c.md);
+            QString results[3];
+            results[0] = md;
+            for (int round = 1; round < 3; ++round)
+                results[round] = MarkdownHandler::fromHtml(
+                    MarkdownHandler::toHtml(results[round - 1]));
+            // 多数字节往返；HTML 有损消歧的形态（双反斜杠、转义+裸混写）允许
+            // 首轮归一（语义等价），但必须收敛且不得累积
+            const bool allowNormalize =
+                QString::fromUtf8(c.name) == QLatin1String("double-bs-caret")
+                || QString::fromUtf8(c.name) == QLatin1String("sup-content-tilde");
+            if (allowNormalize) {
+                QCOMPARE(results[2], results[1]);
+                QVERIFY2(!results[2].contains("\\\\\\\\"),
+                         qPrintable("反斜杠不得累积，实际:\n" + results[2]));
+            } else {
+                QCOMPARE(results[1], md);
+            }
+            QCOMPARE(results[2], results[1]);
+        }
+        // 对照：未转义形态（真实语法）不受转义保护影响
+        const struct { const char *name; const char *md; } plain[] = {
+            {"plain-sup", "^`code`^"},
+            {"plain-sub", "~`code`~"},
+            {"plain-strike", "~~`code`~~"},
+            {"plain-mark", "==`code`=="},
+        };
+        for (const auto &c : plain) {
+            const QString md = QString::fromUtf8(c.md);
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, md);
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+    }
+
+    void testOrphanStrongSpaceTailRoundTrip()
+    {
+        // 后跟空白的孤立字面 ** 往返保真（用户报告：链式上下文中
+        // **`code`** 后跟「空格+中文」，往返后 ** 被转义为 \*\*）。
+        // 根因：md4c 的 flanking 规则使「后跟空白」的 ** 无法作开启符，
+        // 链式配对失败后残留为 HTML 文本层字面；D 步原一律转义为 \*\*。
+        // 但该形态裸输出同样稳定（重载时 md4c 同样拒绝配对→同样残留），
+        // 且裸形式在本引擎/CommonMark/GitHub 渲染一致（对比 ~~：裸形式
+        // GitHub 是删除线，故必须归一为 \~~；** 后空白则两态渲染等价，
+        // 归一为裸形式即保真方向）。D 步改为「后跟 ASCII 空白或块尾
+        // （</p>、<br 等）的字面 ** 还原裸形式」；仍走占位符——裸 **
+        // 留在文本层会被 Qt toMarkdown 版本相关地转义（6.8 转义/6.4 不
+        // 转义），占位符保证输出确定性。全角空格（U+3000）不是 CommonMark
+        // 空白，md4c 视其后为可开启，不在豁免之列（保持转义）。
+        // 注：链式上下文中 md4c 对直接包裹 code 的 ** 对会整对丢弃
+        // （HTML 层无痕）——2026-08-29 起由 toHtml 后处理 wrapDiscardedEmphCode
+        // 补包 <strong>（见 testChainDiscardedEmphCodeRoundTrip）；此处仅
+        // 锁定「残留字面 ** 不被转义」与多轮收敛。
+        const QString userLine = QString::fromUtf8(
+            "`unescapeHtmlEntities`**（约 **`:306-314`**）按「先 **`&lt;/&gt;`**、"
+            "最后 **`&amp;`**」顺序解码，**`toHtml`**侧代码块用 **`toHtmlEscaped()`**、"
+            "fromHtml 侧用 **`unescapeHtmlEntities`** 还原，**`if`**...**`&`**... "
+            "手动转序列（约 **`:2404`**）也成对。逻辑上构成了闭环，但\\*\\*是否在"
+            "所有路径上「转义恰好一次」\\*\\*未被多重往返测试锁定，个别路径"
+            "（如 **`==`**→**`&lt;mark&gt;`** 与实体转义之间的顺序、**`\\x01`** "
+            "与占位符与实体处理的交叉）存在累积转义 / 漏转义的理论风险。**");
+        {
+            const QString back = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(userLine));
+            // mk 处与行尾的 ** 字节保真（不转义为 \*\*）
+            QVERIFY2(back.contains(QStringLiteral("**`&lt;mark&gt;`** 与实体转义")),
+                     qPrintable("mk 处 ** 应保真，实际:\n" + back));
+            QVERIFY2(back.endsWith(QStringLiteral("风险。**")),
+                     qPrintable("行尾 ** 应保真，实际:\n" + back));
+            // 转义来源（后跟非空白）不受影响，仍保真 \*\*
+            QVERIFY(back.contains(QStringLiteral("但\\*\\*是否")));
+            // 多轮收敛
+            const QString back2 = MarkdownHandler::fromHtml(
+                MarkdownHandler::toHtml(back));
+            QCOMPARE(back2, back);
+        }
+        // 直接包裹形态的字面保真
+        const struct { const char *name; const char *md; const char *expect; } cases[] = {
+            // 孤立 ** 后跟空白：裸形式保真
+            {"orphan-space-tail", "x** y 与 z", "x** y 与 z"},
+            // 段尾（</p> 块边界，等效行尾）
+            {"orphan-block-tail", "风险。**", "风险。**"},
+            // 转义来源、后跟空白：归一为裸形式（渲染等价，与 \~~ 归一方向
+            // 相反的理由见函数头注释），一轮归一后收敛
+            {"escape-space-normalize", "但\\*\\* 是否转义", "但** 是否转义"},
+        };
+        for (const auto &c : cases) {
+            const QString md = QString::fromUtf8(c.md);
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, QString::fromUtf8(c.expect));
+            // 多轮收敛
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+        // 回归：转义来源后跟非空白，仍转义保真（不被豁免误伤）
+        {
+            const QString md = QStringLiteral("但\\*\\*是否转义");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, md);
+        }
+        // 回归：全角空格不是 CommonMark 空白，** 后跟全角空格仍转义（保守）
+        {
+            const QString md = QString::fromUtf8("x**　y");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, QString::fromUtf8("x\\*\\*　y"));
+        }
+        // 已修复（2026-08-29）：链式上下文中 md4c 对直接包裹 code 的 ** 对整对
+        // 丢弃，由 toHtml 后处理 wrapDiscardedEmphCode 补包——此原「已知限制」
+        // 用例升级为保真断言（详见 testChainDiscardedEmphCodeRoundTrip）
+        {
+            const QString md = QStringLiteral("前 **`a`** 中 **`b`** 后");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, md);
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+    }
+
+    void testChainDiscardedEmphCodeRoundTrip()
+    {
+        // 链式级联中 md4c 对「直接包裹 code 的 **/* 对」整对丢弃（HTML 无 strong、
+        // 无字面 * 残留，信息在 setMarkdown 层已丢，fromHtml 无法恢复）。修复：
+        // toHtml 后处理 wrapDiscardedEmphCode——MD 侧（processed）候选 = code 两侧
+        // 紧贴等长 run 的 **（strong）/*（em，run>=3 不判）；html 侧验证对应 mono
+        // span 两侧既非强调边界（</span>/<span，征用形态）也无字面 *（字面形态），
+        // 双条件交集才补包 <strong>/<em>。数量/内容核对失败 → 整体放弃（fail-safe）。
+
+        // ① 用户报告原句（整对丢弃 + 征用 + 字面 + 扁平化 strong 混合并存）：整行逐字节保真
+        {
+            const QString md = QString::fromUtf8(
+                "`unescapeHtmlEntities`**（约 **`:306-314`**）按「先 **`&lt;/&gt;`**、"
+                "最后 **`&amp;`**」顺序解码，**`toHtml`**侧代码块用 **`toHtmlEscaped()`**、"
+                "fromHtml 侧用 **`unescapeHtmlEntities`** 还原，**`if`**...**`&`**... "
+                "手动转序列（约 **`:2404`**）也成对。逻辑上构成了闭环，但\\*\\*是否在"
+                "所有路径上「转义恰好一次」\\*\\*未被多重往返测试锁定，个别路径"
+                "（如 **`==`**→**`&lt;mark&gt;`** 与实体转义之间的顺序、**`\\x01`** "
+                "与占位符与实体处理的交叉）存在累积转义 / 漏转义的理论风险。**");
+            const QString html = MarkdownHandler::toHtml(md);
+            // 整对丢弃的铁证修复：\x01 的 code 在 html 中被补包为 strong+code
+            QVERIFY2(html.contains(QStringLiteral("<strong><code>\\x01</code></strong>")),
+                     qPrintable("\\x01 应被补包 <strong><code>，实际:\n" + html));
+            const QString back = MarkdownHandler::fromHtml(html);
+            QCOMPARE(back, md);
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+        // ② 链中最小复现：b 与 \x01 的 ** 对补救；孤立 **（后跟标点）归一 \*\* 后收敛
+        {
+            const QString md = QStringLiteral("`a`**（约 **`b`**）也 、 **`\\x01`** 与 Y");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QVERIFY2(back.contains(QStringLiteral("**`b`**")),
+                     qPrintable("链中 b 的 ** 对应恢复，实际:\n" + back));
+            QVERIFY2(back.contains(QStringLiteral("**`\\x01`**")),
+                     qPrintable("链中 \\x01 的 ** 对应恢复，实际:\n" + back));
+            QVERIFY2(back.contains(QStringLiteral("`a`\\*\\*（约")),
+                     qPrintable("孤立 **（后跟标点）归一转义形态，实际:\n" + back));
+            const QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back));
+            QCOMPARE(back2, back);
+        }
+        // ③ em 链版本：单星整对丢弃同样补救
+        {
+            const QString md = QStringLiteral("`a`*（约 *`b`*）也 、 *`\\x01`* 与 Y");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QVERIFY2(back.contains(QStringLiteral("*`b`*")),
+                     qPrintable("链中 b 的 * 对应恢复，实际:\n" + back));
+            QVERIFY2(back.contains(QStringLiteral("*`\\x01`*")),
+                     qPrintable("链中 \\x01 的 * 对应恢复，实际:\n" + back));
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+        // ④ 征用哨兵：纯文本 strong 链夹心 code（html 两侧为 </strong>/<strong>
+        //    边界）——md4c 已正确配对，不得误包导致双重强调
+        {
+            const QString md = QStringLiteral("`c0`**约，**`c1`**按，**`c2`**别，**`c3`**看，**`c4`");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, md);
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+        // ⑤ 字面哨兵：closer 无 opener 的 ** 残留字面（html 有字面 *），不补包
+        {
+            const QString md = QString::fromUtf8("→**`mk`** 与");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, md);
+        }
+        // ⑥ 无标记 code：MD 侧无候选，零干预
+        {
+            const QString md = QString::fromUtf8("手写 unescapeHtmlEntities 与 `plain` 混排");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, md);
+        }
+        // ⑦ 表格共存：表格（占位符）内 code 不计入核对，链部分仍获补救
+        {
+            const QString md = QStringLiteral("`a`**（约 **`b`**）也 、 **`\\x01`** 与 Y\n\n"
+                                              "| 列A | 列B |\n|----|----|\n| `x` | **y** |");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QVERIFY2(back.contains(QStringLiteral("**`\\x01`**")),
+                     qPrintable("表格共存时链中 \\x01 仍应补救，实际:\n" + back));
+            QVERIFY(back.contains(QStringLiteral("| `x` |")));
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+        // ⑧ fail-safe：双反引号 run 使 MD/html span 数量核对失败 → 整体放弃补救
+        //    （回到修复前行为），不产生错误输出且多轮收敛
+        {
+            const QString md = QStringLiteral("`a`**（约 **``x`y``**）也 、 **`\\x01`** 与 Y");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QVERIFY(!back.contains(QStringLiteral("**`\\x01`**")));
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+        // ⑨ 无空格直接包裹（md4c 同样整对丢弃，html 两侧皆裸）：补包保真
+        {
+            const QString md = QStringLiteral("text**`c`**text");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(back, md);
+        }
+        // ⑩ run>=3（***）不判：嵌套形态保持现状（不误包 <strong><em> 组合）
+        {
+            const QString md = QStringLiteral("`a`***（约 ***`b`***）也 、 ***`\\x01`*** 与 Y");
+            const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+        }
+        // ⑪ 真实链路 seam：TipTap getHTML 把相邻 strong 合并为单个 strong 内嵌
+        //     code（ProseMirror 同 mark 相邻节点合并，vitest 已锁定 JS 侧形态）。
+        //     fromHtml 对该形态输出「大 strong 含 code」——与扁平化三段视觉等价
+        //     （code 在 strong 内本就不加粗渲染），多轮收敛；补包形态本身逐字节还原。
+        {
+            const QString merged = QStringLiteral("<p><strong>约，<code>c1</code>按，</strong></p>");
+            const QString md = MarkdownHandler::fromHtml(merged);
+            QCOMPARE(md, QStringLiteral("**约，`c1`按，**"));
+            QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md)), md);
+            QCOMPARE(MarkdownHandler::fromHtml(
+                         QStringLiteral("<p>、<strong><code>\\x01</code></strong> 与</p>")),
+                     QStringLiteral("、**`\\x01`** 与"));
+        }
+    }
+
+    void testMassInlineCodeRoundTrip()
+    {
+        // 海量行内代码（→ 海量 ZZ 占位符）不得崩溃：fromHtml 逆序还原曾把
+        // 全部占位符拼成一个巨型多选正则（ZZCD0ZZ|ZZCD1ZZ|…），约 2800+ 个
+        // 占位符时 PCRE2 编译超限 → invalid QRegularExpression → doMatch
+        // qFatal abort（进程直接崩溃）。大技术文档（数千行内代码）真实可触发。
+        // 修复：通用模式 ZZ[A-Z]+[0-9]+ZZ 单遍匹配 + 哈希查表；未命中的
+        // 用户字面 ZZ 形态文本保留原文（碰撞检测保证真占位符不与用户文本
+        // 同串，通用模式多匹配到的必然是用户字面，须原样保留）。
+        QString md;
+        md.reserve(5000 * 40);
+        for (int i = 0; i < 5000; ++i) {
+            md += QStringLiteral("段%1 含 `code%1` 行内代码。").arg(i);
+            if (i + 1 < 5000)
+                md += QStringLiteral("\n\n");
+        }
+        // 崩溃发生在 fromHtml（toHtml 正常完成）；进程 abort 即测试失败
+        const QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QCOMPARE(back, md);
+        // 防误删回归：用户字面 ZZ 形态文本不被通用模式匹配吞掉
+        const QString tricky = QStringLiteral("字面 ZZCD99999ZZ 与 `真code` 混排");
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(tricky)), tricky);
+    }
+
     void testLargeDocumentRoundTripBenchmark()
     {
         // 大文档（约 10k 行）往返计时基准：此前项目无任何性能基准，
