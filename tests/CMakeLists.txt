@@ -1,5 +1,13 @@
 find_package(Qt6 REQUIRED COMPONENTS Test Gui)
 
+# vendored QtMarkdownWriter 与 QTextDocument::toMarkdown() 的等价性回归
+# （上游同步防线，详见 docs/vendor-qt-markdown-writer.md）
+add_executable(test_qtmarkdownwriter test_qtmarkdownwriter.cpp
+    ../src/core/qt/QtMarkdownWriter.cpp)
+target_include_directories(test_qtmarkdownwriter PRIVATE ../src)
+target_link_libraries(test_qtmarkdownwriter PRIVATE Qt6::Test Qt6::Gui)
+add_test(NAME test_qtmarkdownwriter COMMAND test_qtmarkdownwriter)
+
 add_executable(test_editorbridge test_editorbridge.cpp ../src/core/EditorBridge.cpp)
 target_include_directories(test_editorbridge PRIVATE ../src)
 target_link_libraries(test_editorbridge PRIVATE Qt6::Test Qt6::Gui)
