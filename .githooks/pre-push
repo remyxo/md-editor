@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# git pre-push 钩子：改动含 C++ 时做跨平台编译预检（容器 clang + win11 KVM MSVC）
+# 一次性启用：git config core.hooksPath .githooks（本机生效，换机需重跑）
+# 逃生门：git push --no-verify 或 MD_EDITOR_SKIP_PRECHECK=1
+# 自测：MD_EDITOR_PRECHECK_DRY_RUN=1 只打印触发决策，不执行检查
+set -u
+REPO=$(git rev-parse --show-toplevel) || exit 0
+ZERO=0000000000000000000000000000000000000000
+PATTERN='(\.(cpp|c|h|hpp|qrc|cmake)$|(^|/)CMakeLists\.txt$)'
+
+say()  { printf '\033[36m[pre-push] %s\033[0m\n' "$*"; }
+warn() { printf '\033[33m[pre-push] %s\033[0m\n' "$*" >&2; }
+
+[ "${MD_EDITOR_SKIP_PRECHECK:-0}" = "1" ] && { warn "MD_EDITOR_SKIP_PRECHECK=1，跳过预检"; exit 0; }
+
+# ---- 1. 汇总所有待推引用的改动集（多引用取并集）----
+changed=$(
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        [ "$local_sha" = "$ZERO" ] && continue   # 删除引用，无新内容
+        commit=$(git rev-parse --verify -q "${local_sha}^{commit}" 2>/dev/null) || {
+            warn "无法把 $local_ref 解引用到 commit（$local_sha），该引用不计入改动集"
+            continue
+        }
+        if [ "$remote_sha" = "$ZERO" ]; then     # 新分支/新 tag：与 origin/master 比
+            base=$(git merge-base "$commit" origin/master 2>/dev/null) || {
+                warn "$local_ref 与 origin/master 无共同祖先，不计入改动集"
+                continue
+            }
+        else
+            base=$remote_sha
+        fi
+        git diff --name-only "$base" "$commit"
+    done
+)
+
+# ---- 2. 改动集不含 C++ 相关 → 秒过 ----
+if ! printf '%s\n' "$changed" | grep -Eq "$PATTERN"; then
+    say "改动不含 C++ 源/构建文件，跳过预检"
+    exit 0
+fi
+count=$(printf '%s\n' "$changed" | grep -Ec "$PATTERN")
+say "改动含 C++ 相关文件（$count 个），执行推送前预检"
+
+if [ "${MD_EDITOR_PRECHECK_DRY_RUN:-0}" = "1" ]; then
+    say "[dry-run] 将执行：verify-clang.sh → build-windows-local.sh --compile-only"
+    exit 0
+fi
+
+# ---- 3. 检查一：容器 clang 语法（快，失败即止不浪费 VM 启动）----
+say "检查 1/2：clang 语法检查（容器）"
+"$REPO/scripts/verify-clang.sh"
+rc=$?
+if [ "$rc" -eq 1 ]; then
+    warn "clang 语法检查未通过——推送已阻断（git push --no-verify 可强推）"
+    exit 1
+elif [ "$rc" -ne 0 ]; then
+    warn "clang 检查环境不可用（exit $rc），跳过该环节"
+fi
+
+# ---- 4. 检查二：win11 KVM MSVC 编译 ----
+say "检查 2/2：Windows MSVC 编译（VM）"
+"$REPO/scripts/build-windows-local.sh" --compile-only
+rc=$?
+if [ "$rc" -eq 75 ]; then
+    warn "Windows VM 环境不可用，跳过该环节"
+elif [ "$rc" -ne 0 ]; then
+    warn "MSVC 编译失败（exit $rc）——推送已阻断（git push --no-verify 可强推）"
+    exit 1
+fi
+
+say "预检通过"
+exit 0

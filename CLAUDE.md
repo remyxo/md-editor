@@ -119,6 +119,14 @@ make -j$(nproc)
 ctest --output-on-failure
 ```
 
+## 推送前预检（pre-push 钩子）
+
+- 一次性启用（本机生效，换机需重跑）：`git config core.hooksPath .githooks`
+- 改动含 C++（src/构建文件）时 push 前自动：容器 clang 语法检查（`scripts/verify-clang.sh`，镜像 `mdeditor-clang:trixie`）+ win11 VM MSVC 编译（`scripts/build-windows-local.sh --compile-only`）；无 C++ 改动秒过
+- 编译错误硬阻断；环境故障（docker/镜像/VM/ssh）警告放行
+- 逃生门：`git push --no-verify` 或 `MD_EDITOR_SKIP_PRECHECK=1`
+- clang 镜像构建：`docker build -t mdeditor-clang:trixie -f scripts/docker/Dockerfile.mdeditor-clang scripts/docker/`
+
 ## 已知问题 & 待完善
 
 - PDF 导出页眉页脚/页码尚未实现（`PdfExporter` 已支持页边距与方向）
