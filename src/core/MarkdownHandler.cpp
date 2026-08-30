@@ -1479,7 +1479,7 @@ static void wrapDiscardedEmphCode(QString &html, const QString &processed)
                         kind = (leftRun == 2) ? 1 : 2;
                 }
             }
-            mdSpans.append({m.capturedStart(1), m.capturedEnd(1), kind});
+            mdSpans.append({int(m.capturedStart(1)), int(m.capturedEnd(1)), kind});
         }
     }
     bool anyCand = false;
@@ -1501,7 +1501,7 @@ static void wrapDiscardedEmphCode(QString &html, const QString &processed)
         auto it = monoRe.globalMatch(html, bodyStart);
         while (it.hasNext()) {
             const QRegularExpressionMatch m = it.next();
-            hspans.append({m.capturedStart(), m.capturedEnd(), m.captured(1)});
+            hspans.append({int(m.capturedStart()), int(m.capturedEnd()), m.captured(1)});
         }
     }
     // 数量与内容逐一核对；不一致 → 放弃（复杂形态整体 fail-safe，见函数头注释）
@@ -2559,8 +2559,10 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                 "\\bfont-weight\\s*:\\s*700\\b");
             static const QRegularExpression italicStyleRe(
                 "\\bfont-style\\s*:\\s*italic\\b");
+            // static const 正则不可出现在捕获列表（MSVC C3495 / Clang 报错，
+            // GCC 扩展容忍——Linux 测不出），静态存储变量体内直接引用即可
             globalReplaceWith(html, lineThroughSpanRe,
-                [&styleAttrRe, &boldStyleRe, &italicStyleRe]
+                []
                 (const QRegularExpressionMatch &m) {
                     QString content = m.captured(1);
                     QString replacement = QStringLiteral("<s>%1</s>").arg(content);
@@ -2650,7 +2652,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             QStringLiteral("<span\\b[^>]*\\bfont-weight\\s*:\\s*700[^>]*>(.*?)</span>"),
             QRegularExpression::DotMatchesEverythingOption);
         globalReplaceWith(html, tableFirstRowRe,
-            [&fwSpanRe](const QRegularExpressionMatch &m) {
+            [](const QRegularExpressionMatch &m) {
                 QString rowContent = m.captured(2);
                 rowContent.replace(fwSpanRe, "\\1");
                 return m.captured(1) + rowContent + m.captured(3);
@@ -2755,7 +2757,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         // 单遍重建：需转义语义标签的 span 替换，其余原样保留（m.captured()），
         // 替代 while(true) match + html.replace（O(K·n) → O(n)）。
         globalReplaceWith(html, spanStyleRe,
-            [&boldStyleRe, &italicStyleRe, &colorStyleRe, &bgColorStyleRe]
+            []
             (const QRegularExpressionMatch &m) {
                 QString style = m.captured(1);
                 QString content = m.captured(2);
@@ -2791,7 +2793,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             QRegularExpression::DotMatchesEverythingOption);
         static const QRegularExpression spanOpenRe("<span\\b[^>]*>");
         globalReplaceWith(html, linkTagRe,
-            [&spanOpenRe](const QRegularExpressionMatch &m) {
+            [](const QRegularExpressionMatch &m) {
                 QString inner = m.captured(2);
                 inner.remove(spanOpenRe);
                 inner.remove("</span>");
@@ -2875,7 +2877,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         // （矩阵回归 mark(sub(sup)) 抓获）。置于 escAware 后按段应用：code span
         // 段仍走全量 esc 保持字面；转义 \^ 已是 ZZED 占位符（无裸 ^）不误触发。
         static const QRegularExpression supPairRe("\\^([^\\^\\n]+?)\\^");
-        auto segToHtml = [&escAware, &supPairRe](const QString &seg) {
+        auto segToHtml = [&escAware](const QString &seg) {
             return escAware(seg).replace(supPairRe, QStringLiteral("<sup>\\1</sup>"));
         };
         static const QRegularExpression codeRe("`([^`]+)`");
