@@ -80,6 +80,12 @@ if [ "$rc" -eq 0 ]; then
         sleep 1
     done
 else
+    # rc 90 = VM 内构建环境故障（build-windows-vm.ps1 与 launch 脚本的 virtiofs 共享缺失等）、rc 255 = ssh 会话层故障：非编译错误，预检模式放行
+    if [ "$rc" -eq 90 ]; then
+        die_precheck "VM 内构建环境故障（exit $rc，virtiofs 共享/launch 环境）"
+    elif [ "$rc" -eq 255 ]; then
+        die_precheck "ssh 会话层故障（exit $rc）"
+    fi
     die "构建失败（exit $rc），见上方日志"
 fi
 exit "$rc"

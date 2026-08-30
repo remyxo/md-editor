@@ -41,6 +41,11 @@ fi
 count=$(printf '%s\n' "$changed" | grep -Ec "$PATTERN")
 say "改动含 C++ 相关文件（$count 个），执行推送前预检"
 
+# 两项检查读的都是当前工作区（容器挂 $REPO、VM 读 virtiofs 共享）而非待推提交：工作区有未提交 C++ 改动时结果可能与推送内容不符，仅警告不阻断
+if git diff --name-only HEAD | grep -Eq "$PATTERN"; then
+    warn "工作区有未提交的 C++ 改动——预检检查的是当前工作区而非待推提交，结果可能与推送内容不符"
+fi
+
 if [ "${MD_EDITOR_PRECHECK_DRY_RUN:-0}" = "1" ]; then
     say "[dry-run] 将执行：verify-clang.sh → build-windows-local.sh --compile-only"
     exit 0

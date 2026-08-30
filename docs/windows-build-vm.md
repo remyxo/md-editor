@@ -64,7 +64,7 @@ virsh -c qemu:///system shutdown win11   # 若在运行
 - 预检模式：`./scripts/build-windows-local.sh --compile-only` 只配置+编译（跳过图标与打包），
   pre-push 钩子自动调用（见 `.githooks/pre-push` 与 spec
   `docs/superpowers/specs/2026-08-30-prepush-cross-compile-verify-design.md`）；
-  环境故障（virsh/ssh）exit 75 放行，MSVC 编译失败退出码透传
+  环境故障（virsh/ssh）exit 75 放行；MSVC 编译失败日志透传、包装器统一 exit 1（预检模式下 VM 内环境故障 exit 90/255 放行为 75）
 - 增量构建 <1 分钟；冷构建（改 CMake/全量）约 10-15 分钟（6 vCPU）
 - 构建期间宿主剩 ~9-10G 内存（另有 15G swap），避免同时跑本地大编译
 - 环境变量：`MD_EDITOR_WIN_SSH`（ssh 目标）、`MD_EDITOR_WIN_WAIT`（ssh 等待秒数）
@@ -85,7 +85,7 @@ virsh -c qemu:///system shutdown win11   # 若在运行
 | guest 覆盖宿主属主旧文件失败（如 `.ico`、`dist/`） | 构建脚本会先删 `.ico`；`dist/` 若是宿主侧建的旧目录，宿主 `rm -rf dist` 后重试 |
 | NSIS 报 `Bad text encoding` 或 makensis 打印用法退出 1 | nsi 是 UTF-8 无 BOM，中文系统（ACP=GBK）的 makensis 3.10 默认按 GBK 读会报前者。脚本已带 `/INPUTCHARSET UTF8` 修复；注意该参数值与选项**空格分隔**，写成 `/INPUTCHARSET=UTF8` 会被当未知参数直接打印用法退出 |
 | 版本号不对 | 打包脚本从 `CMakeLists.txt` 读版本，与 CI 同源 |
-| 构建失败 | 退出码与日志原样透传到宿主终端，按 MSVC 常规错误处理 |
+| 构建失败 | 日志透传到宿主终端、包装器统一 exit 1（MSVC 退出码见错误消息）；预检模式下 VM 内环境故障 exit 90/255 放行为 75；按 MSVC 常规错误处理 |
 | 改了含中文的 .ps1 后 VM 里行为怪异（报错行号对不上、某条命令"消失"） | Windows PowerShell 5.1 读**无 BOM** 的 .ps1 按 GBK 解码，中文注释尾字节可能吞掉换行导致行粘连（CI 用 pwsh 默认 UTF-8，无此问题）。仓库 .ps1 必须存成 UTF-8 带 BOM |
 | 重装后图标仍是旧版（如白角）但 exe 内嵌图标已验证正确 | Windows 图标缓存按路径缓存且**落盘**——实测仅重启 VM 不会清除（重启后依旧白角），必须删 `%LOCALAPPDATA%\IconCache.db` 与 `%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*` 后重启 explorer（或重启 VM）才重新提取。物理机同理（2026-08-22 VM 实测生效，机制与机器无关）。PowerShell 下执行：`taskkill /f /im explorer.exe; Remove-Item -Force "$env:LOCALAPPDATA\IconCache.db" -ErrorAction SilentlyContinue; Remove-Item -Force "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\iconcache_*"; Start-Process explorer.exe`。**注意 `del /a /f /q` 是 cmd 语法，PowerShell 里 `del` 是 `Remove-Item` 别名，不认这些开关会报 ParameterBindingException**——要么用上面的 `Remove-Item`，要么切到 cmd 用 `del /a /f /q "%LOCALAPPDATA%\...\iconcache_*"`。验证 exe 图标是否真有问题：`[System.Drawing.Icon]::ExtractAssociatedIcon('<exe>').ToBitmap().GetPixel(0,0).A`，0 为透明 |
 

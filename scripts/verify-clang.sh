@@ -65,9 +65,10 @@ if not cmds:
     print("compile_commands.json 中没有 src/ 下的 .cpp 条目", file=sys.stderr); sys.exit(1)
 open(os.path.join(work, "commands.txt"), "w").write("\n".join(cmds) + "\n")
 open(os.path.join(work, "files.txt"), "w").write("\n".join(files) + "\n")
+# 并行上限 8：多核低内存主机防止单 TU 被 OOM 杀掉后空日志硬阻断
 open(os.path.join(work, "run.sh"), "w").write(
     "#!/bin/bash\n"
-    "xargs -d '\\n' -P \"$(nproc)\" -n1 sh -c 'eval \"$0\"' < " + shlex.quote(os.path.join(work, "commands.txt")) + "\n"
+    "xargs -d '\\n' -P 8 -n1 sh -c 'eval \"$0\"' < " + shlex.quote(os.path.join(work, "commands.txt")) + "\n"
     "[ ! -f " + shlex.quote(os.path.join(work, "failed.idx")) + " ]\n")
 PYEOF
 
