@@ -58,9 +58,11 @@ git push
 
 ### 2. `scripts/verify-clang.sh`（新增）
 
-- 前置：`sudo apt install clang`（一次性，写入文档；宿主 Qt6 头文件已有）
-- `cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` 幂等重配置（复用现有缓存，不改变其他缓存变量）
-- 解析 `build/compile_commands.json`，对 **src/ 下全部 .cpp**（与 Windows/macOS CI 编译范围一致）执行 `clang++ -fsyntax-only <该文件的完整编译参数>`；任一文件诊断失败即整体失败，输出首个失败的文件与诊断
+- **clang 跑在 Docker 容器内**（镜像 `mdeditor-clang:trixie`，基于 debian:trixie 内装 clang 19.1.7 + libstdc++-14-dev + Qt6 dev 头文件）：
+  2026-08-30 验证发现本机存在**内核级页缓存/mmap 跨文件串页缺陷**——宿主 clang 读宿主 `/usr/include` 时缓冲区内容跨文件错乱（GCC 走 `read()` 路径幸免，容器用自己的 overlayfs 文件页亦幸免；同版本包在容器内完全正常）。因此预检不能依赖宿主 clang 直读宿主系统头文件
+- 镜像一次性构建（`docker build` 或 docker commit 流程写入文档，docker.m.daocloud.io 镜像源拉基础镜像）；`verify-clang.sh` 启动时检查镜像存在，缺失则打印构建命令并以「环境不可用」放行
+- 宿主侧：`cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` 幂等重配置（复用现有缓存）
+- 解析 `build/compile_commands.json`，把 **src/ 下全部 .cpp** 的编译参数转成容器内路径（仓库只读挂载），在容器内执行 `clang++ -fsyntax-only <完整编译参数>`；任一文件诊断失败即整体失败，输出首个失败的文件与诊断
 - compile_commands 由 GCC 配置生成，个别 GCC 专用旗标若干扰 clang，在脚本内过滤白名单处理（实现时验证）
 - 并行执行（xargs -P）控制总时长在 ~1 分钟内
 
@@ -80,7 +82,7 @@ git push
 | 情形 | 处置 |
 |------|------|
 | clang / MSVC 编译错误 | 硬阻断（exit 1），错误摘要 + 日志位置透传 |
-| clang 未安装 / compile_commands 生成失败 | 警告放行（exit 75 语义），提示安装命令 |
+| docker 未装 / 镜像缺失 / compile_commands 生成失败 | 警告放行（exit 75 语义），提示镜像构建命令 |
 | VM virsh 连不上 / 启动失败 / SSH 超时 | 警告放行，提示排查入口（`docs/windows-build-vm.md` 故障表） |
 | 用户明确跳过 | `--no-verify` / `MD_EDITOR_SKIP_PRECHECK=1` |
 | 多引用同推 | 改动集取并集 |
@@ -97,4 +99,5 @@ git push
 - 首次冷路径时延：VM 开机 40s + SSH 等待 + 增量编译 ≈ 1.5–3 分钟；VM 保持开机则 ~1 分钟（文档已建议保持开机）
 - `compile_commands.json` 依赖 build/ 已配置过一次；全新 clone 首跑多 ~20s 配置，之后缓存
 - 钩子仅本机生效（core.hooksPath 是本地配置）；换机需重新启用一次——文档写明
-- clang 版本与 macOS CI 的 Apple Clang 版本不同，诊断不完全等价，但「标准合规性」轴（捕获规则、收窄）一致，覆盖事故级问题足够
+- clang 版本与 macOS CI 的 Apple Clang 版本不同，诊断不完全等价，但「标准合规性」轴（捕获规则、收窄）一致，覆盖事故级问题足够（2026-08-30 已实测：容器内 clang 19.1.7 对两类事故写法分别报 `cannot be captured because it does not have automatic storage duration` 与 `cannot be narrowed from type 'long' to 'int'`，全部拦截）
+- 宿主机内核页缓存缺陷（2026-08-30 取证结论）：宿主 `/usr` 文件页在 mmap 读时跨文件串页，任何直读宿主系统头文件的 clang 均不可用；容器方案是规避手段。若未来内核更新后宿主 clang 恢复正常，可改回宿主直跑（脚本留开关）
