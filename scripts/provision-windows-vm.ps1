@@ -262,6 +262,7 @@ $launch = @'
 # 宿主 ssh 触发的固定入口：按卷标定位仓库共享，再执行其 scripts\build-windows-vm.ps1
 # 注意：virtiofs 卷不出现在 Get-Volume，用 Win32_LogicalDisk 探测；
 #      限定 FileSystem='VirtIO-FS' 排除原服务抢挂时留下的 NTFS 假盘
+param([switch]$CompileOnly)
 $ErrorActionPreference = "Stop"
 $dev = (Get-CimInstance Win32_LogicalDisk -Filter "VolumeName='md-editor-src' AND FileSystem='VirtIO-FS'" -ErrorAction SilentlyContinue |
         Select-Object -First 1).DeviceID
@@ -269,7 +270,7 @@ if (-not $dev) {
     Write-Error "找不到卷标 md-editor-src（VirtioFsSvc2 服务是否运行？）"
     exit 90
 }
-. ($dev + '\scripts\build-windows-vm.ps1')
+. ($dev + '\scripts\build-windows-vm.ps1') -CompileOnly:$CompileOnly
 '@
 Set-Content -Path 'C:\md-editor-build-launch.ps1' -Value $launch -Encoding UTF8
 Ok "已生成"

@@ -1,7 +1,8 @@
 ﻿# guest 内构建脚本：由宿主 scripts/build-windows-local.sh 经 ssh 触发（经 C:\md-editor-build-launch.ps1），也可在 VM 里手动运行
 # 前置：provision-windows-vm.ps1 已跑过（工具链就绪）
 param(
-    [string]$SrcRoot = ""   # 仓库共享根目录；为空时按卷标 md-editor-src 自动定位
+    [string]$SrcRoot = "",     # 仓库共享根目录；为空时按卷标 md-editor-src 自动定位
+    [switch]$CompileOnly       # 预检模式：只配置+编译，跳过图标生成与打包（pre-push 钩子用）
 )
 $ErrorActionPreference = "Stop"
 
@@ -33,11 +34,13 @@ $env:Path = "$qtDir\bin;$env:Path"
 $env:CMAKE_PREFIX_PATH = "$qtDir"
 $magick = Get-ChildItem "$env:ProgramFiles\ImageMagick-*\magick.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($magick) { $env:Path = "$($magick.Directory);$env:Path" }
-else         { Write-Error "未找到 magick.exe（provision 步骤 5）"; exit 1 }
+elseif (-not $CompileOnly) { Write-Error "未找到 magick.exe（provision 步骤 5）"; exit 1 }
 
 # ---- 4. 应用图标（内容有变才替换、mtime 不动则 ninja 无需重编 .rc，见 generate-icons-win.ps1；
-#      勿在此预删旧 ico——会把 hash 跳过分支打掉，每次都重链 exe）----
-& (Join-Path $SrcRoot 'scripts\generate-icons-win.ps1')
+#      勿在此预删旧 ico——会把 hash 跳过分支打掉，每次都重链 exe；-CompileOnly 跳过）----
+if (-not $CompileOnly) {
+    & (Join-Path $SrcRoot 'scripts\generate-icons-win.ps1')
+}
 
 # ---- 5. 配置 + 构建（build 在 D: 本地盘，源码在共享卷 W:，provision 已钉死盘符）----
 # 缓存守卫：CMake 缓存内嵌绝对源路径，与当前源路径不符（盘符漂移的历史遗留，或
@@ -63,8 +66,12 @@ try {
     if ($LASTEXITCODE -ne 0) { Write-Error "构建失败 (exit $LASTEXITCODE)"; exit $LASTEXITCODE }
 
     # ---- 6. 打包：windeployqt → 便携 zip + NSIS 安装器（产物落共享卷 dist\ = 宿主仓库 dist/）----
-    Write-Host "==> 打包"
-    & (Join-Path $SrcRoot 'scripts\package-windows.ps1') -BuildDir 'D:\build'
+    if (-not $CompileOnly) {
+        Write-Host "==> 打包"
+        & (Join-Path $SrcRoot 'scripts\package-windows.ps1') -BuildDir 'D:\build'
+    } else {
+        Write-Host "==> 编译通过（-CompileOnly，跳过打包）"
+    }
 } finally {
     Pop-Location
 }

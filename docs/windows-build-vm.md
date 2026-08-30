@@ -61,6 +61,10 @@ virsh -c qemu:///system shutdown win11   # 若在运行
 ./scripts/build-windows-local.sh          # 全流程：开机(若关) → 构建 → 产物在 dist/
 ```
 
+- 预检模式：`./scripts/build-windows-local.sh --compile-only` 只配置+编译（跳过图标与打包），
+  pre-push 钩子自动调用（见 `.githooks/pre-push` 与 spec
+  `docs/superpowers/specs/2026-08-30-prepush-cross-compile-verify-design.md`）；
+  环境故障（virsh/ssh）exit 75 放行，MSVC 编译失败退出码透传
 - 增量构建 <1 分钟；冷构建（改 CMake/全量）约 10-15 分钟（6 vCPU）
 - 构建期间宿主剩 ~9-10G 内存（另有 15G swap），避免同时跑本地大编译
 - 环境变量：`MD_EDITOR_WIN_SSH`（ssh 目标）、`MD_EDITOR_WIN_WAIT`（ssh 等待秒数）
