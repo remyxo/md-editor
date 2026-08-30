@@ -1,0 +1,16 @@
+# clang 语法预检镜像（git pre-push 钩子用，见 scripts/verify-clang.sh）
+# 构建：docker build -t mdeditor-clang:trixie -f scripts/docker/Dockerfile.mdeditor-clang scripts/docker/
+# 基础镜像走 daocloud 镜像源（宿主直连 docker hub 卡死）
+# Qt dev 包与 CLAUDE.md「环境要求」一致，保证 src/ 全部 .cpp 的 #include 可解析
+FROM docker.m.daocloud.io/library/debian:trixie
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        clang \
+        libstdc++-14-dev \
+        qt6-base-dev \
+        qt6-webchannel-dev \
+        qt6-webengine-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 自检：clang 与 Qt 头文件就位（构建期失败即镜像不可用）
+RUN clang++ --version && test -d /usr/include/x86_64-linux-gnu/qt6/QtCore
