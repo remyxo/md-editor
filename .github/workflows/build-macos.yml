@@ -80,6 +80,15 @@ jobs:
     - name: 打包 dmg (macdeployqt + 签名)
       run: ./scripts/package-macos.sh
 
+    # Release 先于制品上传：制品上传受存储配额约束（重算 6-12h 滞后），
+    # 上传失败不应连坐阻断 Release（与 build-windows/deb 一致）
+    - name: 发布 Release（tag 推送时）
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: md-editor-*-macos-universal.dmg
+        generate_release_notes: true
+
     - name: 上传制品
       if: startsWith(github.ref, 'refs/tags/v')
       uses: actions/upload-artifact@v7
@@ -87,10 +96,3 @@ jobs:
         name: md-editor-macos
         path: md-editor-*-macos-universal.dmg
         retention-days: 14
-
-    - name: 发布 Release（tag 推送时）
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v2
-      with:
-        files: md-editor-*-macos-universal.dmg
-        generate_release_notes: true

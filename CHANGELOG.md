@@ -25,6 +25,9 @@
 - **大文档往返性能** — `globalReplaceWith` 单遍重建、占位符集合判重、循环内固定模式正则提升为 static、多趟逆序还原：10k 行文档往返 ~28s → ~500ms
 - **切标签页时状态栏行列未刷新** — 切回已加载标签页只触发格式同步无光标事件，行列停留旧值。修复：`syncFormatState` 主动上报当前 selection.head，同步状态栏行列与大纲高亮
 
+### 变更
+- **Windows 便携 zip 不再分发** — Release 仅保留安装器 exe / macOS dmg / Linux deb；NSIS 安装器已覆盖安装需求，zip 制品（139MB/版）是 Actions 制品存储配额（免费版 500MB）超限主因
+
 ## [0.12.4] — 2026-08-23
 
 ### 新增

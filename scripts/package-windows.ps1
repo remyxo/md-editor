@@ -1,10 +1,13 @@
 ﻿# Windows 打包：windeployqt 捆绑 Qt → 便携 zip + NSIS 安装器
-# 用法: .\scripts\package-windows.ps1 [-Version <版本号>] [-BuildDir <构建目录>]
+# 用法: .\scripts\package-windows.ps1 [-Version <版本号>] [-BuildDir <构建目录>] [-SkipZip]
 #   -BuildDir：本地 VM 构建时 build 在 D:\build（见 docs/windows-build-vm.md）；
 #              不传则用仓库内 build\（CI 行为，保持不变）
+#   -SkipZip：跳过便携 zip 只产 NSIS 安装器（CI 用：Release 分发只保留 exe，
+#              zip 制品占 139MB 是 Actions 500MB 存储配额超限主因）
 param(
     [string]$Version = "",
-    [string]$BuildDir = ""
+    [string]$BuildDir = "",
+    [switch]$SkipZip
 )
 $ErrorActionPreference = "Stop"
 
@@ -52,10 +55,12 @@ Write-Host "PE 子系统校验: GUI (2) 通过"
 & windeployqt --release --compiler-runtime --no-translations (Join-Path $dist "md-editor.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败 (exit $LASTEXITCODE)" }
 
-# 4. 便携 zip（与 NSIS 安装器统一落 dist\，不散在仓库根）
-$zip = Join-Path $root "dist\md-editor-$Version-win64.zip"
-if (Test-Path $zip) { Remove-Item $zip }
-Compress-Archive -Path (Join-Path $dist "*") -DestinationPath $zip
+# 4. 便携 zip（与 NSIS 安装器统一落 dist\，不散在仓库根；-SkipZip 跳过）
+if (-not $SkipZip) {
+    $zip = Join-Path $root "dist\md-editor-$Version-win64.zip"
+    if (Test-Path $zip) { Remove-Item $zip }
+    Compress-Archive -Path (Join-Path $dist "*") -DestinationPath $zip
+}
 
 # 5. NSIS 安装器（在仓库根目录运行，nsi 内相对路径依赖此 CWD）
 #    定位 makensis：choco 装到 Program Files (x86)\NSIS，常不在 PATH，需显式解析

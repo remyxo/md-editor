@@ -56,6 +56,15 @@ jobs:
         echo "=== 生成的 DEB 包 ==="
         ls -lh *.deb
 
+    # Release 先于制品上传：制品上传受存储配额约束（重算 6-12h 滞后），
+    # 上传失败不应连坐阻断 Release（与 build-windows/macos 一致）
+    - name: 发布 Release（tag 推送时）
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: build/*.deb
+        generate_release_notes: true
+
     - name: 上传 DEB 制品
       if: startsWith(github.ref, 'refs/tags/v')
       uses: actions/upload-artifact@v7
@@ -63,10 +72,3 @@ jobs:
         name: md-editor-deb
         path: build/*.deb
         retention-days: 14
-
-    - name: 发布 Release（tag 推送时）
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v2
-      with:
-        files: build/*.deb
-        generate_release_notes: true

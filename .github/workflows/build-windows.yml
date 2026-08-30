@@ -55,25 +55,24 @@ jobs:
       shell: pwsh
       run: cmake --build build
 
-    - name: 打包 (便携 zip + NSIS 安装器)
+    - name: 打包 (NSIS 安装器)
       shell: pwsh
-      run: ./scripts/package-windows.ps1
+      run: ./scripts/package-windows.ps1 -SkipZip
+
+    # Release 发布先于制品上传：Release 走 dist/ 文件直传（无 500MB 配额），
+    # 制品上传受 Actions 存储配额约束且配额重算有 6-12h 滞后，
+    # 若上传失败不应连坐阻断 Release（上传仅为 CI 侧留档）
+    - name: 发布 Release（tag 推送时）
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/md-editor-*-win64.exe
+        generate_release_notes: true
 
     - name: 上传制品
       if: startsWith(github.ref, 'refs/tags/v')
       uses: actions/upload-artifact@v7
       with:
         name: md-editor-windows
-        path: |
-          dist/md-editor-*-win64.zip
-          dist/md-editor-*-win64.exe
+        path: dist/md-editor-*-win64.exe
         retention-days: 14
-
-    - name: 发布 Release（tag 推送时）
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          dist/md-editor-*-win64.zip
-          dist/md-editor-*-win64.exe
-        generate_release_notes: true
