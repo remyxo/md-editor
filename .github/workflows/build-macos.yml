@@ -1,11 +1,11 @@
 name: Build macOS Package
 
+# 仅手动触发：macOS runner 按 10× 倍率计费（Free 额度杀手），
+# 日常 push 只构建 DEB/Windows，发布 macOS 包时手动跑：
+#   gh workflow run build-macos.yml --ref <tag 或 master>
+# 选 tag ref 时 Release/制品步骤照常生效
 on:
-  push:
-    branches: [master, main]
-    tags: ['v*']
-  pull_request:
-    branches: [master, main]
+  workflow_dispatch:
 
 permissions:
   contents: write
