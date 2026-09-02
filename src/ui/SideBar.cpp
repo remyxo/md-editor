@@ -6,6 +6,7 @@
 #include <QSplitter>
 #include <QPropertyAnimation>
 #include <QShowEvent>
+#include <QSignalBlocker>
 
 SideBar::SideBar(QWidget *parent)
     : QWidget(parent)
@@ -91,6 +92,31 @@ void SideBar::setFileTreeVisible(bool visible)
 void SideBar::setOutlineVisible(bool visible)
 {
     m_outlineSection->setCollapsed(!visible);
+}
+
+// 启动恢复面板可见性（MainWindow 读 QSettings 后调用）。必须用 QSignalBlocker
+// 阻断 collapsedChanged 信号链直置状态：构造期 splitter 尺寸未定形，
+// rememberExpandedSizes 会把垃圾比例存进 m_savedSplitSizes（用户重开目录树时
+// 恢复出坏比例）；且启动不需要收起动画。末尾统一发 visibleChanged 信号，
+// 供 MainWindow 同步菜单勾选与持久化。
+void SideBar::applyInitialPanes(bool fileTree, bool outline)
+{
+    const QSignalBlocker fileBlocker(m_fileSection);
+    const QSignalBlocker outlineBlocker(m_outlineSection);
+    m_fileSection->setCollapsed(!fileTree, false);   // 无动画重载
+    m_outlineSection->setCollapsed(!outline, false);
+    m_fileTreeVisible = fileTree;
+    m_outlineVisible = outline;
+    m_openFolderBtn->setVisible(fileTree);
+    updateSectionOrder();   // 恢复「大纲收起+目录树展开」时交换面板顺序
+    m_wholeCollapsed = !fileTree && !outline;
+    if (m_wholeCollapsed) { // 复现全收态：无动画直接置隐藏
+        setMaximumWidth(0);
+        setMinimumWidth(0);
+        setVisible(false);
+    }
+    emit fileTreeVisibleChanged(fileTree);
+    emit outlineVisibleChanged(outline);
 }
 
 // 两面板全收 → 侧边栏宽度收起；任一面板展开（从全收态）→ 宽度展开

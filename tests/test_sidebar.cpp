@@ -21,6 +21,10 @@ private slots:
     void header_collapse_triggers_whole_collapse();   // 标题栏点击收起两面板 → 宽度收起
     void header_collapse_emits_visibility_signals();  // 标题栏点击 → visibleChanged 信号
     void whole_collapse_hides_widget();               // 全收完成 setVisible(false)，编辑区可回填；重开恢复可见
+    void restore_collapses_file_tree_only();  // 启动恢复：只显示大纲，按钮隐藏
+    void restore_all_off_hides_sidebar();     // 启动恢复：全收 → 侧边栏隐藏
+    void restore_then_reopen_keeps_ratio();   // 恢复收起后重开目录树，比例未被污染
+    void restore_emits_signals();             // 恢复发 visibleChanged 信号（菜单同步依赖）
 private:
     CollapsibleSection *fileSection(const SideBar &sb) const;
     CollapsibleSection *outlineSection(const SideBar &sb) const;
@@ -255,6 +259,64 @@ void TestSideBar::header_collapse_emits_visibility_signals()
     outlineHeader->click();
     QCOMPARE(outlineSpy.count(), 1);
     QCOMPARE(outlineSpy.takeFirst().at(0).toBool(), false);
+}
+
+// === 启动恢复（applyInitialPanes）：MainWindow 读 QSettings 后调用 ===
+
+// 恢复「只显示大纲」：目录树收起、按钮隐藏、不触发整体收起
+void TestSideBar::restore_collapses_file_tree_only()
+{
+    SideBar sb;
+    sb.applyInitialPanes(false, true);
+    sb.show();
+    QVERIFY(fileSection(sb)->isCollapsed());
+    QVERIFY(!outlineSection(sb)->isCollapsed());
+    QVERIFY(!openBtn(sb)->isVisibleTo(&sb));  // 「打开文件夹」跟随目录树隐藏
+    QTest::qWait(400);
+    QVERIFY(sb.isVisible());
+    QVERIFY(sb.maximumWidth() != 0);          // 单面板收起不触发整体收起
+    QVERIFY(sb.width() > 0);
+}
+
+// 恢复「全收」：侧边栏直接隐藏（无动画）。SideBar 须挂父 widget——顶层直接
+// sb.show() 会强行覆盖预置的 setVisible(false)，与真实应用「子 widget 显隐
+// 标记」语义不符。
+void TestSideBar::restore_all_off_hides_sidebar()
+{
+    QWidget parent;
+    auto *sb = new SideBar(&parent);
+    sb->applyInitialPanes(false, false);
+    QCOMPARE(sb->maximumWidth(), 0);
+    parent.show();
+    QVERIFY(!sb->isVisibleTo(&parent));       // 父显示不拉起侧边栏（显隐标记生效）
+}
+
+// 关键回归：构造期（未布局）恢复收起 → show → 再展开目录树，大纲仍占大头。
+// 证明 m_savedSplitSizes 未被构造期垃圾尺寸污染（若污染，恢复出坏比例）。
+void TestSideBar::restore_then_reopen_keeps_ratio()
+{
+    SideBar sb;
+    sb.applyInitialPanes(false, true);
+    sb.show();
+    QTest::qWait(100);                        // 等 showEvent setSizes({360,240}) 生效
+    QVERIFY(fileSection(sb)->isCollapsed());
+    sb.setFileTreeVisible(true);              // 用户点开目录树
+    QTest::qWait(400);
+    QVERIFY(!fileSection(sb)->isCollapsed());
+    QVERIFY(outlineSection(sb)->height() > fileSection(sb)->height());  // 6:4 量级
+}
+
+// 恢复须发两个 visibleChanged 信号各一次（MainWindow 菜单勾选同步依赖）
+void TestSideBar::restore_emits_signals()
+{
+    SideBar sb;
+    QSignalSpy fileSpy(&sb, &SideBar::fileTreeVisibleChanged);
+    QSignalSpy outlineSpy(&sb, &SideBar::outlineVisibleChanged);
+    sb.applyInitialPanes(false, true);
+    QCOMPARE(fileSpy.count(), 1);
+    QCOMPARE(fileSpy.takeFirst().at(0).toBool(), false);
+    QCOMPARE(outlineSpy.count(), 1);
+    QCOMPARE(outlineSpy.takeFirst().at(0).toBool(), true);
 }
 
 QTEST_MAIN(TestSideBar)

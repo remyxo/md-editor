@@ -25,6 +25,9 @@ public:
     void setFileTreeVisible(bool visible);
     void setOutlineVisible(bool visible);
 
+    // 启动恢复面板初始态：MainWindow 读 QSettings 后调用（无动画、阻断信号链直置）
+    void applyInitialPanes(bool fileTree, bool outline);
+
     // 语言切换后重设全部文案
     void retranslateUi();
 
