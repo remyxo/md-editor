@@ -341,3 +341,20 @@ scripts/verify-clang.sh
 - **Spec 覆盖**：§3.1 行为表 → Task 2 Step 4 清单逐项对应；§3.2 applyInitialPanes → Task 1；§3.3 接线 → Task 2；§4 测试 4 用例 → Task 1 Step 1（逐字对应）；§5 收尾 → Task 3。无缺口。
 - **占位符扫描**：所有代码步骤均为完整可落地代码，无 TBD/「适当处理」类表述。
 - **类型一致性**：`applyInitialPanes(bool fileTree, bool outline)` 在 Task 1（声明/实现/测试）与 Task 2（调用）签名一致；QSettings 键名四处（Task 2 读/写、Task 3 CHANGELOG）一致。
+
+## 执行记录（2026-09-02，subagent-driven）
+
+| 任务 | 状态 | commit |
+|------|------|--------|
+| Task 1 | ✅ 完成（16/16 单测、全量回归绿，审查通过） | `6c7f4f8` |
+| Task 2 | ✅ 完成（用户目视验证 5/5 通过后提交） | `3205e46` |
+| Task 3 | ⏸ **用户指示暂缓**（「版本号暂不推进」） | — |
+
+最终全分支审查（fable）：**Ready to merge = Yes**，0 Critical / 0 Important。延后到版本收口时一并消化的加固项：
+
+1. `restore_then_reopen_keeps_ratio` 区分力弱（构造期 `{0,0}` 垃圾经 stretch 重分配观测上等价）——加固：`applyInitialPanes` 前 `splitter(sb)->setSizes({10, 390})` 预置诱饵坏比例，未阻断信号的实现重开后大纲仅剩标题栏高，断言必挂
+2. 钉住「无动画」属性——加固：`applyInitialPanes` 后、任何 `qWait` 前断言 `fileSection->maximumHeight() == fileSection->collapsedHeight()`（动画实现此刻 max 仍 10000）
+3. 补 `(true, false)` 恢复用例（唯一「未 show 先换序」路径；断言换序后 `splitter->widget(0) == fileSection`、按钮可见）
+4. 收起副作用现编码于三处（`SideBar.cpp` 两个 lambda + `applyInitialPanes`）——短期加互指注释，长期评估抽 `syncPaneState()` helper
+
+收口时按 Task 3 步骤执行（版本号、CHANGELOG、tag、push 走 pre-push 预检），顺带做上述加固。
