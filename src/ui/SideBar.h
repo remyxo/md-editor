@@ -25,7 +25,8 @@ public:
     void setFileTreeVisible(bool visible);
     void setOutlineVisible(bool visible);
 
-    // 启动恢复面板初始态：MainWindow 读 QSettings 后调用（无动画、阻断信号链直置）
+    // 启动恢复面板初始态：MainWindow 读 QSettings 后调用（无动画、阻断信号链直置）。
+    // 时机契约：须在首次 show 之前调用——显示后再调会因阻断信号链丢失用户已调比例
     void applyInitialPanes(bool fileTree, bool outline);
 
     // 语言切换后重设全部文案

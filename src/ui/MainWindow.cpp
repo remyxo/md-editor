@@ -49,6 +49,15 @@ MainWindow::MainWindow(const QString &initialFile, QWidget *parent)
     setupUi();
     connectSignals();
 
+    // 恢复侧边栏面板可见性（首次启动默认只显示大纲；两面板状态跨会话记忆）。
+    // 此时信号 lambda 已连接：applyInitialPanes 发的信号会同步菜单勾选并幂等写回。
+    {
+        QSettings settings("md-editor", "md-editor");
+        m_sideBar->applyInitialPanes(
+            settings.value("sidebar/fileTreeVisible", false).toBool(),
+            settings.value("sidebar/outlineVisible", true).toBool());
+    }
+
     // 命令行传入文件路径（文件管理器双击打开）时优先打开该文件；
     // 否则恢复上次会话（无会话时自动新建空白标签页）
     if (!initialFile.isEmpty()) {
@@ -185,10 +194,14 @@ void MainWindow::connectSignals()
     connect(m_sideBar, &SideBar::fileTreeVisibleChanged, this, [this](bool visible) {
         QAction *act = m_menuBar->findChild<QAction *>(QStringLiteral("fileTreeAction"));
         if (act) act->setChecked(visible);
+        QSettings settings("md-editor", "md-editor");   // 三条路径（菜单/标题栏/Ctrl+B）全汇聚于此
+        settings.setValue("sidebar/fileTreeVisible", visible);
     });
     connect(m_sideBar, &SideBar::outlineVisibleChanged, this, [this](bool visible) {
         QAction *act = m_menuBar->findChild<QAction *>(QStringLiteral("outlineAction"));
         if (act) act->setChecked(visible);
+        QSettings settings("md-editor", "md-editor");
+        settings.setValue("sidebar/outlineVisible", visible);
     });
 
     // Ctrl+B 整体收/展：可见→记住组合并全收；全收→恢复组合
