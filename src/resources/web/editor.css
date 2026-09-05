@@ -20,6 +20,7 @@ body.dark {
 }
 
 #editor {
+    position: relative;   /* 容纳逐行行号 gutter 的绝对定位 */
     max-width: 80%;
     min-width: 800px;
     margin: 0 auto;
@@ -309,28 +310,34 @@ body.dark #source-overlay {
     background: #1e1e1e;
 }
 
-/* === 行号 === */
+/* === 行号（逐行 gutter，行语义与状态栏同源，由 editor.js setLineNumbers 驱动） ===
+   旧实现为 CSS counter 按顶级节点计数：代码块/多行引用整体记 1 行，且 pre/ul/
+   ol/table 不显示行号——与状态栏可视行语义不一致，已废弃。 */
 body.line-numbers .ProseMirror {
-    counter-reset: line;
-    padding-left: 3em;
+    padding-left: var(--lnw, 3em);   /* 给行号列让位，列宽随位数由 JS 设置 */
 }
-body.line-numbers .ProseMirror > * {
-    counter-increment: line;
-    position: relative;
-}
-body.line-numbers .ProseMirror > *:not(table):not(pre):not(ul):not(ol)::before {
-    content: counter(line);
+#line-gutter {
     position: absolute;
-    left: -3em;
-    width: 2.5em;
+    top: 0;
+    bottom: 0;
+    left: 60px;                      /* 与 #editor padding-left 同源对齐 */
+    width: var(--lnw, 3em);
+    overflow: hidden;
+    pointer-events: none;
+    user-select: none;
+}
+#line-gutter div {
+    position: absolute;
+    left: 0;
+    right: 8px;                      /* 与正文留 8px 间距 */
     text-align: right;
     color: #b0b0b0;
     font-size: 0.85em;
     font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
-    pointer-events: none;
-    line-height: inherit;
+    line-height: 1.6;
+    white-space: nowrap;
 }
-body.dark.line-numbers .ProseMirror > *:not(table):not(pre):not(ul):not(ol)::before {
+body.dark #line-gutter div {
     color: #606060;
 }
 

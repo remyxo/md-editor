@@ -1319,6 +1319,206 @@ window.editorApi = {
         });
     },
 
+    // 枚举文档所有逻辑可视行的行首 pos，返回单调非严格递增数组（下标 i 即第 i+1 行）。
+    // 语义与 _lineColAt 完全同源（两套独立实现，由 line-starts.test.js 全 pos 交叉
+    // 一致性锁定）：textblock 占 1 行（行首 = 块起始 pos），块内每个 '\n'（代码块）/
+    // hardBreak/brk 各追加 1 行（行首 = 换行后位置）；表格按行占行（行数取最高单元
+    // 格，行首 = 行内首个可寻址的对应段）；块级图片/mermaid 占 1 行、块级公式按
+    // latex 可见行数占 N 行（内部不可寻址，N 行共享节点起始 pos，渲染侧均分定位）；
+    // hr 不占行。用途：编辑器边缘逐行行号 gutter（与状态栏行号一致）。
+    _lineStarts: function(docObj) {
+        var self = this, sink = [];
+        function push(pos) { sink.push(pos); }
+        // textblock：行 1 行首 = 块起始；块内换行逐个追加行首
+        function textLines(block, start) {
+            push(start);
+            var content = start + 1;
+            block.descendants(function(node, rel) {
+                var abs = content + rel;
+                if (node.isText) {
+                    var t = node.text;
+                    for (var i = 0; i < t.length; i++)
+                        if (t.charCodeAt(i) === 10) push(abs + i + 1);
+                } else if (node.type.name === 'hardBreak' || node.type.name === 'brk') {
+                    push(abs + node.nodeSize);
+                }
+                return true;
+            });
+        }
+        // 表格行：行数 = 最高单元格；第 k 行行首 = 行内首个含第 k 段的单元格中该段行首
+        function rowLines(row, start) {
+            var outer = sink, cols = [], off = start + 1;
+            row.forEach(function(cell) {
+                var arr = [];
+                sink = arr;
+                walkBlock(cell, off);
+                cols.push(arr);
+                off += cell.nodeSize;
+            });
+            sink = outer;
+            var rowCount = self._rowLineCount(row);
+            for (var k = 0; k < rowCount; k++) {
+                var pos = null;
+                for (var c = 0; c < cols.length; c++) {
+                    if (cols[c][k] !== undefined) { pos = cols[c][k]; break; }
+                }
+                push(pos !== null ? pos : start);         // 全空行兜底：行起始
+            }
+        }
+        function walkChildren(node, start) {
+            var off = start + 1;
+            node.forEach(function(child) { walkBlock(child, off); off += child.nodeSize; });
+        }
+        function walkBlock(node, start) {
+            var name = node.type.name;
+            if (name === 'tableRow') { rowLines(node, start); return; }
+            if (node.isLeaf) {                              // 块级原子：按类型占 N 行
+                var n = self._leafLineCount(node);
+                for (var i = 0; i < n; i++) push(start);
+                return;
+            }
+            if (node.isTextblock) { textLines(node, start); return; }
+            var first = sink.length;                        // 引用/列表/单元格/表格：
+            walkChildren(node, start);                      //   下钻内部块
+            // 容器边界 pos（容器起始 ~ 首个内部块起始之间，不可被光标选中但占位）
+            // 在 _lineColAt 中已计入首行——首行行首须回钳到容器自身起始，
+            // 嵌套容器（table>tbody>row>cell>para）由外层递归钳制最终对齐最外层
+            if (sink.length > first && sink[first] > start) sink[first] = start;
+        }
+        var off = 0;
+        docObj.forEach(function(child) { walkBlock(child, off); off += child.nodeSize; });
+        return sink;
+    },
+
+    // ===== 逐行行号 gutter（行语义与状态栏同源，见 _lineStarts）=====
+
+    // 行号开关（applySettings 下发）：创建/移除 gutter 与尺寸观察器。内容高度
+    // 变化（编辑/图片加载/mermaid 异步渲染/窗口折行变化）由 ResizeObserver 监听
+    // .ProseMirror 触发重算——行数变化必然伴随高度变化，纯文字修改既不改行数
+    // 也常不改高度，观察器天然过滤大部分无效刷新。
+    setLineNumbers: function(enabled) {
+        this._lineGutterOn = !!enabled;
+        document.body.classList.toggle('line-numbers', !!enabled);
+        if (!this._lineGutterOn) {
+            if (this._lineGutterRO) { this._lineGutterRO.disconnect(); this._lineGutterRO = null; }
+            if (this._lineGutterEl && this._lineGutterEl.parentNode)
+                this._lineGutterEl.parentNode.removeChild(this._lineGutterEl);
+            this._lineGutterEl = null;
+            document.documentElement.style.removeProperty('--lnw');
+            return;
+        }
+        if (!document.getElementById('editor')) return;
+        // setContent 会整体替换 #editor（销毁重建编辑器以清零 undo）：旧 gutter
+        // 随旧 DOM 脱离文档、RO 观察目标失效——检测到陈旧即重建
+        if (this._lineGutterEl && this._lineGutterEl.parentNode !== document.getElementById('editor')) {
+            this._lineGutterEl = null;
+            if (this._lineGutterRO) { this._lineGutterRO.disconnect(); this._lineGutterRO = null; }
+        }
+        if (!this._lineGutterEl) {
+            var g = document.createElement('div');
+            g.id = 'line-gutter';
+            g.setAttribute('aria-hidden', 'true');
+            document.getElementById('editor').appendChild(g);
+            this._lineGutterEl = g;
+        }
+        if (this.editor && !this._lineGutterRO && typeof ResizeObserver !== 'undefined') {
+            var self = this;
+            this._lineGutterRO = new ResizeObserver(function() { self._scheduleLineGutter(); });
+            this._lineGutterRO.observe(this.editor.view.dom);
+        }
+        this._renderLineGutter();
+    },
+
+    // debounce 合并高频触发（连续输入/图片逐个加载/mermaid 逐块渲染）
+    _scheduleLineGutter: function() {
+        if (!this._lineGutterOn || this._lnTimer) return;
+        var self = this;
+        this._lnTimer = setTimeout(function() {
+            self._lnTimer = null;
+            self._renderLineGutter();
+        }, 150);
+    },
+
+    // 重算行号：枚举逻辑行 → 逐行测 y（相对 #editor 盒顶）→ 一次性重建 gutter。
+    // 多行块级公式等「同一 pos 产多行」的行槽内部不可寻址，按节点高度均分定位；
+    // 测量失败的行跳过渲染但行号连续性不受影响（下标即行号）。
+    _renderLineGutter: function() {
+        var g = this._lineGutterEl;
+        if (!g || !this.editor) return;
+        var starts = this._lineStarts(this.editor.state.doc);
+        if (!starts.length) { g.innerHTML = ''; return; }
+        // 列宽随位数自适应（3em 起，4 位数 3.75em、5 位数 4.5em…）
+        document.documentElement.style.setProperty(
+            '--lnw', Math.max(3, (String(starts.length).length + 1) * 0.75).toFixed(2) + 'em');
+        var parts = [];
+        var i = 0, n = starts.length;
+        while (i < n) {
+            var j = i;
+            while (j + 1 < n && starts[j + 1] === starts[i]) j++;    // 同 pos 连续行槽
+            var span = j - i + 1, k;
+            if (span === 1) {
+                var y = this._lineY(starts[i]);
+                if (y !== null) parts.push(this._lnDiv(i, y));
+            } else {
+                var rect = this._gutterNodeRect(starts[i]);
+                if (rect) {
+                    for (k = 0; k < span; k++)
+                        parts.push(this._lnDiv(i + k, rect.top + rect.height * k / span));
+                } else {
+                    var y0 = this._lineY(starts[i]);                  // 节点框不可得：退化为同点叠放
+                    if (y0 !== null)
+                        for (k = 0; k < span; k++) parts.push(this._lnDiv(i + k, y0));
+                }
+            }
+            i = j + 1;
+        }
+        g.innerHTML = parts.join('');
+    },
+
+    _lnDiv: function(idx, y) {
+        return '<div style="top:' + y.toFixed(1) + 'px">' + (idx + 1) + '</div>';
+    },
+
+    // 行首 pos 的 y 坐标：view.coordsAtPos（PM 标准定位 API，悬浮菜单/气泡同款）
+    // 返回视口坐标，换算到 #editor 盒内。文本行/块首/br 后/表格行内段落均给出
+    // 该行行盒 top；失败返回 null。（注意不能用 view.posToDOM——该名非公开 API，
+    // 本项目打包的 prosemirror-view 版本上不存在，运行时 undefined）
+    _lineY: function(pos) {
+        try {
+            var view = this.editor && this.editor.view;
+            if (!view || typeof view.coordsAtPos !== 'function') return null;
+            var ed = document.getElementById('editor');
+            if (!ed) return null;
+            // 行首 pos 多为块起始边界：coordsAtPos 在块边界测量的是块元素外框 top，
+            // 对带外壳的 textblock（codeBlock NodeView 含 ~50px 工具栏）会高出首行
+            // 文本一截。pos 后紧跟非空 textblock 时改探块内首字符位置（行盒 top）。
+            var $p = view.state.doc.resolve(pos);
+            if ($p.nodeAfter && $p.nodeAfter.isTextblock && $p.nodeAfter.content.size > 0)
+                pos = pos + 1;
+            var c = view.coordsAtPos(pos);
+            if (!c || typeof c.top !== 'number' || !isFinite(c.top)) return null;
+            return c.top - ed.getBoundingClientRect().top;
+        } catch (e) {
+            return null;
+        }
+    },
+
+    // pos 处块节点外框（相对 #editor）：多行公式行槽均分定位用
+    _gutterNodeRect: function(pos) {
+        try {
+            var view = this.editor && this.editor.view;
+            if (!view) return null;
+            var el = view.nodeDOM(pos);
+            var ed = document.getElementById('editor');
+            if (!el || !ed || el.getBoundingClientRect === undefined) return null;
+            var r = el.getBoundingClientRect();
+            if (!(r.height > 0)) return null;
+            return { top: r.top - ed.getBoundingClientRect().top, height: r.height };
+        } catch (e) {
+            return null;
+        }
+    },
+
     _markDirty: function() {
         if (!this._dirty) {
             this._dirty = true;
@@ -1473,6 +1673,7 @@ window.editorApi = {
                 if (args.transaction.docChanged) {
                     self._markDirty();
                 }
+                self._scheduleLineGutter();
                 self.notifyHeadings();
                 self.notifyWordCount();
                 self.notifyHistory();
@@ -1665,6 +1866,8 @@ window.editorApi = {
         }
         this._attachMathClickHandler(this.editor.view.dom);
         this._syncLinkHandlers();
+        // #editor 已整体替换：行号开着则重挂 gutter 与尺寸观察器（见 setLineNumbers）
+        if (this._lineGutterOn) this.setLineNumbers(true);
     },
 
     // === 格式命令 ===
@@ -2982,7 +3185,7 @@ window.editorApi = {
 
     applySettings: function(settings) {
         if (settings.lineNumbers !== undefined) {
-            document.body.classList.toggle('line-numbers', !!settings.lineNumbers);
+            this.setLineNumbers(!!settings.lineNumbers);
         }
         if (settings.wordWrap !== undefined) {
             document.body.classList.toggle('nowrap', !settings.wordWrap);
