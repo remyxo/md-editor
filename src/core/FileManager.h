@@ -18,7 +18,7 @@ public:
     // → QWebChannel 序列化 → ProseMirror 文档，合计约 10×），误开大文件/
     // 二进制会 UI 假死甚至 OOM；正常 Markdown 文档（百万字书稿）纯文本 ~2MB。
     static constexpr qint64 kLargeFileWarnBytes = 2 * 1024 * 1024;   // ≥2MB：提示可能卡顿，可继续
-    static constexpr qint64 kMaxReadBytes = 16 * 1024 * 1024;        // >16MB：拒绝读入
+    static constexpr qint64 kMaxReadBytes = 10 * 1024 * 1024;        // >10MB：拒绝读入
 
     QString readFile(const QString &path, QString *encoding = nullptr);
     bool writeFile(const QString &path, const QString &content);

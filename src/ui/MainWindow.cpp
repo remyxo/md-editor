@@ -958,7 +958,7 @@ void MainWindow::onOpenFolder()
 
 void MainWindow::onFileDoubleClicked(const QString &path)
 {
-    // 软警告层：2MB~16MB 的大文件经确认后才打开；超 16MB 不必再问「是否仍要
+    // 软警告层：2MB~10MB 的大文件经确认后才打开；超 10MB 不必再问「是否仍要
     // 打开」（readFile 硬上限必然拒绝，连弹两框徒增打扰）；二进制文件同理
     // （readFile 会拒读并报错，先弹「是否仍要打开」只会造成双重弹窗）
     const qint64 size = QFileInfo(path).size();
@@ -1254,7 +1254,7 @@ void MainWindow::restoreSession()
     const QString activePath = openFiles.value(
         qBound(0, settings.value("session/activeTab", 0).toInt(),
                qMax(openFiles.size() - 1, 0)));
-    // 读失败（文件损坏/超 16MB 上限）的条目跳过，不开空标签页——空内容
+    // 读失败（文件损坏/超 10MB 上限）的条目跳过，不开空标签页——空内容
     // 标签页误保存会清空原文件；启动期错误弹窗静默（避免弹窗轰炸）
     m_suppressReadErrors = true;
     QList<QPair<EditorTab *, QString>> lazyTabs;

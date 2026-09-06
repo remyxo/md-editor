@@ -107,7 +107,7 @@ QString FileManager::readFile(const QString &path, QString *encoding)
         return {};
     }
     // 大小硬上限：经打开句柄取 size（无 TOCTOU），超限不 readAll 直接拒绝。
-    // 上限取闭区间边界（恰好 16MB 可读，超过 1 字节才拒），软警告层见 MainWindow
+    // 上限取闭区间边界（恰好 10MB 可读，超过 1 字节才拒），软警告层见 MainWindow
     const qint64 size = file.size();
     if (size > kMaxReadBytes) {
         file.close();
