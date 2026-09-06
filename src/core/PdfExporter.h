@@ -6,6 +6,18 @@
 #include <QPageLayout>
 #include <QPageSize>
 
+// PDF 分页规格（buildRenderHtml 纯字符串路径的参数载体，exportToPdf 从 QSettings 组装）
+struct PdfPageSpec {
+    QPageSize::PageSizeId paper = QPageSize::A4;
+    QPageLayout::Orientation orientation = QPageLayout::Portrait;
+    QMarginsF marginsMm{18, 18, 18, 18};   // 左 上 右 下（mm）
+    bool headerEnabled = false;            // @top-center 文档标题
+    bool footerEnabled = false;            // @bottom-right 第 X 页 / 共 Y 页
+    QString headerTitle;
+    // 页眉/页脚任一启用即激活 paged.js 分页（全关走原 Chromium 分页管线）
+    bool pagedActive() const { return headerEnabled || footerEnabled; }
+};
+
 class PdfExporter : public QObject {
     Q_OBJECT
 public:
@@ -19,6 +31,11 @@ public:
     // 构建 PDF 渲染 HTML（纯字符串逻辑，供测试）
     static QString buildRenderHtml(const QString &html, const QString &docDir,
                                    const QString &katexCss, const QString &customCss);
+
+    // 分页版：@page 规则 + paged.js 注入（spec.pagedActive() 时）
+    static QString buildRenderHtml(const QString &html, const QString &docDir,
+                                   const QString &katexCss, const QString &customCss,
+                                   const PdfPageSpec &spec);
 
 signals:
     void exportFinished(bool success, const QString &outputPath);

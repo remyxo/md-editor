@@ -20,16 +20,77 @@ PdfExporter::~PdfExporter()
     delete m_renderView;
 }
 
+// CSS content 字符串转义：\ 与 "；换行替换为空格（页眉单行）
+static QString cssContentString(QString text)
+{
+    text.replace('\\', QStringLiteral("\\\\"));
+    text.replace('"', QStringLiteral("\\\""));
+    text.replace('\n', QLatin1Char(' '));
+    text.replace('\r', QLatin1Char(' '));
+    return text;
+}
+
 QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                                      const QString &katexCss, const QString &customCss)
+{
+    return buildRenderHtml(html, docDir, katexCss, customCss, PdfPageSpec());
+}
+
+QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
+                                     const QString &katexCss, const QString &customCss,
+                                     const PdfPageSpec &spec)
 {
     // 图片 base64 内联（相对路径相对 docDir 解析；绝对路径原样；读不到保留 src）
     QString body = HtmlExporter::inlineImages(html, docDir);
 
+    const bool paged = spec.pagedActive();
+    // @page 规则（paged 激活时）：置于 @media print 之外——paged.js 在屏幕媒体
+    // 上解析分页；margin 顺序 CSS = 上 右 下 左
+    QString pageCss;
+    if (paged) {
+        QString sizeStr = QPageSize(spec.paper).key();   // "A4"/"Letter"/"A5"…
+        if (spec.orientation == QPageLayout::Landscape)
+            sizeStr += QLatin1String(" landscape");
+        pageCss = QStringLiteral("@page{size:%1;margin:%2mm %3mm %4mm %5mm;")
+                      .arg(sizeStr,
+                           QString::number(spec.marginsMm.top()),
+                           QString::number(spec.marginsMm.right()),
+                           QString::number(spec.marginsMm.bottom()),
+                           QString::number(spec.marginsMm.left()));
+        if (spec.headerEnabled)
+            pageCss += QStringLiteral(
+                           "@top-center{content:\"%1\";font-size:9pt;color:#666;}")
+                           .arg(cssContentString(spec.headerTitle));
+        if (spec.footerEnabled)
+            pageCss += QStringLiteral(
+                           "@bottom-right{content:\"第 \" counter(page) \" 页 / 共 \" "
+                           "counter(pages) \" 页\";font-size:9pt;color:#666;}");
+        pageCss += QLatin1Char('}');
+    }
+    // 旧 @page{margin:0}（Qt QPageLayout 边距方案）仅 legacy 路保留；
+    // paged 路径下若同存，@media print 内的后位规则会级联覆盖新 margin
+    const QString legacyPageZero = paged ? QString()
+                                         : QStringLiteral("@page{margin:0;}");
+
+    // 打印前置入口：mermaid 先渲染（SVG 定型），paged 后跑（分页测量正确）；
+    // 双 settle 防挂起（沿用 __renderAllMermaid 的 .then/.catch 均真模式）
+    const QString preparePrint = QStringLiteral(
+        "window.__preparePrint=function(){"
+        "return window.__renderAllMermaid()"
+        ".then(function(){if(!window.PagedPolyfill)return true;"
+        "return PagedPolyfill.preview().then(function(){return true;})"
+        ".catch(function(){return true;});})"
+        ".catch(function(){return true;});};");
+    const QString pagedScripts = paged
+        ? QStringLiteral("<script>window.PagedConfig={auto:false};</script>"
+                         "<script src=\"paged.polyfill.js\"></script>")
+        : QString();
+
     QString fullHtml = QString(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
+        "%1"                                    // @page 分页规则（paged 激活时）
         "@media print{"
-        "@page{margin:0;}"
+        "%2"                                    // @page{margin:0}（仅 legacy）
         "body{font-family:\"Noto Sans SC\",\"DejaVu Sans\",sans-serif;"
         "font-size:11pt;line-height:1.6;color:#333;}"
         "h1{font-size:1.7em;margin-top:1em;margin-bottom:0.3em;}"
@@ -53,11 +114,13 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "ul[data-type=\"taskList\"] > li label{margin-top:3px;}"
         "ul[data-type=\"taskList\"] > li > div > p{margin:0;}"
         "}"
-        "%2"
+        "%3"                                    // KaTeX CSS
         "</style>"
+        "%4"                                    // PagedConfig + polyfill（paged 时）
         "<script src=\"katex.min.js\"></script>"
         "<script src=\"mermaid.min.js\"></script>"
         "<script>"
+        "%5"                                    // __preparePrint
         "window.addEventListener('DOMContentLoaded',function(){"
         "var els=document.querySelectorAll('[data-latex]');"
         "for(var i=0;i<els.length;i++){"
@@ -70,11 +133,11 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "}"
         "});"
         "</script>"
-        "</head><body>%1</body></html>"
-    ).arg(body, katexCss);
+        "</head><body>%6</body></html>"
+    ).arg(pageCss, legacyPageZero, katexCss, pagedScripts, preparePrint, body);
 
     // 注入 mermaid 渲染 helper（定义 window.__renderAllMermaid，返回 Promise，
-    // 不自调用——PDF 在 onLoadFinished 里显式调用并等待）。PDF 固定亮色打印。
+    // 不自调用——__preparePrint 显式链式调用并等待）。PDF 固定亮色打印。
     fullHtml.replace("</head>",
         QString("<script>%1</script></head>").arg(HtmlExporter::mermaidRenderScript("default")));
 
