@@ -806,14 +806,16 @@ body.dark .emoji-tab.active { background: #2a3f5f; color: #8ab4f8; }
   font-size: 0.9em;
 }
 
-/* 单条定义 */
+/* 单条定义（块级内容：marker 浮动、content 块级） */
 .ProseMirror div[data-type="footnoteDef"] {
   margin: 0.25em 0;
+  overflow: hidden;             /* BFC 包住浮动 marker，防浮出容器 */
 }
 .ProseMirror .footnote-marker {
   color: #1967d2;
   font-weight: 600;
   margin-right: 0.35em;
+  float: left;                  /* 首段绕排，视觉与旧内联形态连续 */
 }
 
 /* 暗色覆盖 */

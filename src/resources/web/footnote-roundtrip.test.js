@@ -47,9 +47,9 @@ describe('脚注往返保真（真实 TipTap 链路）', () => {
       '</div></div>';
     window.editorApi.setContent(src);
     const out = window.editorApi.getContent();
-    // footnote-content 序列化后正文应恰为“脚注内容”，不含 marker 前缀
-    const m = out.match(/footnote-content"[^>]*>([^<]*)</);
-    expect(m ? m[1] : '').toBe('脚注内容');
+    // 块级契约（Task 8）：footnote-content 序列化为 div > p，旧 span 内联形态解析为段落；
+    // 正文应恰为“脚注内容”段落，不含 marker 前缀
+    expect(out).toContain('<div class="footnote-content"><p>脚注内容</p></div>');
   });
 
   it('footnoteDef 往返多次 marker 不叠加（连续 setContent 两次）', () => {
@@ -63,7 +63,8 @@ describe('脚注往返保真（真实 TipTap 链路）', () => {
     let out = window.editorApi.getContent();
     window.editorApi.setContent(out);
     out = window.editorApi.getContent();
-    const m = out.match(/footnote-content"[^>]*>([^<]*)</);
-    expect(m ? m[1] : '').toBe('ABC');
+    // marker 恰出现一次（不叠加），正文稳定为 ABC 段落
+    expect((out.match(/footnote-marker/g) || []).length).toBe(1);
+    expect(out).toContain('<div class="footnote-content"><p>ABC</p></div>');
   });
 });

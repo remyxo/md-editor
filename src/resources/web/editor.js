@@ -680,12 +680,13 @@ function buildFootnoteContainer() {
     });
 }
 
-// 构造单条脚注定义（容器子节点，单段内联富文本）
-// marker span 显示标记前缀（只读），正文包入 footnote-content span（parseHTML getContentElement 定位）
+// 构造单条脚注定义（容器子节点，块级富文本）
+// marker span（只读，CSS float 左浮首段绕排）+ div.footnote-content（块级 content，
+// MarkdownHandler 块级契约对齐——toHtml/fromHtml 产 div 形态）
 function buildFootnoteDef() {
     return TipTapNode.create({
         name: 'footnoteDef',
-        content: 'inline*',
+        content: 'block+',
         defining: true,
         addAttributes: function() {
             return {
@@ -709,7 +710,7 @@ function buildFootnoteDef() {
             var id = ref.node.attrs.id;
             return ['div', { 'data-type': 'footnoteDef', 'data-id': id },
                 ['span', { class: 'footnote-marker', contenteditable: 'false' }, id],
-                ['span', { class: 'footnote-content' }, 0]];
+                ['div', { class: 'footnote-content' }, 0]];
         }
     });
 }
@@ -3239,7 +3240,9 @@ window.editorApi = {
             var tr = ref.tr, state = ref.state, dispatch = ref.dispatch;
             var doc = state.doc;
             var last = doc.lastChild;
-            var def = schema.nodes.footnoteDef.create({ id: newId });
+            // block+ 最小内容：空定义须带一个空段落，否则无效节点被解析器丢弃
+            var def = schema.nodes.footnoteDef.create(
+                { id: newId }, schema.nodes.paragraph.create());
             if (last && last.type.name === 'footnoteContainer') {
                 // 容器内末尾（闭合标签前）插入 def
                 tr.insert(doc.content.size - 1, def);
