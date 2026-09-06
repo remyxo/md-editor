@@ -841,6 +841,11 @@ void MainWindow::onExportPdf()
                 m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
                 exporter->deleteLater();
             });
+            // paged.js 失败/超时回退原生分页——告知用户产物无页眉页脚
+            connect(exporter, &PdfExporter::pagedFallbackUsed, this, [this]() {
+                m_statusBar->showMessage(
+                    tr("页眉页脚引擎失败，已按普通版式导出（无页眉页脚）"), 6000);
+            });
             exporter->exportToPdf(html, docDir, path);
         });
 }

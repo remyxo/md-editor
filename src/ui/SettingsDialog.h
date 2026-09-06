@@ -71,6 +71,8 @@ private:
     QDoubleSpinBox *m_marginBottom;
     QDoubleSpinBox *m_marginLeft;
     QDoubleSpinBox *m_marginRight;
+    QCheckBox *m_pdfHeaderCheck = nullptr;
+    QCheckBox *m_pdfFooterCheck = nullptr;
     QLabel *m_paperLabel;
     QGroupBox *m_marginGroup;
     QLabel *m_marginTopLbl;

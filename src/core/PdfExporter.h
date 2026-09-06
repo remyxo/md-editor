@@ -5,6 +5,7 @@
 #include <QWebEngineView>
 #include <QPageLayout>
 #include <QPageSize>
+#include <QTimer>
 
 // PDF 分页规格（buildRenderHtml 纯字符串路径的参数载体，exportToPdf 从 QSettings 组装）
 struct PdfPageSpec {
@@ -40,15 +41,25 @@ public:
 signals:
     void exportFinished(bool success, const QString &outputPath);
     void exportError(const QString &error);
+    // paged.js 分页失败/超时，已回退原生分页导出（产物无页眉页脚）——提示用户
+    void pagedFallbackUsed();
 
 private slots:
     void onLoadFinished(bool ok);
     void onPdfPrintingFinished(const QString &filePath, bool success);
 
 private:
+    void pollPrintState();
+
     QWebEngineView *m_renderView;
     QString m_pendingOutputPath;
-    QPageLayout m_pendingLayout;
+    QPageLayout m_pendingLayout;   // paged 版式（0 边距——@page 已承载页边距）
+    QPageLayout m_legacyLayout;    // 原生版式（用户边距）——legacy/回退共用
+    // runJavaScript 不等待 Promise（Qt 6.8 实测回调立即触发），完成态靠轮询
+    // window.__printState（paged/legacy/fallback）获取
+    QTimer m_printPoll;
+    int m_printPollCount = 0;
+    bool m_printStarted = false;   // 防轮询回调竞态导致重复 printToPdf
 };
 
 #endif // MD_EDITOR_PDFEXPORTER_H

@@ -193,6 +193,12 @@ void SettingsDialog::setupUi()
     m_orientGroup->setLayout(orientOuter);
     exportLayout->addWidget(m_orientGroup);
 
+    // PDF 页眉/页脚（paged.js 分页引擎，任一开启即启用——见 2026-09-06 spec §1）
+    m_pdfHeaderCheck = new QCheckBox(exportTab);
+    m_pdfFooterCheck = new QCheckBox(exportTab);
+    exportLayout->addWidget(m_pdfHeaderCheck);
+    exportLayout->addWidget(m_pdfFooterCheck);
+
     exportLayout->addStretch();
     m_tabs->addTab(exportTab, QString());
 
@@ -238,6 +244,8 @@ void SettingsDialog::retranslateUi()
     m_orientGroup->setTitle(tr("方向"));
     m_portraitLbl->setText(tr("纵向(P)"));
     m_landscapeLbl->setText(tr("横向(L)"));
+    m_pdfHeaderCheck->setText(tr("PDF 页眉（文档标题）"));
+    m_pdfFooterCheck->setText(tr("PDF 页码（第 X 页 / 共 Y 页）"));
 
     m_tabs->setTabText(0, tr("通用"));
     m_tabs->setTabText(1, tr("编辑器"));
@@ -292,6 +300,10 @@ void SettingsDialog::loadSettings()
     m_marginBottom->setValue(settings.value("export/marginBottom", 1.8).toDouble());
     m_marginLeft->setValue(settings.value("export/marginLeft", 1.8).toDouble());
     m_marginRight->setValue(settings.value("export/marginRight", 1.8).toDouble());
+    m_pdfHeaderCheck->setChecked(
+        settings.value("export/pdfHeaderEnabled", true).toBool());
+    m_pdfFooterCheck->setChecked(
+        settings.value("export/pdfFooterEnabled", true).toBool());
 
     // 显示偏好模式（system 时下拉框选「跟随系统」，而非当前实际主题）
     QString mode = settings.value("appearance/theme", "light").toString();
@@ -326,6 +338,8 @@ void SettingsDialog::onAccepted()
     settings.setValue("export/marginBottom", m_marginBottom->value());
     settings.setValue("export/marginLeft", m_marginLeft->value());
     settings.setValue("export/marginRight", m_marginRight->value());
+    settings.setValue("export/pdfHeaderEnabled", m_pdfHeaderCheck->isChecked());
+    settings.setValue("export/pdfFooterEnabled", m_pdfFooterCheck->isChecked());
 
     // 语言走 MainWindow 统一链路（切换 + 持久化），不再直写 QSettings
     emit languageChanged(m_langCombo->currentData().toString());
