@@ -646,6 +646,124 @@ private slots:
         QVERIFY(md.contains("$E=mc^2$"));
     }
 
+    void testUnclosedBlockMathLiteralRoundTrip() {
+        // 回归：未闭合 $$ 块（开启后至文档结束无闭合定界符）。行扫描在开启行
+        // 即把占位符推入 mathBlockPhs，而备份只在闭合 $$ 时入 mathBlocks——EOF
+        // 未闭合使两列表错配一条，batchRestorePlaceholders 取 backups[i] 越界
+        // 直接 abort。修复：EOF 收尾把占位符弹出并还原原文——解析器惯例
+        // （未闭合定界符 = 字面量），按字面文本透传，不得静默丢弃用户内容。
+        // 字面 needle：断言输出必须保留的原文片段（仅有开符的用例为 "$$"）
+        const struct { const char *name; const char *md; const char *needle; bool hasMath; } cases[] = {
+            // 最小复现（源码模式输入 $$ 后退出即触发）
+            {"minimal", "正文\n\n$$\nE=mc^2\n", "E=mc^2", false},
+            // 文档以未闭合 $$ 结尾且无尾换行
+            {"no-trailing-newline", "$$\nE=mc^2", "E=mc^2", false},
+            // 闭合块在前 + 未闭合块在后（确认前块不受收尾影响）
+            {"closed-then-unclosed", "$$\na = b\n$$\n\n正文\n\n$$\nE=mc^2\n", "E=mc^2", true},
+            // 仅有开符、无内容行
+            {"opener-only", "$$\n", "$$", false},
+        };
+        for (const auto &c : cases) {
+            const QString md = QString::fromUtf8(c.md);
+            // 修复前：首条 toHtml 即越界 abort
+            QString html = MarkdownHandler::toHtml(md);
+            QVERIFY2(html.contains("$$"),
+                     qPrintable(QString("[%1] HTML 应保留字面 $$，实际: %2")
+                                    .arg(c.name, html)));
+            QVERIFY2(html.contains(QString::fromUtf8(c.needle)),
+                     qPrintable(QString("[%1] HTML 应保留原文 [%2]，实际: %3")
+                                    .arg(c.name, c.needle, html)));
+            QVERIFY2(!html.contains("ZZMB"),
+                     qPrintable(QString("[%1] 占位符不得泄漏，实际: %2")
+                                    .arg(c.name, html)));
+            // 未闭合块不得渲染成公式块（闭合块对照在 hasMath 用例断言）
+            if (!c.hasMath)
+                QVERIFY2(!html.contains("block-math"),
+                         qPrintable(QString("[%1] 未闭合 $$ 不应产出公式块，实际: %2")
+                                        .arg(c.name, html)));
+            // 往返保真：字面内容保留 + 收敛后 round2 ↔ round3 字节等价。
+            // 字面 ^ 在正文中由序列化器转义为 \^（防上标误读的无损表示），
+            // 比较 needle 前先还原转义形态
+            QString md2 = MarkdownHandler::fromHtml(html);
+            QString md2Unescaped = md2;
+            md2Unescaped.replace(QStringLiteral("\\^"), QStringLiteral("^"));
+            QVERIFY2(md2Unescaped.contains(QString::fromUtf8(c.needle)),
+                     qPrintable(QString("[%1] 往返应保留原文 [%2]，实际: %3")
+                                    .arg(c.name, c.needle, md2)));
+            QString md3 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2));
+            QVERIFY2(md3 == md2,
+                     qPrintable(QString("[%1] 收敛后应字节稳定，round2=[%2] round3=[%3]")
+                                    .arg(c.name, md2, md3)));
+        }
+        // 对照：闭合 $$ 既有行为不回归（渲染为公式块、内容入 data-latex）
+        {
+            QString html = MarkdownHandler::toHtml("$$\na = b\n$$\n");
+            QVERIFY2(html.contains("block-math"),
+                     qPrintable(QString("闭合 $$ 应渲染公式块，实际: %1").arg(html)));
+            QVERIFY2(html.contains("a = b"),
+                     qPrintable(QString("闭合 $$ 应保留内容，实际: %1").arg(html)));
+        }
+    }
+
+    void testUnclosedCodeFenceNoCrash() {
+        // 同模式审计：未闭合 ``` 围栏——codeBlockPhs 开启即入、codeBlocks 闭合
+        // 才入，EOF 未闭合同样错配越界 abort（与未闭合 $$ 同根因）。修复：EOF
+        // 按闭合补备份。CommonMark 惯例：围栏未闭合时内容到文档结束均为代码块，
+        // 仍渲染为代码块（不按字面透传）；fromHtml 补写闭合围栏属归一化，收敛后
+        // 字节稳定。
+        const struct { const char *name; const char *md; const char *needle; } cases[] = {
+            {"fence-with-lang", "```cpp\nint x = 1;\n", "int x = 1;"},
+            {"fence-bare", "```\nplain line\n", "plain line"},
+            {"fence-then-paragraph", "正文\n\n```js\nlet a = 2;\n", "let a = 2;"},
+        };
+        for (const auto &c : cases) {
+            const QString md = QString::fromUtf8(c.md);
+            QString html = MarkdownHandler::toHtml(md);   // 修复前 abort
+            QVERIFY2(html.contains(QString::fromUtf8(c.needle)),
+                     qPrintable(QString("[%1] HTML 应保留内容 [%2]，实际: %3")
+                                    .arg(c.name, c.needle, html)));
+            QVERIFY2(html.contains("<pre"),
+                     qPrintable(QString("[%1] 未闭合围栏应渲染为代码块，实际: %2")
+                                    .arg(c.name, html)));
+            QVERIFY2(!html.contains("ZZCB"),
+                     qPrintable(QString("[%1] 占位符不得泄漏，实际: %2")
+                                    .arg(c.name, html)));
+            QString md2 = MarkdownHandler::fromHtml(html);
+            QVERIFY2(md2.contains(QString::fromUtf8(c.needle)),
+                     qPrintable(QString("[%1] 往返应保留内容 [%2]，实际: %3")
+                                    .arg(c.name, c.needle, md2)));
+            QString md3 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2));
+            QVERIFY2(md3 == md2,
+                     qPrintable(QString("[%1] 收敛后应字节稳定，round2=[%2] round3=[%3]")
+                                    .arg(c.name, md2, md3)));
+        }
+    }
+
+    void testUnclosedBlockquoteCodeFenceNoDataLoss() {
+        // 同模式审计：未闭合块引用内代码围栏 > ```——占位符与备份均在闭合时
+        // 生成，两列表不错配、不崩溃，但 EOF 未闭合时内容被静默丢弃（整块
+        // 无处还原，往返成空段落），违反往返保真红线。修复：EOF 补闭合，
+        // 已收集内容按代码块还原。
+        // 注：不断言 round2 ↔ round3 收敛——fromHtml 对块引用围栏输出
+        // 「> ```cpp / 内容 / 裸 ```」形态（内容与闭合围栏不带 > 前缀），
+        // 重解析时裸 ``` 不闭合块引用围栏，这是闭合围栏同样存在的既有
+        // 序列化局限（与本修复无关），此处锚定与闭合路径一致的输出形态。
+        QString md = "> ```cpp\n> int x = 1;\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("int x = 1;"),
+                 qPrintable(QString("未闭合 > ``` 应保留内容，实际: %1").arg(html)));
+        QVERIFY2(html.contains("<pre"),
+                 qPrintable(QString("未闭合 > ``` 应渲染为代码块，实际: %1").arg(html)));
+        QVERIFY2(!html.contains("ZZBQ"),
+                 qPrintable(QString("占位符不得泄漏，实际: %1").arg(html)));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("int x = 1;"),
+                 qPrintable(QString("往返应保留内容，实际: %1").arg(md2)));
+        // 锚定既有闭合路径的输出形态（闭合 > ``` 围栏往返与之逐字节一致）
+        QVERIFY2(md2 == QStringLiteral("> ```cpp\nint x = 1;\n```"),
+                 qPrintable(QString("往返形态应与闭合路径一致，实际: %1").arg(md2)));
+    }
+
     void testCodeBlockLanguageRoundTrip() {
         // 代码块语言标记往返：MD → HTML → MD，语言应保留
         // TipTap codeBlock 契约：<pre><code class="language-xxx">

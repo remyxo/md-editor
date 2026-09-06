@@ -1629,6 +1629,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
 
     QStringList mathBlocks;  // 收集 $$ 块的内容
     QStringList mathLines;    // 当前 $$ 块的行
+    QString mathOpenLine;     // 当前 $$ 块的开启行原文（EOF 未闭合时还原用）
 
     // 上一处理行的块类型。隔离规则：列表后紧跟正文（无空行）时补空行，
     // 否则 md4c 的 lazy-continuation 会把正文吞入列表项、后续列表被合并。
@@ -1685,10 +1686,13 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                     continue;
                 }
                 mathLines.clear();
+                mathOpenLine = line;
                 inMathBlock = true;
                 // 占位符（块在闭合 $$ 时才入 mathBlocks，此处先占序号；
-                // 碰撞跳号时 mathBlockPhs 与 mathBlocks 仍一一对应）
-                mathBlockPhs << collisionFreePlaceholder(collisions, 
+                // 碰撞跳号时 mathBlockPhs 与 mathBlocks 仍一一对应）。
+                // EOF 未闭合时由循环后的收尾逻辑弹出并还原原文（见 toHtml
+                // 末段「未闭合块级公式」注释），两列表恢复一致
+                mathBlockPhs << collisionFreePlaceholder(collisions,
                     "MB", mathBlocks.size());
                 processed += mathBlockPhs.last() + "\n";
             } else {
@@ -2107,6 +2111,76 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             lastBlock = isListItemLine(line) ? BT_LIST
                         : (isParagraphLine(line) ? BT_PARA : BT_NONE);
         }
+    }
+
+    // EOF 收尾：块级结构「开启即入占位符列表、闭合才入备份列表」的未闭合状态
+    // 处理。行循环耗尽时若结构未闭合，占位符/备份两列表错配——batchRestore
+    // Placeholders 按 phs 遍历取 backups[i] 越界直接崩溃；块引用代码围栏虽两
+    // 列表均在闭合时生成（不错配），但内容被静默丢弃（往返保真违规）。
+    // ① 未闭合块级公式 $$：解析器惯例——未闭合定界符按字面量透传。开启行的
+    //    占位符从列表弹出并从 processed 尾部剥离，原文（开启行 + 内容行）回填
+    //    为普通文本，由后续管线按正文解析（不得静默丢弃用户内容）。
+    if (inMathBlock) {
+        const QString ph = mathBlockPhs.takeLast();
+        // 开启行追加的占位符必为 processed 末尾（inMathBlock 期间其余行全部
+        // 进入 mathLines，无其它分支追加）；防御性 endsWith 校验——不变量被
+        // 破坏时保留占位符原文，由 debug 泄漏断言暴露而非静默错删正文
+        if (processed.endsWith(ph + QLatin1Char('\n')))
+            processed.chop(ph.size() + 1);
+        // 相邻行间嵌入 ZZBR 软换行占位符（与正文行对的既有机制一致）：否则
+        // setMarkdown 把软换行折叠成空格，行结构在往返中丢失。守卫对齐行内
+        // BRMARKER 判定：下一行须为段落延续行（块边界/空行/<br> 行/图片行/
+        // 跨块引用边界均不插），本行须为段落行——唯一例外是开符 $$ 行：它在
+        // 常规流中是结构行（isParagraphLine 明确排除），但此处已按字面文本
+        // 还原，与后续内容行之间的换行是用户结构，须保留
+        QStringList restored;
+        restored << mathOpenLine << mathLines;
+        for (int ri = 0; ri < restored.size(); ++ri) {
+            QString rl = restored[ri];
+            const QString &nx = (ri + 1 < restored.size())
+                ? restored[ri + 1] : QString();
+            const bool curOk = !rl.isEmpty()
+                && (isParagraphLine(rl) || ri == 0);
+            const bool nextOk = !nx.isEmpty() && isParagraphLine(nx)
+                && !isBrOnlyLine(nx) && !isImageOnlyLine(nx)
+                && !(!isBlockquoteLine(rl) && isBlockquoteLine(nx));
+            if (curOk && nextOk) {
+                brSoftPhs << collisionFreePlaceholder(collisions,
+                    "BR", brSoftCount);
+                ++brSoftCount;
+                rl += QLatin1Char(' ') + brSoftPhs.last();
+            }
+            processed += rl + QLatin1Char('\n');
+        }
+        inMathBlock = false;
+    }
+    // ② 未闭合代码围栏 ```：CommonMark 惯例——围栏未闭合时内容到文档结束均
+    //    为代码块，按闭合同款逻辑补备份（codeContent 已收集到 EOF），
+    //    codeBlockPhs 与 codeBlocks 恢复一致
+    if (codeFenceLen > 0) {
+        QString content = codeContent.join('\n');
+        QString codeOpen = codeFenceLang.isEmpty()
+            ? QStringLiteral("<code>")
+            : QStringLiteral("<code class=\"language-") + codeFenceLang + "\">";
+        codeBlocks << "<pre>" + codeOpen + content.toHtmlEscaped() + "</code></pre>";
+        codeFenceLen = 0;
+    }
+    // ③ 未闭合块引用内代码围栏 > ```：占位符在闭合时才生成（不会崩溃），但
+    //    EOF 未闭合时已收集内容无处还原（静默丢弃）。按闭合同款逻辑补还原
+    //    （EOF 无后续行，不发 bqSep 边界标记）
+    if (bqCodeFenceLen > 0) {
+        QString content = bqCodeContent.join('\n');
+        QString codeOpen = bqCodeFenceLang.isEmpty()
+            ? QStringLiteral("<code>")
+            : QStringLiteral("<code class=\"language-") + bqCodeFenceLang + "\">";
+        bqCodeBlocks << "<pre style=\" margin-left:40px; margin-right:40px;\">"
+                        + codeOpen + content.toHtmlEscaped() + "</code></pre>";
+        bqCodeFenceLen = 0;
+        if (!processed.isEmpty() && !processed.endsWith("\n\n"))
+            processed += '\n';
+        bqCodeBlockPhs << collisionFreePlaceholder(collisions,
+            "BQ", bqCodeBlocks.size() - 1);
+        processed += "> " + bqCodeBlockPhs.last() + "\n\n";
     }
 
     // 保护手写 <div> 块级容器（排除 data-type 内部结构）
@@ -3817,8 +3891,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 // cm 内的外层占位符（块级公式 ZZBM / 代码块 ZZCB / 任务列表
                 // ZZTL 等）若留给末段统一还原，多行备份的内部行不携带本定义的
                 // 续行缩进——重载时定义在首个非缩进内部行处断裂（块级公式形态
-                // 还会使嵌套 toHtml 遇到未闭合 $$，触发 mathBlockPhs/mathBlocks
-                // 错配崩溃）。故先在 cm 内就地展开（逆序 = 外层先展开，与末段
+                // 还会使嵌套 toHtml 遇到未闭合 $$——该形态曾触发 mathBlockPhs/
+                // mathBlocks 错配崩溃，现已由 toHtml 的 EOF 收尾按字面透传消解）。
+                // 故先在 cm 内就地展开（逆序 = 外层先展开，与末段
                 // 多趟还原语义一致），使多行备份的每一行都进入下方缩进续行输出。
                 // 碰撞检测保证 cm 中与占位符同串的必为真占位符；漏网 token 由
                 // 末段多趟还原兜底（无缩进，与未展开时的旧行为一致）。
