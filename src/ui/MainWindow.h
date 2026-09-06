@@ -86,6 +86,9 @@ private:
     void saveSession();
     void restoreSession();
 
+    // ≥2MB 大文件软警告（手动打开与会话恢复共用）：true = 继续打开，false = 用户拒绝
+    bool confirmLargeFile(const QString &path);
+
     MenuBar *m_menuBar;
     ToolBar *m_toolBar;
     SideBar *m_sideBar;

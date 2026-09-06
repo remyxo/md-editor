@@ -956,23 +956,29 @@ void MainWindow::onOpenFolder()
     }
 }
 
+// ≥2MB 大文件软警告（手动打开与会话恢复共用）。
+// 仅 2MB~10MB 且非二进制时提示：超上限 readFile 必拒、二进制有专门报错，
+// 先问「是否仍要打开」只会造成双重弹窗
+bool MainWindow::confirmLargeFile(const QString &path)
+{
+    const qint64 size = QFileInfo(path).size();
+    if (size < FileManager::kLargeFileWarnBytes || size > FileManager::kMaxReadBytes
+        || FileManager::isBinaryFile(path))
+        return true;
+    QMessageBox box(QMessageBox::Question, tr("文件较大"),
+                    tr("文件 %1 大小为 %2 MB，打开后可能明显卡顿。\n是否仍要打开？")
+                        .arg(path, QString::number(size / 1024.0 / 1024.0, 'f', 1)),
+                    QMessageBox::Yes | QMessageBox::No, this);
+    box.button(QMessageBox::Yes)->setText(tr("是"));
+    box.button(QMessageBox::No)->setText(tr("否"));
+    return box.exec() == QMessageBox::Yes;
+}
+
 void MainWindow::onFileDoubleClicked(const QString &path)
 {
-    // 软警告层：2MB~10MB 的大文件经确认后才打开；超 10MB 不必再问「是否仍要
-    // 打开」（readFile 硬上限必然拒绝，连弹两框徒增打扰）；二进制文件同理
-    // （readFile 会拒读并报错，先弹「是否仍要打开」只会造成双重弹窗）
-    const qint64 size = QFileInfo(path).size();
-    if (size >= FileManager::kLargeFileWarnBytes && size <= FileManager::kMaxReadBytes
-        && !FileManager::isBinaryFile(path)) {
-        QMessageBox box(QMessageBox::Question, tr("文件较大"),
-                        tr("文件 %1 大小为 %2 MB，打开后可能明显卡顿。\n是否仍要打开？")
-                            .arg(path, QString::number(size / 1024.0 / 1024.0, 'f', 1)),
-                        QMessageBox::Yes | QMessageBox::No, this);
-        box.button(QMessageBox::Yes)->setText(tr("是"));
-        box.button(QMessageBox::No)->setText(tr("否"));
-        if (box.exec() != QMessageBox::Yes)
-            return;
-    }
+    // 软警告层：2MB~10MB 的大文件经确认后才打开（与会话恢复共用 confirmLargeFile）
+    if (!confirmLargeFile(path))
+        return;
 
     // 统一经 FileManager 读入：编码自动检测（BOM → UTF-8 → 系统编码回退）+
     // 大小守卫。读失败（null）已由 fileReadError 信号统一弹窗，不开空标签页
@@ -1259,6 +1265,9 @@ void MainWindow::restoreSession()
     m_suppressReadErrors = true;
     QList<QPair<EditorTab *, QString>> lazyTabs;
     for (const QString &path : restoreList) {
+        // 大文件软警告与会话恢复一致：拒绝则跳过该文件（不开标签/不 watch/不进最近）
+        if (!confirmLargeFile(path))
+            continue;
         QString encoding;
         QString content = m_fileManager->readFile(path, &encoding);
         if (content.isNull())
