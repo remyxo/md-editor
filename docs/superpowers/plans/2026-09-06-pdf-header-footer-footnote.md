@@ -621,16 +621,16 @@ git commit -m "feat: PDF 导出页眉（文档标题）与页码（第 X 页/共
         QString html = MarkdownHandler::toHtml(md);
         QVERIFY(html.contains("data-type=\"footnoteDef\""));
         QVERIFY(html.contains("footnote-content"));
-        // 两个段落都在定义内（块级），且不再残留在正文
+        // 两个段落都在定义内（块级），且不再残留在正文：
+        // 正文前缀（容器开标签之前）不含定义内容，容器区两段都在且顺序保留
         QVERIFY(html.contains("第一段"));
         QVERIFY(html.contains("第二段"));
-        int bodyPos = html.indexOf("正文");
-        int defPos = html.indexOf("第一段");
-        QVERIFY(defPos > 0);
-        // 第二段在定义区内部：其位置须在第一段之后且在容器闭合前
-        QVERIFY(html.indexOf("第二段") > defPos);
-        QVERIFY(html.indexOf("第二段") < html.indexOf("data-type=\"footnoteContainer\"") + 40
-                || html.indexOf("第二段") > html.indexOf("footnoteContainer"));
+        int contPos = html.indexOf("data-type=\"footnoteContainer\"");
+        QVERIFY(contPos > 0);
+        QVERIFY(!html.left(contPos).contains("第一段"));
+        QVERIFY(!html.left(contPos).contains("第二段"));
+        QVERIFY(html.mid(contPos).contains("第一段"));
+        QVERIFY(html.mid(contPos).contains("第二段"));
     }
 
     void testFootnoteDefBlockListToHtml() {
@@ -732,10 +732,10 @@ Expected: 新用例 FAIL（列表不在定义内 / 空定义无 `<p></p>` / 公�
             processed += '\n';   // 行被移除，留空行维持段落分隔
             i = j - 1;           // 跳过已消费的续行
             lastBlock = BT_NONE;
-        } else if (...)
+        }
 ```
 
-（主循环本就是 `for (int i = 0; ...)` 索引式，`i = j - 1` 后 `++i` 正好落在 j。）
+（代码块为 def 分支的完整替换体，开头的 `} else if (...)` 与结尾的 `}` 都属于该分支；分支链中后续的 else-if 分支保持原样不动。主循环本就是 `for (int i = 0; ...)` 索引式，`i = j - 1` 后 `++i` 正好落在 j。）
 
 - [ ] **Step 5: buildFootnoteDefHtml 重写（嵌套主管线）**
 
