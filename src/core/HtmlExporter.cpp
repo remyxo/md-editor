@@ -157,6 +157,9 @@ QString HtmlExporter::mermaidRenderScript(const QString &theme)
         "for(var j=0;j<pres.length;j++){(function(code){"
         "var src=code.textContent;var pre=code.parentNode;"
         "var holder=document.createElement('div');"
+        // 类名供 PDF 分页路径定位（.mermaid-diagram svg 容纳上限规则）；
+        // 自包含 HTML 导出路径无对应 CSS，纯标记无副作用
+        "holder.className='mermaid-diagram';"
         "pre.parentNode.replaceChild(holder,pre);"
         "jobs.push(mermaid.render('mermaid-export-'+(++seq),src).then(function(res){holder.innerHTML=res.svg;})"
         ".catch(function(err){holder.textContent=src;}));"

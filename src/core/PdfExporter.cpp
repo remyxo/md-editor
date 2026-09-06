@@ -51,9 +51,22 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     // 上解析分页；margin 顺序 CSS = 上 右 下 左
     QString pageCss;
     if (paged) {
-        QString sizeStr = QPageSize(spec.paper).key();   // "A4"/"Letter"/"A5"…
-        if (spec.orientation == QPageLayout::Landscape)
-            sizeStr += QLatin1String(" landscape");
+        QString sizeStr;
+        if (spec.orientation == QPageLayout::Landscape) {
+            // 横向发显式换向尺寸（宽前高后，宽=纵向高），不用 landscape 关键字：
+            // vendored paged.js 的 pageSizes 表只有 A0-A10，命名尺寸 + landscape
+            // 时 Letter/Legal 等查表失败 → width/height 解析为空 → 尺寸变量永不
+            // 写入，DOM 页盒停留样式表默认的 8.5×11in 纵向，与横向打印版式分叉
+            // （内容被裁、页眉页脚错位）。显式 mm 尺寸走 Dimension 解析直设
+            // width/height，不依赖命名尺寸表。毫米值定点 1 位小数——与 Qt 点位
+            // 换算的微差（<0.1mm）对布局无影响
+            const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
+            sizeStr = QStringLiteral("%1mm %2mm")
+                          .arg(paperMm.height(), 0, 'f', 1)
+                          .arg(paperMm.width(), 0, 'f', 1);
+        } else {
+            sizeStr = QPageSize(spec.paper).key();   // "A4"/"Letter"/"A5"…
+        }
         pageCss = QStringLiteral("@page{size:%1;margin:%2mm %3mm %4mm %5mm;")
                       .arg(sizeStr,
                            QString::number(spec.marginsMm.top()),
@@ -69,6 +82,25 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            "@bottom-right{content:\"第 \" counter(page) \" 页 / 共 \" "
                            "counter(pages) \" 页\";font-size:9pt;color:#666;}");
         pageCss += QLatin1Char('}');
+        // mermaid SVG 页面容纳上限：mermaid 渲染的 svg 带 width="100%" + 内联
+        // max-width，宽度自适应但高度无约束——高于内容区的图不可分页拆分 →
+        // 分页器 "Unable to layout item" → 内容重复铺排 → 指纹校验拦截回退
+        // 原生分页（产物无页眉页脚）。横向 A4 内容高仅约 174mm，常见时序图
+        // （实测 735px≈195mm）纵向正常、横向必超——「横向导出无页眉页脚」的
+        // 根因。双 auto + max 盒保持纵横比（svg 自带 viewBox），超限才缩；
+        // 2mm 安全间隙防压线亚像素溢出（区底贴合即触发 Unable to layout）。
+        // 规则须在 @media print 之外——paged.js 在屏幕媒体上分页测量
+        const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
+        const bool landscape = spec.orientation == QPageLayout::Landscape;
+        const qreal capW = (landscape ? paperMm.height() : paperMm.width())
+                           - spec.marginsMm.left() - spec.marginsMm.right() - 2.0;
+        const qreal capH = (landscape ? paperMm.width() : paperMm.height())
+                           - spec.marginsMm.top() - spec.marginsMm.bottom() - 2.0;
+        pageCss += QStringLiteral(
+                       ".mermaid-diagram svg{width:auto!important;height:auto!important;"
+                       "max-width:%1mm!important;max-height:%2mm!important;}")
+                       .arg(capW, 0, 'f', 1)
+                       .arg(capH, 0, 'f', 1);
     }
     // 旧 @page{margin:0}（Qt QPageLayout 边距方案）仅 legacy 路保留；
     // paged 路径下若同存，@media print 内的后位规则会级联覆盖新 margin

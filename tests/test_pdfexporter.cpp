@@ -2,6 +2,8 @@
 #include <QTemporaryDir>
 #include <QDir>
 #include <QFile>
+#include <QPageSize>
+#include <QRegularExpression>
 #include "../src/core/PdfExporter.h"
 #include "../src/core/HtmlExporter.h"
 
@@ -128,9 +130,60 @@ private slots:
         s.orientation = QPageLayout::Landscape;
         s.marginsMm = QMarginsF(15, 20, 15, 22);   // 左上右下（QMarginsF 语义）
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
-        QVERIFY(out.contains("size:A5 landscape"));
+        // 横向发显式换向尺寸（宽前高后、宽>高），不用 landscape 关键字——vendored
+        // paged.js 的 pageSizes 表只有 A0-A10，Letter/Legal 等命名尺寸解析不出
+        // width/height → 尺寸变量永不写入 → DOM 页盒停留 8.5×11in 纵向默认值，
+        // 横向打印版式与 DOM 几何分叉（内容被裁/页眉页脚错位）。显式 mm 尺寸
+        // 走 Dimension 解析直设 width/height，不依赖命名尺寸表
+        QVERIFY(!out.contains("landscape"));
+        const QSizeF mm = QPageSize(s.paper).size(QPageSize::Millimeter);
+        QVERIFY(out.contains(QStringLiteral("size:%1mm %2mm")
+                                 .arg(mm.height(), 0, 'f', 1)
+                                 .arg(mm.width(), 0, 'f', 1)));
+        QRegularExpression re("size:([0-9.]+)mm ([0-9.]+)mm");
+        QRegularExpressionMatch m = re.match(out);
+        QVERIFY(m.hasMatch());
+        QVERIFY(m.captured(1).toDouble() > m.captured(2).toDouble());   // 宽>高
         // @page margin 顺序 = 上 右 下 左：20mm 15mm 22mm 15mm
         QVERIFY(out.contains("margin:20mm 15mm 22mm 15mm"));
+    }
+
+    void testBuildRenderHtmlPortraitKeepsNamedSize() {
+        // 纵向回归防线：维持命名尺寸（"A4"）——A 系纵向与 Letter 纵向（默认值
+        // 8.5×11in 恰为 Letter）现网均正常，此路径一个字节都不动
+        PdfPageSpec s = specWithHeader();
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
+        QVERIFY(out.contains("size:A4;"));
+        QVERIFY(!out.contains("landscape"));
+        QVERIFY(!QRegularExpression("size:[0-9.]+mm").match(out).hasMatch());
+    }
+
+    void testBuildRenderHtmlPagedCapsMermaidSvg() {
+        // mermaid SVG 页面容纳上限（横向丢页眉页脚的根因）：mermaid 渲染的 svg
+        // 带 width="100%" + 内联 max-width，宽度自适应但高度无约束——高于内容
+        // 区的图（横向内容高 174mm，常见时序图 ~195mm）不可分页拆分 → 分页器
+        // "Unable to layout item" → 内容重复铺排 → 指纹校验拦截回退原生分页
+        // （无页眉页脚）。上限规则用双 auto + max 盒保持纵横比，超限才缩，
+        // 2mm 安全间隙防压线亚像素溢出
+        PdfPageSpec s = specWithHeader();
+        s.marginsMm = QMarginsF(18, 18, 18, 18);
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
+        QVERIFY(out.contains("holder.className='mermaid-diagram'"));
+        QVERIFY(out.contains(".mermaid-diagram svg{"));
+        // 纵向 A4：内容盒 210-36-2=172mm 宽、297-36-2=259mm 高
+        QVERIFY(out.contains("max-width:172.0mm!important"));
+        QVERIFY(out.contains("max-height:259.0mm!important"));
+        // 横向 A4：宽高互换
+        s.orientation = QPageLayout::Landscape;
+        out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
+        QVERIFY(out.contains("max-width:259.0mm!important"));
+        QVERIFY(out.contains("max-height:172.0mm!important"));
+        // 上限规则须在 @media print 之外（paged.js 在屏幕媒体上分页测量）
+        QVERIFY(out.indexOf(".mermaid-diagram svg{")
+                < out.indexOf("@media print{"));
+        // legacy 路径（页眉页脚全关）无 paged 分页，不注入容纳上限
+        QString legacy = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
+        QVERIFY(!legacy.contains(".mermaid-diagram svg{"));
     }
 
     void testBuildRenderHtmlTitleEscaped() {
