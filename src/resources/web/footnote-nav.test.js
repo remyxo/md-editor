@@ -67,3 +67,24 @@ describe('脚注定位助手', () => {
     expect(first).toBeLessThan(second);
   });
 });
+
+describe('脚注改名校验', () => {
+  it('_footnoteValidateId 拒空/非法字符/重名，接受正常改名', () => {
+    const api = window.editorApi;
+    api.init();
+    api.editor.commands.setContent(
+      '<p>a<sup data-type="footnoteRef" data-id="1">1</sup></p>' +
+      '<div data-type="footnoteContainer">' +
+      '<div data-type="footnoteDef" data-id="1"><div class="footnote-content"><p>x</p></div></div>' +
+      '<div data-type="footnoteDef" data-id="2"><div class="footnote-content"><p>y</p></div></div>' +
+      '</div>');
+    expect(api._footnoteValidateId('', '1').ok).toBe(false);
+    expect(api._footnoteValidateId('a[b', '1').ok).toBe(false);
+    expect(api._footnoteValidateId('a b', '1').ok).toBe(false);
+    expect(api._footnoteValidateId('a:b', '1').ok).toBe(false);
+    expect(api._footnoteValidateId('2', '1').ok).toBe(false);      // 已存在
+    expect(api._footnoteValidateId('2', '1').err).toBe('duplicate');
+    expect(api._footnoteValidateId('注A', '1').ok).toBe(true);
+    expect(api._footnoteValidateId('1', '1').ok).toBe(true);       // 原名直过
+  });
+});

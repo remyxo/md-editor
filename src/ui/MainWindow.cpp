@@ -130,12 +130,13 @@ void MainWindow::setupUi()
     QShortcut *escShortcut = new QShortcut(QKeySequence("Esc"), this);
     connect(escShortcut, &QShortcut::activated, this, [this]() {
         if (m_modalDialogOpen) {
-            // 关闭 JS 侧的模态面板（Mermaid/数学公式/超链接/语言选择器）
+            // 关闭 JS 侧的模态面板（Mermaid/数学公式/超链接/语言选择器/脚注改名）
             runEditorCommand("window.editorApi._linkEditor.close();"
                              "window.editorApi._mermaidEditor.close();"
                              "window.editorApi._mathEditor.close();"
                              "window.editorApi._emojiPicker.close();"
-                             "window.editorApi._codeLangPicker.close();");
+                             "window.editorApi._codeLangPicker.close();"
+                             "window.editorApi._footnoteEditor.close();");
         } else {
             m_searchBar->setVisible(false);
         }

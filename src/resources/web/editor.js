@@ -595,7 +595,7 @@ function buildMermaidNode() {
 // 构造脚注引用节点（行内原子节点，显示为上标标记）
 // - id 为字面标记文本（"1" / "注1" / "附录A"）
 // - 渲染 <sup data-type="footnoteRef" data-id="{id}">{id}</sup>
-// - 自定义 NodeView：双击触发改名（与 insertLink 的 prompt 风格一致）
+// - 自定义 NodeView：双击打开改名弹层 _footnoteEditor（Enter/确定改名）
 function buildFootnoteReference() {
     return TipTapNode.create({
         name: 'footnoteReference',
@@ -654,19 +654,11 @@ function buildFootnoteReference() {
                 render();
                 _setI18nTitle(dom, 'footnote.editId');
                 dom.addEventListener('dblclick', function(e) {
-                    clearTimeout(clickTimer);
-                    clickTimer = null;
                     e.preventDefault();
                     e.stopPropagation();
-                    var cur = node.attrs.id;
-                    var v = prompt(i18n('footnote.prompt'), cur);
-                    if (v != null) {
-                        v = v.trim();
-                        // 禁止空串与脚注语法字符
-                        if (v && v !== cur && !/[\[\]\s:]/.test(v)) {
-                            window.editorApi.renameFootnote(cur, v);
-                        }
-                    }
+                    clearTimeout(clickTimer);
+                    clickTimer = null;
+                    window.editorApi._footnoteEditor.open(node.attrs.id);
                 });
                 return {
                     dom: dom,
@@ -778,6 +770,46 @@ function buildFootnoteDef() {
                     }
                 };
             };
+        }
+    });
+}
+
+// 收集文档中全部脚注引用 id 集合（空 id 忽略；孤儿定义清理用，见
+// buildFootnoteCleanupExtension）
+function footnoteRefIdSet(doc) {
+    var set = Object.create(null);
+    doc.descendants(function(node) {
+        if (node.type.name === 'footnoteReference' && node.attrs.id)
+            set[node.attrs.id] = true;
+        return true;
+    });
+    return set;
+}
+
+// 构造脚注孤儿定义清理扩展（appendTransaction 级联）：
+// - 用户编辑删掉某 id 的最后一个 footnoteReference → 连带删除该 id 的
+//   footnoteDef；容器内定义被清空 → 连容器一并删（footnoteContainer 要求
+//   content: footnoteDef+，留空容器违反 schema）
+// - 红线：setContent 等全文档替换事务不级联——文件加载/重载不得静默删
+//   用户写在文件里的孤儿定义（保存即丢数据）。判定为单步 ReplaceStep
+//   覆盖 [0, 文档全长]（TipTap setContent 即 replaceWith(0, size, doc)）
+// - 源码模式退出（exitSourceMode 销毁重建，不走事务）由
+//   _cleanupFootnoteOrphans 显式补一刀，见其注释
+// - 撤销成组：追加事务与触发的用户事务同批派发，prosemirror-history
+//   自然并组，一次 undo 同时恢复引用与定义
+function buildFootnoteCleanupExtension() {
+    return TipTapExtension.create({
+        name: 'footnoteCleanup',
+        addProseMirrorPlugins: function() {
+            var PM = window.ProseMirrorState;
+            if (!PM || !PM.Plugin || !PM.PluginKey) return [];
+            return [new PM.Plugin({
+                key: new PM.PluginKey('footnoteCleanup'),
+                appendTransaction: function(transactions, oldState, newState) {
+                    return window.editorApi._appendFootnoteOrphanCleanup(
+                        transactions, oldState, newState);
+                }
+            })];
         }
     });
 }
@@ -1148,6 +1180,9 @@ var I18N = {
     'codeblock.copy': '复制代码',
     'codeblock.changeLang': '双击修改语言',
     'footnote.editId': '双击修改脚注标记',
+    'footnote.renameTitle': '重命名脚注标记',
+    'footnote.duplicateId': '该标记已存在',
+    'footnote.invalidId': '标记不能包含 [ ] 空白或冒号',
     'emoji.search': '搜索表情（如 笑 / heart / +1）',
     'emoji.freq': '常用表情符号',
     'emoji.empty': '无匹配表情',
@@ -1190,6 +1225,9 @@ var I18N = {
     'codeblock.copy': 'Copy code',
     'codeblock.changeLang': 'Double-click to change language',
     'footnote.editId': 'Double-click to edit footnote marker',
+    'footnote.renameTitle': 'Rename footnote marker',
+    'footnote.duplicateId': 'Marker already exists',
+    'footnote.invalidId': 'Marker cannot contain [ ] whitespace or colon',
     'emoji.search': 'Search emoji (e.g. smile / heart / +1)',
     'emoji.freq': 'Frequently used',
     'emoji.empty': 'No matching emoji',
@@ -1673,6 +1711,9 @@ window.editorApi = {
             exts.push(buildFootnoteContainer());
             exts.push(buildFootnoteDef());
         }
+        // 脚注孤儿定义清理（appendTransaction：最后一个引用被删 → 连带删定义）
+        if (TipTapExtension && window.ProseMirrorState)
+            exts.push(buildFootnoteCleanupExtension());
         // 搜索高亮（自写 ProseMirror plugin，TipTap Extension 包装）
         if (TipTapExtension && window.searchPlugin)
             exts.push(buildSearchExtension());
@@ -2255,6 +2296,9 @@ window.editorApi = {
         // 记录进入源码模式前的光标位置，退出重建后恢复（内容未大改则回到原处，
         // 大纲高亮与视口随之一致）。
         this._srcEntryPos = this.editor.state.selection.head;
+        // 记录进入前已有的孤儿定义 id：退出源码模式的显式孤儿清理要排除它们
+        //（文件固有的孤儿不属于用户本次源码编辑，清了即静默丢文件内容）。
+        this._srcEntryOrphanIds = this._footnoteOrphanIdMap();
         // 记录光标所在 heading 序号（0-based，-1 表示光标前无任何标题），进入
         // 源码模式时据此滚动定位。基于 PM heading 节点顺序——与 fromHtml 输出的
         // MD 标题行一一对应（表格/引用块内的 heading 是边缘场景，序号可能略偏）。
@@ -2376,7 +2420,14 @@ window.editorApi = {
         // 命令 commands.setContent 在末尾块为标题/表格等非段落块时会自动追加空
         // 段落 <p></p>，ProseMirror 要求文档末尾有可输入节点；重建方式按 HTML
         // 原样渲染、不追加，避免「最后一行是标题时莫名插入 &nbsp;」）。
-        if (changed) this.setContent(html);
+        if (changed) {
+            this.setContent(html);
+            // 源码里删了引用 → 重建后孤儿定义同样要清（R1）：setContent 销毁
+            // 重建不产生事务，appendTransaction 级联不会触发，此处显式补刀。
+            // 排除进入源码模式前已孤立的 id（文件固有孤儿保留，见快照注释）。
+            this._cleanupFootnoteOrphans(this._srcEntryOrphanIds);
+        }
+        this._srcEntryOrphanIds = null;
         sourceWrap.style.display = 'none';
         // keep-warm 恢复：只清 visibility 与负 margin（布局大部分保留，
         // 远快于 display:none 恢复的全量重排）
@@ -3403,6 +3454,113 @@ window.editorApi = {
         }).run();
     },
 
+    // ===== 脚注孤儿定义清理（Task 10 R1） =====
+    // appendTransaction 入口（buildFootnoteCleanupExtension 回调）：
+    // 对比事务前后引用 id 集合，消失的 id 若在删除后文档中仍无引用、但有
+    // 定义，则生成删除其定义的追加事务（返回 null 表示无需追加）。
+    _appendFootnoteOrphanCleanup: function(transactions, oldState, newState) {
+        var i, tr, docChanged = false;
+        for (i = 0; i < transactions.length; i++) {
+            tr = transactions[i];
+            if (!tr.docChanged) continue;
+            // 红线：全文档替换（commands.setContent）不级联——文件加载/重载
+            // 产生的孤儿定义属于文件内容，静默删等于丢数据
+            if (this._isFullDocReplace(tr)) return null;
+            docChanged = true;
+        }
+        if (!docChanged) return null;
+        var before = footnoteRefIdSet(oldState.doc);
+        var after = footnoteRefIdSet(newState.doc);
+        var ids = [];
+        for (var id in before) {
+            if (!after[id]) ids.push(id);
+        }
+        if (!ids.length) return null;
+        return this._buildFootnoteDefDeleteTr(newState, ids);
+    },
+
+    // 全文档替换事务判定：单步 ReplaceStep 覆盖 [0, 替换前文档全长]
+    // （TipTap setContent 的 tr.replaceWith(0, doc.content.size, document)）
+    _isFullDocReplace: function(tr) {
+        if (tr.steps.length !== 1) return false;
+        var step = tr.steps[0];
+        return !!step && !!step.slice
+            && step.from === 0 && step.to === tr.before.content.size;
+    },
+
+    // 生成删除指定 id 脚注定义的事务（不派发，供 appendTransaction 追加与
+    // 源码模式退出清理共用）。容器内定义全被清时连容器一并删——容器
+    // content 为 footnoteDef+，留空违反 schema。
+    _buildFootnoteDefDeleteTr: function(state, ids) {
+        var idSet = Object.create(null);
+        for (var i = 0; i < ids.length; i++) idSet[ids[i]] = true;
+        var ranges = [];
+        state.doc.descendants(function(node, pos) {
+            if (node.type.name === 'footnoteContainer') {
+                var cnt = node.childCount, orphanCnt = 0, k;
+                for (k = 0; k < cnt; k++) {
+                    var c = node.child(k);
+                    if (c.type.name === 'footnoteDef' && idSet[c.attrs.id])
+                        orphanCnt++;
+                }
+                if (cnt > 0 && orphanCnt === cnt) {
+                    // 整容器删：直接收容器区间，不再下钻（避免子定义重复计入）
+                    ranges.push({ from: pos, to: pos + node.nodeSize });
+                    return false;
+                }
+                return true;
+            }
+            if (node.type.name === 'footnoteDef' && idSet[node.attrs.id])
+                ranges.push({ from: pos, to: pos + node.nodeSize });
+            return true;
+        });
+        if (!ranges.length) return null;
+        // 从后往前删，前序位置不漂移
+        ranges.sort(function(a, b) { return b.from - a.from; });
+        var tr = state.tr;
+        for (var j = 0; j < ranges.length; j++)
+            tr.delete(ranges[j].from, ranges[j].to);
+        tr.setMeta('footnoteCleanup', true);
+        return tr;
+    },
+
+    // 显式清理当前文档的孤儿定义（无 excludeIds 时全清）：
+    // 源码模式退出（exitSourceMode 对已编辑源码走 setContent 销毁重建，不
+    // 产生事务，appendTransaction 级联不会触发）由该路径补上——用户在源码
+    // 里删引用后退出，孤儿定义同样应被清。excludeIds 为进入源码模式时的
+    // 孤儿快照：文件固有的孤儿定义不在用户本次编辑范围内，保留。
+    _cleanupFootnoteOrphans: function(excludeIds) {
+        var ed = this.editor;
+        if (!ed) return;
+        var refs = footnoteRefIdSet(ed.state.doc);
+        var ids = [];
+        ed.state.doc.descendants(function(node) {
+            if (node.type.name === 'footnoteDef' && node.attrs.id
+                && !refs[node.attrs.id] && !(excludeIds && excludeIds[node.attrs.id]))
+                ids.push(node.attrs.id);
+            return true;
+        });
+        if (!ids.length) return;
+        var tr = this._buildFootnoteDefDeleteTr(ed.state, ids);
+        if (tr) ed.view.dispatch(tr);
+    },
+
+    // 当前文档孤儿定义 id 快照（enterSourceMode 记录，exitSourceMode 排除用）
+    _footnoteOrphanIdMap: function() {
+        var map = null;
+        if (!this.editor) return null;
+        var refs = footnoteRefIdSet(this.editor.state.doc);
+        this.editor.state.doc.descendants(function(node) {
+            if (node.type.name === 'footnoteDef' && node.attrs.id
+                && !refs[node.attrs.id]) {
+                if (!map) map = Object.create(null);
+                map[node.attrs.id] = true;
+            }
+            return true;
+        });
+        return map;
+    },
+
     // 打开 emoji 选择器浮层（C++ 侧传入定位坐标）
     openEmojiPicker: function(x, y) {
         window.editorApi._emojiPicker.open(x, y);
@@ -4201,6 +4359,136 @@ window.editorApi = {
                     }
                 }, 150);
             }, 50);
+        }
+    },
+
+    // 脚注标记校验：非空、不含 [ ] 空白冒号、不与现有 id 重名（原名直过）
+    _footnoteValidateId: function(v, curId) {
+        v = (v || '').trim();
+        if (!v) return { ok: false, err: 'invalid' };
+        if (/[\[\]\s:]/.test(v)) return { ok: false, err: 'invalid' };
+        if (v !== curId && this.findFootnoteDefPos(v) >= 0)
+            return { ok: false, err: 'duplicate' };
+        // 引用与定义任一处占用即重名
+        if (v !== curId && this.findFootnoteRefPos(v) >= 0)
+            return { ok: false, err: 'duplicate' };
+        return { ok: true, err: '' };
+    },
+
+    // ===== 脚注改名弹层（模态：仿 _linkEditor，双击引用打开） =====
+    _footnoteEditor: {
+        overlay: null,
+        popover: null,
+        input: null,
+        errLabel: null,
+        _curId: '',
+        _bodyOverflow: '',
+
+        open: function(id) {
+            var ed = window.editorApi.editor;
+            if (!ed) return;
+            this._curId = id;
+            window.editorApi._footnoteBubble.hide();   // 弹层压过气泡
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
+            this._bodyOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+            this.buildDom();
+            this.input.value = id;
+            this.show();
+            this.input.focus();
+            this.input.select();
+            ed.view.dom.blur();
+        },
+
+        buildDom: function() {
+            this.cleanupDom();
+            var self = this;
+            this.overlay = document.createElement('div');
+            this.overlay.className = 'math-editor-overlay';
+            this.popover = document.createElement('div');
+            this.popover.className = 'math-editor-popover footnote-editor-popover';
+
+            var titleBar = document.createElement('div');
+            titleBar.className = 'math-editor-titlebar';
+            var tag = document.createElement('span');
+            tag.className = 'math-editor-type-tag';
+            _setI18n(tag, 'footnote.renameTitle');
+            titleBar.appendChild(tag);
+            var closeBtn = document.createElement('button');
+            closeBtn.className = 'math-editor-close-btn';
+            closeBtn.textContent = '×';
+            _setI18nTitle(closeBtn, 'common.close');
+            closeBtn.addEventListener('click', function() { self.close(); });
+            titleBar.appendChild(closeBtn);
+            this.popover.appendChild(titleBar);
+
+            this.input = document.createElement('input');
+            this.input.type = 'text';
+            this.input.className = 'math-editor-input';
+            this.input.spellcheck = false;
+            this.input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); self.confirm(); }
+            });
+            this.input.addEventListener('input', function() { self.clearError(); });
+            this.popover.appendChild(this.input);
+
+            this.errLabel = document.createElement('div');
+            this.errLabel.className = 'footnote-editor-error';
+            this.errLabel.style.display = 'none';
+            this.popover.appendChild(this.errLabel);
+
+            // 按钮行复用 link-editor-actions（取消/确定视觉与链接编辑器一致）
+            var btnRow = document.createElement('div');
+            btnRow.className = 'link-editor-actions';
+            var cancelBtn = document.createElement('button');
+            _setI18n(cancelBtn, 'common.cancel');
+            cancelBtn.addEventListener('click', function() { self.close(); });
+            var okBtn = document.createElement('button');
+            okBtn.className = 'primary';
+            _setI18n(okBtn, 'common.ok');
+            okBtn.addEventListener('click', function() { self.confirm(); });
+            btnRow.appendChild(cancelBtn);
+            btnRow.appendChild(okBtn);
+            this.popover.appendChild(btnRow);
+
+            // 拦截滚轮穿透（遮罩本身不响应点击关闭，见模态对话框行为约定）
+            this.overlay.addEventListener('wheel', function(e) { e.preventDefault(); });
+            this.overlay.appendChild(this.popover);
+            document.body.appendChild(this.overlay);
+        },
+
+        show: function() { if (this.overlay) this.overlay.style.display = 'flex'; },
+        clearError: function() { this.errLabel.style.display = 'none'; },
+        showError: function(err) {
+            this.errLabel.style.display = 'block';
+            _setI18n(this.errLabel,
+                err === 'duplicate' ? 'footnote.duplicateId' : 'footnote.invalidId');
+        },
+
+        confirm: function() {
+            var v = this.input.value;
+            var check = window.editorApi._footnoteValidateId(v, this._curId);
+            if (!check.ok) { this.showError(check.err); return; }
+            var newId = v.trim();
+            if (newId !== this._curId)
+                window.editorApi.renameFootnote(this._curId, newId);
+            this._confirmedClose();
+        },
+
+        _confirmedClose: function() {
+            // 改名产生文档变更（onUpdate 已置脏并通知 C++），此处无需恢复
+            this.close();
+        },
+
+        close: function() {
+            this.cleanupDom();
+            document.body.style.overflow = this._bodyOverflow;
+            if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(false);
+        },
+
+        cleanupDom: function() {
+            if (this.overlay) { this.overlay.remove(); this.overlay = null; }
+            this.popover = null; this.input = null; this.errLabel = null;
         }
     },
 

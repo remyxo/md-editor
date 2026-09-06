@@ -872,6 +872,11 @@ body.dark .footnote-bubble {
   color: #d0d4d8;
 }
 
+/* 改名弹层（复用 math-editor-popover/dialog 骨架，按钮行用 link-editor-actions） */
+.footnote-editor-popover { min-width: 280px; }
+.footnote-editor-error { color: #d93025; font-size: 0.85em; margin: 4px 0; }
+body.dark .footnote-editor-error { color: #f28b82; }
+
 /* kbd 键盘按键 */
 kbd {
     font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
