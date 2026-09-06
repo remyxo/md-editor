@@ -5,7 +5,8 @@
 
 class MarkdownHandler {
 public:
-    static QString toHtml(const QString &markdown);
+    // extractFootnotes=false：嵌套转换（脚注定义内容）——[^x] 引用与定义行均按字面
+    static QString toHtml(const QString &markdown, bool extractFootnotes = true);
     static QString toPlainText(const QString &markdown);
     static QString extractTitle(const QString &markdown);
     static QString fromHtml(const QString &html);

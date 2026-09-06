@@ -923,6 +923,65 @@ private slots:
                  qPrintable("残留 ZZSB 占位符，实际: " + html));
     }
 
+    void testFootnoteDefBlockParagraphsToHtml() {
+        // 空行 + 缩进 = 定义内新段落
+        QString md = "正文[^1]。\n\n[^1]: 第一段\n\n    第二段\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY(html.contains("data-type=\"footnoteDef\""));
+        QVERIFY(html.contains("footnote-content"));
+        // 两个段落都在定义内（块级），且不再残留在正文：
+        // 正文前缀（容器开标签之前）不含定义内容，容器区两段都在且顺序保留
+        QVERIFY(html.contains("第一段"));
+        QVERIFY(html.contains("第二段"));
+        int contPos = html.indexOf("data-type=\"footnoteContainer\"");
+        QVERIFY(contPos > 0);
+        QVERIFY(!html.left(contPos).contains("第一段"));
+        QVERIFY(!html.left(contPos).contains("第二段"));
+        QVERIFY(html.mid(contPos).contains("第一段"));
+        QVERIFY(html.mid(contPos).contains("第二段"));
+    }
+
+    void testFootnoteDefBlockListToHtml() {
+        QString md = "[^1]: 段落\n    - 甲\n    - 乙\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY(html.contains("<li"));
+        QVERIFY(html.contains("甲"));
+        // 列表在定义内：正文流不残留列表文本（processed 里定义行被移除）
+        QVERIFY(!html.left(html.indexOf("data-type=\"footnoteContainer\"")).contains("- 甲"));
+    }
+
+    void testFootnoteDefLazyContinuationStaysInBody() {
+        // 非缩进续行不归属定义（与 MVP 行为一致），保留在正文
+        QString md = "[^1]: 定义内容\n紧随正文\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY(html.contains("紧随正文"));
+        // 紧随正文须出现在定义区之外（正文区）
+        QVERIFY(html.indexOf("紧随正文") < html.indexOf("footnoteDef"));
+    }
+
+    void testFootnoteDefEmptyToHtml() {
+        QString md = "正文[^1]。\n\n[^1]:\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY(html.contains("data-type=\"footnoteDef\""));
+        // 空定义给一个空段落（block+ schema 最小内容）
+        QVERIFY(html.contains("<p></p>"));
+    }
+
+    void testFootnoteDefNestedPipelineMath() {
+        // 定义内容经嵌套主管线：行内公式占位符机制生效（非裸 setMarkdown）
+        QString md = "[^1]: 公式 $a+b$ 注\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY(html.contains("data-latex"));
+    }
+
+    void testFootnoteDefNestedDefLiteral() {
+        // 嵌套定义行按字面文本（不二次提取）
+        QString md = "[^1]: 外层\n    [^2]: 内层\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY(!html.contains("data-id=\"2\""));
+        QVERIFY(html.count("data-type=\"footnoteDef\"") == 1);
+    }
+
     // ===== 脚注（footnote）HTML → MD 往返 =====
 
     void testFootnoteRefRoundTrip() {

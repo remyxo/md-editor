@@ -827,8 +827,9 @@ static QString extractHtmlInlineElements(const QString &line,
 // 先保护行内代码 `...`（其内的 [^x] 原样保留），再转换引用，最后还原代码。
 // 占位符经碰撞检测生成（实际串存 phs），还原时按存储值回填。
 static QString extractFootnoteRefs(QString line, QStringList &refs, QStringList &phs,
-                                   QSet<QString> &collisions)
+                                   QSet<QString> &collisions, bool enabled = true)
 {
+    if (!enabled) return line;   // 嵌套层：[^x] 按字面穿过
     // 静态缓存正则：每正文行调用一次，现构造会累积 O(行数×构造开销)
     static const QRegularExpression codeSpanRe("`([^`]+)`");
     static const QRegularExpression refRe("\\[\\^([^\\]]+?)\\]");
@@ -862,24 +863,28 @@ static QString extractFootnoteRefs(QString line, QStringList &refs, QStringList 
     return line;
 }
 
-// 脚注定义内容（MD 行内）→ footnoteDef 契约 HTML（marker + footnote-content 包裹）。
-// 内容借嵌套 QTextDocument 转 inline HTML（保留粗体/斜体/链接等），仅取首段 inline。
-static QString buildFootnoteDefHtml(const QString &id, const QString &contentMd,
-                                    QStringList &subContents, QStringList &subPhs,
-                                    QSet<QString> &collisions)
+// 脚注定义内容（MD，可多行块级）→ footnoteDef 契约 HTML（marker + 块级 content）。
+// 内容经完整 MD→HTML 主管线嵌套转换（数学/任务列表/高亮/上下标等占位符全套生效，
+// 嵌套层禁用脚注提取：内层 [^x] 按字面处理，嵌套脚注不支持）。
+static QString buildFootnoteDefHtml(const QString &id, const QString &contentMd)
 {
-    QTextDocument d;
-    d.setMarkdown(extractSubscripts(contentMd, subContents, subPhs, collisions));
-    QString h = d.toHtml();
-    auto bm = QRegularExpression("<body[^>]*>(.*)</body>",
-        QRegularExpression::DotMatchesEverythingOption).match(h);
-    QString inner = bm.hasMatch() ? bm.captured(1).trimmed() : QString();
-    // 去掉外层 <p></p>，仅保留 inline
-    inner.remove(QRegularExpression("^\\s*<p[^>]*>"));
-    inner.remove(QRegularExpression("</p>\\s*$"));
+    QString inner;
+    if (contentMd.trimmed().isEmpty()) {
+        inner = QStringLiteral("<p></p>");   // 空定义：block+ schema 最小内容
+    } else {
+        QString h = MarkdownHandler::toHtml(contentMd, false);
+        static const QRegularExpression bodyRe(
+            QStringLiteral("<body[^>]*>(.*)</body>"),
+            QRegularExpression::DotMatchesEverythingOption);
+        auto bm = bodyRe.match(h);
+        inner = bm.hasMatch() ? bm.captured(1).trimmed() : h.trimmed();
+        // Qt toHtml 携带的片段注释不进编辑器内容
+        inner.remove(QStringLiteral("<!--StartFragment-->"));
+        inner.remove(QStringLiteral("<!--EndFragment-->"));
+    }
     return "<div data-type=\"footnoteDef\" data-id=\"" + id + "\">"
          + "<span class=\"footnote-marker\">" + id + "</span>"
-         + "<span class=\"footnote-content\">" + inner + "</span></div>";
+         + "<div class=\"footnote-content\">" + inner + "</div></div>";
 }
 
 // ===== 任务列表（GFM task list ↔ TipTap taskList/taskItem 契约）=====
@@ -1564,7 +1569,7 @@ static void wrapDiscardedEmphCode(QString &html, const QString &processed)
     html = out;
 }
 
-QString MarkdownHandler::toHtml(const QString &markdown)
+QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
 {
     // 占位符碰撞索引：源文档中全部 ZZ\w+ZZ 形态子串，供 collisionFreePlaceholder
     // O(1) 碰撞检测（单次构建，随生成 insert 本次占位符）。
@@ -1795,16 +1800,43 @@ QString MarkdownHandler::toHtml(const QString &markdown)
             // 块引用代码内容行（非围栏行）：剥离 > 前缀收集
             bqCodeContent << stripBlockquotePrefix(line);
             lastBlock = BT_NONE;
-        } else if (isFootnoteDef) {
-            // 脚注定义行 [^id]: 内容（非代码块）—— 抽取归集到文末容器，从正文流移除
+        } else if (isFootnoteDef && extractFootnotes) {
+            // 脚注定义行 [^id]: 内容（非代码块）—— 抽取归集到文末容器，从正文流移除。
+            // 嵌套层（extractFootnotes=false）不进此分支：定义行按字面输出。
+            // 块级定义：缩进续行（≥4 空格 / 1 tab）归属定义；空行后仍有缩进行 =
+            // 定义内新段落（pandoc 式）；非缩进行（含懒续行）即定义结束留在正文
             QString fid = footnoteDefMatch.captured(1).trimmed();
+            QString contentMd = footnoteDefMatch.captured(2).trimmed();
+            int j = i + 1;
+            while (j < lines.size()) {
+                const QString &cont = lines[j];
+                if (cont.trimmed().isEmpty()) {
+                    // 空行不消费：先向后探测，其后首个非空行是缩进行才算定义内段落分隔
+                    int k = j;
+                    while (k < lines.size() && lines[k].trimmed().isEmpty()) ++k;
+                    if (k < lines.size()
+                        && (lines[k].startsWith(QStringLiteral("    "))
+                            || lines[k].startsWith(QLatin1Char('\t')))) {
+                        contentMd += QStringLiteral("\n\n");
+                        j = k;          // 消费中间空行（定义内段落分隔）
+                        continue;
+                    }
+                    break;              // 空行后无缩进行 → 定义结束
+                }
+                if (!(cont.startsWith(QStringLiteral("    "))
+                      || cont.startsWith(QLatin1Char('\t'))))
+                    break;              // 非缩进非空 → 定义结束（懒续行留正文）
+                contentMd += QLatin1Char('\n');
+                contentMd += cont.startsWith(QLatin1Char('\t'))
+                                 ? cont.mid(1) : cont.mid(4);   // 去一层缩进
+                ++j;
+            }
             if (!footnoteDefIds.contains(fid)) {   // 同 id 取首次定义
                 footnoteDefIds << fid;
-                footnoteDefs << buildFootnoteDefHtml(
-                    fid, footnoteDefMatch.captured(2).trimmed(),
-                    subContents, subPhs, collisions);
+                footnoteDefs << buildFootnoteDefHtml(fid, contentMd);
             }
             processed += '\n';   // 行被移除，留空行维持段落分隔
+            i = j - 1;           // 跳过已消费的续行
             lastBlock = BT_NONE;
         } else if (line.trimmed().isEmpty() || isNbspLiteralLine(line)) {
             const bool prevWasList = (lastBlock == BT_LIST);
@@ -1954,7 +1986,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                                              escapedDelimPhs, collisions);
                 cl = extractSubscripts(cl, subContents, subPhs, collisions);
                 cl = extractFootnoteRefs(cl, footnoteRefs, footnoteRefPhs,
-                                         collisions);
+                                         collisions, extractFootnotes);
                 cl = extractHtmlInlineElements(cl, htmlInlineBackups, htmlInlinePhs,
                                                collisions);
                 processed += cl + '\n';
@@ -1974,7 +2006,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                                          escapedDelimPhs, collisions);
             cl = extractSubscripts(cl, subContents, subPhs, collisions);
             cl = extractFootnoteRefs(cl, footnoteRefs, footnoteRefPhs,
-                                     collisions);
+                                     collisions, extractFootnotes);
             cl = extractHtmlInlineElements(cl, htmlInlineBackups, htmlInlinePhs,
                                            collisions);
             processed += cl + '\n';
@@ -2005,7 +2037,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                                          escapedDelimPhs, collisions);
             cl = extractSubscripts(cl, subContents, subPhs, collisions);
             cl = extractFootnoteRefs(cl, footnoteRefs, footnoteRefPhs,
-                                     collisions);
+                                     collisions, extractFootnotes);
             cl = extractHtmlInlineElements(cl, htmlInlineBackups, htmlInlinePhs,
                                            collisions);
             brSoftPhs << collisionFreePlaceholder(collisions, 
@@ -2064,7 +2096,7 @@ QString MarkdownHandler::toHtml(const QString &markdown)
                                          escapedDelimPhs, collisions);
             cl = extractSubscripts(cl, subContents, subPhs, collisions);
             cl = extractFootnoteRefs(cl, footnoteRefs, footnoteRefPhs,
-                                     collisions);
+                                     collisions, extractFootnotes);
             cl = extractHtmlInlineElements(cl, htmlInlineBackups, htmlInlinePhs,
                                            collisions);
             processed += cl + '\n';
@@ -3748,8 +3780,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteDef"[^>]*>(.*?)</div>)",
                 QRegularExpression::DotMatchesEverythingOption);
             QRegularExpression defIdRe("data-id\\s*=\\s*\"([^\"]*)\"");
+            // content 容器：div（toHtml 块级新契约）| span（内联旧形态，向后兼容）
             QRegularExpression contentOpenRe(
-                R"(<span\b[^>]*class\s*=\s*"footnote-content"[^>]*>)");
+                R"(<(div|span)\b[^>]*class\s*=\s*"footnote-content"[^>]*>)");
             QString mdBlock;
             int doff = 0;
             while (true) {
@@ -3757,16 +3790,22 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 if (!dm.hasMatch()) break;
                 auto iim = defIdRe.match(dm.captured());
                 QString id = iim.hasMatch() ? iim.captured(1) : QString();
-                // 取 footnote-content span 内的 inline HTML（跳过 marker）。
+                // 取 footnote-content 容器内的 inline HTML（跳过 marker）。
                 // content 含 Qt 生成的嵌套 <span style="...">（粗体/链接色等），
-                // 必须平衡扫描定位配对 </span>，非贪婪正则会停在首个嵌套闭合标签。
+                // 必须平衡扫描定位配对闭合标签，非贪婪正则会停在首个嵌套闭合标签。
                 QString defInner = dm.captured(1);
                 auto com = contentOpenRe.match(defInner);
                 QString contentHtml;
                 if (com.hasMatch()) {
-                    int spanClose = findMatchingSpanClose(defInner, com.capturedStart());
-                    contentHtml = (spanClose >= 0)
-                        ? defInner.mid(com.capturedEnd(), spanClose - com.capturedEnd())
+                    // div 形态的配对 </div> 可能已被外层 defDivRe 非贪婪定界消费
+                    // （捕获区以 content 的闭合标签为终点）——平衡扫描失败时回退
+                    // 取容器开标签之后的全部内容，恰好即完整 content。
+                    const bool isDiv = (com.captured(1) == QLatin1String("div"));
+                    int contentClose = isDiv
+                        ? findMatchingDivClose(defInner, com.capturedStart())
+                        : findMatchingSpanClose(defInner, com.capturedStart());
+                    contentHtml = (contentClose >= 0)
+                        ? defInner.mid(com.capturedEnd(), contentClose - com.capturedEnd())
                         : defInner.mid(com.capturedEnd());
                 } else {
                     contentHtml = defInner;
