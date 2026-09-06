@@ -135,6 +135,27 @@ connect(escShortcut, &QShortcut::activated, this, [this]() {
 
 ---
 
+## 浮层复用与语义放宽（2026-09-06 增补）
+
+`modalDialogStateChanged` 标志的实际使用者已超出当初的「模态编辑对话框」，覆盖编辑器内全部阻塞型浮层：
+
+| 浮层 | 打开入口 | 备注 |
+|------|---------|------|
+| 超链接编辑器 `_linkEditor` | 右键菜单 / 工具栏 | 原始设计内 |
+| Mermaid 编辑器 `_mermaidEditor` | 工具栏插入 | 原始设计内 |
+| 数学公式编辑器 `_mathEditor` | 工具栏插入 | 原始设计内 |
+| emoji 选择器 `_emojiPicker` | 工具栏 | 复用此标记（2026-08-09 emoji spec 待办补录） |
+| 代码语言选择器 `_codeLangPicker` | 代码块 | 同上 |
+| 脚注改名弹层 `_footnoteEditor` | 双击脚注引用 | 2026-09-06 新增（脚注增强 spec §2.5） |
+
+变量语义从「模态对话框打开」放宽为「编辑器内阻塞型浮层打开」；C++ 侧 `m_modalDialogOpen` 与 Esc 分流逻辑不变。
+
+**新增浮层接入清单**：`open()` 时 `bridge.modalDialogChanged(true)`、`close()` 时传 `false`；并把 `close()` 调用加入 `MainWindow` Esc 链的 `runJavaScript` 串（`MainWindow.cpp:134-138`）。
+
+**非阻塞浮层不占用此标志**：如脚注 hover 气泡——随鼠标离开即消失的瞬时预览，Esc 不应关闭它。
+
+---
+
 ## 教训
 
 ### 1. Qt QShortcut 会拦截子控件的事件
