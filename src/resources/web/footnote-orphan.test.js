@@ -24,9 +24,17 @@ function loadEditor() {
   window.eval(readFileSync(path.join(W, 'editor.js'), 'utf8'));
 }
 
-// 加载模式照 footnote-nav.test.js：jsdom body 需先备 #editor 挂载点
+// 加载模式照 footnote-nav.test.js：jsdom body 需先备 #editor 挂载点。
+// 另备源码模式脚手架（#source-wrap/#source-view/#source-overlay，照
+// modeswitch-search.test.js），供接线级用例真实走 enter/exitSourceMode；
+// jsdom 未实现 scrollIntoView/scrollTo（exitSourceMode 恢复光标时调用），桩掉。
 beforeAll(() => {
-  document.body.innerHTML = '<div id="editor"></div>';
+  window.scrollTo = function () {};
+  window.HTMLElement.prototype.scrollIntoView = function () {};
+  document.body.innerHTML =
+    '<div id="editor"></div>' +
+    '<div id="source-wrap" style="display:none">' +
+    '<pre id="source-overlay"></pre><textarea id="source-view"></textarea></div>';
   loadEditor();
 });
 
@@ -165,5 +173,35 @@ describe('脚注孤儿定义清理', () => {
     expect(api.findFootnoteDefPos('9')).toBeGreaterThan(0); // 旧孤儿保留
     api._cleanupFootnoteOrphans(null);                      // 无排除：全清
     expect(api.findFootnoteDefPos('9')).toBe(-1);
+  });
+
+  it('接线级：enterSourceMode 快照 → 源码删引用 → exitSourceMode 真实链路清理', () => {
+    const api = window.editorApi;
+    // 文档：正常脚注 1（ref+def）+ 文件固有孤儿 def 9（有 def 无 ref）
+    setup(api,
+      '<p>a<sup data-type="footnoteRef" data-id="1">1</sup></p>' +
+      '<div data-type="footnoteContainer">' +
+      '<div data-type="footnoteDef" data-id="1"><div class="footnote-content"><p>x</p></div></div>' +
+      '<div data-type="footnoteDef" data-id="9"><div class="footnote-content"><p>旧孤儿</p></div></div>' +
+      '</div>');
+    // 真实进入源码模式：enterSourceMode 内部记录孤儿快照（含 9）
+    const md = 'a[^1]\n\n[^1]: x\n\n[^9]: 旧孤儿\n';
+    api.enterSourceMode(md);
+    expect(api.isSourceMode).toBe(true);
+    // 模拟用户在源码里删掉引用 [^1]（程序化改 value 不触发 input 事件，
+    // exitSourceMode 以 value 与 _sourceValue 的差异判 changed，语义一致）
+    document.getElementById('source-view').value = 'a\n\n[^9]: 旧孤儿\n';
+    // 真实退出：html 为删除引用后的重建文档（C++ toHtml 产物形态）——
+    // def 1 成新孤儿，def 9 仍在
+    api.exitSourceMode(
+      '<p>a</p>' +
+      '<div data-type="footnoteContainer">' +
+      '<div data-type="footnoteDef" data-id="1"><div class="footnote-content"><p>x</p></div></div>' +
+      '<div data-type="footnoteDef" data-id="9"><div class="footnote-content"><p>旧孤儿</p></div></div>' +
+      '</div>');
+    expect(api.isSourceMode).toBe(false);
+    expect(api.findFootnoteDefPos('9')).toBeGreaterThan(0); // 红线：文件固有孤儿存活
+    expect(api.findFootnoteDefPos('1')).toBe(-1);           // 用户编辑新孤儿被清理
+    expect(api.findFootnoteRefPos('1')).toBe(-1);
   });
 });
