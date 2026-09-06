@@ -16,6 +16,19 @@ static const int kExternalChangeDebounceMs = 300;
 // UTF-8 BOM 字节（EF BB BF）
 static const QByteArray kUtf8Bom = QByteArray::fromHex("efbbbf");
 
+// 二进制探测窗口：只嗅探文件头部，NUL 出现在窗口外（如正文粘贴了罕见控制
+// 字符）放行，避免全文扫描开销
+static const int kBinarySniffBytes = 8192;
+
+// 头部字节是否像二进制：无 UTF-16 BOM 且含 NUL 字节 → 判为二进制。
+// UTF-16 文件合法含大量 NUL（每字符高低字节交替 00），以 BOM 豁免
+static bool headLooksBinary(const QByteArray &head)
+{
+    if (head.startsWith("\xFF\xFE") || head.startsWith("\xFE\xFF"))
+        return false;
+    return head.contains('\0');
+}
+
 // 系统默认编码名（无 BOM 且非法 UTF-8 时回退所用编码），用于状态栏显示。
 // Windows 中文系统 ANSI 代码页为 936（GBK）；Linux/macOS 恒为 UTF-8。
 static QString systemEncodingName()
@@ -93,9 +106,45 @@ QString FileManager::readFile(const QString &path, QString *encoding)
         emit fileReadError(path, file.errorString());
         return {};
     }
+    // 大小硬上限：经打开句柄取 size（无 TOCTOU），超限不 readAll 直接拒绝。
+    // 上限取闭区间边界（恰好 16MB 可读，超过 1 字节才拒），软警告层见 MainWindow
+    const qint64 size = file.size();
+    if (size > kMaxReadBytes) {
+        file.close();
+        emit fileReadError(path, QStringLiteral("文件过大：%1 MB（上限 %2 MB）")
+                               .arg(QString::number(size / 1024.0 / 1024.0, 'f', 1),
+                                    QString::number(kMaxReadBytes / 1024.0 / 1024.0, 'f', 1)));
+        return {};
+    }
+    // 二进制拒读：头部含 NUL（图片/可执行/损坏文件误当 .md 打开）。
+    // NUL 经 UTF-8 解码成串 U+FFFD 单段落，渲染进程病态布局数分钟打不开
+    // （实测 3MB NUL 渲染进程 99.5% CPU 假死）
+    const QByteArray head = file.peek(kBinarySniffBytes);
+    if (headLooksBinary(head)) {
+        file.close();
+        emit fileReadError(path, QStringLiteral("二进制文件（含 NUL 字节），不支持作为文本打开"));
+        return {};
+    }
     QByteArray bytes = file.readAll();
     file.close();
-    return decodeFileContent(bytes, encoding);
+    QString content = decodeFileContent(bytes, encoding);
+    // readFile 契约：返回 null ⟺ 读失败（已发 fileReadError）。空文件须返回
+    // 空串而非 null，调用方以 isNull() 判错跳过打开——否则失败读入被当空文档
+    // 打开，误保存会清空原文件
+    return content.isNull() ? QString(QStringLiteral("")) : content;
+}
+
+bool FileManager::isBinaryFile(const QString &path)
+{
+    // 与 readFile 拒读同一判定（头部 NUL + UTF-16 BOM 豁免），供 MainWindow
+    // 在弹软警告框前预检：二进制文件直接走读入报错路径，避免「大文件警告 →
+    // 确认 → 又报错」的双重弹窗
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    const QByteArray head = file.peek(kBinarySniffBytes);
+    file.close();
+    return headLooksBinary(head);
 }
 
 bool FileManager::writeFile(const QString &path, const QString &content)

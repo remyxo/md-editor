@@ -134,6 +134,164 @@ private slots:
                  "替换式修改后监控丢失：后续外部修改无法感知（需重新加入监控）");
     }
 
+    void testReadOversizeRejected() {
+        // 超过硬上限（16MB）的文件应拒绝读入：返回空、发出 fileReadError、
+        // 错误信息含「文件过大」——不 readAll（编辑管道内存放大约 10×，会假死）
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/big.md";
+
+        QByteArray chunk(1024 * 1024, 'x');   // 1MB
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            for (int i = 0; i < FileManager::kMaxReadBytes / (1024 * 1024); i++)
+                f.write(chunk);
+            f.write("x");                     // 恰超上限 1 字节
+            f.close();
+        }
+
+        QSignalSpy spy(&fm, &FileManager::fileReadError);
+        QString result = fm.readFile(path);
+        QVERIFY(result.isNull());
+        QCOMPARE(spy.count(), 1);
+        QVERIFY2(spy.at(0).at(1).toString().contains(QStringLiteral("文件过大")),
+                 qPrintable(spy.at(0).at(1).toString()));
+    }
+
+    void testReadAtLimitSucceeds() {
+        // 恰好等于上限（16MB）的文件应正常读入（上限为闭区间边界，仅「超过」才拒绝）
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/exact.md";
+
+        QByteArray chunk(1024 * 1024, 'y');
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            for (int i = 0; i < FileManager::kMaxReadBytes / (1024 * 1024); i++)
+                f.write(chunk);
+            f.close();
+        }
+
+        QSignalSpy spy(&fm, &FileManager::fileReadError);
+        QString content = fm.readFile(path);
+        QCOMPARE(spy.count(), 0);
+        QCOMPARE(static_cast<qint64>(content.size()),
+                 FileManager::kMaxReadBytes);
+    }
+
+    void testReadEmptyFileNonError() {
+        // readFile 契约：null ⟺ 读失败。空文件应返回「空串而非 null」且不发
+        // 错误信号——调用方以 isNull() 判错，null 会被误当读失败跳过
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/empty.md";
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.close();
+
+        QSignalSpy spy(&fm, &FileManager::fileReadError);
+        QString content = fm.readFile(path);
+        QCOMPARE(spy.count(), 0);
+        QVERIFY(!content.isNull());
+        QVERIFY(content.isEmpty());
+    }
+
+    void testReadNulBinaryRejected() {
+        // 全 NUL 二进制文件（误拖入的图片/可执行/损坏文件）应拒读：null +
+        // fileReadError 含「二进制」——3MB NUL 会解码为单段落数百万 U+FFFD，
+        // 渲染进程病态布局数分钟打不开（实测 99.5% CPU 假死）
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/nul.md";
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            QByteArray chunk(1024 * 1024, '\0');
+            f.write(chunk);
+            f.write(chunk);
+            f.write(chunk);
+            f.close();
+        }
+        QSignalSpy spy(&fm, &FileManager::fileReadError);
+        QString result = fm.readFile(path);
+        QVERIFY(result.isNull());
+        QCOMPARE(spy.count(), 1);
+        QVERIFY2(spy.at(0).at(1).toString().contains(QStringLiteral("二进制")),
+                 qPrintable(spy.at(0).at(1).toString()));
+    }
+
+    void testReadUtf16BomNulNotBinary() {
+        // UTF-16 文件合法含 NUL 字节（每字符高/低字节交替 00），BOM 豁免，
+        // 不得误判二进制
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/u16.md";
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QByteArray::fromHex("FFFE48006900"));
+            f.close();
+        }
+        QSignalSpy spy(&fm, &FileManager::fileReadError);
+        QString content = fm.readFile(path);
+        QCOMPARE(spy.count(), 0);
+        QCOMPARE(content, QStringLiteral("Hi"));
+    }
+
+    void testIsBinaryFile() {
+        // isBinaryFile（MainWindow 软警告框前预检用）与 readFile 拒读同逻辑
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+
+        // 纯文本 → 非二进制
+        QString text = dir.path() + "/t.md";
+        {
+            QFile f(text);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("# 标题\n正文");
+            f.close();
+        }
+        QVERIFY(!FileManager::isBinaryFile(text));
+
+        // 头部含 NUL → 二进制
+        QString nul = dir.path() + "/n.md";
+        {
+            QFile f(nul);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("text\0more", 10);
+            f.close();
+        }
+        QVERIFY(FileManager::isBinaryFile(nul));
+
+        // UTF-16 BOM 豁免 → 非二进制
+        QString u16 = dir.path() + "/u.md";
+        {
+            QFile f(u16);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QByteArray::fromHex("FFFE4800"));
+            f.close();
+        }
+        QVERIFY(!FileManager::isBinaryFile(u16));
+
+        // NUL 在 8KB 探测窗口之外 → 启发式放行（非二进制）
+        QString far = dir.path() + "/f.md";
+        {
+            QFile f(far);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QByteArray(9000, 'x'));
+            f.write("\0", 1);
+            f.close();
+        }
+        QVERIFY(!FileManager::isBinaryFile(far));
+    }
+
     void testReadUtf8BomStripped() {
         // 带 UTF-8 BOM 的文件读入应剥离 BOM，不残留 U+FEFF
         FileManager fm;

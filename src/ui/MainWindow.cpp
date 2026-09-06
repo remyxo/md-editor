@@ -375,6 +375,20 @@ void MainWindow::connectSignals()
                 }
             });
 
+    // === 文件读入失败 ===
+    // 统一弹窗（打开对话框/双击/拖放/命令行/外部变更重载）；会话恢复期间静默
+    // （读失败条目直接跳过，见 restoreSession——此前该信号无人连接，读失败
+    // 静默返回 null：会话恢复开空标签页、重载静默放弃）
+    connect(m_fileManager, &FileManager::fileReadError, this,
+            [this](const QString &path, const QString &error) {
+                if (m_suppressReadErrors) return;
+                QMessageBox box(QMessageBox::Warning, tr("打开失败"),
+                                tr("无法打开文件：\n%1\n\n%2").arg(path, error),
+                                QMessageBox::Ok, this);
+                box.button(QMessageBox::Ok)->setText(tr("确定"));
+                box.exec();
+            });
+
     // === 文件外部变更 ===
     connect(m_fileManager, &FileManager::fileExternallyModified, this,
             [this](const QString &path) {
@@ -944,19 +958,29 @@ void MainWindow::onOpenFolder()
 
 void MainWindow::onFileDoubleClicked(const QString &path)
 {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        QMessageBox box(QMessageBox::Warning, tr("打开失败"),
-                        tr("无法打开文件: %1").arg(path), QMessageBox::Ok, this);
-        box.button(QMessageBox::Ok)->setText(tr("确定"));
-        box.exec();
-        return;
+    // 软警告层：2MB~16MB 的大文件经确认后才打开；超 16MB 不必再问「是否仍要
+    // 打开」（readFile 硬上限必然拒绝，连弹两框徒增打扰）；二进制文件同理
+    // （readFile 会拒读并报错，先弹「是否仍要打开」只会造成双重弹窗）
+    const qint64 size = QFileInfo(path).size();
+    if (size >= FileManager::kLargeFileWarnBytes && size <= FileManager::kMaxReadBytes
+        && !FileManager::isBinaryFile(path)) {
+        QMessageBox box(QMessageBox::Question, tr("文件较大"),
+                        tr("文件 %1 大小为 %2 MB，打开后可能明显卡顿。\n是否仍要打开？")
+                            .arg(path, QString::number(size / 1024.0 / 1024.0, 'f', 1)),
+                        QMessageBox::Yes | QMessageBox::No, this);
+        box.button(QMessageBox::Yes)->setText(tr("是"));
+        box.button(QMessageBox::No)->setText(tr("否"));
+        if (box.exec() != QMessageBox::Yes)
+            return;
     }
 
-    // 统一经 FileManager 的编码自动检测（BOM → UTF-8 → 系统编码回退）解码
+    // 统一经 FileManager 读入：编码自动检测（BOM → UTF-8 → 系统编码回退）+
+    // 大小守卫。读失败（null）已由 fileReadError 信号统一弹窗，不开空标签页
+    // ——空内容标签页误保存会清空原文件
     QString encoding;
-    QString content = FileManager::decodeFileContent(file.readAll(), &encoding);
-    file.close();
+    QString content = m_fileManager->readFile(path, &encoding);
+    if (content.isNull())
+        return;
 
     EditorTab *tab = m_tabWidget->openFileTab(path, content);
     tab->setFilePath(path);
@@ -1225,15 +1249,21 @@ void MainWindow::restoreSession()
 
     // 非活动标签页惰性加载：启动只加载当前要看的标签页内容，其余标签页登记
     // 待载内容、切到时才加载（重文档会话免多页并行 setContent 的启动停顿）
-    int activeTab = settings.value("session/activeTab", 0).toInt();
-    if (activeTab < 0 || activeTab >= restoreList.size())
-        activeTab = 0;
+    // 活动标签按路径定位（而非下标）：读失败条目跳过后标签下标会整体前移，
+    // 按下标会激活错位的标签页
+    const QString activePath = openFiles.value(
+        qBound(0, settings.value("session/activeTab", 0).toInt(),
+               qMax(openFiles.size() - 1, 0)));
+    // 读失败（文件损坏/超 16MB 上限）的条目跳过，不开空标签页——空内容
+    // 标签页误保存会清空原文件；启动期错误弹窗静默（避免弹窗轰炸）
+    m_suppressReadErrors = true;
     QList<QPair<EditorTab *, QString>> lazyTabs;
-    for (int i = 0; i < restoreList.size(); ++i) {
-        const QString &path = restoreList.at(i);
+    for (const QString &path : restoreList) {
         QString encoding;
         QString content = m_fileManager->readFile(path, &encoding);
-        const bool isActive = (i == activeTab);
+        if (content.isNull())
+            continue;
+        const bool isActive = (path == activePath);
         EditorTab *tab = m_tabWidget->openFileTab(path, isActive ? content : QString(),
                                                   !isActive);
         tab->setFilePath(path);
@@ -1242,9 +1272,21 @@ void MainWindow::restoreSession()
         m_menuBar->addRecentFile(path);
         if (!isActive) lazyTabs.append(qMakePair(tab, content));
     }
+    m_suppressReadErrors = false;
+
+    // 全部条目读失败 → 按无会话处理，开空白标签页
+    if (m_tabWidget->count() == 0) {
+        m_tabWidget->openNewTab();
+        return;
+    }
 
     // 恢复活动标签页，随后登记惰性内容（避免 openFileTab 过程中的临时激活误触发加载）
-    m_tabWidget->setCurrentIndex(activeTab);
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        if (m_tabWidget->tabAt(i)->webView()->property("filePath").toString() == activePath) {
+            m_tabWidget->setCurrentIndex(i);
+            break;
+        }
+    }
     for (const auto &p : lazyTabs)
         p.first->setPendingContent(p.second);
 

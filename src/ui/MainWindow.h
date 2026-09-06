@@ -95,6 +95,8 @@ private:
     StatusBar *m_statusBar;
     SearchBar *m_searchBar;
     FileManager *m_fileManager;
+    // 会话恢复期间静默 fileReadError 弹窗（读失败条目直接跳过，避免启动弹窗轰炸）
+    bool m_suppressReadErrors = false;
     SystemThemeWatcher *m_systemThemeWatcher = nullptr;
     QString m_themeMode = QStringLiteral("light");  // 偏好模式，非实际主题
     QSplitter *m_splitter;

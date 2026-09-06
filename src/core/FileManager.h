@@ -13,6 +13,13 @@ class FileManager : public QObject {
 public:
     explicit FileManager(QObject *parent = nullptr);
 
+    // 读入大小守卫阈值（MainWindow 软警告确认框复用同一常量）：
+    // 编辑管道内存放大显著（bytes → QString(UTF-16) → QTextDocument MD→HTML
+    // → QWebChannel 序列化 → ProseMirror 文档，合计约 10×），误开大文件/
+    // 二进制会 UI 假死甚至 OOM；正常 Markdown 文档（百万字书稿）纯文本 ~2MB。
+    static constexpr qint64 kLargeFileWarnBytes = 2 * 1024 * 1024;   // ≥2MB：提示可能卡顿，可继续
+    static constexpr qint64 kMaxReadBytes = 16 * 1024 * 1024;        // >16MB：拒绝读入
+
     QString readFile(const QString &path, QString *encoding = nullptr);
     bool writeFile(const QString &path, const QString &content);
 
@@ -20,6 +27,10 @@ public:
     //   BOM → UTF-8（校验）→ 系统编码回退；换行归一化为 \n。
     // encoding 非空时回填检测到的编码标签（UTF-8 BOM / UTF-16 LE/BE / UTF-8 / GBK…）。
     static QString decodeFileContent(const QByteArray &bytes, QString *encoding = nullptr);
+
+    // 头部（前 8KB）含 NUL 且非 UTF-16 → 判为二进制（与 readFile 拒读同逻辑）。
+    // 打不开（不存在/权限）返回 false，交由 readFile 报具体错误
+    static bool isBinaryFile(const QString &path);
 
     void watchFile(const QString &path);
     void unwatchFile(const QString &path);
