@@ -224,6 +224,58 @@ private slots:
         }
     }
 
+    void testLargeSoftBreakCountRestore() {
+        // 回归：软换行占位符还原曾按占位符个数枚举正则交替项
+        // （ZZBR0ZZ|ZZBR1ZZ|…），2 万+ 个软换行时 PCRE2 编译超限 → 正则非法 →
+        // 还原空转 → Debug 构建 Q_ASSERT「占位符残留泄漏」abort（Release 则
+        // ZZBR 字面泄漏进正文，破坏保真）。还原必须与占位符个数无关
+        // （通用 token 正则 + 集合成员判断），3 万行连续正文 = 29999 个软换行
+        QStringList lines;
+        for (int i = 0; i < 30000; ++i)
+            lines << QStringLiteral("第%1行正文内容").arg(i);
+        QString html = MarkdownHandler::toHtml(lines.join('\n'));
+        QVERIFY2(!html.contains(QStringLiteral("ZZBR")),
+                 "大文档软换行占位符不得泄漏进输出");
+        QCOMPARE(html.count(QStringLiteral("br data-brk")), 29999);
+    }
+
+    void testLargeSoftBreakUserLiteralPreserved() {
+        // 用户字面 ZZBRnZZ 文本（collisionFreePlaceholder 生成时已跳号避让，
+        // 序号 99999 不在生成集合）不得被通用 token 正则替换或吃掉两侧空格
+        QStringList lines;
+        for (int i = 0; i < 50; ++i)
+            lines << QStringLiteral("line %1 text").arg(i);
+        lines << QStringLiteral("前后空格 ZZBR99999ZZ 保留");
+        QString html = MarkdownHandler::toHtml(lines.join('\n'));
+        QVERIFY2(html.contains(QStringLiteral(" ZZBR99999ZZ ")),
+                 qPrintable(QStringLiteral("用户字面 ZZBR 文本须原样保留（含两侧空格）:\n%1")
+                                .arg(html.mid(html.indexOf(QStringLiteral("ZZBR99999")) - 20, 60))));
+    }
+
+    void testManyCodeBlocksRestore() {
+        // 批量还原助手（batchRestorePlaceholders）同样不得按占位符个数枚举
+        // 正则交替项：3000 个代码块的占位符枚举同样超 PCRE2 编译上限
+        QStringList parts;
+        for (int i = 0; i < 3000; ++i)
+            parts << QStringLiteral("```cpp\nint x%1;\n```").arg(i);
+        QString html = MarkdownHandler::toHtml(parts.join("\n\n"));
+        QVERIFY2(!html.contains(QStringLiteral("ZZCB")),
+                 "大量代码块占位符不得泄漏进输出");
+        QCOMPARE(html.count(QStringLiteral("<pre")), 3000);
+    }
+
+    void testLargeSoftBreakRoundTrip() {
+        // 500 行连续正文的完整往返（toHtml → fromHtml）字节保真：
+        // fromHtml 侧还原共用同一批助手，大占位符数量下两方向都要正确
+        QStringList lines;
+        for (int i = 0; i < 500; ++i)
+            lines << QStringLiteral("第%1行正文内容").arg(i);
+        const QString md = lines.join('\n');
+        const QString back = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(md)).trimmed();
+        QCOMPARE(back, md);
+    }
+
     void testBasicConversion() {
         QString md = "# Hello\n\nWorld";
         QString html = MarkdownHandler::toHtml(md);

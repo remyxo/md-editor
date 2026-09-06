@@ -369,17 +369,29 @@ static QSet<QString> buildPlaceholderCollisionSet(const QString &source)
 
 #ifndef QT_NO_DEBUG
 // 占位符残留金丝雀（仅 debug 构建）：还原完成后，本次转换生成的每个占位符
-// 都必须已从输出中消失。按调用方存储的「实际生成占位符串」列表逐一检查，
-// 不用 ZZ\w+ZZ 通配扫描——用户文档可合法地字面包含 ZZ* 文本（见上方
-// collisionFreePlaceholder 注释），通配扫描会误报。
+// 都必须已从输出中消失。
+// 性能：输出串只扫一遍（通用 token 模式 globalMatch，总成本 O(n)），命中候选
+// 查集合（O(1)/个）——替代旧「逐占位符 output.contains」的 O(K·n)：3MB 文档
+// 2.4 万占位符时旧法要烧 20+ 秒主线程 CPU，直接顶满 GNOME「应用无响应」阈值。
+// 语义不变：用户文档可合法地字面包含 ZZ* 文本（见上方 collisionFreePlaceholder
+// 注释），只有「呈 ZZ token 形态 且 属于本次生成集合」才判泄漏，用户字面不误报
 static void assertNoPlaceholderLeak(
     const QString &output,
     std::initializer_list<const QStringList *> phLists)
 {
+    QSet<QString> generated;
     for (const QStringList *list : phLists)
         for (const QString &ph : *list)
-            Q_ASSERT_X(!output.contains(ph), "MarkdownHandler",
-                       qPrintable(QStringLiteral("占位符残留泄漏: ") + ph));
+            generated.insert(ph);
+    if (generated.isEmpty())
+        return;
+    static const QRegularExpression tokenRe(R"(ZZ[A-Z]+[0-9]+ZZ)");
+    auto it = tokenRe.globalMatch(output);
+    while (it.hasNext()) {
+        const QString tok = it.next().captured();
+        Q_ASSERT_X(!generated.contains(tok), "MarkdownHandler",
+                   qPrintable(QStringLiteral("占位符残留泄漏: ") + tok));
+    }
 }
 #endif
 
@@ -412,51 +424,56 @@ static void globalReplaceWith(QString &s, const QRegularExpression &re, F fn)
 //   第 2 遍：兜底还原未独立成段（混排文本/标题内）的裸占位符。
 // 第 2 遍不会误伤第 1 遍已还原的占位符（已随 <p> 一起消失），backups 中也不含
 // 占位符形态的文本。
+// 正则用通用占位符模式 ZZ[A-Z]+[0-9]+ZZ + 哈希查表（同 fromHtml 侧多趟还原
+// 范式），不按占位符个数拼接 alternation：约 3000+ 个占位符时巨型多选正则
+// 超出 PCRE2 编译限制，构造出 invalid QRegularExpression，还原空转致占位符
+// 泄漏（Debug 构建触发泄漏断言 abort）。碰撞检测保证真占位符不与用户文本
+// 同串，通用模式多匹配到的必然是用户字面 ZZ 形态文本——查表未命中须原样保留。
 static void batchRestorePlaceholders(QString &s, const QStringList &phs,
                                      const QStringList &backups)
 {
     if (phs.isEmpty())
         return;
-    QStringList esc;
-    esc.reserve(phs.size());
-    for (const QString &ph : phs)
-        esc << QRegularExpression::escape(ph);
-    const QString alt = esc.join(QLatin1Char('|'));
     QHash<QString, QString> map;
     map.reserve(phs.size());
     for (int i = 0; i < phs.size(); ++i)
         map.insert(phs[i], backups[i]);
 
-    globalReplaceWith(s,
-        QRegularExpression(QStringLiteral("<p[^>]*>(%1)</p>").arg(alt)),
+    static const QRegularExpression pWrapRe(
+        R"(<p[^>]*>(ZZ[A-Z]+[0-9]+ZZ)</p>)");
+    static const QRegularExpression phRe(R"(ZZ[A-Z]+[0-9]+ZZ)");
+    globalReplaceWith(s, pWrapRe,
         [&map](const QRegularExpressionMatch &m) {
-            return map.value(m.captured(1));
+            auto it = map.constFind(m.captured(1));
+            return it != map.constEnd() ? *it : m.captured(0);
         });
-    globalReplaceWith(s, QRegularExpression(alt),
+    globalReplaceWith(s, phRe,
         [&map](const QRegularExpressionMatch &m) {
-            return map.value(m.captured());
+            auto it = map.constFind(m.captured());
+            return it != map.constEnd() ? *it : m.captured(0);
         });
 }
 
 // 批量裸串精确替换（不剥 <p> 包裹）：search/repl 一一对应，单遍重建 O(n)。
 // 供内联占位符（ZZHI/ZZES/ZZFR/ZZSB 等）还原——这些占位符嵌在行内文本中，
 // 还原时应保留其所在段落结构，不做 <p> 包裹剥离。
+// 契约：search 必须全部为 ZZ 占位符 token 形态（ZZ<大写字母><序号>ZZ），
+// 还原用通用 token 正则 + 哈希查表（不按个数拼 alternation，原因同
+// batchRestorePlaceholders），查表未命中的用户字面 ZZ 形态文本原样保留。
 static void batchReplaceExact(QString &s, const QStringList &search,
                               const QStringList &repl)
 {
     if (search.isEmpty())
         return;
-    QStringList esc;
-    esc.reserve(search.size());
-    for (const QString &q : search)
-        esc << QRegularExpression::escape(q);
     QHash<QString, QString> map;
     map.reserve(search.size());
     for (int i = 0; i < search.size(); ++i)
         map.insert(search[i], repl[i]);
-    globalReplaceWith(s, QRegularExpression(esc.join(QLatin1Char('|'))),
+    static const QRegularExpression phRe(R"(ZZ[A-Z]+[0-9]+ZZ)");
+    globalReplaceWith(s, phRe,
         [&map](const QRegularExpressionMatch &m) {
-            return map.value(m.captured());
+            auto it = map.constFind(m.captured());
+            return it != map.constEnd() ? *it : m.captured(0);
         });
 }
 
@@ -2315,17 +2332,22 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     //   换行，空段落渲染成 2 行高（实测 61px ≈ 2 行），视觉间距翻倍无规律；
     //   <p></p> 与 TipTap Enter 原生空段落一致（1 行高 31px），渲染正确。
     //   带 <p> 包裹的还原为 <p></p>，裸占位符（混排时）删除。
+    //   通用 token 正则 + 集合成员判断（不按个数拼 alternation，防超 PCRE2
+    //   编译上限，见 batchRestorePlaceholders 注释）；未命中集合的是用户字面
+    //   ZZ 形态文本，原样保留。
     if (!blankLinePhs.isEmpty()) {
-        QString alt;
-        for (const QString &ph : blankLinePhs) {
-            if (!alt.isEmpty()) alt += QLatin1Char('|');
-            alt += QRegularExpression::escape(ph);
-        }
+        QSet<QString> phSet(blankLinePhs.cbegin(), blankLinePhs.cend());
         globalReplaceWith(html,
-            QRegularExpression(QStringLiteral("<p[^>]*>(%1)</p>").arg(alt)),
-            [](const QRegularExpressionMatch &) { return QStringLiteral("<p></p>"); });
-        globalReplaceWith(html, QRegularExpression(alt),
-            [](const QRegularExpressionMatch &) { return QString(); });
+            QRegularExpression(QStringLiteral("<p[^>]*>(ZZ[A-Z]+[0-9]+ZZ)</p>")),
+            [&phSet](const QRegularExpressionMatch &m) {
+                return phSet.contains(m.captured(1))
+                           ? QStringLiteral("<p></p>") : m.captured(0);
+            });
+        globalReplaceWith(html,
+            QRegularExpression(QStringLiteral("ZZ[A-Z]+[0-9]+ZZ")),
+            [&phSet](const QRegularExpressionMatch &m) {
+                return phSet.contains(m.captured()) ? QString() : m.captured(0);
+            });
     }
 
     // 后处理 2: ZZBR<n>ZZ → <br data-brk>（占位符以区分用户手写 <br>）
@@ -2337,15 +2359,18 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     // "BRMARKER"（含行内代码内）不会被误替换。
     // 单遍重建：正则「可选前空格 + 占位符 + 可选后空格」一次性消费两侧空格
     // （等效原 4 次降级替换，O(K·n) → O(n)）。
+    // 占位符用通用 token 模式 + 集合成员判断（不按个数拼 alternation：2 万+
+    // 软换行时巨型多选正则超 PCRE2 编译上限变 invalid，还原空转 → 占位符泄漏
+    // → Debug 构建泄漏断言 abort）；未命中集合的是用户字面 ZZ 形态文本，
+    // 返回整段匹配原样保留（两侧空格不被吞）。
     if (!brSoftPhs.isEmpty()) {
-        QString alt;
-        for (const QString &ph : brSoftPhs) {
-            if (!alt.isEmpty()) alt += QLatin1Char('|');
-            alt += QRegularExpression::escape(ph);
-        }
+        QSet<QString> phSet(brSoftPhs.cbegin(), brSoftPhs.cend());
         globalReplaceWith(html,
-            QRegularExpression(QStringLiteral(" ?(?:%1) ?").arg(alt)),
-            [](const QRegularExpressionMatch &) { return QStringLiteral("<br data-brk>"); });
+            QRegularExpression(QStringLiteral(" ?(ZZ[A-Z]+[0-9]+ZZ) ?")),
+            [&phSet](const QRegularExpressionMatch &m) {
+                return phSet.contains(m.captured(1))
+                           ? QStringLiteral("<br data-brk>") : m.captured(0);
+            });
     }
 
     // 还原任务列表占位符 ZZTL → TipTap taskList 契约 HTML
@@ -2363,17 +2388,19 @@ QString MarkdownHandler::toHtml(const QString &markdown)
         phMap.reserve(emphCodePhs.size());
         for (int i = 0; i < emphCodePhs.size(); ++i)
             phMap.insert(emphCodePhs[i], emphCodeHtml[i]);
-        QStringList esc;
-        esc.reserve(emphCodePhs.size());
-        for (const QString &ph : emphCodePhs)
-            esc << QRegularExpression::escape(ph);
-        const QRegularExpression allRe(esc.join(QLatin1Char('|')));
+        // 通用 token 正则 + 查表（不按个数拼 alternation，见
+        // batchRestorePlaceholders 注释）；未命中原样保留，且不置 replaced
+        // （否则用户字面 ZZ 文本会让多趟循环空转致死循环）
+        static const QRegularExpression allRe(R"(ZZ[A-Z]+[0-9]+ZZ)");
         for (;;) {
             bool replaced = false;
             globalReplaceWith(html, allRe,
                 [&phMap, &replaced](const QRegularExpressionMatch &m) {
+                    auto it = phMap.constFind(m.captured());
+                    if (it == phMap.constEnd())
+                        return m.captured(0);   // 用户字面 ZZ 文本，保留
                     replaced = true;
-                    return phMap.value(m.captured());
+                    return *it;
                 });
             if (!replaced) break;
         }
@@ -2389,22 +2416,42 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     //   注意 <(p|pre)\b 的 \b 必须保留：否则 <p 会误匹配 <pre 的开头（p 是 pre 的
     //   前缀），把 <pre>…</pre> 与其后的 <p>…</p> 吞成一个 <p> 块，代码块被拆碎。
     {
-        QRegularExpression blockRe(
-            R"(<(p|pre)\b([^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*)>(.*?)</\1>)",
-            QRegularExpression::DotMatchesEverythingOption);
+        // 两段式扫描（O(n)）：先用无嵌套回溯的廉价标签模式单遍 globalMatch 找出
+        // 全部 <p>/<pre> 开标签（[^>]*> 单向扫描到 '>' 即成，无 O(属性长²) 回溯），
+        // 再对属性含 margin-left:40px+margin-right:40px 的标签用 indexOf 找同型
+        // 闭合标签。原单正则 <([^>]*margin-left…[^>]*margin-right…)>(.*?)</\1>
+        // 在每个标签处都要 O(属性长²) 回溯，3MB 文档（数万标签）烧秒级主线程
+        // CPU（GNOME「应用无响应」）。行为与原正则一致：闭合取最近同型标签
+        // （原懒惰量词 (.*?)</\1> 同样停在首个闭合处）、无闭合则跳过该标签、
+        // 后块起点不得落入前块区间（原 off=capturedEnd 同义）。
+        // <(p|pre)\b 的 \b 必须保留（见上），\b 与 [^>]* 均无回溯放大。
+        static const QRegularExpression tagRe(R"(<(p|pre)\b[^>]*>)");
+        static const QRegularExpression marginRe(
+            R"(margin-left:\s*40px[^>]*margin-right:\s*40px)");
 
         struct BqBlock { int start = 0; int end = 0; bool isPre = false; };
         QVector<BqBlock> blocks;
-        int off = 0;
-        while (true) {
-            auto m = blockRe.match(html, off);
-            if (!m.hasMatch()) break;
+        auto it = tagRe.globalMatch(html);
+        while (it.hasNext()) {
+            auto m = it.next();
+            if (!blocks.isEmpty() && m.capturedStart() < blocks.constLast().end)
+                continue;   // 落在前块区间内（原循环 off 起点等价排除）
+            const QString tag = m.captured(0);
+            // 廉价预检：绝大多数标签无 margin-left，一次 indexOf 短路
+            if (!tag.contains(QLatin1String("margin-left")))
+                continue;
+            if (!marginRe.match(tag).hasMatch())
+                continue;
+            const bool isPre = (m.captured(1) == QLatin1String("pre"));
+            const QLatin1String closeTag(isPre ? "</pre>" : "</p>");
+            const int close = html.indexOf(closeTag, m.capturedEnd());
+            if (close < 0)
+                continue;   // 无同型闭合：原正则回溯后同该起点失败
             BqBlock b;
             b.start = m.capturedStart();
-            b.end = m.capturedEnd();
-            b.isPre = (m.captured(1) == QLatin1String("pre"));
+            b.end = close + closeTag.size();
+            b.isPre = isPre;
             blocks << b;
-            off = m.capturedEnd();
         }
 
         if (!blocks.isEmpty()) {
@@ -2462,16 +2509,17 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     //   标记以顶层段落透传，用于打破块引用重构的「连续 margin-left 块」合并，
     //   使「> 代码\n\n> 引用」空行分隔的两个块引用不被误合并为一个。此处移除，
     //   相邻 <blockquote>（或 <blockquote> 与正文）由 Qt toMarkdown 自动补空行。
-    //   按存储的实际占位符串逐个移除（带序号 + 碰撞检测，不误删用户字面文本）
+    //   按存储的实际占位符串移除（带序号 + 碰撞检测，不误删用户字面文本）：
+    //   通用 token 正则 + 集合成员判断，未命中集合的用户字面文本原样保留
+    //   （不按个数拼 alternation 的原因见 batchRestorePlaceholders 注释）
     if (!bqSepPhs.isEmpty()) {
-        QString alt;
-        for (const QString &ph : bqSepPhs) {
-            if (!alt.isEmpty()) alt += QLatin1Char('|');
-            alt += QRegularExpression::escape(ph);
-        }
+        QSet<QString> phSet(bqSepPhs.cbegin(), bqSepPhs.cend());
         globalReplaceWith(html,
-            QRegularExpression(QStringLiteral("<p[^>]*>(%1)</p>\\s*").arg(alt)),
-            [](const QRegularExpressionMatch &) { return QString(); });
+            QRegularExpression(
+                QStringLiteral("<p[^>]*>(ZZ[A-Z]+[0-9]+ZZ)</p>\\s*")),
+            [&phSet](const QRegularExpressionMatch &m) {
+                return phSet.contains(m.captured(1)) ? QString() : m.captured(0);
+            });
     }
     //    monospace span → <code>（字体名动态匹配本平台 FixedFont，见 monoSpanFamilyPattern）
     {
@@ -2918,22 +2966,25 @@ QString MarkdownHandler::toHtml(const QString &markdown)
     // 还原表格空单元格占位符 ZZTC → 空 <td>（≥2 格行防 Qt 合并用，见 protectTableRowForQt）。
     // 占位符独立成单元格内容，Qt 输出 <td><p…>ZZTCnZZ</p></td>，连同 <p> 壳还原为空单元格，
     // 与 Qt 自身空单元格（<td></td>）形态一致，供 TipTap/fromHtml 正常解析。
-    // 按存储的实际占位符串逐个还原（不用 ZZTC\\d+ 通配正则——会把用户
-    // 文档字面的同形态文本一并清空）
+    // 按存储的实际占位符串还原：通用 token 正则 + 集合成员判断——仅清空本次
+    // 生成的占位符，用户文档字面的同形态文本不在集合内，原样保留（不按个数
+    // 拼 alternation 的原因见 batchRestorePlaceholders 注释）
     if (!tableCellPhs.isEmpty()) {
-        QString alt;
-        for (const QString &ph : tableCellPhs) {
-            if (!alt.isEmpty()) alt += QLatin1Char('|');
-            alt += QRegularExpression::escape(ph);
-        }
+        QSet<QString> phSet(tableCellPhs.cbegin(), tableCellPhs.cend());
         globalReplaceWith(html,
-            QRegularExpression(QStringLiteral("<td([^>]*)>\\s*<p[^>]*>(%1)</p>\\s*</td>").arg(alt)),
-            [](const QRegularExpressionMatch &m) {
+            QRegularExpression(QStringLiteral(
+                "<td([^>]*)>\\s*<p[^>]*>(ZZ[A-Z]+[0-9]+ZZ)</p>\\s*</td>")),
+            [&phSet](const QRegularExpressionMatch &m) {
+                if (!phSet.contains(m.captured(2)))
+                    return m.captured(0);
                 return QStringLiteral("<td") + m.captured(1) + QStringLiteral("></td>");
             });
         // fallback：占位符未包在 <p> 中时直接清空（防泄漏为字面文本）
-        globalReplaceWith(html, QRegularExpression(alt),
-            [](const QRegularExpressionMatch &) { return QString(); });
+        globalReplaceWith(html,
+            QRegularExpression(QStringLiteral("ZZ[A-Z]+[0-9]+ZZ")),
+            [&phSet](const QRegularExpressionMatch &m) {
+                return phSet.contains(m.captured()) ? QString() : m.captured(0);
+            });
     }
 
     // 还原转义扩展定界符 ZZED → 字面 ~~ / ~ / ^。必须放在 toHtml 末尾：
