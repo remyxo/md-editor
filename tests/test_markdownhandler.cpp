@@ -939,6 +939,10 @@ private slots:
         QVERIFY(!html.left(contPos).contains("第二段"));
         QVERIFY(html.mid(contPos).contains("第一段"));
         QVERIFY(html.mid(contPos).contains("第二段"));
+        // 段落分隔恰一个空行：不触发嵌套管线 K≥2 空行守卫（否则定义内多出
+        // 一个 <p></p> 空段落；空定义的 <p></p> 最小内容契约在
+        // testFootnoteDefEmptyToHtml，与此处互不影响）
+        QVERIFY(!html.contains("<p></p>"));
     }
 
     void testFootnoteDefBlockListToHtml() {

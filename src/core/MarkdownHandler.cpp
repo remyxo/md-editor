@@ -1817,7 +1817,11 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                     if (k < lines.size()
                         && (lines[k].startsWith(QStringLiteral("    "))
                             || lines[k].startsWith(QLatin1Char('\t')))) {
-                        contentMd += QStringLiteral("\n\n");
+                        // 段落分隔只补一个 '\n'：与下方续行统一的 '\n' 前缀合成恰好
+                        // 一个空行（contentMd 为 "a\n\nb"），嵌套管线不会触发 K≥2
+                        // 空行守卫多出 <p></p> 空段落。多空行（K≥2）折叠为单个
+                        // 段落分隔是有意行为（pandoc 兼容）。
+                        contentMd += QLatin1Char('\n');
                         j = k;          // 消费中间空行（定义内段落分隔）
                         continue;
                     }
