@@ -628,6 +628,25 @@ function buildFootnoteReference() {
                 var node = ref.node;
                 var dom = document.createElement('sup');
                 dom.setAttribute('data-type', 'footnoteRef');
+                // 单击跳转（250ms 判别双击改名：双击时取消跳转定时器）
+                var clickTimer = null;
+                dom.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    if (clickTimer) return;
+                    var targetId = node.attrs.id;
+                    clickTimer = setTimeout(function() {
+                        clickTimer = null;
+                        window.editorApi.jumpToFootnoteDef(targetId);
+                    }, 250);
+                });
+                // hover 气泡预览（非模态，不占 modalDialogStateChanged）
+                dom.addEventListener('mouseenter', function() {
+                    window.editorApi._footnoteBubble.cancelHide();
+                    window.editorApi._footnoteBubble.showFor(node.attrs.id, dom);
+                });
+                dom.addEventListener('mouseleave', function() {
+                    window.editorApi._footnoteBubble.scheduleHide();
+                });
                 function render() {
                     dom.setAttribute('data-id', node.attrs.id);
                     dom.textContent = node.attrs.id;
@@ -635,6 +654,8 @@ function buildFootnoteReference() {
                 render();
                 _setI18nTitle(dom, 'footnote.editId');
                 dom.addEventListener('dblclick', function(e) {
+                    clearTimeout(clickTimer);
+                    clickTimer = null;
                     e.preventDefault();
                     e.stopPropagation();
                     var cur = node.attrs.id;
@@ -711,6 +732,52 @@ function buildFootnoteDef() {
             return ['div', { 'data-type': 'footnoteDef', 'data-id': id },
                 ['span', { class: 'footnote-marker', contenteditable: 'false' }, id],
                 ['div', { class: 'footnote-content' }, 0]];
+        },
+        addNodeView: function() {
+            return function(ref) {
+                var node = ref.node;
+                var dom = document.createElement('div');
+                dom.setAttribute('data-type', 'footnoteDef');
+                // marker（只读，float）内嵌返回箭头：hover 显现，跳回首个引用
+                var marker = document.createElement('span');
+                marker.className = 'footnote-marker';
+                marker.setAttribute('contenteditable', 'false');
+                var backBtn = document.createElement('button');
+                backBtn.type = 'button';
+                backBtn.className = 'footnote-back-btn';
+                backBtn.textContent = '↩';
+                backBtn.setAttribute('tabindex', '-1');
+                backBtn.addEventListener('mousedown', function(e) {
+                    e.preventDefault(); e.stopPropagation();   // 不抢编辑焦点
+                });
+                backBtn.addEventListener('click', function(e) {
+                    e.preventDefault(); e.stopPropagation();
+                    window.editorApi.jumpToFootnoteRef(node.attrs.id);
+                });
+                marker.appendChild(backBtn);
+                var content = document.createElement('div');
+                content.className = 'footnote-content';
+                dom.appendChild(marker);
+                dom.appendChild(content);
+                // 重渲染时先清 marker 旧文本节点再插入新 id（防改名后叠加）
+                function render() {
+                    dom.setAttribute('data-id', node.attrs.id);
+                    while (marker.firstChild && marker.firstChild !== backBtn)
+                        marker.removeChild(marker.firstChild);
+                    marker.insertBefore(document.createTextNode(node.attrs.id), backBtn);
+                }
+                render();
+                return {
+                    dom: dom,
+                    contentDOM: content,
+                    update: function(n) {
+                        if (n.type !== node.type) return false;
+                        node = n;
+                        render();
+                        return true;
+                    }
+                };
+            };
         }
     });
 }
@@ -1087,6 +1154,8 @@ var I18N = {
     'editor.failInit': '编辑器内核加载失败：未找到 window.TipTap。请检查 tiptap-all.js。',
     // 简报字典之外的补充键（自检补漏，均为用户可见文案）
     'footnote.prompt': '脚注标记:',
+    'footnote.undefined': '未定义',
+    'footnote.empty': '（空）',
     'mermaid.editTip': '双击编辑图表源码',
     'codeblock.copyBtn': '复制',
     'codeblock.copied': '已复制'
@@ -1127,6 +1196,8 @@ var I18N = {
     'editor.failInit': 'Editor core failed to load: window.TipTap not found. Check tiptap-all.js.',
     // 简报字典之外的补充键（自检补漏，均为用户可见文案）
     'footnote.prompt': 'Footnote marker:',
+    'footnote.undefined': 'Undefined',
+    'footnote.empty': '(empty)',
     'mermaid.editTip': 'Double-click to edit diagram source',
     'codeblock.copyBtn': 'Copy',
     'codeblock.copied': 'Copied'
@@ -2404,6 +2475,64 @@ window.editorApi = {
             var el = dom.node.nodeType === 3 ? dom.node.parentElement : dom.node;
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
+    },
+    // === 脚注跳转互导（2026-09-06 脚注增强 spec §2.3） ===
+    // 按 id 找首个 footnoteDef / footnoteReference 的文档 pos；未找到返回 -1
+    findFootnoteDefPos: function(id) {
+        var found = -1;
+        if (!this.editor) return -1;
+        this.editor.state.doc.descendants(function(node, pos) {
+            if (found < 0 && node.type.name === 'footnoteDef'
+                && node.attrs.id === id) found = pos;
+        });
+        return found;
+    },
+    findFootnoteRefPos: function(id) {
+        var found = -1;
+        if (!this.editor) return -1;
+        this.editor.state.doc.descendants(function(node, pos) {
+            if (found < 0 && node.type.name === 'footnoteReference'
+                && node.attrs.id === id) found = pos;
+        });
+        return found;
+    },
+    // 目标高亮闪烁（重放动画：移除类 → 强制 reflow → 重加）
+    _footnoteFlash: function(selector) {
+        var el = document.querySelector(selector);
+        if (!el) return;
+        el.classList.remove('footnote-flash');
+        void el.offsetWidth;
+        el.classList.add('footnote-flash');
+        setTimeout(function() { el.classList.remove('footnote-flash'); }, 1600);
+    },
+    // 悬空目标抖动提示（无对应 def/ref 时不跳转）
+    _footnoteShake: function(selector) {
+        var el = document.querySelector(selector);
+        if (!el) return;
+        el.classList.remove('footnote-shake');
+        void el.offsetWidth;
+        el.classList.add('footnote-shake');
+        setTimeout(function() { el.classList.remove('footnote-shake'); }, 500);
+    },
+    // 单击引用 → 跳定义并高亮；无定义 → 原地抖动
+    jumpToFootnoteDef: function(id) {
+        var pos = this.findFootnoteDefPos(id);
+        var sel = 'sup[data-type="footnoteRef"][data-id="' + CSS.escape(id) + '"]';
+        if (pos < 0) { this._footnoteShake(sel); return false; }
+        this.scrollToPos(pos);
+        this._footnoteFlash('div[data-type="footnoteDef"][data-id="' + CSS.escape(id) + '"]');
+        return true;
+    },
+    // 返回箭头 → 跳回首个引用并高亮；无引用 → 定义区抖动
+    jumpToFootnoteRef: function(id) {
+        var pos = this.findFootnoteRefPos(id);
+        if (pos < 0) {
+            this._footnoteShake('div[data-type="footnoteDef"][data-id="' + CSS.escape(id) + '"]');
+            return false;
+        }
+        this.scrollToPos(pos);
+        this._footnoteFlash('sup[data-type="footnoteRef"][data-id="' + CSS.escape(id) + '"]');
+        return true;
     },
     // === 源码模式搜索 ===
     // textarea 无法像 ProseMirror 用 Decoration 高亮全部匹配，采用「透明文字 + 背后
@@ -3770,6 +3899,75 @@ window.editorApi = {
                     }
                 }, 150);
             }, 50);
+        }
+    },
+
+    // 脚注 hover 气泡：克隆 def 首两块内容预览；非模态（ESC 不管，鼠标离开即收）
+    _footnoteBubble: {
+        el: null,
+        hideTimer: null,
+        _position: function(el, anchor) {
+            var r = anchor.getBoundingClientRect();
+            el.style.visibility = 'hidden';
+            el.style.display = 'block';
+            var top = r.top - el.offsetHeight - 8;
+            if (top < 8) top = r.bottom + 8;   // 上缘不足翻下方
+            el.style.left = Math.max(8,
+                Math.min(r.left, window.innerWidth - el.offsetWidth - 8)) + 'px';
+            el.style.top = top + 'px';
+            el.style.visibility = 'visible';
+        },
+        _mount: function(anchor, buildContent) {
+            this.hide(true);
+            var el = document.createElement('div');
+            el.className = 'footnote-bubble';
+            buildContent(el);
+            el.addEventListener('mouseenter', function() {
+                window.editorApi._footnoteBubble.cancelHide();
+            });
+            el.addEventListener('mouseleave', function() {
+                window.editorApi._footnoteBubble.scheduleHide();
+            });
+            document.body.appendChild(el);
+            this._position(el, anchor);
+            this.el = el;
+        },
+        showFor: function(id, anchor) {
+            var def = document.querySelector(
+                'div[data-type="footnoteDef"][data-id="' + CSS.escape(id) + '"] .footnote-content');
+            if (!def) {
+                this._mount(anchor, function(el) {
+                    el.textContent = i18n('footnote.undefined');
+                });
+                return;
+            }
+            var blocks = Array.prototype.slice.call(def.children);
+            if (blocks.length === 0) {
+                this._mount(anchor, function(el) {
+                    el.textContent = i18n('footnote.empty');
+                });
+                return;
+            }
+            this._mount(anchor, function(el) {
+                for (var i = 0; i < Math.min(2, blocks.length); i++)
+                    el.appendChild(blocks[i].cloneNode(true));
+                if (blocks.length > 2) {
+                    var more = document.createElement('div');
+                    more.className = 'footnote-bubble-more';
+                    more.textContent = '…';
+                    el.appendChild(more);
+                }
+            });
+        },
+        scheduleHide: function() {
+            var self = this;
+            clearTimeout(this.hideTimer);
+            this.hideTimer = setTimeout(function() { self.hide(); }, 300);
+        },
+        cancelHide: function() { clearTimeout(this.hideTimer); },
+        hide: function() {
+            clearTimeout(this.hideTimer);
+            if (this.el) { this.el.remove(); this.el = null; }
         }
     },
 

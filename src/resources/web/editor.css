@@ -825,6 +825,53 @@ body.dark .ProseMirror div[data-type="footnoteContainer"] {
   border-top-color: #3c4043;
 }
 
+/* ===== 脚注跳转高亮/抖动（2026-09-06 脚注增强）===== */
+@keyframes footnote-flash-bg {
+  0% { background-color: rgba(25, 103, 210, 0.25); }
+  100% { background-color: transparent; }
+}
+.ProseMirror .footnote-flash { animation: footnote-flash-bg 1.5s ease-out; }
+@keyframes footnote-shake-x {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+.ProseMirror .footnote-shake { animation: footnote-shake-x 0.3s ease-in-out 2; }
+
+/* 定义区返回箭头：hover 显现 */
+.ProseMirror .footnote-back-btn {
+  display: none;
+  border: none;
+  background: none;
+  color: #1967d2;
+  cursor: pointer;
+  font-size: 0.9em;
+  padding: 0 0.25em;
+}
+.ProseMirror .footnote-marker:hover .footnote-back-btn { display: inline; }
+
+/* hover 气泡预览（非模态） */
+.footnote-bubble {
+  position: fixed;
+  z-index: 1000;
+  max-width: 320px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: 0.85em;
+  line-height: 1.5;
+  pointer-events: auto;
+}
+.footnote-bubble p { margin: 0 0 0.3em; }
+.footnote-bubble .footnote-bubble-more { color: #999; }
+body.dark .footnote-bubble {
+  background: #2b2f33;
+  border-color: #444;
+  color: #d0d4d8;
+}
+
 /* kbd 键盘按键 */
 kbd {
     font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
