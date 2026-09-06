@@ -4100,6 +4100,29 @@ QString MarkdownHandler::fromHtml(const QString &html)
                     roff = rm.capturedEnd();
                 }
             }
+            // 空单元格注入占位符（与 toHtml protectTableRowForQt 的 ZZTC 防护
+            // 对偶）：Qt toMarkdown 按列宽生成分隔行连字符，空列 0 宽 → 全空
+            // 表格分隔行退化 |||（与数据行无异，重开即丢表格）。注入非空文本
+            // 使每列获得 ≥1 连字符；占位符入共享 placeholders/backups（backup
+            // 为空串），通用还原（步骤 4）回空后由规范化（步骤 6）补 |  | 形态，
+            // 幂等。两种空形态均匹配：裸 <td></td> 与 TipTap 实际产的
+            // <td><p></p></td>（vitest 探针实测 insertTable 产物）。位于脚注
+            // 容器提取之后 → 天然只作用于正文表格；定义内表格由嵌套 fromHtml
+            // 递归获得同款防护。
+            {
+                QRegularExpression emptyCellRe(
+                    QStringLiteral(
+                        "(<t[dh]\\b[^>]*>)(\\s*(?:<p>\\s*</p>\\s*)?)(</t[dh]>)"));
+                globalReplaceWith(region, emptyCellRe,
+                    [&collisions, &placeholders, &backups]
+                    (const QRegularExpressionMatch &m) {
+                        const QString ph = collisionFreePlaceholder(
+                            collisions, "TC", placeholders.size());
+                        placeholders << ph;
+                        backups << QString();   // 还原为空
+                        return m.captured(1) + ph + m.captured(3);
+                    });
+            }
             // 剥离 text-align 声明（含由此变空的 style 属性）。仅作用于表格
             // 区域：顶层段落/标题的 text-align 由下方 ZZA 继续处理。
             region.replace(
@@ -4852,14 +4875,19 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //    统一为 | cell |（单元格内容前后各一个空格），分隔行统一为 | --- |，
     //    并按 setHtml 前提取的列对齐（tableAligns）注回 GFM 对齐标记：
     //    居中 :---: / 右对齐 ---: / 显式左 :---（文档顺序逐表对应，列数一致才注入）。
+    //    缩进续行（脚注定义内表格，Task 7 契约）重写时保留原行前导空白：
+    //    否则定义在首个非缩进续行处断裂，表格逃逸成正文 pipe 字面文本。
     {
         int tableIdx = 0;
         QStringList lines = md.split('\n');
+        static const QRegularExpression leadingWsRe(QStringLiteral("^[ \t]+"));
         for (int i = 0; i < lines.size(); ++i) {
             QString line = lines[i];
             QString t = line.trimmed();
             // 仅处理表格行（以 | 开头且以 | 结尾，非 blockquote 前缀 > |）
             if (!t.startsWith('|') || !t.endsWith('|')) continue;
+            const auto wm = leadingWsRe.match(line);
+            const QString prefix = wm.hasMatch() ? wm.captured() : QString();
 
             // 去掉首尾 | → 拆分为单元格（反引号感知：行内代码内的 | 与
             // 转义 \| 不作为分隔符，故含反引号的行同样参与规范化）
@@ -4875,9 +4903,12 @@ QString MarkdownHandler::fromHtml(const QString &html)
             }
             if (isSep) {
                 // 分隔行：按提取的列对齐注回标记（列数一致才消费，防误判
-                // 分隔行导致与后续表格错位），每格 :---: / ---: / :--- / ---
+                // 分隔行导致与后续表格错位），每格 :---: / ---: / :--- / ---。
+                // 仅第 0 列（无前导空白）的表格参与 tableAligns 消费：
+                // tableAligns 按文档序只对应正文表格（提取于脚注容器移除
+                // 之后），缩进的定义内表格若参与消费会抢占正文表格的对位
                 QStringList aligns;
-                if (tableIdx < tableAligns.size()
+                if (prefix.isEmpty() && tableIdx < tableAligns.size()
                         && tableAligns[tableIdx].size() == cells.size()) {
                     aligns = tableAligns[tableIdx];
                     ++tableIdx;
@@ -4885,18 +4916,29 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 QStringList sepCells;
                 for (int k = 0; k < cells.size(); ++k) {
                     QString a = (k < aligns.size()) ? aligns[k] : QString();
+                    if (a.isEmpty() && !prefix.isEmpty()) {
+                        // 缩进分隔行未被消费时保留既有标记：定义内表格的
+                        // 对齐由嵌套 fromHtml 注入，此处不得剥离成 ---
+                        const QString c = cells[k].trimmed();
+                        if (c.startsWith(':') && c.endsWith(':') && c.size() >= 3)
+                            a = QLatin1String("center");
+                        else if (c.endsWith(':') && c.size() >= 2)
+                            a = QLatin1String("right");
+                        else if (c.startsWith(':') && c.size() >= 2)
+                            a = QLatin1String("left");
+                    }
                     if (a == QLatin1String("center")) sepCells << ":---:";
                     else if (a == QLatin1String("right")) sepCells << "---:";
                     else if (a == QLatin1String("left")) sepCells << ":---";
                     else sepCells << "---";
                 }
-                lines[i] = "| " + sepCells.join(" | ") + " |";
+                lines[i] = prefix + "| " + sepCells.join(" | ") + " |";
             } else {
                 // 数据/表头行：每格 trim + 前后各一个空格
                 QStringList padded;
                 for (const auto &cell : cells)
                     padded << (" " + cell + " ");
-                lines[i] = "|" + padded.join('|') + "|";
+                lines[i] = prefix + "|" + padded.join('|') + "|";
             }
         }
         md = lines.join('\n');
@@ -4907,17 +4949,23 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //     折叠回单格（| x |），与 toHtml protectTableRowForQt 的「恰 1 个显式
     //     单元格 → colspan」规则对偶，保证合并单元格往返保真。
     //     按连续 |...| 行识别表格区域（与步骤 6 一致），行序表头/分隔/body 一一对应。
+    //     仅第 0 列（无前导空白）行参与区域跟踪与 tableIdx 消费：缩进的定义内
+    //     表格已由嵌套 fromHtml 折叠，tableFullMergeRows 也只记录正文表格
+    //     （提取于脚注容器移除之后），缩进区域跳过防错位消费。
     if (!tableFullMergeRows.isEmpty()) {
         int tableIdx = 0;
         QStringList lines = md.split('\n');
+        static const QRegularExpression leadingWsRe(QStringLiteral("^[ \t]+"));
         int i = 0;
         while (i < lines.size()) {
             QString t = lines[i].trimmed();
-            if (!(t.startsWith('|') && t.endsWith('|'))) { ++i; continue; }
+            if (leadingWsRe.match(lines[i]).hasMatch()
+                    || !(t.startsWith('|') && t.endsWith('|'))) { ++i; continue; }
             QList<int> run;   // 当前表格的连续表行索引
             while (i < lines.size()) {
                 QString lt = lines[i].trimmed();
-                if (!(lt.startsWith('|') && lt.endsWith('|'))) break;
+                if (leadingWsRe.match(lines[i]).hasMatch()
+                        || !(lt.startsWith('|') && lt.endsWith('|'))) break;
                 run << i;
                 ++i;
             }

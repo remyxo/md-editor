@@ -1088,6 +1088,120 @@ private slots:
         QVERIFY2(back.contains("[^1]: 旧内容"), qPrintable(back));
     }
 
+    // ===== R1：脚注定义内表格往返（用户缺陷：保存重开表格丢失 + 末尾 pipe 乱码） =====
+    // 根因双缺陷叠加：
+    //   A）fromHtml 末段「表格规范化/合并行折叠」以 trimmed 基准整行重写，剥掉
+    //      定义续行的 4 空格缩进 → 重开（toHtml）时定义在首个非缩进行处断裂，
+    //      表格内容逃逸成正文 pipe 字面文本（用户看到的末尾乱码）；
+    //   B）Qt toMarkdown 对空单元格列按列宽输出连字符，空列 0 宽 → 全空表格
+    //      分隔行退化成 |||（与数据行无异）。toHtml 侧早有 ZZTC 空单元格占位
+    //      防护，fromHtml 侧缺失（正文空表格往返同受影响，先于本批存在）。
+
+    void testFootnoteDefEmptyTableRoundTrip() {
+        // ① def 含全空表格（TipTap 真实形状：空单元格 = <td><p></p></td>，
+        //    vitest 探针实测 insertTable 产物）：保存 MD 须带缩进续行 + 合法分隔行
+        const QString html = QStringLiteral(
+            "<p>正文<sup data-type=\"footnoteRef\" data-id=\"1\">1</sup></p>"
+            "<div data-type=\"footnoteContainer\">"
+            "<div data-type=\"footnoteDef\" data-id=\"1\">"
+            "<span class=\"footnote-marker\">1</span>"
+            "<div class=\"footnote-content\"><table><tbody>"
+            "<tr><th colspan=\"1\" rowspan=\"1\"><p></p></th>"
+            "<th colspan=\"1\" rowspan=\"1\"><p></p></th></tr>"
+            "<tr><td colspan=\"1\" rowspan=\"1\"><p></p></td>"
+            "<td colspan=\"1\" rowspan=\"1\"><p></p></td></tr>"
+            "</tbody></table></div></div></div>");
+        const QString md = MarkdownHandler::fromHtml(html);
+        // 表头行接在定义行后（缩进续行 + 分隔行合法存在，空表格不再退化）
+        QVERIFY2(md.contains("[^1]: |  |  |"), qPrintable(md));
+        QVERIFY2(md.contains("\n    | --- | --- |"), qPrintable(md));
+        QVERIFY2(md.contains("\n    |  |  |"), qPrintable(md));
+        // 重开侧：表格恢复在定义区内（不逃逸正文）
+        const QString html2 = MarkdownHandler::toHtml(md);
+        const int defPos = html2.indexOf("data-type=\"footnoteDef\"");
+        QVERIFY2(defPos > 0, qPrintable(html2));
+        QVERIFY2(html2.mid(defPos).contains("<table"), qPrintable(html2));
+        // 二次往返字节等价
+        QCOMPARE(MarkdownHandler::fromHtml(html2), md);
+    }
+
+    void testFootnoteDefContentTableRoundTrip() {
+        // ② def 含有内容表格：表格行重写保留缩进（根因 A），往返字节等价
+        const QString html = QStringLiteral(
+            "<p>正文<sup data-type=\"footnoteRef\" data-id=\"2\">2</sup></p>"
+            "<div data-type=\"footnoteContainer\">"
+            "<div data-type=\"footnoteDef\" data-id=\"2\">"
+            "<span class=\"footnote-marker\">2</span>"
+            "<div class=\"footnote-content\"><table><tbody>"
+            "<tr><th colspan=\"1\" rowspan=\"1\"><p>表头0</p></th>"
+            "<th colspan=\"1\" rowspan=\"1\"><p>表头1</p></th></tr>"
+            "<tr><td colspan=\"1\" rowspan=\"1\"><p>数据0</p></td>"
+            "<td colspan=\"1\" rowspan=\"1\"><p>数据1</p></td></tr>"
+            "</tbody></table></div></div></div>");
+        const QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains("[^2]: | 表头0 | 表头1 |"), qPrintable(md));
+        QVERIFY2(md.contains("\n    | --- | --- |"), qPrintable(md));
+        QVERIFY2(md.contains("\n    | 数据0 | 数据1 |"), qPrintable(md));
+        // 二次往返字节等价
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QCOMPARE(md2, md);
+    }
+
+    void testBodyEmptyTableSeparatorPreserved() {
+        // ③ 正文空表格：fromHtml 分隔行不退化（根因 B，先于本批存在）
+        const QString html = QStringLiteral(
+            "<p>正文</p><table><tbody>"
+            "<tr><th colspan=\"1\" rowspan=\"1\"><p></p></th>"
+            "<th colspan=\"1\" rowspan=\"1\"><p></p></th></tr>"
+            "<tr><td colspan=\"1\" rowspan=\"1\"><p></p></td>"
+            "<td colspan=\"1\" rowspan=\"1\"><p></p></td></tr>"
+            "</tbody></table>");
+        const QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains("| --- | --- |"), qPrintable(md));
+        // 分隔行合法 → 重开恢复表格
+        QVERIFY2(MarkdownHandler::toHtml(md).contains("<table"), qPrintable(md));
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md)), md);
+    }
+
+    void testFootnoteDefTableNotStealBodyAligns() {
+        // ④ 定义内表格不得抢占正文表格的列对齐：tableAligns 按文档序只对应正文
+        //    表格（定义内容在嵌套管线已自行处理），外层分隔行对齐消费须以
+        //    「第 0 列（无前导空白）行才参与」判别。定义块在前 + 正文居中表格
+        //    （同列数 2）在后，无判别时定义分隔行会先消费走居中对齐。
+        const QString html = QStringLiteral(
+            "<div data-type=\"footnoteContainer\">"
+            "<div data-type=\"footnoteDef\" data-id=\"3\">"
+            "<span class=\"footnote-marker\">3</span>"
+            "<div class=\"footnote-content\"><table><tbody>"
+            "<tr><th colspan=\"1\" rowspan=\"1\"><p>定头0</p></th>"
+            "<th colspan=\"1\" rowspan=\"1\"><p>定头1</p></th></tr>"
+            "<tr><td colspan=\"1\" rowspan=\"1\"><p>定值0</p></td>"
+            "<td colspan=\"1\" rowspan=\"1\"><p>定值1</p></td></tr>"
+            "</tbody></table></div></div></div>"
+            "<p>正文</p><table><tbody>"
+            "<tr><th colspan=\"1\" rowspan=\"1\" style=\"text-align: center;\">"
+            "<p>正头0</p></th>"
+            "<th colspan=\"1\" rowspan=\"1\" style=\"text-align: center;\">"
+            "<p>正头1</p></th></tr>"
+            "<tr><td colspan=\"1\" rowspan=\"1\" style=\"text-align: center;\">"
+            "<p>正值0</p></td>"
+            "<td colspan=\"1\" rowspan=\"1\" style=\"text-align: center;\">"
+            "<p>正值1</p></td></tr>"
+            "</tbody></table>");
+        const QString md = MarkdownHandler::fromHtml(html);
+        // 正文表格的对齐保留在其自己的分隔行上（表头行紧邻判别）
+        QVERIFY2(md.contains("正头1 |\n| :---: | :---: |"), qPrintable(md));
+        // 定义内分隔行不带对齐标记（无对齐信息，不得抢注）
+        QVERIFY2(!md.contains("    | :---:"), qPrintable(md));
+        // 二次往返字节等价：toHtml 会把脚注容器规范化到文末（构造时容器在
+        // 前属非规范首态），首轮即收敛为规范形态，此后逐字节稳定
+        const QString md2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2)), md2);
+        // 收敛后对齐与缩进契约仍成立
+        QVERIFY2(md2.contains("正头1 |\n| :---: | :---: |"), qPrintable(md2));
+        QVERIFY2(md2.contains("\n    | --- | --- |"), qPrintable(md2));
+    }
+
     void testExtractTitle() {
         QString md = "# 我的文档标题\n\n内容。";
         QString title = MarkdownHandler::extractTitle(md);
