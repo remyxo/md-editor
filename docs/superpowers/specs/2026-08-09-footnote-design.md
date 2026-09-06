@@ -228,3 +228,17 @@ MD↔HTML 往返用例：
 - hover reference 弹气泡预览定义内容。
 - def 内容模型升级为 `block+`，支持多段块级元素。
 - 内联编辑标记（替代 prompt）。
+
+---
+
+## 12. 第二阶段执行记录（2026-09-06）
+
+§11 四项（跳转互导 / hover 气泡 / 块级定义 / 内联改名）已实现，设计与实现计划见
+`docs/superpowers/specs/2026-09-06-pdf-header-footer-footnote-design.md` §2 与
+`docs/superpowers/plans/2026-09-06-pdf-header-footer-footnote.md` Task 6-10。
+
+与原 §11 设想的差异：
+- 块级内容转换复用 MarkdownHandler 主管线嵌套调用（非裸 setMarkdown），数学/任务列表对称生效
+- 续行判定：非缩进「懒续行」不归属定义（保持 MVP 行为，往返稳定）
+- 嵌套脚注（定义内再定义）按字面文本往返，仍不支持
+- 引用删除级联清理孤儿定义

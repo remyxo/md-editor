@@ -103,6 +103,7 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 | `src/core/FileManager.cpp` | 文件 I/O + 文件监控 |
 | `src/core/DocxExporter.cpp` | DOCX 导出（基于 QTextDocument + zip） |
 | `src/core/HtmlExporter.cpp` | 自包含 HTML 导出（资源 base64 内联） |
+| `src/resources/web/paged.polyfill.js` | vendored paged.js 分页引擎（PDF 页眉页脚/页码，见 docs/vendor-pagedjs.md） |
 
 ## 环境要求
 
@@ -129,7 +130,6 @@ ctest --output-on-failure
 
 ## 已知问题 & 待完善
 
-- PDF 导出页眉页脚/页码尚未实现（`PdfExporter` 已支持页边距与方向）
 - `tiptap-all.js` 更新需在 `src/resources/web/` 下运行 `npx esbuild tiptap-entry.js --bundle --outfile=tiptap-all.js --format=iife`
 - **切源码模式仍有可感知停顿（待进一步优化）**：2026-08-26 已把折行点测量改为异步分块 + 窗口界定二分，模式切换不再同步阻塞（8k 文档从 ~9s 降到 ~59ms），但大文档（4k+）高亮仍要 1–3s 异步补全，切换后有「空→高亮渐显」的停顿感。后续优化方向：① 先测当前匹配/可见行的高亮优先渲染，其余异步补全；② 探索上下文无关的快速折行算法（引擎折行点受前文影响，孤立切片法已验证不可靠）；③ 跨源码会话缓存折行点（`_srcStop` 目前清空 `_srcWrapCache`，重进必重测）
 
@@ -145,3 +145,4 @@ ctest --output-on-failure
 - **[代码块围栏往返机制](docs/code-fence-roundtrip.md)** — 嵌套围栏三坑：解析层围栏长度 / 序列化层反引号数推断 / 占位符段落重排粘连
 - **[vendor QtMarkdownWriter 说明](docs/vendor-qt-markdown-writer.md)** — 80 列折行根治 / 与上游等价性验证 / 上游同步 diff 流程 / LGPL 义务与 GPL-3.0 决策
 - **[vendor lowlight plugin 说明](docs/vendor-lowlight-plugin.md)** — 代码块高亮异步化（init 零高亮 / 空闲分批 / step 相交增量）/ 高亮缓存与 PluginKey 单例 / 上游同步与保底降级
+- **[vendor paged.js 说明](docs/vendor-pagedjs.md)** — PDF 分页引擎来源/版本/同步流程
