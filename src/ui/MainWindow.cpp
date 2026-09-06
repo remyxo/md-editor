@@ -838,13 +838,21 @@ void MainWindow::onExportPdf()
             auto *exporter = new PdfExporter(this);
             connect(exporter, &PdfExporter::exportFinished, this,
                     [this, exporter](bool ok, const QString &out) {
-                m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
+                // 本条是状态栏最后一条消息：走回退时并入回退说明并延长展示——
+                // pagedFallbackUsed 的独立提示早于 printToPdf 触发，1-3s 后即被
+                // 本条覆盖，用户须从这里得知产物无页眉页脚
+                if (ok && exporter->fallbackUsed())
+                    m_statusBar->showMessage(
+                        tr("已导出: %1（分页引擎回退，本次无页眉页脚）").arg(out), 6000);
+                else
+                    m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
                 exporter->deleteLater();
             });
-            // paged.js 失败/超时回退原生分页——告知用户产物无页眉页脚
+            // paged.js 失败/超时回退原生分页——打印进行中的过渡提示（最终说明
+            // 见上方 exportFinished 的组合消息）
             connect(exporter, &PdfExporter::pagedFallbackUsed, this, [this]() {
                 m_statusBar->showMessage(
-                    tr("页眉页脚引擎失败，已按普通版式导出（无页眉页脚）"), 6000);
+                    tr("页眉页脚引擎失败，正在按普通版式导出（无页眉页脚）"), 6000);
             });
             exporter->exportToPdf(html, docDir, path);
         });

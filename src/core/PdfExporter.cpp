@@ -376,6 +376,7 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     m_printPoll.stop();
     m_printPollCount = 0;
     m_printStarted = false;
+    m_fallbackUsed = false;
 
     disconnect(m_renderView, &QWebEngineView::loadFinished, this, nullptr);
     disconnect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
@@ -414,6 +415,7 @@ void PdfExporter::pollPrintState()
         if (m_printStarted)
             return;
         m_printStarted = true;
+        m_fallbackUsed = true;
         m_renderView->page()->runJavaScript(
             "try{window.__restoreBody&&window.__restoreBody();}catch(e){}");
         emit pagedFallbackUsed();
@@ -432,8 +434,10 @@ void PdfExporter::pollPrintState()
                 return;
             m_printStarted = true;
             const bool paged = (state == QLatin1String("paged"));
-            if (state == QLatin1String("fallback"))
+            if (state == QLatin1String("fallback")) {
+                m_fallbackUsed = true;
                 emit pagedFallbackUsed();
+            }
             m_renderView->page()->printToPdf(m_pendingOutputPath,
                                              paged ? m_pendingLayout : m_legacyLayout);
         });

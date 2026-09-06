@@ -38,6 +38,12 @@ public:
                                    const QString &katexCss, const QString &customCss,
                                    const PdfPageSpec &spec);
 
+    // 本次导出是否走了回退（paged.js 失败/超时/内容校验不过 → 原生分页，产物
+    // 无页眉页脚）。pagedFallbackUsed 信号先于 printToPdf 触发，其状态栏提示
+    // 会被随后的导出成功消息覆盖——调用方须在 exportFinished 时据此把回退
+    // 说明并入最终消息
+    bool fallbackUsed() const { return m_fallbackUsed; }
+
 signals:
     void exportFinished(bool success, const QString &outputPath);
     void exportError(const QString &error);
@@ -60,6 +66,7 @@ private:
     QTimer m_printPoll;
     int m_printPollCount = 0;
     bool m_printStarted = false;   // 防轮询回调竞态导致重复 printToPdf
+    bool m_fallbackUsed = false;   // 进入回退路径（fallback/超时）时置位
 };
 
 #endif // MD_EDITOR_PDFEXPORTER_H
