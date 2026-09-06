@@ -1032,6 +1032,62 @@ private slots:
                  qPrintable("定义内下标往返丢失，实际: " + back));
     }
 
+    void testFootnoteDefBlockRoundTrip() {
+        QString md = "正文[^1]。\n\n[^1]: 第一段\n\n    第二段\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("[^1]: 第一段"), qPrintable(back));
+        QVERIFY2(back.contains("    第二段"), qPrintable(back));   // 续行缩进
+        // 二次往返稳定
+        QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back));
+        QCOMPARE(back2, back);
+    }
+
+    void testFootnoteDefBlockListRoundTrip() {
+        QString md = "[^1]: 段落\n    - 甲\n    - 乙\n";
+        QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("    - 甲"), qPrintable(back));
+        QVERIFY2(back.contains("    - 乙"), qPrintable(back));
+        QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back));
+        QCOMPARE(back2, back);
+    }
+
+    void testFootnoteDefCodeBlockRoundTrip() {
+        QString md = "[^1]: 说明\n        code line\n";
+        // 8 空格 = 去一层后 4 空格缩进代码块
+        QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("code line"), qPrintable(back));
+        QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back));
+        QCOMPARE(back2, back);
+    }
+
+    void testFootnoteDefEmptyRoundTrip() {
+        QString md = "正文[^1]。\n\n[^1]:\n";
+        QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("[^1]:"), qPrintable(back));
+        QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back));
+        QCOMPARE(back2, back);
+    }
+
+    void testFootnoteDefTaskListInDefRoundTrip() {
+        // 定义内任务列表：嵌套 fromHtml 主管线的 taskList 占位保护对称生效
+        QString md = "[^1]: 待办\n    - [ ] 事项\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY(html.contains("taskList"));
+        QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("- [ ] 事项"), qPrintable(back));
+    }
+
+    void testFootnoteDefSpanContentBackwardCompat() {
+        // 旧内联形态（span.footnote-content，编辑器同会话旧 HTML/单测构造）仍可解析
+        QString html = "<div data-type=\"footnoteContainer\">"
+                       "<div data-type=\"footnoteDef\" data-id=\"1\">"
+                       "<span class=\"footnote-marker\">1</span>"
+                       "<span class=\"footnote-content\">旧内容</span></div></div>";
+        QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains("[^1]: 旧内容"), qPrintable(back));
+    }
+
     void testExtractTitle() {
         QString md = "# 我的文档标题\n\n内容。";
         QString title = MarkdownHandler::extractTitle(md);

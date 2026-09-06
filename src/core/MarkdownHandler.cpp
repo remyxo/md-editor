@@ -3762,11 +3762,10 @@ QString MarkdownHandler::fromHtml(const QString &html)
     }
 
     // 7) 脚注容器 <div data-type="footnoteContainer"> → [^id]: 内容（多条）
-    //    位于所有行内格式（上下标/行内代码/任务列表）占位化之后：footnote-content
-    //    内的 <sub>/<sup>/<code> 等已先被通用步骤替换为 ZZSB/ZZSP/ZZCD 占位符，
-    //    它们作为字面文本穿过嵌套 QTextDocument，最终由逆序还原统一还原
-    //    （ZZFD 最后追加 → 最先还原 → [^id]: aZZSB0ZZc → 再被 ZZSB 还原为 a~b~c）。
-    //    依赖前置的 Step 6：footnoteRef 的 <sup> 已先隔离为 ZZFR，不会被本步误读。
+    //    块级定义：content 容器为 div（旧 span 形态兼容）；def 定界与 content
+    //    提取均用平衡扫描（taskList 内嵌 <div>、Qt 嵌套 <span> 会破坏非贪婪
+    //    匹配）；内容经完整 fromHtml 主管线嵌套转换后按缩进续行输出。
+    //    依赖前置的 Step 6：footnoteRef 的 <sup> 已先隔离为 ZZFR。
     {
         QRegularExpression contOpenRe(
             R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteContainer"[^>]*>)");
@@ -3779,48 +3778,63 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (closeStart < 0) { offset = om.capturedStart() + 1; continue; }
             QString inner = processed.mid(om.capturedEnd(),
                                           closeStart - om.capturedEnd());
-            // 提取每条 def div
-            QRegularExpression defDivRe(
-                R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteDef"[^>]*>(.*?)</div>)",
-                QRegularExpression::DotMatchesEverythingOption);
+            // 定位每条 def 开标签（定界交给平衡扫描）
+            QRegularExpression defOpenRe(
+                R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteDef"[^>]*>)");
             QRegularExpression defIdRe("data-id\\s*=\\s*\"([^\"]*)\"");
-            // content 容器：div（toHtml 块级新契约）| span（内联旧形态，向后兼容）
+            // content 容器：div（块级新形态）| span（内联旧形态）
             QRegularExpression contentOpenRe(
                 R"(<(div|span)\b[^>]*class\s*=\s*"footnote-content"[^>]*>)");
             QString mdBlock;
             int doff = 0;
             while (true) {
-                auto dm = defDivRe.match(inner, doff);
+                auto dm = defOpenRe.match(inner, doff);
                 if (!dm.hasMatch()) break;
+                int defClose = findMatchingDivClose(inner, dm.capturedStart());
+                if (defClose < 0) { doff = dm.capturedEnd(); continue; }
                 auto iim = defIdRe.match(dm.captured());
                 QString id = iim.hasMatch() ? iim.captured(1) : QString();
-                // 取 footnote-content 容器内的 inline HTML（跳过 marker）。
-                // content 含 Qt 生成的嵌套 <span style="...">（粗体/链接色等），
-                // 必须平衡扫描定位配对闭合标签，非贪婪正则会停在首个嵌套闭合标签。
-                QString defInner = dm.captured(1);
+                QString defInner = inner.mid(dm.capturedEnd(),
+                                             defClose - dm.capturedEnd());
                 auto com = contentOpenRe.match(defInner);
                 QString contentHtml;
                 if (com.hasMatch()) {
-                    // div 形态的配对 </div> 可能已被外层 defDivRe 非贪婪定界消费
-                    // （捕获区以 content 的闭合标签为终点）——平衡扫描失败时回退
-                    // 取容器开标签之后的全部内容，恰好即完整 content。
                     const bool isDiv = (com.captured(1) == QLatin1String("div"));
                     int contentClose = isDiv
                         ? findMatchingDivClose(defInner, com.capturedStart())
                         : findMatchingSpanClose(defInner, com.capturedStart());
                     contentHtml = (contentClose >= 0)
-                        ? defInner.mid(com.capturedEnd(), contentClose - com.capturedEnd())
+                        ? defInner.mid(com.capturedEnd(),
+                                       contentClose - com.capturedEnd())
                         : defInner.mid(com.capturedEnd());
                 } else {
-                    contentHtml = defInner;
+                    contentHtml = defInner;   // 无 content 容器（异常兜底）
                 }
-                // inline HTML → MD（嵌套 QTextDocument，同样关闭折行）
-                QTextDocument d;
-                d.setHtml(contentHtml);
-                QString cm2 = serializeMarkdownNoWrap(d);
-                while (cm2.endsWith('\n')) cm2.chop(1);
-                mdBlock += "[^" + id + "]: " + cm2 + "\n";
-                doff = dm.capturedEnd();
+                // 块级 HTML → MD：嵌套完整 fromHtml（任务列表/数学/行内代码等
+                // 占位保护对称生效；内容内若含嵌套脚注容器，转出的 [^x]: 行
+                // 即字面文本，与 toHtml 端字面处理对称）
+                QString cm = MarkdownHandler::fromHtml(contentHtml);
+                // cm 内的外层占位符（块级公式 ZZBM / 代码块 ZZCB / 任务列表
+                // ZZTL 等）若留给末段统一还原，多行备份的内部行不携带本定义的
+                // 续行缩进——重载时定义在首个非缩进内部行处断裂（块级公式形态
+                // 还会使嵌套 toHtml 遇到未闭合 $$，触发 mathBlockPhs/mathBlocks
+                // 错配崩溃）。故先在 cm 内就地展开（逆序 = 外层先展开，与末段
+                // 多趟还原语义一致），使多行备份的每一行都进入下方缩进续行输出。
+                // 碰撞检测保证 cm 中与占位符同串的必为真占位符；漏网 token 由
+                // 末段多趟还原兜底（无缩进，与未展开时的旧行为一致）。
+                for (int pi = placeholders.size() - 1; pi >= 0; --pi)
+                    cm.replace(placeholders[pi], backups[pi]);
+                while (cm.endsWith('\n')) cm.chop(1);
+                // 缩进续行输出：首行接 [^id]: 之后，其余行补 4 空格（空行不缩进）
+                QStringList outLines = cm.split('\n');
+                mdBlock += "[^" + id + "]: " + outLines.value(0);
+                for (int li = 1; li < outLines.size(); ++li) {
+                    mdBlock += '\n';
+                    if (!outLines[li].trimmed().isEmpty())
+                        mdBlock += QStringLiteral("    ") + outLines[li];
+                }
+                mdBlock += '\n';
+                doff = defClose + 6;   // 跳过 </div>
             }
             QString ph = collisionFreePlaceholder(collisions, "FD", n++);
             placeholders << ph;
