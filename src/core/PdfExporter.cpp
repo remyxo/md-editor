@@ -51,23 +51,30 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     // 上解析分页；margin 顺序 CSS = 上 右 下 左
     QString pageCss;
     if (paged) {
+        // 两向统一发显式 mm 尺寸（宽前高后），不用命名尺寸与 landscape 关键字：
+        // vendored paged.js 的 pageSizes 表键为 A0-A10/B4/B5（大写）与
+        // letter/legal/ledger（小写英寸系），而 Qt QPageSize::key() 返回
+        // "Letter"/"Legal"（首字母大写）——查表无大小写归一即失配（A 系与
+        // B4/B5 恰好同形幸免），width/height 解析为空 → 尺寸变量永不写入，
+        // DOM 页盒停留样式表默认的 8.5×11in 纵向，与所选纸打印版式分叉（内容
+        // 被裁、页眉页脚错位；打印纸本身也被分页器注入的 @page{size:letter}
+        // 带偏）。纵向 Letter 纯靠默认 8.5×11in 恰为其实际尺寸巧合蒙对，
+        // 纵向 Legal（8.5×14in）是真错；横向换向尺寸同病先修（#29），此处
+        // 纵向并入同路径——显式 mm 走 Dimension 解析直设 width/height，
+        // 命名尺寸表不再被依赖。毫米值定点 1 位小数——与 Qt 点位换算的微差
+        // （<0.1mm）对布局无影响
+        const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
         QString sizeStr;
         if (spec.orientation == QPageLayout::Landscape) {
-            // 横向发显式换向尺寸（宽前高后，宽=纵向高），不用 landscape 关键字：
-            // vendored paged.js 的 pageSizes 表键为 A0-A10/B4/B5（大写）与
-            // letter/legal/ledger（小写英寸系），而 Qt QPageSize::key() 返回
-            // "Letter"/"Legal"（首字母大写）——查表无大小写归一即失配（A 系与
-            // B4/B5 恰好同形幸免），width/height 解析为空 → 尺寸变量永不写入，
-            // DOM 页盒停留样式表默认的 8.5×11in 纵向，与横向打印版式分叉（内容
-            // 被裁、页眉页脚错位；Legal 纵向同病，属先于本修复的既有缺陷）。
-            // 显式 mm 尺寸走 Dimension 解析直设 width/height，不查命名尺寸表。
-            // 毫米值定点 1 位小数——与 Qt 点位换算的微差（<0.1mm）对布局无影响
-            const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
+            // 横向：宽=纵向高（换向），宽前高后、宽>高
             sizeStr = QStringLiteral("%1mm %2mm")
                           .arg(paperMm.height(), 0, 'f', 1)
                           .arg(paperMm.width(), 0, 'f', 1);
         } else {
-            sizeStr = QPageSize(spec.paper).key();   // "A4"/"Letter"/"A5"…
+            // 纵向：宽<高，宽前高后
+            sizeStr = QStringLiteral("%1mm %2mm")
+                          .arg(paperMm.width(), 0, 'f', 1)
+                          .arg(paperMm.height(), 0, 'f', 1);
         }
         pageCss = QStringLiteral("@page{size:%1;margin:%2mm %3mm %4mm %5mm;")
                       .arg(sizeStr,
@@ -94,8 +101,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // （R1 审查实测 300×150 被放大 2.17×）；高度超限时 viewBox 按缺省
         // meet 等比居中（盒宽不变）。2mm 安全间隙防压线亚像素溢出（区底贴合
         // 即触发 Unable to layout）。规则须在 @media print 之外——paged.js 在
-        // 屏幕媒体上分页测量
-        const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
+        // 屏幕媒体上分页测量（paperMm 与上方 sizeStr 同一次读取共用）
         const qreal capH = (spec.orientation == QPageLayout::Landscape ? paperMm.width()
                                                                        : paperMm.height())
                            - spec.marginsMm.top() - spec.marginsMm.bottom() - 2.0;

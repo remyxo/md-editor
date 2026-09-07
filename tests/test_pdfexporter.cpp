@@ -150,16 +150,40 @@ private slots:
         QVERIFY(out.contains("margin:20mm 15mm 22mm 15mm"));
     }
 
-    void testBuildRenderHtmlPortraitKeepsNamedSize() {
-        // 纵向回归防线：维持命名尺寸（"A4"）——A 系/B4/B5 纵向大小写恰好匹配
-        // 表键，Letter 纵向纯属默认值 8.5×11in 恰为 Letter 的巧合，均正常；
-        // Legal 纵向命名尺寸失配是先于本修复的既有缺陷（DOM 停 8.5×11in），
-        // 不在本修复范围。此路径一个字节都不动
+    void testBuildRenderHtmlPortraitExplicitDims() {
+        // 纵向显式 mm 尺寸（宽前高后，宽<高）：vendored paged.js 的 pageSizes
+        // 表键为 A0-A10/B4/B5（大写）与 letter/legal/ledger（小写英寸系），
+        // Qt QPageSize::key() 返回 "Letter"/"Legal"（首字母大写）——查表无
+        // 大小写归一即失配。A 系/B4/B5 纵向恰好同形幸免；Letter 纵向纯靠
+        // DOM 默认 8.5×11in 巧合蒙对；Legal 纵向（8.5×14in）是真错——DOM
+        // 页盒停 11in 高与打印版式分叉（内容被裁/页眉页脚错位）。两向统一
+        // 显式 mm 走 Dimension 解析直设 width/height，命名尺寸表不再被依赖
+        // （数值取 QPageSize 毫米、定点 1 位小数，与横向同源）
         PdfPageSpec s = specWithHeader();
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
-        QVERIFY(out.contains("size:A4;"));
+        const QSizeF mm = QPageSize(s.paper).size(QPageSize::Millimeter);   // 默认 A4
+        QVERIFY(out.contains(QStringLiteral("size:%1mm %2mm;")
+                                 .arg(mm.width(), 0, 'f', 1)
+                                 .arg(mm.height(), 0, 'f', 1)));
+        QVERIFY(!out.contains("size:A4"));   // 命名尺寸不再出现
         QVERIFY(!out.contains("landscape"));
-        QVERIFY(!QRegularExpression("size:[0-9.]+mm").match(out).hasMatch());
+    }
+
+    void testBuildRenderHtmlLegalPortraitExplicitDims() {
+        // Legal 纵向显式尺寸（大小写失配主场景）：命名尺寸 "Legal" 查不到
+        // pageSizes 表键 "legal"（小写）→ width/height 解析为空 → DOM 页盒
+        // 停留默认 8.5×11in，与 8.5×14in 打印版式分叉。期望值由
+        // QPageSize(QPageSize::Legal).size(Millimeter) 驱动拼接（勿硬编码
+        // ——Qt 毫米换算精度跨版本可能有微差，Qt 6.8 实测 215.9×355.6mm）
+        PdfPageSpec s = specWithHeader();
+        s.paper = QPageSize::Legal;
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
+        const QSizeF mm = QPageSize(QPageSize::Legal).size(QPageSize::Millimeter);
+        QVERIFY(out.contains(QStringLiteral("size:%1mm %2mm;")
+                                 .arg(mm.width(), 0, 'f', 1)
+                                 .arg(mm.height(), 0, 'f', 1)));
+        QVERIFY(!out.contains("size:Legal"));
+        QVERIFY(!out.contains("landscape"));
     }
 
     void testBuildRenderHtmlPagedCapsMermaidSvg() {
