@@ -341,10 +341,11 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 注释：take the whole row, not just the cell，只加 tr 时行内断点仍穿透；
         // 骑跨行压线贴合区底的场景 CSS 永远查不到——那是 onOverflow 回退修复的）
         "tr,th,td{break-inside:avoid;}"
-        "table{border-collapse:collapse;width:100%%;margin:0.5em 0;}"
+        // % 无需转义——QString::arg 只识别 %1..%99 占位符，%% 会原样保留成无效 CSS（历史缺陷已修）
+        "table{border-collapse:collapse;width:100%;margin:0.5em 0;}"
         "th,td{border:1px solid #ccc;padding:4px 8px;font-size:10pt;}"
         "th{background:#f5f5f5;}"
-        "img{max-width:100%%;}"
+        "img{max-width:100%;}"
         "blockquote{border-left:3px solid #0078d4;padding:4px 12px;"
         "color:#555;margin:0.5em 0;}"
         "[data-type=\"block-math\"]{display:block;text-align:center;margin:1em 0;}"

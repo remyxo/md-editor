@@ -261,14 +261,37 @@ private slots:
         QVERIFY(n >= 0);
         QVERIFY(n < out.indexOf("@media print{"));
         // legacy 路径（页眉页脚全关）无 paged 分页，不注入两条容纳规则：img 宽度
-        // 规则仅剩 @media print 内的一处（前缀计数区分屏幕副本与打印副本）。
-        // 注：@media print 内既有 img{max-width:100%%;} 的 "%%" 并非 QString::arg
-        // 转义（Qt 无此语义，实测原样保留为无效 CSS 值）——先于本任务的既有
-        // 缺陷，超出本任务修改范围，不在此锁定其形态
+        // 规则仅剩 @media print 内的一处（前缀计数区分屏幕副本与打印副本；打印
+        // 副本的 %% 死值已在 #32 修正为有效单 %，形态由
+        // testBuildRenderHtmlPrintCssPercentValid 锁定，此处只锁数量）
         QString legacy = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
         QVERIFY(!legacy.contains("img:not([width])"));
         QCOMPARE(legacy.count("img{max-width:100"), 1);
         QVERIFY(legacy.lastIndexOf("img{max-width:100") > legacy.indexOf("@media print{"));
+    }
+
+    void testBuildRenderHtmlPrintCssPercentValid() {
+        // @media print 模板里的百分比宽度必须是有效 CSS 值：QString::arg 只识别
+        // %1..%99 占位符、没有 printf 式的 %% 转义语义——模板里写 100%% 会原样
+        // 保留进最终 HTML（无效 CSS 值），table 的 width:100%% 与 img 的
+        // max-width:100%% 两条规则从未生效过（死 CSS）。历史缺陷已修，此处双向
+        // 锁定：全文无 %% 残留 + 两条规则复活后的完整形态
+        // paged 态：img{max-width:100%;} 出现两处——@media print 之外的屏幕媒体
+        // 分页测量副本（pageCss 注入）+ @media print 内的打印副本（模板）
+        PdfPageSpec s = specWithHeader();
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
+        QVERIFY(!out.contains("%%"));
+        QVERIFY(out.contains(
+            "table{border-collapse:collapse;width:100%;margin:0.5em 0;}"));
+        QVERIFY(out.contains("img{max-width:100%;}"));
+        QCOMPARE(out.count("img{max-width:100%;}"), 2);
+        // legacy 态：img{max-width:100%;} 恰 1 处（仅 @media print 内的打印副本）
+        QString legacy = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
+        QVERIFY(!legacy.contains("%%"));
+        QVERIFY(legacy.contains(
+            "table{border-collapse:collapse;width:100%;margin:0.5em 0;}"));
+        QVERIFY(legacy.contains("img{max-width:100%;}"));
+        QCOMPARE(legacy.count("img{max-width:100%;}"), 1);
     }
 
     void testPagedPrintMarginsTinyNonZero() {
