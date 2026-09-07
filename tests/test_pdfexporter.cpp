@@ -196,6 +196,52 @@ private slots:
         QVERIFY(!legacy.contains(".mermaid-diagram svg{"));
     }
 
+    void testBuildRenderHtmlPagedCapsImages() {
+        // 普通 <img> 页高容纳上限 + 屏幕媒体宽度约束（与上方 mermaid 上限同型）：
+        // 高于内容区的图片是原子元素不可分页拆分 → 分页器 "Unable to layout item"
+        // → 内容重复铺排 → 指纹校验拦截回退原生分页（无页眉页脚）；横向 A4 内容
+        // 高仅 172mm，竖版截图/长图必超。形状调查结论（选择器依据）：导出 HTML
+        // 一律来自 TipTap getHTML()（schema 只序列化 src/alt/title/width/height），
+        // 常规插入/剪贴板粘贴/md4c 加载路径均不产 width 属性——:not([width])
+        // 覆盖全部常规图片；显式 width 属性唯一来源是用户字面 HTML（TipTap
+        // parseHTML 按 schema 吸收 width/height），刻意排除——width:auto!important
+        // 会把用户显式缩小的缩略图放大回自然尺寸（R1 审查 300×150 被放大 2.17×
+        // 的同型陷阱），显式尺寸超高时回退保底仍在。:not([style]) 同理：当前链路
+        // ProseMirror 解析丢弃非 schema 的 style 属性（导出 HTML 无带 style 的
+        // img），排除是零成本护栏——width:auto!important 会覆盖非 important 的
+        // 内联 style 宽度（buildRenderHtml 为公开 API，防未来内联样式路径）
+        PdfPageSpec s = specWithHeader();
+        s.marginsMm = QMarginsF(18, 18, 18, 18);
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
+        // 纵向 A4：内容盒高 297-36-2=259mm。形状锁：max-height 与 width:auto
+        // 恰成一对——max-height 收缩高度时只有 width:auto 才按纵横比等比缩宽
+        // （CSS 替换元素约束），字符串层测不了渲染尺寸，锁规则形状是唯一护栏
+        QVERIFY(out.contains(QStringLiteral(
+            "img:not([width]):not([style]){max-height:259.0mm!important;"
+            "width:auto!important;}")));
+        // 横向 A4：内容盒高 210-36-2=172mm
+        s.orientation = QPageLayout::Landscape;
+        out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
+        QVERIFY(out.contains(QStringLiteral(
+            "img:not([width]):not([style]){max-height:172.0mm!important;"
+            "width:auto!important;}")));
+        // 两条规则均须在 @media print 之外——paged.js 在屏幕媒体上分页测量：
+        // max-width 只在打印媒体生效时，超宽图屏幕布局无宽度约束 → 横向溢出
+        // .pagedjs_sheet（overflow:hidden）→ 静默右裁（指纹通过不回退，比回退
+        // 更隐蔽）；max-height 同理须在分页测量前生效
+        QVERIFY(out.indexOf("img{max-width:100%;}") < out.indexOf("@media print{"));
+        QVERIFY(out.indexOf("img:not([width])") < out.indexOf("@media print{"));
+        // legacy 路径（页眉页脚全关）无 paged 分页，不注入两条容纳规则：img 宽度
+        // 规则仅剩 @media print 内的一处（前缀计数区分屏幕副本与打印副本）。
+        // 注：@media print 内既有 img{max-width:100%%;} 的 "%%" 并非 QString::arg
+        // 转义（Qt 无此语义，实测原样保留为无效 CSS 值）——先于本任务的既有
+        // 缺陷，超出本任务修改范围，不在此锁定其形态
+        QString legacy = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
+        QVERIFY(!legacy.contains("img:not([width])"));
+        QCOMPARE(legacy.count("img{max-width:100"), 1);
+        QVERIFY(legacy.lastIndexOf("img{max-width:100") > legacy.indexOf("@media print{"));
+    }
+
     void testPagedPrintMarginsTinyNonZero() {
         // paged 路径 Qt 打印边距（mm）形状锁：每边必须 > 0 且 <= 1.0——
         // ① Qt 6.8 printToPdf 对恰为 0 的边距套用 ~18mm（51pt）有效默认打印

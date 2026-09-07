@@ -101,6 +101,31 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            - spec.marginsMm.top() - spec.marginsMm.bottom() - 2.0;
         pageCss += QStringLiteral(".mermaid-diagram svg{max-height:%1mm!important;}")
                        .arg(capH, 0, 'f', 1);
+        // 普通 <img> 页高容纳上限（与上方 mermaid 上限同型，capH 同源）：高于
+        // 内容区的图片是原子元素不可分页拆分 → 分页器 "Unable to layout item"
+        // → 内容重复铺排 → 指纹校验拦截回退原生分页（无页眉页脚）；横向 A4
+        // 内容高仅约 172mm，竖版截图/长图必超。
+        // ① max-width:100% 全量适用（只收缩不放大，height:auto 时纵横比自动
+        //    保持，无放大陷阱）——且必须与下方 max-height 一样在 @media print
+        //    之外：paged.js 在屏幕媒体上分页测量，仅打印媒体生效的宽度约束挡
+        //    不住屏幕布局的横向溢出——超宽图溢出 .pagedjs_sheet（overflow:
+        //    hidden）被静默右裁，指纹通过不回退，比回退更隐蔽
+        // ② 高度上限只对 :not([width]) 生效（形状调查：导出 HTML 一律来自
+        //    TipTap getHTML()，schema 只序列化 src/alt/title/width/height，
+        //    常规插入/粘贴/md4c 加载路径均不产 width 属性，选择器覆盖全部常规
+        //    图片；显式 width 属性唯一来源是用户字面 HTML）。刻意排除是防放大
+        //    陷阱：width:auto!important 会覆盖 width 属性（展示提示层，强度低
+        //    于 important CSS），把用户显式缩小的缩略图放大回自然尺寸（R1 审查
+        //    实测 300×150 被放大 2.17× 的同型陷阱）——用户显式尺寸超高时回退
+        //    保底仍在。width:auto 与 max-height 恰成一对：高度超限时按纵横比
+        //    等比缩宽（CSS 替换元素约束），不超不动。:not([style]) 同理——
+        //    当前链路 ProseMirror 解析丢弃非 schema 的 style 属性，排除是零
+        //    成本护栏（width:auto!important 会覆盖非 important 的内联样式宽度）
+        pageCss += QStringLiteral("img{max-width:100%;}");
+        pageCss += QStringLiteral(
+                       "img:not([width]):not([style]){max-height:%1mm!important;"
+                       "width:auto!important;}")
+                       .arg(capH, 0, 'f', 1);
     }
     // 旧 @page{margin:0}（Qt QPageLayout 边距方案）仅 legacy 路保留；
     // paged 路径下若同存，@media print 内的后位规则会级联覆盖新 margin
