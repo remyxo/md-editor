@@ -54,12 +54,14 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         QString sizeStr;
         if (spec.orientation == QPageLayout::Landscape) {
             // 横向发显式换向尺寸（宽前高后，宽=纵向高），不用 landscape 关键字：
-            // vendored paged.js 的 pageSizes 表只有 A0-A10，命名尺寸 + landscape
-            // 时 Letter/Legal 等查表失败 → width/height 解析为空 → 尺寸变量永不
-            // 写入，DOM 页盒停留样式表默认的 8.5×11in 纵向，与横向打印版式分叉
-            // （内容被裁、页眉页脚错位）。显式 mm 尺寸走 Dimension 解析直设
-            // width/height，不依赖命名尺寸表。毫米值定点 1 位小数——与 Qt 点位
-            // 换算的微差（<0.1mm）对布局无影响
+            // vendored paged.js 的 pageSizes 表键为 A0-A10/B4/B5（大写）与
+            // letter/legal/ledger（小写英寸系），而 Qt QPageSize::key() 返回
+            // "Letter"/"Legal"（首字母大写）——查表无大小写归一即失配（A 系与
+            // B4/B5 恰好同形幸免），width/height 解析为空 → 尺寸变量永不写入，
+            // DOM 页盒停留样式表默认的 8.5×11in 纵向，与横向打印版式分叉（内容
+            // 被裁、页眉页脚错位；Legal 纵向同病，属先于本修复的既有缺陷）。
+            // 显式 mm 尺寸走 Dimension 解析直设 width/height，不查命名尺寸表。
+            // 毫米值定点 1 位小数——与 Qt 点位换算的微差（<0.1mm）对布局无影响
             const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
             sizeStr = QStringLiteral("%1mm %2mm")
                           .arg(paperMm.height(), 0, 'f', 1)
@@ -82,24 +84,22 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            "@bottom-right{content:\"第 \" counter(page) \" 页 / 共 \" "
                            "counter(pages) \" 页\";font-size:9pt;color:#666;}");
         pageCss += QLatin1Char('}');
-        // mermaid SVG 页面容纳上限：mermaid 渲染的 svg 带 width="100%" + 内联
-        // max-width，宽度自适应但高度无约束——高于内容区的图不可分页拆分 →
-        // 分页器 "Unable to layout item" → 内容重复铺排 → 指纹校验拦截回退
-        // 原生分页（产物无页眉页脚）。横向 A4 内容高仅约 174mm，常见时序图
+        // mermaid SVG 页高容纳上限：mermaid 渲染的 svg 带 width="100%" + 内联
+        // max-width，宽度自适应容器、但高度无约束——高于内容区的图不可分页
+        // 拆分 → 分页器 "Unable to layout item" → 内容重复铺排 → 指纹校验拦截
+        // 回退原生分页（产物无页眉页脚）。横向 A4 内容高仅约 174mm，常见时序图
         // （实测 735px≈195mm）纵向正常、横向必超——「横向导出无页眉页脚」的
-        // 根因。双 auto + max 盒保持纵横比（svg 自带 viewBox），超限才缩；
-        // 2mm 安全间隙防压线亚像素溢出（区底贴合即触发 Unable to layout）。
-        // 规则须在 @media print 之外——paged.js 在屏幕媒体上分页测量
+        // 根因。只约束 max-height：宽度归 mermaid 自身机制（width="100%" +
+        // 内联 max-width 永不超容器），加 width:auto 会把小图放大到内容区宽
+        // （R1 审查实测 300×150 被放大 2.17×）；高度超限时 viewBox 按缺省
+        // meet 等比居中（盒宽不变）。2mm 安全间隙防压线亚像素溢出（区底贴合
+        // 即触发 Unable to layout）。规则须在 @media print 之外——paged.js 在
+        // 屏幕媒体上分页测量
         const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
-        const bool landscape = spec.orientation == QPageLayout::Landscape;
-        const qreal capW = (landscape ? paperMm.height() : paperMm.width())
-                           - spec.marginsMm.left() - spec.marginsMm.right() - 2.0;
-        const qreal capH = (landscape ? paperMm.width() : paperMm.height())
+        const qreal capH = (spec.orientation == QPageLayout::Landscape ? paperMm.width()
+                                                                       : paperMm.height())
                            - spec.marginsMm.top() - spec.marginsMm.bottom() - 2.0;
-        pageCss += QStringLiteral(
-                       ".mermaid-diagram svg{width:auto!important;height:auto!important;"
-                       "max-width:%1mm!important;max-height:%2mm!important;}")
-                       .arg(capW, 0, 'f', 1)
+        pageCss += QStringLiteral(".mermaid-diagram svg{max-height:%1mm!important;}")
                        .arg(capH, 0, 'f', 1);
     }
     // 旧 @page{margin:0}（Qt QPageLayout 边距方案）仅 legacy 路保留；
@@ -356,6 +356,27 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     return fullHtml;
 }
 
+QMarginsF PdfExporter::pagedPrintMargins()
+{
+    // paged 路径的 Qt 打印边距为何不是 0（三层根因，2026-09-07 实验证实）：
+    // ① Qt 6.8 的 printToPdf 对恰为 0 的边距不按 0 采用，而是套用 ~18mm（51pt）
+    //   的有效默认打印边距——「边距由 @page 承载、Qt 布局传 0 防双重边距」的
+    //   设计意图被这一行为打破（判别实验：CSS @page 边距 18→10mm 落纸内缩纹丝
+    //   不动，证明与 CSS 无关；Qt 边距 5mm → 内缩精确 14.17pt，证明非 0 即被
+    //   精确采用）
+    // ② 有效边距压缩可打印区（纸 − 2×51pt）→ Chromium shrink-to-fit 把自然宽
+    //   = 纸宽的 paged.js 文档等比缩放（实测横向 0.879 / 纵向 0.829）
+    // ③ 缩放后 paged.js 的 @media print height:100%!important 把 sheet 盒拉到
+    //   ≠ 纸高：横向盒 561.4pt < 网格 595.3pt，.pagedjs_sheet 的 overflow:hidden
+    //   裁掉底部 33.9pt——页脚文本（居中于末 51pt 行）整段落在裁切线外，页脚
+    //   全丢；纵向盒 893.1 > 841.9 不裁切，但全文 83% 缩放 + 页脚悬高于真实
+    //   底边距行 ~80pt（静默劣化）
+    // 解法：0.1mm 微量值（用户裁决）避开零值默认边距，偏差 0.28pt 落纸不可见。
+    // 依赖「非 0 边距被精确采用」这一行为（Qt 6.8 实测；6.10 不可本地测，行为
+    // 如有变化须重取证）。页边距仍由 @page 规则承载，此值仅为骗过零值默认
+    return QMarginsF(0.1, 0.1, 0.1, 0.1);
+}
+
 void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const QString &outputPath,
                               QPageLayout::Orientation orientation,
                               QPageSize::PageSizeId paperSize)
@@ -393,11 +414,14 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     QString fullHtml = buildRenderHtml(html, docDir, katexCss, customCss, spec);
 
     m_pendingOutputPath = outputPath;
-    // paged 路径边距由 @page 承载（页面盒自带页边距），Qt 布局传 0 防双重边距；
-    // legacy 路径维持 Qt QPageLayout 边距（设置值为 cm，QPageLayout::Millimeter 需要 mm）
+    // paged 路径边距由 @page 承载（页面盒自带页边距），Qt 布局不能传 0——Qt 6.8
+    // 对恰 0 边距套 ~18mm 默认打印边距，引发 shrink-to-fit 缩放 + 横向 sheet
+    // 被裁底 → 页脚全丢（三层根因详见 pagedPrintMargins() 注释），故传 0.1mm
+    // 微量值；legacy 路径维持 Qt QPageLayout 边距（设置值为 cm，
+    // QPageLayout::Millimeter 需要 mm）
     m_pendingLayout = QPageLayout(QPageSize(static_cast<QPageSize::PageSizeId>(paper)),
         static_cast<QPageLayout::Orientation>(orient),
-        spec.pagedActive() ? QMarginsF(0, 0, 0, 0)
+        spec.pagedActive() ? pagedPrintMargins()
                            : QMarginsF(ml * 10, mt * 10, mr * 10, mb * 10),
         QPageLayout::Millimeter);
     // 原生版式（用户边距）：legacy 路径与 paged 失败/超时回退共用

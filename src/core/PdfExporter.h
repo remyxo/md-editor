@@ -38,6 +38,10 @@ public:
                                    const QString &katexCss, const QString &customCss,
                                    const PdfPageSpec &spec);
 
+    // paged 路径的 Qt 打印边距（mm，0.1mm 微量值，实现处注释详述根因）——
+    // 提为静态函数供单测锁形（每边 > 0 且 <= 1.0mm）
+    static QMarginsF pagedPrintMargins();
+
     // 本次导出是否走了回退（paged.js 失败/超时/内容校验不过 → 原生分页，产物
     // 无页眉页脚）。pagedFallbackUsed 信号先于 printToPdf 触发，其状态栏提示
     // 会被随后的导出成功消息覆盖——调用方须在 exportFinished 时据此把回退
@@ -59,7 +63,7 @@ private:
 
     QWebEngineView *m_renderView;
     QString m_pendingOutputPath;
-    QPageLayout m_pendingLayout;   // paged 版式（0 边距——@page 已承载页边距）
+    QPageLayout m_pendingLayout;   // paged 版式（0.1mm 微量边距——@page 已承载页边距，见 pagedPrintMargins）
     QPageLayout m_legacyLayout;    // 原生版式（用户边距）——legacy/回退共用
     // runJavaScript 不等待 Promise（Qt 6.8 实测回调立即触发），完成态靠轮询
     // window.__printState（paged/legacy/fallback）获取

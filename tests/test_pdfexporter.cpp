@@ -131,10 +131,12 @@ private slots:
         s.marginsMm = QMarginsF(15, 20, 15, 22);   // 左上右下（QMarginsF 语义）
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
         // 横向发显式换向尺寸（宽前高后、宽>高），不用 landscape 关键字——vendored
-        // paged.js 的 pageSizes 表只有 A0-A10，Letter/Legal 等命名尺寸解析不出
-        // width/height → 尺寸变量永不写入 → DOM 页盒停留 8.5×11in 纵向默认值，
-        // 横向打印版式与 DOM 几何分叉（内容被裁/页眉页脚错位）。显式 mm 尺寸
-        // 走 Dimension 解析直设 width/height，不依赖命名尺寸表
+        // paged.js 的 pageSizes 表键为 A0-A10/B4/B5（大写）与 letter/legal/
+        // ledger（小写英寸系），而 Qt QPageSize::key() 返回 "Letter"/"Legal"
+        // （首字母大写），查表无大小写归一即失配 → width/height 解析为空 →
+        // 尺寸变量永不写入，DOM 页盒停留 8.5×11in 纵向默认值，横向打印版式
+        // 与 DOM 几何分叉（内容被裁/页眉页脚错位）。显式 mm 尺寸走 Dimension
+        // 解析直设 width/height，不查命名尺寸表
         QVERIFY(!out.contains("landscape"));
         const QSizeF mm = QPageSize(s.paper).size(QPageSize::Millimeter);
         QVERIFY(out.contains(QStringLiteral("size:%1mm %2mm")
@@ -149,8 +151,10 @@ private slots:
     }
 
     void testBuildRenderHtmlPortraitKeepsNamedSize() {
-        // 纵向回归防线：维持命名尺寸（"A4"）——A 系纵向与 Letter 纵向（默认值
-        // 8.5×11in 恰为 Letter）现网均正常，此路径一个字节都不动
+        // 纵向回归防线：维持命名尺寸（"A4"）——A 系/B4/B5 纵向大小写恰好匹配
+        // 表键，Letter 纵向纯属默认值 8.5×11in 恰为 Letter 的巧合，均正常；
+        // Legal 纵向命名尺寸失配是先于本修复的既有缺陷（DOM 停 8.5×11in），
+        // 不在本修复范围。此路径一个字节都不动
         PdfPageSpec s = specWithHeader();
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
         QVERIFY(out.contains("size:A4;"));
@@ -159,31 +163,56 @@ private slots:
     }
 
     void testBuildRenderHtmlPagedCapsMermaidSvg() {
-        // mermaid SVG 页面容纳上限（横向丢页眉页脚的根因）：mermaid 渲染的 svg
-        // 带 width="100%" + 内联 max-width，宽度自适应但高度无约束——高于内容
-        // 区的图（横向内容高 174mm，常见时序图 ~195mm）不可分页拆分 → 分页器
-        // "Unable to layout item" → 内容重复铺排 → 指纹校验拦截回退原生分页
-        // （无页眉页脚）。上限规则用双 auto + max 盒保持纵横比，超限才缩，
-        // 2mm 安全间隙防压线亚像素溢出
+        // mermaid SVG 页高容纳上限（横向丢页眉页脚的根因）：mermaid 渲染的 svg
+        // 带 width="100%" + 内联 max-width，宽度自适应容器但高度无约束——高于
+        // 内容区的图（横向内容高 174mm，常见时序图 ~195mm）不可分页拆分 →
+        // 分页器 "Unable to layout item" → 内容重复铺排 → 指纹校验拦截回退
+        // 原生分页（无页眉页脚）。只约束 max-height：宽度归 mermaid 自身机制
+        // （width="100%" + 内联 max-width 永不超容器），加 width:auto 反而会把
+        // 小图放大到内容区宽（R1 审查实测 300×150 被放大 2.17×）；高度超限时
+        // viewBox 按缺省 meet 等比居中（盒宽不变）。2mm 安全间隙防压线亚像素
+        // 溢出
         PdfPageSpec s = specWithHeader();
         s.marginsMm = QMarginsF(18, 18, 18, 18);
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
         QVERIFY(out.contains("holder.className='mermaid-diagram'"));
-        QVERIFY(out.contains(".mermaid-diagram svg{"));
-        // 纵向 A4：内容盒 210-36-2=172mm 宽、297-36-2=259mm 高
-        QVERIFY(out.contains("max-width:172.0mm!important"));
-        QVERIFY(out.contains("max-height:259.0mm!important"));
-        // 横向 A4：宽高互换
+        // 纵向 A4：内容盒高 297-36-2=259mm；规则必须恰为 max-height 单约束
+        // ——width/height:auto 或 max-width 都会破坏「小图不放大」（字符串层
+        // 测不了渲染尺寸，锁规则形状是唯一护栏）
+        const qsizetype i = out.indexOf(".mermaid-diagram svg{");
+        QVERIFY(i >= 0);
+        const qsizetype j = out.indexOf(QLatin1Char('}'), i);
+        QVERIFY(out.mid(i, j - i + 1)
+                == QStringLiteral(".mermaid-diagram svg{max-height:259.0mm!important;}"));
+        // 横向 A4：内容盒高 210-36-2=172mm
         s.orientation = QPageLayout::Landscape;
         out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
-        QVERIFY(out.contains("max-width:259.0mm!important"));
-        QVERIFY(out.contains("max-height:172.0mm!important"));
+        QVERIFY(out.contains(".mermaid-diagram svg{max-height:172.0mm!important;}"));
         // 上限规则须在 @media print 之外（paged.js 在屏幕媒体上分页测量）
         QVERIFY(out.indexOf(".mermaid-diagram svg{")
                 < out.indexOf("@media print{"));
         // legacy 路径（页眉页脚全关）无 paged 分页，不注入容纳上限
         QString legacy = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
         QVERIFY(!legacy.contains(".mermaid-diagram svg{"));
+    }
+
+    void testPagedPrintMarginsTinyNonZero() {
+        // paged 路径 Qt 打印边距（mm）形状锁：每边必须 > 0 且 <= 1.0——
+        // ① Qt 6.8 printToPdf 对恰为 0 的边距套用 ~18mm（51pt）有效默认打印
+        //    边距（CSS @page 边距 18→10mm 落纸内缩不变的判别实验证实与 CSS
+        //    无关；5mm→内缩精确 14.17pt 证明非 0 即精确采用）
+        // ② 有效边距压缩可打印区 → Chromium shrink-to-fit 把自然宽=纸宽的
+        //    paged.js 文档等比缩 0.879(横)/0.829(纵)
+        // ③ 缩放后横向 sheet 盒 561.4pt < 网格 595.3pt，.pagedjs_sheet 的
+        //    overflow:hidden 裁掉底部 33.9pt → 页脚整段落裁切线外全丢；纵向
+        //    不裁但全文 83% 缩放 + 页脚悬高于真实底边距行 ~80pt
+        // 0.1mm（用户裁决值）避开零值默认、落纸偏差不可见。上限 1.0mm 防
+        // 有人改成大边距引入与 @page 边距的双重边距
+        const QMarginsF m = PdfExporter::pagedPrintMargins();
+        QVERIFY(m.left() > 0.0 && m.left() <= 1.0);
+        QVERIFY(m.top() > 0.0 && m.top() <= 1.0);
+        QVERIFY(m.right() > 0.0 && m.right() <= 1.0);
+        QVERIFY(m.bottom() > 0.0 && m.bottom() <= 1.0);
     }
 
     void testBuildRenderHtmlTitleEscaped() {
