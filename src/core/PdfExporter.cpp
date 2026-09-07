@@ -109,7 +109,8 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
 
     // 打印前置入口：mermaid 先渲染（SVG 定型），paged 后跑（分页测量正确）。
     // 完成态走 window.__printState 状态机（Qt 的 runJavaScript 不等待 Promise，
-    // C++ 侧轮询此标志）：working=进行中；paged=分页完成（0 边距打印）；
+    // C++ 侧轮询此标志）：working=进行中；paged=分页完成（微量边距打印，
+    // 见 pagedPrintMargins——页边距由 @page 承载）；
     // legacy=无 paged 直接过（用户边距）；fallback=paged 失败——还原 body 后
     // 走 legacy 打印，绝不把被 paged.js wrapContent 掏空的 body 交给 printToPdf
     const QString preparePrint = QStringLiteral(
