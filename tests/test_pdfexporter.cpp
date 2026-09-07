@@ -229,8 +229,13 @@ private slots:
         // max-width 只在打印媒体生效时，超宽图屏幕布局无宽度约束 → 横向溢出
         // .pagedjs_sheet（overflow:hidden）→ 静默右裁（指纹通过不回退，比回退
         // 更隐蔽）；max-height 同理须在分页测量前生效
-        QVERIFY(out.indexOf("img{max-width:100%;}") < out.indexOf("@media print{"));
-        QVERIFY(out.indexOf("img:not([width])") < out.indexOf("@media print{"));
+        // 先锁存在再锁位置——indexOf 删规则返回 -1 会空过比较（-1 < N 恒真）
+        const qsizetype m = out.indexOf("img{max-width:100%;}");
+        QVERIFY(m >= 0);
+        QVERIFY(m < out.indexOf("@media print{"));
+        const qsizetype n = out.indexOf("img:not([width])");
+        QVERIFY(n >= 0);
+        QVERIFY(n < out.indexOf("@media print{"));
         // legacy 路径（页眉页脚全关）无 paged 分页，不注入两条容纳规则：img 宽度
         // 规则仅剩 @media print 内的一处（前缀计数区分屏幕副本与打印副本）。
         // 注：@media print 内既有 img{max-width:100%%;} 的 "%%" 并非 QString::arg
