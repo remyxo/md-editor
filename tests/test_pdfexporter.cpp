@@ -83,6 +83,41 @@ private slots:
                 > out.indexOf("PagedPolyfill.preview()"));
     }
 
+    void testBuildRenderHtmlVerifyContentCoversImages() {
+        // #33 img 维度指纹：图片无文本，textContent 指纹对图片丢失/裁切/重复铺排
+        // 全部空转（#30 红基线实证：超高 img 溢出时 state=paged 不回退，被
+        // .pagedjs_sheet overflow:hidden 静默裁切）——须独立比对 src 多重集。
+        // 字符串形状锁（渲染行为由 E2E probe 直调 __verifyContent 验证，此处
+        // 锁关键标识存在性，让「img 维度被整体删除」必转红）：
+        // 1) 快照：__preImgs 与 __preText 同点（splitPreLines 之后、preview 之前
+        //    ——splitPreLines 不动 img，同点即对称），从 document.body 取 img
+        // 2) 比对：__verifyContent 函数体内对页面内容盒+脚注盒 querySelectorAll
+        //    ('img') 取 post 侧多重集，不等返回 '图片指纹不一致'
+        // 3) 文本指纹 '内容指纹不一致' 原样仍在（img 维度是叠加不是替换）
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", specWithHeader());
+        // 快照侧：标识存在 + 时机与 __preText 对称（splitPreLines 后、preview 前）
+        QVERIFY(out.contains("window.__preText=document.body.textContent;"));
+        QVERIFY(out.contains("window.__preImgs="));
+        QVERIFY(out.contains("document.body.querySelectorAll('img')"));
+        QVERIFY(out.indexOf("window.__preImgs=")
+                > out.lastIndexOf("window.__splitPreLines();"));
+        QVERIFY(out.indexOf("window.__preImgs=")
+                < out.indexOf("PagedPolyfill.preview()"));
+        // 比对侧：代码必须落在 __verifyContent 函数体内（仅快照侧出现 __preImgs
+        // 不构成比对——切块到 __preparePrint 定义前，防标识在别处空过）
+        const qsizetype v = out.indexOf("window.__verifyContent=function(){");
+        QVERIFY(v >= 0);
+        const qsizetype vend = out.indexOf("window.__preparePrint=function(){", v);
+        QVERIFY(vend > v);
+        const QString vc = out.mid(v, vend - v);
+        QVERIFY(vc.contains("__preImgs"));
+        QVERIFY(vc.contains("querySelectorAll('img')"));
+        QVERIFY(vc.contains("'图片指纹不一致 '"));
+        // 文本指纹原样仍在，且先于 img 维度（先文本后图片，丢失文本优先报文本）
+        QVERIFY(vc.contains("'内容指纹不一致 '"));
+        QVERIFY(vc.indexOf("'内容指纹不一致 '") < vc.indexOf("'图片指纹不一致 '"));
+    }
+
     void testBuildRenderHtmlPagedInjectsPageRules() {
         PdfPageSpec s = specWithHeader();
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);

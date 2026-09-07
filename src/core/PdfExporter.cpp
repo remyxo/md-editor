@@ -255,7 +255,8 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 段落/标题/表格/代码/公式/图注），分页后汇总 .pagedjs_page_content 文本
         // 比对（页眉页脚在 .pagedjs_margin 盒内，不计入）。任何静默丢失（未知的
         // 内容形态触发未设防的断点路径）→ 立即还原 body 走 fallback 原生打印——
-        // 保底零丢失优先于页眉页脚
+        // 保底零丢失优先于页眉页脚。文本指纹对图片维度空转（img 无文本，丢失/
+        // 裁切/重复铺排均不改 textContent），故文本比对后另比对 img src 多重集
         "window.__verifyContent=function(){"
         "try{"
         "var pages=document.querySelectorAll('.pagedjs_page_content');"
@@ -270,6 +271,22 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "var j=0;while(j<Math.min(a.length,b.length)&&a.charAt(j)===b.charAt(j))j++;"
         "return '内容指纹不一致 '+a.length+'→'+b.length+' 首异位@'+j;"
         "}"
+        // img 维度指纹（文本比对之后）：图片无文本，文本指纹对图片丢失/裁切/
+        // 重复铺排全无感知，须独立比对。签名取 src 多重集（收集后排序 join('|')）
+        // 而非仅计数——同 src 合法重复出现 N 次须保留次数语义，总量守恒的
+        // 「丢 A 重复 B」替换也唯有多重集能逮住；post 侧与文本比对同覆盖
+        // （页面内容盒 + 脚注盒，脚注内图片同样可能被分页手术波及）。签名含
+        // base64 data URI 会巨长，返回值截断为前 8 字符+总长，勿整串回填
+        // （风格对齐上方文本指纹的 a.length+'→'+b.length）
+        "var ims=[];"
+        "for(var n=0;n<pages.length;n++){var pg=pages[n].querySelectorAll('img');"
+        "for(var m=0;m<pg.length;m++)ims.push(pg[m]);}"
+        "for(n=0;n<fns.length;n++){var fg=fns[n].querySelectorAll('img');"
+        "for(m=0;m<fg.length;m++)ims.push(fg[m]);}"
+        "var ia=window.__preImgs||'',srcs=[];"
+        "for(n=0;n<ims.length;n++)srcs.push(ims[n].src);"
+        "srcs.sort();var ib=srcs.join('|');"
+        "if(ia!==ib)return '图片指纹不一致 '+ia.slice(0,8)+'('+ia.length+')→'+ib.slice(0,8)+'('+ib.length+')';"
         "return true;"
         "}catch(e){return '校验异常: '+(e&&e.message||e);}"
         "};"
@@ -287,6 +304,13 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "try{window.__splitPreLines();}catch(e){console.warn('代码块逐行重排失败: '+(e&&e.message||e));}"
         // 指纹快照必须在 splitPreLines 之后（它重排 pre 文本，前后快照要同基线）
         "window.__preText=document.body.textContent;"
+        // img src 多重集快照与文本快照同点：splitPreLines 不动 img，同点即与
+        // 比对侧（__verifyContent）完全对称。body 内全部 img 的 src 排序后
+        // join('|')——多重集语义：同 src 合法重复出现保留次数（仅计数会被
+        // 总量守恒的替换骗过），排序消除分页重排带来的顺序差
+        "window.__preImgs=(function(){var s=[],is=document.body.querySelectorAll('img');"
+        "for(var i=0;i<is.length;i++)s.push(is[i].src);"
+        "s.sort();return s.join('|');})();"
         "return PagedPolyfill.preview()"
         ".then(function(){"
         "var ok=window.__verifyContent();"
