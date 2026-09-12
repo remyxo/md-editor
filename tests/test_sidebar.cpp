@@ -24,6 +24,7 @@ private slots:
     void restore_collapses_file_tree_only();  // 启动恢复：只显示大纲，按钮隐藏
     void restore_all_off_hides_sidebar();     // 启动恢复：全收 → 侧边栏隐藏
     void restore_then_reopen_keeps_ratio();   // 恢复收起后重开目录树，比例未被污染
+    void restore_reorders_file_tree_to_top(); // 恢复「只显示目录树」：未 show 先换序路径
     void restore_emits_signals();             // 恢复发 visibleChanged 信号（菜单同步依赖）
 private:
     CollapsibleSection *fileSection(const SideBar &sb) const;
@@ -268,6 +269,9 @@ void TestSideBar::restore_collapses_file_tree_only()
 {
     SideBar sb;
     sb.applyInitialPanes(false, true);
+    // 钉住「无动画」契约：恢复直置立即生效——此刻面板 max 已是标题栏高；
+    // 若误用动画重载（setCollapsed 单参），此刻 max 仍是展开大值（16M），断言即挂
+    QCOMPARE(fileSection(sb)->contentMaxHeight(), fileSection(sb)->collapsedHeight());
     sb.show();
     QVERIFY(fileSection(sb)->isCollapsed());
     QVERIFY(!outlineSection(sb)->isCollapsed());
@@ -293,9 +297,18 @@ void TestSideBar::restore_all_off_hides_sidebar()
 
 // 关键回归：构造期（未布局）恢复收起 → show → 再展开目录树，大纲仍占大头。
 // 证明 m_savedSplitSizes 未被构造期垃圾尺寸污染（若污染，恢复出坏比例）。
+// 区分力加固：applyInitialPanes 前预置诱饵坏比例 {10, 390}（大纲:目录树 ≈ 1:39）。
+// 未阻断 collapsedChanged 信号链的实现会经 rememberExpandedSizes 把诱饵存进
+// m_savedSplitSizes，重开后大纲被压到最小高度，下方断言必挂；而构造期 {0,0}
+// 垃圾经 stretch 重分配在观测上与默认 6:4 等价（无诱饵时旧断言红不了）。
+// 注意：须先给 splitter 预置高度——未 show 的 splitter 是默认 ~30px 高，
+// 两面板被各自最小高度钳住，{10, 390} 实测落成 {13, 13}（1:1，重开后大纲
+// 125 vs 107 仍侥幸通过）；预置 400px 高后诱饵比例才能真正成形。
 void TestSideBar::restore_then_reopen_keeps_ratio()
 {
     SideBar sb;
+    splitter(sb)->resize(240, 400);           // 预置空间：诱饵比例不被最小高度钳扁
+    splitter(sb)->setSizes({10, 390});        // 诱饵坏比例：大纲仅最小高度
     sb.applyInitialPanes(false, true);
     sb.show();
     QTest::qWait(100);                        // 等 showEvent setSizes({360,240}) 生效
@@ -304,6 +317,25 @@ void TestSideBar::restore_then_reopen_keeps_ratio()
     QTest::qWait(400);
     QVERIFY(!fileSection(sb)->isCollapsed());
     QVERIFY(outlineSection(sb)->height() > fileSection(sb)->height());  // 6:4 量级
+}
+
+// 恢复「只显示目录树」（true, false）：唯一的「未 show 先换序」路径（其余换序均
+// 发生在显示后的标题栏点击）。断言 applyInitialPanes 内同步完成换序——目录树
+// 位于 splitter 第一位、大纲标题栏沉底，show 后「打开文件夹」按钮可见。
+void TestSideBar::restore_reorders_file_tree_to_top()
+{
+    SideBar sb;
+    sb.applyInitialPanes(true, false);
+    QVERIFY(!fileSection(sb)->isCollapsed());
+    QVERIFY(outlineSection(sb)->isCollapsed());
+    QCOMPARE(splitter(sb)->widget(0), fileSection(sb));   // 未 show 即完成换序
+    QCOMPARE(splitter(sb)->widget(1), outlineSection(sb));
+    sb.show();
+    QVERIFY(openBtn(sb)->isVisibleTo(&sb));   // 目录树在 → 按钮可见
+    QTest::qWait(400);
+    QVERIFY(sb.isVisible());
+    QVERIFY(sb.maximumWidth() != 0);          // 单面板收起不触发整体收起
+    QVERIFY(fileSection(sb)->height() > outlineSection(sb)->height());  // 目录树占满
 }
 
 // 恢复须发两个 visibleChanged 信号各一次（MainWindow 菜单勾选同步依赖）

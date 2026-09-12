@@ -49,6 +49,12 @@ void SideBar::setupUi()
     connect(m_openFolderBtn, &QPushButton::clicked, this, &SideBar::openFolderClicked);
     layout->addWidget(m_openFolderBtn);
 
+    // === 收起副作用三处对称编码（改一处须三处同步）===
+    // ①下方大纲 lambda ②下方目录树 lambda（动画路径）③applyInitialPanes（启动
+    // 恢复直置路径）。三处副作用集相同：可见标志、比例保存/恢复、updateSectionOrder
+    // 沉底换序、updateWholeCollapse、发 visibleChanged。评估过抽 syncPaneState()
+    // 统一：三处差异（动画/直置、remember 与否、全收态复现方式、单发/批量信号）
+    // 需多个开关参数，抽象后可读性劣于现状——维持三处显式编码 + 本互指注释。
     // 标题栏点击路径：折叠状态变化 → 同步可见标志 + 收起面板沉底 + 比例保存/恢复
     // + 整体收起 + 通知菜单
     connect(m_outlineSection, &CollapsibleSection::collapsedChanged, this,
@@ -63,6 +69,8 @@ void SideBar::setupUi()
                 emit outlineVisibleChanged(!collapsed);
             });
     connect(m_fileSection, &CollapsibleSection::collapsedChanged, this,
+            // 收起副作用三处对称编码之一（②目录树动画路径，另两处见上方大纲 lambda
+            // 与 applyInitialPanes），改动须三处同步
             [this](bool collapsed) {
                 m_fileTreeVisible = !collapsed;
                 m_openFolderBtn->setVisible(!collapsed);   // 「打开文件夹」跟随目录树
@@ -99,10 +107,14 @@ void SideBar::setOutlineVisible(bool visible)
 // rememberExpandedSizes 会把垃圾比例存进 m_savedSplitSizes（用户重开目录树时
 // 恢复出坏比例）；且启动不需要收起动画。末尾统一发 visibleChanged 信号，
 // 供 MainWindow 同步菜单勾选与持久化。
+// 收起副作用三处对称编码之一（③启动恢复直置路径，另两处见 setupUi 内两个
+// 标题栏点击 lambda），改动须三处同步；差异：本路径直置无动画、不记忆比例
+// （正是要避免垃圾比例）、全收态直接隐藏、信号批量收尾。
 void SideBar::applyInitialPanes(bool fileTree, bool outline)
 {
     const QSignalBlocker fileBlocker(m_fileSection);
     const QSignalBlocker outlineBlocker(m_outlineSection);
+    m_fileSection->setCollapsed(!fileTree, false);   // 无动画重载
     m_fileSection->setCollapsed(!fileTree, false);   // 无动画重载
     m_outlineSection->setCollapsed(!outline, false);
     m_fileTreeVisible = fileTree;
