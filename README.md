@@ -88,4 +88,4 @@ cpack -G DEB
 
 ## License
 
-MIT
+GPL-3.0（详见 [LICENSE](LICENSE)；vendored 组件——miniz、paged.js、lowlight plugin 等——各自保留原始许可，见 `docs/` 各 vendor 说明）
