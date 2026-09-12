@@ -1153,6 +1153,41 @@ static void parseBody(QXmlStreamReader &r, ParseState &s)
 
 // ============ OOXML 部件生成 ============
 
+// 页眉部件：单段居中文档标题（9pt 灰 #808080），段距紧凑（覆盖 docDefaults 1.15 行距）
+static QString makeHeaderXml(const QString &title)
+{
+    const QString rpr = "<w:rPr><w:color w:val=\"808080\"/><w:sz w:val=\"18\"/></w:rPr>";
+    return QStringLiteral(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n"
+        "  <w:p>"
+        "<w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>"
+        "<w:jc w:val=\"center\"/></w:pPr>"
+        "<w:r>%1<w:t xml:space=\"preserve\">%2</w:t></w:r>"
+        "</w:p>\n"
+        "</w:hdr>\n").arg(rpr, xmlEscape(xmlSanitize(title)));
+}
+
+// 页脚部件：右对齐「第 X 页 / 共 Y 页」，X/Y 为 PAGE/NUMPAGES 简单字段——
+// Word 打开时按字段重算（活页码，用户续编辑自动更新）；字段内 run 文本是占位值
+static QString makeFooterXml()
+{
+    const QString rpr = "<w:rPr><w:color w:val=\"808080\"/><w:sz w:val=\"18\"/></w:rPr>";
+    const QString pPr = "<w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>"
+                        "<w:jc w:val=\"right\"/></w:pPr>";
+    return QStringLiteral(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n"
+        "  <w:p>%1"
+        "<w:r>%2<w:t xml:space=\"preserve\">第 </w:t></w:r>"
+        "<w:fldSimple w:instr=\" PAGE   \\* MERGEFORMAT \"><w:r>%2<w:t>1</w:t></w:r></w:fldSimple>"
+        "<w:r>%2<w:t xml:space=\"preserve\"> 页 / 共 </w:t></w:r>"
+        "<w:fldSimple w:instr=\" NUMPAGES   \\* MERGEFORMAT \"><w:r>%2<w:t>1</w:t></w:r></w:fldSimple>"
+        "<w:r>%2<w:t xml:space=\"preserve\"> 页</w:t></w:r>"
+        "</w:p>\n"
+        "</w:ftr>\n").arg(pPr, rpr);
+}
+
 static QString makeStylesXml()
 {
     return QStringLiteral(
@@ -1285,6 +1320,12 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
     // 超宽图片按比例缩小到页面文本宽度，小图保持自然尺寸（不放大）。
     // 同时生成 sectPr 声明纸张尺寸与页边距（twips），使 DOCX 页与导出设置一致，
     // 否则 Word/WPS 用默认（约 1 英寸边距）排版，图片上限与实际页宽不匹配、超宽图越界。
+    // DOCX 页眉页脚开关（独立开关默认开，与 PDF 的 pdfHeader/FooterEnabled 互不影响；
+    // 标题取导出文件名基名，与 PDF 同源）。开关/标题声明在下方 settings 块之外——
+    // 块是 {} 局部作用域，块外的 rels/contentTypes/zip 段还要用这三个值。
+    bool headerEnabled = true;
+    bool footerEnabled = true;
+    QString headerTitle;
     {
         QSettings settings("md-editor", "md-editor");
         const int paper = settings.value("export/paperSize", static_cast<int>(QPageSize::A4)).toInt();
@@ -1300,9 +1341,21 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
         const double contentMm = pageW - (ml + mr) * 10.0;
         state.maxImageWidthEmu = contentMm > 0 ? static_cast<int>(contentMm * 36000.0) : 0;
         const auto mm2twips = [](double mm) { return static_cast<int>(qRound(mm * 56.6929134)); };
+        headerEnabled = settings.value("export/docxHeaderEnabled", true).toBool();
+        footerEnabled = settings.value("export/docxFooterEnabled", true).toBool();
+        headerTitle = QFileInfo(outputPath).completeBaseName();
+        if (headerTitle.isEmpty()) headerEnabled = false;   // 防御：无标题不产页眉部件
+        // CT_SectPr schema 要求 headerReference/footerReference（EG_HdrFtrReferences）
+        // 位于 pgSz 之前，故引用前置（全关时 hdrFtrRefs 为空串，产物与改造前等价）
+        QString hdrFtrRefs;
+        if (headerEnabled)
+            hdrFtrRefs += "<w:headerReference w:type=\"default\" r:id=\"rIdHeader1\"/>";
+        if (footerEnabled)
+            hdrFtrRefs += "<w:footerReference w:type=\"default\" r:id=\"rIdFooter1\"/>";
         state.sectPrXml = QStringLiteral(
-            "<w:sectPr><w:pgSz w:w=\"%1\" w:h=\"%2\"/><w:pgMar w:top=\"%3\" w:right=\"%4\" "
-            "w:bottom=\"%5\" w:left=\"%6\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>")
+            "<w:sectPr>%1<w:pgSz w:w=\"%2\" w:h=\"%3\"/><w:pgMar w:top=\"%4\" w:right=\"%5\" "
+            "w:bottom=\"%6\" w:left=\"%7\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>")
+            .arg(hdrFtrRefs)
             .arg(mm2twips(pageW)).arg(mm2twips(pageH))
             .arg(mm2twips(mt * 10.0)).arg(mm2twips(mr * 10.0))
             .arg(mm2twips(mb * 10.0)).arg(mm2twips(ml * 10.0));
@@ -1330,6 +1383,14 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
     if (state.hasBulletList || state.hasDecimalList) {
         docRelsXml += "  <Relationship Id=\"rIdNumbering\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" Target=\"numbering.xml\"/>\n";
     }
+    if (headerEnabled)
+        docRelsXml += "  <Relationship Id=\"rIdHeader1\""
+            " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\""
+            " Target=\"header1.xml\"/>\n";
+    if (footerEnabled)
+        docRelsXml += "  <Relationship Id=\"rIdFooter1\""
+            " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\""
+            " Target=\"footer1.xml\"/>\n";
     if (!state.relsXml.isEmpty()) {
         docRelsXml += state.relsXml.toUtf8();
     }
@@ -1346,6 +1407,12 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
     if (state.hasBulletList || state.hasDecimalList) {
         contentTypes += "  <Override PartName=\"/word/numbering.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/>\n";
     }
+    if (headerEnabled)
+        contentTypes += "  <Override PartName=\"/word/header1.xml\""
+            " ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>\n";
+    if (footerEnabled)
+        contentTypes += "  <Override PartName=\"/word/footer1.xml\""
+            " ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>\n";
     // 图片 media 部件：按实际出现的扩展名去重追加 Default（否则 Word 打不开图片）
     if (!state.media.isEmpty()) {
         QSet<QString> exts;
@@ -1398,6 +1465,10 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
     add("word/styles.xml", stylesXml, MZ_BEST_COMPRESSION);
     if (state.hasBulletList || state.hasDecimalList)
         add("word/numbering.xml", numberingXml, MZ_BEST_COMPRESSION);
+    if (headerEnabled)
+        add("word/header1.xml", makeHeaderXml(headerTitle).toUtf8(), MZ_BEST_COMPRESSION);
+    if (footerEnabled)
+        add("word/footer1.xml", makeFooterXml().toUtf8(), MZ_BEST_COMPRESSION);
     for (const auto &mp : state.media) {
         const QByteArray name = "word/media/" + mp.fileName.toUtf8();
         add(name.constData(), mp.bytes, MZ_BEST_COMPRESSION);

@@ -9,6 +9,8 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
+#include <QMap>
+#include <QXmlStreamReader>
 #include "../src/core/DocxExporter.h"
 #include "../src/core/MermaidRenderer.h"
 #include "../src/core/MathMlRenderer.h"
@@ -31,6 +33,30 @@ class TestDocxExporter : public QObject {
         unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
         if (!unzip.waitForFinished(10000)) return {};
         return QString::fromUtf8(unzip.readAllStandardOutput());
+    }
+
+    // 导出 HTML 为 docx 并整包解压，返回 {部件路径 → 内容}；不存在的部件不在 map 中。
+    // 注：不得用 `unzip -p out [Content_Types].xml`——unzip 参数是 glob 模式，
+    // `[...]` 是字符类匹配不到字面名，必须 -o 解压后按文件读。
+    static QMap<QString, QString> exportParts(const QString &html,
+                                               const QStringList &partNames,
+                                               const QString &outFileName = QStringLiteral("out.docx")) {
+        QMap<QString, QString> out;
+        QTemporaryDir dir;
+        if (!dir.isValid()) return out;
+        const QString outPath = dir.path() + "/" + outFileName;
+        DocxExporter ex;
+        ex.exportToDocx(html, dir.path(), outPath);
+        if (!QFile::exists(outPath)) return out;
+        QProcess unzip;
+        unzip.start("unzip", QStringList() << "-o" << outPath << "-d" << dir.path() + "/x");
+        if (!unzip.waitForFinished(10000)) return out;
+        for (const QString &p : partNames) {
+            QFile f(dir.path() + "/x/" + p);
+            if (f.open(QIODevice::ReadOnly))
+                out.insert(p, QString::fromUtf8(f.readAll()));
+        }
+        return out;
     }
 
 private slots:
@@ -56,6 +82,149 @@ private slots:
         QVERIFY(xml.contains("<w:vertAlign w:val=\"subscript\"/>"));
         QVERIFY(xml.contains("<w:vertAlign w:val=\"superscript\"/>"));
         QVERIFY(xml.contains("<w:rFonts w:ascii=\"Consolas\""));
+    }
+
+    // === DOCX 页眉页脚（export/docxHeaderEnabled / docxFooterEnabled，默认开）===
+
+    // 双开：两部件齐全 + sectPr 引用先于 pgSz（CT_SectPr schema 顺序）+ rels/Content_Types 接线 + 良构
+    void testDocxHeaderFooterBothEnabled() {
+        QSettings s("md-editor", "md-editor");
+        const QVariant oldH = s.value("export/docxHeaderEnabled");
+        const QVariant oldF = s.value("export/docxFooterEnabled");
+        s.setValue("export/docxHeaderEnabled", true);
+        s.setValue("export/docxFooterEnabled", true);
+        s.sync();
+
+        auto parts = exportParts("<p>hello</p>",
+            {"word/document.xml", "word/header1.xml", "word/footer1.xml",
+             "word/_rels/document.xml.rels", "[Content_Types].xml"},
+            QStringLiteral("测试文档.docx"));
+        QVERIFY(parts.contains("word/document.xml"));
+        QVERIFY(parts.contains("word/header1.xml"));
+        QVERIFY(parts.contains("word/footer1.xml"));
+
+        // sectPr 引用存在且位于 pgSz 之前
+        const QString doc = parts["word/document.xml"];
+        const int hdrPos = doc.indexOf("<w:headerReference w:type=\"default\" r:id=\"rIdHeader1\"/>");
+        const int ftrPos = doc.indexOf("<w:footerReference w:type=\"default\" r:id=\"rIdFooter1\"/>");
+        const int pgSzPos = doc.indexOf("<w:pgSz");
+        QVERIFY(hdrPos >= 0 && ftrPos >= 0);
+        QVERIFY(pgSzPos > hdrPos && pgSzPos > ftrPos);
+
+        // 页眉：居中 + 标题 = 导出文件名基名 + 9pt 灰
+        const QString hdr = parts["word/header1.xml"];
+        QVERIFY(hdr.contains("<w:jc w:val=\"center\"/>"));
+        QVERIFY(hdr.contains("测试文档"));
+        QVERIFY(hdr.contains("<w:color w:val=\"808080\"/><w:sz w:val=\"18\"/>"));
+
+        // 页脚：右对齐 + PAGE/NUMPAGES 简单字段 + 「第 X 页 / 共 Y 页」文案
+        const QString ftr = parts["word/footer1.xml"];
+        QVERIFY(ftr.contains("<w:jc w:val=\"right\"/>"));
+        QVERIFY(ftr.contains("w:instr=\" PAGE   \\* MERGEFORMAT \""));
+        QVERIFY(ftr.contains("w:instr=\" NUMPAGES   \\* MERGEFORMAT \""));
+        QVERIFY(ftr.contains("第 ") && ftr.contains(" 页 / 共 ") && ftr.contains(" 页"));
+
+        // 两部件 XML 良构
+        for (const QString &x : {hdr, ftr}) {
+            QXmlStreamReader r(x);
+            while (!r.atEnd()) r.readNext();
+            QVERIFY2(!r.hasError(), qPrintable(r.errorString()));
+        }
+
+        // rels 与 Content_Types 接线
+        QVERIFY(parts["word/_rels/document.xml.rels"]
+                    .contains("relationships/header\" Target=\"header1.xml\""));
+        QVERIFY(parts["word/_rels/document.xml.rels"]
+                    .contains("relationships/footer\" Target=\"footer1.xml\""));
+        QVERIFY(parts["[Content_Types].xml"].contains(
+            "/word/header1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\""));
+        QVERIFY(parts["[Content_Types].xml"].contains(
+            "/word/footer1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\""));
+
+        s.setValue("export/docxHeaderEnabled", oldH);   // null QVariant → 移除键，回落默认
+        s.setValue("export/docxFooterEnabled", oldF);
+    }
+
+    // 只开页眉：footer 部件/引用/字段全无
+    void testDocxHeaderOnly() {
+        QSettings s("md-editor", "md-editor");
+        const QVariant oldH = s.value("export/docxHeaderEnabled");
+        const QVariant oldF = s.value("export/docxFooterEnabled");
+        s.setValue("export/docxHeaderEnabled", true);
+        s.setValue("export/docxFooterEnabled", false);
+        s.sync();
+
+        auto parts = exportParts("<p>x</p>",
+            {"word/document.xml", "word/header1.xml", "word/footer1.xml"});
+        QVERIFY(parts.contains("word/header1.xml"));
+        QVERIFY(!parts.contains("word/footer1.xml"));
+        QVERIFY(parts["word/document.xml"].contains("r:id=\"rIdHeader1\""));
+        QVERIFY(!parts["word/document.xml"].contains("footerReference"));
+        QVERIFY(!parts["word/document.xml"].contains("NUMPAGES"));
+
+        s.setValue("export/docxHeaderEnabled", oldH);
+        s.setValue("export/docxFooterEnabled", oldF);
+    }
+
+    // 只开页脚：header 部件/引用全无
+    void testDocxFooterOnly() {
+        QSettings s("md-editor", "md-editor");
+        const QVariant oldH = s.value("export/docxHeaderEnabled");
+        const QVariant oldF = s.value("export/docxFooterEnabled");
+        s.setValue("export/docxHeaderEnabled", false);
+        s.setValue("export/docxFooterEnabled", true);
+        s.sync();
+
+        auto parts = exportParts("<p>x</p>",
+            {"word/document.xml", "word/header1.xml", "word/footer1.xml"});
+        QVERIFY(!parts.contains("word/header1.xml"));
+        QVERIFY(parts.contains("word/footer1.xml"));
+        QVERIFY(!parts["word/document.xml"].contains("headerReference"));
+        QVERIFY(parts["word/document.xml"].contains("r:id=\"rIdFooter1\""));
+
+        s.setValue("export/docxHeaderEnabled", oldH);
+        s.setValue("export/docxFooterEnabled", oldF);
+    }
+
+    // 全关：零注入，sectPr 直接跟 pgSz（与改造前语义等价，回归锁定）
+    void testDocxHeaderFooterAllDisabled() {
+        QSettings s("md-editor", "md-editor");
+        const QVariant oldH = s.value("export/docxHeaderEnabled");
+        const QVariant oldF = s.value("export/docxFooterEnabled");
+        s.setValue("export/docxHeaderEnabled", false);
+        s.setValue("export/docxFooterEnabled", false);
+        s.sync();
+
+        auto parts = exportParts("<p>x</p>",
+            {"word/document.xml", "word/header1.xml", "word/footer1.xml",
+             "word/_rels/document.xml.rels", "[Content_Types].xml"});
+        QVERIFY(!parts.contains("word/header1.xml"));
+        QVERIFY(!parts.contains("word/footer1.xml"));
+        QVERIFY(parts["word/document.xml"].contains("<w:sectPr><w:pgSz"));
+        QVERIFY(!parts["word/_rels/document.xml.rels"].contains("header1.xml"));
+        QVERIFY(!parts["[Content_Types].xml"].contains("header+xml"));
+
+        s.setValue("export/docxHeaderEnabled", oldH);
+        s.setValue("export/docxFooterEnabled", oldF);
+    }
+
+    // 标题含 XML 特殊字符：页眉文本经 xmlEscape，无注入
+    void testDocxHeaderTitleEscaped() {
+        QSettings s("md-editor", "md-editor");
+        const QVariant oldH = s.value("export/docxHeaderEnabled");
+        const QVariant oldF = s.value("export/docxFooterEnabled");
+        s.setValue("export/docxHeaderEnabled", true);
+        s.setValue("export/docxFooterEnabled", false);
+        s.sync();
+
+        auto parts = exportParts("<p>x</p>", {"word/header1.xml"},
+                                 QStringLiteral("a&b<c.docx"));
+        const QString hdr = parts.value("word/header1.xml");
+        QVERIFY(hdr.contains("a&amp;b&lt;c"));
+        QVERIFY(!hdr.contains("a&b<c"));
+
+        s.setValue("export/docxHeaderEnabled", oldH);
+        s.setValue("export/docxFooterEnabled", oldF);
     }
 
     void testMathMlConverterBasic() {
