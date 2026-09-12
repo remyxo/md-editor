@@ -199,6 +199,12 @@ void SettingsDialog::setupUi()
     exportLayout->addWidget(m_pdfHeaderCheck);
     exportLayout->addWidget(m_pdfFooterCheck);
 
+    // DOCX 页眉/页脚（DocxExporter 侧读取生效）
+    m_docxHeaderCheck = new QCheckBox(exportTab);
+    m_docxFooterCheck = new QCheckBox(exportTab);
+    exportLayout->addWidget(m_docxHeaderCheck);
+    exportLayout->addWidget(m_docxFooterCheck);
+
     exportLayout->addStretch();
     m_tabs->addTab(exportTab, QString());
 
@@ -246,6 +252,8 @@ void SettingsDialog::retranslateUi()
     m_landscapeLbl->setText(tr("横向(L)"));
     m_pdfHeaderCheck->setText(tr("PDF 页眉（文档标题）"));
     m_pdfFooterCheck->setText(tr("PDF 页码（第 X 页 / 共 Y 页）"));
+    m_docxHeaderCheck->setText(tr("DOCX 页眉（文档标题）"));
+    m_docxFooterCheck->setText(tr("DOCX 页码（第 X 页 / 共 Y 页）"));
 
     m_tabs->setTabText(0, tr("通用"));
     m_tabs->setTabText(1, tr("编辑器"));
@@ -304,6 +312,10 @@ void SettingsDialog::loadSettings()
         settings.value("export/pdfHeaderEnabled", true).toBool());
     m_pdfFooterCheck->setChecked(
         settings.value("export/pdfFooterEnabled", true).toBool());
+    m_docxHeaderCheck->setChecked(
+        settings.value("export/docxHeaderEnabled", true).toBool());
+    m_docxFooterCheck->setChecked(
+        settings.value("export/docxFooterEnabled", true).toBool());
 
     // 显示偏好模式（system 时下拉框选「跟随系统」，而非当前实际主题）
     QString mode = settings.value("appearance/theme", "light").toString();
@@ -340,6 +352,8 @@ void SettingsDialog::onAccepted()
     settings.setValue("export/marginRight", m_marginRight->value());
     settings.setValue("export/pdfHeaderEnabled", m_pdfHeaderCheck->isChecked());
     settings.setValue("export/pdfFooterEnabled", m_pdfFooterCheck->isChecked());
+    settings.setValue("export/docxHeaderEnabled", m_docxHeaderCheck->isChecked());
+    settings.setValue("export/docxFooterEnabled", m_docxFooterCheck->isChecked());
 
     // 语言走 MainWindow 统一链路（切换 + 持久化），不再直写 QSettings
     emit languageChanged(m_langCombo->currentData().toString());
