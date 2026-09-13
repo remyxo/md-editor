@@ -1321,11 +1321,34 @@ static QString taskItemInlineText(QString content)
         QRegularExpression::DotMatchesEverythingOption);
     static const QRegularExpression brRe("<br\\b[^>]*>");
     static const QRegularExpression pCloseRe("</p>");
+    static const QRegularExpression imgRe(
+        "<img\\b([^>]*)>", QRegularExpression::DotMatchesEverythingOption);
+    static const QRegularExpression srcRe("\\bsrc\\s*=\\s*\"([^\"]*)\"");
+    static const QRegularExpression altRe("\\balt\\s*=\\s*\"([^\"]*)\"");
     static const QRegularExpression tagRe("<[^>]*>");
     content.replace(strongRe, "**\\2**");
     content.replace(emRe, "*\\2*");
     content.replace(strikeRe, "~~\\2~~");
     content.replace(linkRe, "[\\2](\\1)");
+    // <img> → ![alt](src)（图片是内容，不是无意义标签）。
+    // 此前 <img> 随 tagRe 一并被剥离：列表项内的图片（编辑器块级 Image 节点
+    // 落在 li 内时产 <li><p>x</p><img><p>y</p></li>）保存即从文档消失。
+    // 含图片的条目最终并入单行（见下方 kept.join，理由同处注释）。
+    // 置于 linkRe 之后：<a href><img></a> 已变 [<img …>](href)，此处再展开为
+    // [![alt](src)](href) ✓ 与既有 linkRe 展开顺序一致。置于 remove(tagRe) 之前
+    // 是必须的——被剥掉就再也拿不回来了。
+    bool hasImage = false;
+    globalReplaceWith(content, imgRe,
+        [&hasImage](const QRegularExpressionMatch &m) {
+            const QString attrs = m.captured(1);
+            const auto sm = srcRe.match(attrs);
+            if (!sm.hasMatch()) return QString();   // 无 src：与既有剥离行为一致（丢弃）
+            hasImage = true;
+            const auto am = altRe.match(attrs);
+            return QStringLiteral("![")
+                + (am.hasMatch() ? unescapeHtmlEntities(am.captured(1)) : QString())
+                + "](" + unescapeHtmlEntities(sm.captured(1)) + ")";
+        });
     // 块边界 → 换行（条目内多段落用缩进续行表达）
     content.replace(brRe, "\n");
     content.replace(pCloseRe, "\n");
@@ -1336,7 +1359,11 @@ static QString taskItemInlineText(QString content)
         QString t = l.trimmed();
         if (!t.isEmpty()) kept << t;
     }
-    return kept.join("\n");
+    // 含图片的条目合并为单行：Qt 的 markdown 导入把列表项的续行解析成**列表外**
+    // 的独立段落（实测 `- 前\n  后` 即如此，续行机制对块级内容普遍不可用），
+    // 图片会被挤出条目、下一轮再漂移。单行形态 `- 前 ![x](a.png) 后` 才是
+    // Qt 回读的稳定不动点（图片仍留在 li 内，TipTap 归一到 <p>前</p><img><p>后</p>）。
+    return hasImage ? kept.join(QLatin1Char(' ')) : kept.join(QLatin1Char('\n'));
 }
 
 // 前向声明：定义在下方（generalListInnerToMd 的辅助，任务项内嵌通用列表也用它）
@@ -3337,6 +3364,30 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     html.replace(QRegularExpression(
         QStringLiteral("<p[^>]*>\\s*(<img\\b[^>]*>)\\s*</p>")),
         QStringLiteral("\\1"));
+
+    // 列表项内的块级图片：补一个空 <p> 挡在图片前，把图片留在条目内。
+    // TipTap 的 ListItem 内容式为 paragraph block*，块级 Image（inline:false）作
+    // 首子元素时 ProseMirror 无处安放，会把整张图**弹出列表**——`<li><img></li>`
+    // 经真实链路（vitest 探针）变成 `<li><p></p></li></ul><img>`，保存后列表里
+    // 永远残留一个空条目（用户从未写过）。在前面补空 <p> 即 TipTap 的稳定不动点
+    //（`<li><p></p><img></li>` 载入即原样输出），而 fromHtml 侧的空段落会被
+    // taskItemInlineText 过滤掉，回写仍是干净的 `- ![x](a.png)`，完整往返。
+    // 仅当图片确为条目首个子元素时才补——`<li><p>前</p><img>` 形态 TipTap 本就能
+    // 稳定容纳（实测），不得再插入多余空段落。
+    {
+        // 通用列表项：<li …><img …>
+        globalReplaceWith(html,
+            QRegularExpression(QStringLiteral("(<li\\b[^>]*>)\\s*(<img\\b)")),
+            [](const QRegularExpressionMatch &m) {
+                return m.captured(1) + QStringLiteral("<p></p>") + m.captured(2);
+            });
+        // 任务项内容容器：<label>…</label><div><img …>（TipTap taskItem 契约结构）
+        globalReplaceWith(html,
+            QRegularExpression(QStringLiteral("(</label>\\s*<div\\b[^>]*>)\\s*(<img\\b)")),
+            [](const QRegularExpressionMatch &m) {
+                return m.captured(1) + QStringLiteral("<p></p>") + m.captured(2);
+            });
+    }
 
     // 还原表格空单元格占位符 ZZTC → 空 <td>（≥2 格行防 Qt 合并用，见 protectTableRowForQt）。
     // 占位符独立成单元格内容，Qt 输出 <td><p…>ZZTCnZZ</p></td>，连同 <p> 壳还原为空单元格，

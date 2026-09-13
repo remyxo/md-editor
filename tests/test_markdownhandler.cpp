@@ -4557,6 +4557,41 @@ private slots:
                  qPrintable(QString("data-latex 应做属性转义，HTML=[%1]").arg(html)));
     }
 
+    void testListImageRoundTrip()
+    {
+        // 列表项内的图片曾保存即丢：编辑器块级 Image 落在 li 内时产
+        // <li><p>前</p><img><p>后</p></li>，fromHtml 的列表序列化
+        //（taskItemInlineText）把 <img> 随所有标签一并剥离。
+        // 另：块级图片不能做 li 的首子元素——ProseMirror 无处安放会把整张图
+        // **弹出列表**（真实链路实测 <li><img></li> → <li><p></p></li></ul><img>），
+        // 故 toHtml 侧补空 <p> 挡在图片前（TipTap 稳定形态），fromHtml 侧把
+        // 图片转回 ![alt](src) 并合并为单行（续行会被 Qt 解析成列表外段落）。
+        const QStringList cases = {
+            QStringLiteral("- ![x](a.png)"),
+            QStringLiteral("- ![](a.png)"),
+            QStringLiteral("- 前 ![x](a.png) 后"),
+            QStringLiteral("- [ ] ![x](a.png)"),
+            QStringLiteral("- a\n  - ![x](b.png)"),
+            QStringLiteral("1. ![x](a.png)"),
+            QStringLiteral("- 普通项\n- ![x](c.png)\n- 尾项"),
+        };
+        for (const QString &md : cases) {
+            const QString html = MarkdownHandler::toHtml(md);
+            QVERIFY2(html.contains(QLatin1String("<img")),
+                     qPrintable(QString("列表项内图片不应被丢弃，MD=[%1] HTML=[%2]").arg(md, html)));
+            // 图片作首子元素时须先补空 <p>（否则 TipTap 把图弹出列表）
+            QVERIFY2(!html.contains(QLatin1String("<li><img")),
+                     qPrintable(QString("首子元素图片前应补 <p></p>，HTML=[%1]").arg(html)));
+            QCOMPARE(MarkdownHandler::fromHtml(html), md);
+        }
+        // 常规列表（无图）不因该步引入多余空段落
+        const QString plain = MarkdownHandler::toHtml(QStringLiteral("- a\n- b"));
+        QVERIFY2(!plain.contains(QLatin1String("<p></p><img"))
+                     && plain.contains(QLatin1String("<li")),
+                 qPrintable(QString("无图列表不应被改动，HTML=[%1]").arg(plain)));
+        QCOMPARE(MarkdownHandler::fromHtml(plain), QStringLiteral("- a\n- b"));
+    }
+
     void testLegacyEntityEscapedHeals()
     {
         // 历史损坏文件的修复：6.8.2 及以前 fromHtml 不解属性实体，把 aligned 的
