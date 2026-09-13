@@ -1366,6 +1366,23 @@ static int findMatchingSpanClose(const QString &s, int openTagStart)
     }
 }
 
+// fromHtml 方向：从 <blockquote 开标签平衡扫描配对闭标签；失败返回 -1。
+// 嵌套引用必须配对到同层闭合——惰性首闭会把内层开标签卷进捕获、留下不平衡
+// 片段（曾使二级引用经递归 + Qt 未闭合引用序列化多加一级前缀）。
+static int findMatchingBlockquoteClose(const QString &s, int openTagStart)
+{
+    static const QRegularExpression bqTagRe("<(/?)blockquote\\b[^>]*>");
+    int depth = 0;
+    int pos = openTagStart;
+    while (true) {
+        auto m = bqTagRe.match(s, pos);
+        if (!m.hasMatch()) return -1;
+        if (m.captured(1).isEmpty()) ++depth;   // <blockquote ...>
+        else if (--depth == 0) return m.capturedStart();
+        pos = m.capturedEnd();
+    }
+}
+
 // 任务条目内容 → 纯文本：行内富文本转为 markdown 语法，其余标签剥离。
 // 调用前提：嵌套任务列表已提取，行内代码/上下标/高亮/公式已是 ZZ* 占位符（原样保留）。
 static QString taskItemInlineText(QString content)
@@ -1860,6 +1877,86 @@ static void wrapDiscardedEmphCode(QString &html, const QString &processed)
     html = out;
 }
 
+// 就地展开 s 中的占位符 token（通用 ZZ 模式 + 查表；嵌套占位符经有界多趟
+// 消解，趟数 = 嵌套深度上限 8）。未命中表的是用户字面 ZZ 形态文本，原样保留
+// （碰撞检测保证真占位符不与用户文本同串）。供脚注定义 / 块引用内容等
+// 「递归产出 MD 后需在父级上下文展开外层占位符」的场景共用——多行备份必须
+// 先展开再逐行加前缀/缩进，否则只有首行获得前缀（围栏/多行内容逃出容器）。
+static void expandPlaceholdersInPlace(QString &s, const QStringList &phs,
+                                      const QStringList &backups)
+{
+    static const QRegularExpression anyTokRe(QStringLiteral("ZZ[A-Z]+[0-9]+ZZ"));
+    QHash<QString, QString> phMap;
+    phMap.reserve(phs.size());
+    for (int i = 0; i < phs.size(); ++i)
+        phMap.insert(phs[i], backups[i]);
+    for (int pass = 0; pass < 8; ++pass) {
+        if (!anyTokRe.match(s).hasMatch())
+            break;
+        QString rebuilt;
+        int pos = 0;
+        while (true) {
+            const auto tm = anyTokRe.match(s, pos);
+            if (!tm.hasMatch()) {
+                rebuilt += s.mid(pos);
+                break;
+            }
+            rebuilt += s.mid(pos, tm.capturedStart() - pos);
+            const auto itr = phMap.constFind(tm.captured());
+            rebuilt += (itr != phMap.constEnd()) ? itr.value() : tm.captured();
+            pos = tm.capturedEnd();
+        }
+        s = rebuilt;
+    }
+}
+
+// 阶段 4（审查 P2-8）：复杂块引用预抽取（toHtml 侧）。
+// Qt setMarkdown 对引用内的列表/hr 会弹出引用、二级引用展平为双倍缩进段落、
+// 围栏需专门通道——信息在 Qt 层已丢失，后处理无从恢复。此处在主管线之前把
+// 「剥一层 > 前缀后含 列表/嵌套引用/围栏/hr」的引用块整体抽出：内层递归
+// toHtml（其自身的后处理 2 已把 margin 块重构为 <blockquote>），包裹为字面
+// <blockquote>…</blockquote> 走 ZZDV 字面还原通道（与手写 <div> 同型，独占
+// 段落时连 <p> 壳一并替换）；TipTap 原生解析 blockquote 节点，fromHtml 侧
+// 递归还原 > 前缀。仅含普通段落的引用块不走此路径（既有 Qt→margin→重构
+// 链路已验证，行为不变）。
+static void protectComplexQuoteBlocks(QStringList &lines, QSet<QString> &collisions,
+                                      QStringList &divPhs, QStringList &divBackups,
+                                      bool extractFootnotes)
+{
+    static const QRegularExpression quoteLineRe("^\\s*>");
+    // 剥前缀后判定「Qt 会破坏结构」的构造：无序/有序列表、嵌套引用、围栏、hr
+    static const QRegularExpression complexRe(
+        "^\\s*(?:[-*+]\\s|\\d{1,9}[.)]\\s|>|`{3,}|~{3,}|(?:-{3,}|\\*{3,}|_{3,})\\s*$)");
+    for (int i = 0; i < lines.size();) {
+        if (!quoteLineRe.match(lines[i]).hasMatch()) { ++i; continue; }
+        int j = i;
+        QStringList inner;
+        bool complex = false;
+        while (j < lines.size() && quoteLineRe.match(lines[j]).hasMatch()) {
+            const QString stripped = stripBlockquotePrefix(lines[j]);
+            if (complexRe.match(stripped).hasMatch()) complex = true;
+            inner << stripped;
+            ++j;
+        }
+        if (complex) {
+            // 递归转换内层（footnotes 标志透传，嵌套引用在递归内再抽再递归）
+            const QString innerHtml = MarkdownHandler::toHtml(
+                inner.join('\n'), extractFootnotes);
+            int b0 = innerHtml.indexOf(QLatin1String("<body"));
+            b0 = (b0 >= 0 ? innerHtml.indexOf('>', b0) : -1) + 1;
+            const int b1 = innerHtml.lastIndexOf(QLatin1String("</body>"));
+            const QString body = (b0 > 0 && b1 > b0)
+                ? innerHtml.mid(b0, b1 - b0).trimmed() : innerHtml.trimmed();
+            divBackups << "<blockquote>" + body + "</blockquote>";
+            divPhs << collisionFreePlaceholder(collisions, "DV", divBackups.size() - 1);
+            lines.replace(i, divPhs.last());
+            for (int k = j - 1; k > i; --k)
+                lines.removeAt(k);
+        }
+        i = j;
+    }
+}
+
 QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
 {
     // 占位符碰撞索引：源文档中全部 ZZ\w+ZZ 形态子串，供 collisionFreePlaceholder
@@ -1912,6 +2009,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     QStringList brSoftPhs;       // ZZBR（软换行）
     QStringList hrPhs;           // ZZHR（水平线，与 hrMarkers 对应）
     QStringList divPhs;          // ZZDV（手写 <div>，与 divBackups 对应）
+    QStringList divBackups;      // ZZDV 备份（函数级：复杂块引用预抽取在行循环前写入）
     QStringList escapedEqPhs;    // ZZES（转义等号，与 escapedEqBackups 对应）
     QStringList escapedDelimPhs; // ZZED（转义扩展定界符，与 escapedDelimBackups 对应）
     QStringList subPhs;          // ZZSB（下标，与 subContents 对应）
@@ -1931,6 +2029,9 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     // （有意偏离严格 CommonMark：编辑区语义优先，同 blockquote 先例）
     enum BlockType { BT_NONE, BT_LIST, BT_PARA };
     BlockType lastBlock = BT_NONE;
+
+    // 阶段 4：复杂块引用预抽取（列表/嵌套引用/围栏/hr 在 Qt 层必丢结构）
+    protectComplexQuoteBlocks(lines, collisions, divPhs, divBackups, extractFootnotes);
 
     for (int i = 0; i < lines.size(); ++i) {
         const QString &line = lines[i];
@@ -2508,7 +2609,6 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     // extractFootnoteRefs 一致）——否则被 ZZDV 捕获后还原为原始 HTML 插入
     // <code> 内，浏览器把 <div> 当结构元素解析，字面标签即"被过滤"。
     // 注释见后处理 ZZDV 还原步骤：还原必须先于 ZZHI 等内层占位符。
-    QStringList divBackups;
     {
         // 1) 暂存行内代码片段。注意：processed 是多行 buffer，正则必须排除
         // \n（[^`\n]）——若允许跨行配对，双反引号写法（`` `x` ``）会与后续
@@ -4253,36 +4353,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 // 多趟还原语义一致），使多行备份的每一行都进入下方缩进续行输出。
                 // 碰撞检测保证 cm 中与占位符同串的必为真占位符；漏网 token 由
                 // 末段多趟还原兜底（无缩进，与未展开时的旧行为一致）。
-                // 单趟 token 扫描 + 查表重建（等价逆序逐占位符 replace 的多趟
-                // 语义——嵌套占位符经有界多趟消解）：逐占位符全串 replace 是
-                // F×K×|cm| 热点（每个脚注定义对全文档全部占位符各扫一遍）
-                {
-                    static const QRegularExpression anyTokRe(
-                        QStringLiteral("ZZ[A-Z]+[0-9]+ZZ"));
-                    QHash<QString, QString> phMap;
-                    phMap.reserve(placeholders.size());
-                    for (int i = 0; i < placeholders.size(); ++i)
-                        phMap.insert(placeholders[i], backups[i]);
-                    for (int pass = 0; pass < 8; ++pass) {
-                        if (!anyTokRe.match(cm).hasMatch())
-                            break;
-                        QString rebuilt;
-                        int pos = 0;
-                        while (true) {
-                            const auto tm = anyTokRe.match(cm, pos);
-                            if (!tm.hasMatch()) {
-                                rebuilt += cm.mid(pos);
-                                break;
-                            }
-                            rebuilt += cm.mid(pos, tm.capturedStart() - pos);
-                            const auto itr = phMap.constFind(tm.captured());
-                            rebuilt += (itr != phMap.constEnd())
-                                           ? itr.value() : tm.captured();
-                            pos = tm.capturedEnd();
-                        }
-                        cm = rebuilt;
-                    }
-                }
+                // 就地展开外层占位符（见 expandPlaceholdersInPlace 注释：
+                // 多行备份展开后再缩进续行，内部行才携带定义的续行缩进）
+                expandPlaceholdersInPlace(cm, placeholders, backups);
                 while (cm.endsWith('\n')) cm.chop(1);
                 // 缩进续行输出：首行接 [^id]: 之后，其余行补 4 空格（空行不缩进）
                 QStringList outLines = cm.split('\n');
@@ -4556,32 +4629,57 @@ QString MarkdownHandler::fromHtml(const QString &html)
         //    a/img）到不了 Qt 转换，由 blockquoteInnerInlineToMd 手动转 MD 语法。
         {
             int n = 0;
-            // <blockquote> 标签先处理
-            QRegularExpression bqTagRe(
-                R"(<blockquote[^>]*>(.*?)</blockquote>)",
-                QRegularExpression::DotMatchesEverythingOption);
-            globalReplaceWith(processed, bqTagRe,
-                [&n, &collisions, &placeholders, &backups, &wrapBlock]
-                (const QRegularExpressionMatch &m) {
-                    QString inner = blockquoteInnerInlineToMd(m.captured(1));
-                    // 块级标签 → 换行，保留段落边界
-                    inner.replace(QRegularExpression("</?p[^>]*>"), "\n");
-                    inner.replace(QRegularExpression("</?div[^>]*>"), "\n");
-                    inner.replace(QRegularExpression("<br\\b[^>]*>"), "\n");
-                    inner.remove(QRegularExpression("<[^>]*>"));
-                    inner = inner.trimmed();
-                    QStringList lines = inner.split('\n');
+            // <blockquote> 标签先处理。
+            // 递归 + 逐行前缀（阶段 4 / 审查 P2-8）：内容经完整 fromHtml 主管线
+            // 嵌套转换——列表/hr/围栏/嵌套 blockquote 均保结构（旧实现仅手动转
+            // 行内标签、块级全部剥平：引用内列表变裸列表、二级引用塌成一级、
+            // 围栏体丢 > 前缀）。外层管线已保护的 ZZ* 占位符在递归结果中字面
+            // 透传，须就地展开后再加前缀——曾展开在加前缀之后，多行备份只有
+            // 首行得到 > 前缀，围栏重开即逃出引用。嵌套 <blockquote> 由递归
+            // 转出内层 "> " 行，外层再统一加一级前缀（> > a）。
+            static const QRegularExpression bqOpenRe(R"(<blockquote\b[^>]*>)");
+            globalExtractWith(processed, bqOpenRe,
+                [&n, &collisions, &placeholders, &backups, &wrapBlock, &processed]
+                (const QRegularExpressionMatch &m, QString &outReplacement, int &consumedTo) {
+                    // 平衡配对（嵌套引用取同层闭合，见 findMatchingBlockquoteClose）
+                    const int closeStart = findMatchingBlockquoteClose(processed, m.capturedStart());
+                    if (closeStart < 0)
+                        return false;   // 未闭合：留原样交后续宽容解析
+                    const QString raw = processed.mid(m.capturedEnd(),
+                                                      closeStart - m.capturedEnd());
+                    // 内层形态三分支：
+                    // ① 含嵌套 <blockquote>（toHtml 复杂引用预抽取产物）：递归已
+                    //    转出内层 "> " 行，外层整体再加一级（> > a）；
+                    // ② Qt 扁平形态（<p margin-left:40px>，老简单引用路径产物）：
+                    //    递归的 bqRe 已加过一级，直通不再加（曾双重前缀）；
+                    // ③ 普通内容：递归转块级结构（列表/hr/围栏），逐行加一级。
+                    const bool hasNestedBq = raw.contains(QLatin1String("<blockquote"));
+                    static const QRegularExpression flatQuoteRe(
+                        R"(<(p|pre)\b[^>]*margin-left:\s*40px)");
+                    const bool flatQtQuote =
+                        !hasNestedBq && flatQuoteRe.match(raw).hasMatch();
+                    QString innerMd = MarkdownHandler::fromHtml(raw);
+                    expandPlaceholdersInPlace(innerMd, placeholders, backups);
                     QString quoted;
-                    for (const QString &l : lines) {
-                        QString t = l.trimmed();
-                        if (!t.isEmpty())
-                            quoted += "> " + t + "\n";
+                    if (flatQtQuote) {
+                        quoted = innerMd.trimmed();
+                    } else {
+                        QStringList ls = innerMd.split('\n');
+                        while (!ls.isEmpty() && ls.last().trimmed().isEmpty())
+                            ls.removeLast();
+                        for (const QString &l : ls) {
+                            quoted += l.trimmed().isEmpty()
+                                ? QStringLiteral(">\n")    // 引用内空行保块边界
+                                : "> " + l + QStringLiteral("\n");
+                        }
+                        quoted = quoted.trimmed();
                     }
-                    quoted = quoted.trimmed();
                     QString ph = collisionFreePlaceholder(collisions, "BQ", n++);
                     placeholders << ph;
                     backups << quoted;
-                    return wrapBlock(ph);
+                    consumedTo = closeStart + 13;   // 含 </blockquote>
+                    outReplacement = wrapBlock(ph);
+                    return true;
                 });
             // 裸 margin-left <p>（未被 <blockquote> 包裹的）
             QRegularExpression bqRe(

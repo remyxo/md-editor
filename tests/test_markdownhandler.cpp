@@ -897,10 +897,9 @@ private slots:
         // 生成，两列表不错配、不崩溃，但 EOF 未闭合时内容被静默丢弃（整块
         // 无处还原，往返成空段落），违反往返保真红线。修复：EOF 补闭合，
         // 已收集内容按代码块还原。
-        // 注：不断言 round2 ↔ round3 收敛——fromHtml 对块引用围栏输出
-        // 「> ```cpp / 内容 / 裸 ```」形态（内容与闭合围栏不带 > 前缀），
-        // 重解析时裸 ``` 不闭合块引用围栏，这是闭合围栏同样存在的既有
-        // 序列化局限（与本修复无关），此处锚定与闭合路径一致的输出形态。
+        // 注：阶段 4（审查 P2-8）后围栏内容行统一带 > 前缀（严格引用形态，
+        // 旧「内容与闭合围栏不带 > 前缀」的 lazy 形态正是围栏逃出引用的根源），
+        // 未闭合路径与闭合路径输出形态一致。
         QString md = "> ```cpp\n> int x = 1;\n";
         QString html = MarkdownHandler::toHtml(md);
         QVERIFY2(html.contains("int x = 1;"),
@@ -912,8 +911,8 @@ private slots:
         QString md2 = MarkdownHandler::fromHtml(html);
         QVERIFY2(md2.contains("int x = 1;"),
                  qPrintable(QString("往返应保留内容，实际: %1").arg(md2)));
-        // 锚定既有闭合路径的输出形态（闭合 > ``` 围栏往返与之逐字节一致）
-        QVERIFY2(md2 == QStringLiteral("> ```cpp\nint x = 1;\n```"),
+        // 锚定闭合路径的输出形态（闭合 > ``` 围栏往返与之逐字节一致）
+        QVERIFY2(md2 == QStringLiteral("> ```cpp\n> int x = 1;\n> ```"),
                  qPrintable(QString("往返形态应与闭合路径一致，实际: %1").arg(md2)));
     }
 
@@ -2716,16 +2715,18 @@ private slots:
     {
         // 块引用内代码围栏：此前 BRMARKER 会破坏围栏解析，把 <pre> 拆成多段并
         // 注入 <br data-brk>，代码内容与语言信息串全部丢失。修复后代码内容、
-        // 语言信息串均保留，块引用结构完整。代码内容行规范化为 lazy 形式
-        // （不带 > 前缀，语义等价，Qt toMarkdown 的固有输出）。
+        // 语言信息串均保留，块引用结构完整。阶段 4（审查 P2-8）后内容行统一
+        // 带 > 前缀（严格引用形态；旧 lazy 形态不带前缀，正是围栏重开即逃出
+        // 引用的根源）。文本段行尾的一个空格是 Qt 序列化痕迹，第二轮往返
+        // 自愈（已在 /tmp 探针验证 round2 == round3）。
         struct { const char *in; const char *expect; } cases[] = {
-            {"> 前\n> ```\n> int x;\n> ```\n> 后\n", "> 前\n> ```\nint x;\n```\n> 后"},
-            {"> ```cpp\n> int x;\n> ```\n", "> ```cpp\nint x;\n```"},
-            {"> 前\n> ```\n> line1\n> line2\n> ```\n> 后\n", "> 前\n> ```\nline1\nline2\n```\n> 后"},
-            {"> ```\n> int x;\n> ```\n", "> ```\nint x;\n```"},
+            {"> 前\n> ```\n> int x;\n> ```\n> 后\n", "> 前 \n>\n> ```\n> int x;\n> ```\n>\n> 后"},
+            {"> ```cpp\n> int x;\n> ```\n", "> ```cpp\n> int x;\n> ```"},
+            {"> 前\n> ```\n> line1\n> line2\n> ```\n> 后\n", "> 前 \n>\n> ```\n> line1\n> line2\n> ```\n>\n> 后"},
+            {"> ```\n> int x;\n> ```\n", "> ```\n> int x;\n> ```"},
             // 代码块后空行分隔的第二个块引用/正文：空行必须保留，不得合并进同一块引用
-            {"> 前\n> ```\n> code\n> ```\n\n> 后\n", "> 前\n> ```\ncode\n```\n\n> 后"},
-            {"> ```\n> code\n> ```\n\n正文\n", "> ```\ncode\n```\n\n正文"},
+            {"> 前\n> ```\n> code\n> ```\n\n> 后\n", "> 前 \n>\n> ```\n> code\n> ```\n\n> 后"},
+            {"> ```\n> code\n> ```\n\n正文\n", "> ```\n> code\n> ```\n\n正文"},
         };
         for (const auto &c : cases) {
             QString md1 = QString::fromUtf8(c.in);
@@ -2746,6 +2747,39 @@ private slots:
             QVERIFY2(md2 == QString::fromUtf8(c.expect),
                      qPrintable(QString("块引用代码块应精确往返，输入[%1] 实际[%2]")
                                     .arg(c.in, md2)));
+        }
+    }
+
+    void testBlockquoteNestingRoundTrip()
+    {
+        // 阶段 4（审查 P2-8）：引用内列表 / 二级引用 / 引用内 hr / 引用内围栏
+        // 的结构保真。Qt setMarkdown 会把列表/hr 弹出引用、二级引用展平成双倍
+        // 缩进段落（信息在 Qt 层已丢）；修复后 toHtml 预抽取 + 递归转换、
+        // fromHtml 递归还原 > 前缀，全部字节往返，且第二轮稳定（不动点）。
+        // 真实 TipTap 链路（jsdom）已另行验证 <blockquote> 内含 ul/嵌套 bq/
+        // pre/hr 均可解析并保持结构（/tmp 探针，2026-09-13）。
+        struct { const char *in; const char *expect; } cases[] = {
+            {"> > a", "> > a"},                                   // 二级引用
+            {"> - x\n> - y", "> - x\n> - y"},                     // 引用内无序列表
+            {"> a\n>\n> ---", "> a\n>\n> ---"},                   // 引用内 hr
+            {"> ```\n> fenced\n> ```", "> ```\n> fenced\n> ```"}, // 引用内围栏
+            {"> 1. one\n> 2. two", "> 1. one\n> 2. two"},         // 引用内有序列表
+        };
+        for (const auto &c : cases) {
+            const QString md1 = QString::fromUtf8(c.in);
+            const QString html = MarkdownHandler::toHtml(md1);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            const QString body = html.mid(bsi, bei - bsi).trimmed();
+            const QString md2 = MarkdownHandler::fromHtml(body);
+            QVERIFY2(md2 == QString::fromUtf8(c.expect),
+                     qPrintable(QString("块引用嵌套应字节往返，输入[%1] 实际[%2]")
+                                    .arg(c.in, md2)));
+            const QString md3 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2));
+            QVERIFY2(md3 == md2,
+                     qPrintable(QString("块引用嵌套应为不动点，输入[%1] md2[%2] md3[%3]")
+                                    .arg(c.in, md2, md3)));
         }
     }
 
