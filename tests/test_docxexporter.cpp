@@ -619,6 +619,64 @@ private slots:
         QVERIFY2(lvl2.captured(1) == "%3.", qPrintable(lvl2.captured(1)));
     }
 
+    void testBlockquoteNestedAndBlocksPreserved() {
+        // D1：嵌套引用——内层 blockquote 闭合曾触发外层循环 break，其后同层段落
+        // 全部丢失；引用内 pre/table 文本曾无人消费而丢失；列表退化为普通段落
+        QString xml = exportDocumentXml(
+            "<blockquote><p>外层</p><blockquote><p>内层</p></blockquote><p>内层闭合后</p></blockquote>");
+        QVERIFY2(xml.contains("外层"), qPrintable(xml));
+        QVERIFY2(xml.contains("内层"), qPrintable(xml));
+        QVERIFY2(xml.contains("内层闭合后"), qPrintable(xml));
+
+        QString xml2 = exportDocumentXml(
+            "<blockquote><pre><code>code-in-quote</code></pre></blockquote>");
+        QVERIFY2(xml2.contains("code-in-quote"), qPrintable(xml2));
+
+        QString xml3 = exportDocumentXml(
+            "<blockquote><table><tbody><tr><td>cell-in-quote</td></tr></tbody></table></blockquote>");
+        QVERIFY2(xml3.contains("cell-in-quote"), qPrintable(xml3));
+
+        QString xml4 = exportDocumentXml(
+            "<blockquote><ul><li><p>item-in-quote</p></li></ul></blockquote>");
+        QVERIFY2(xml4.contains("item-in-quote"), qPrintable(xml4));
+        QVERIFY2(xml4.contains("<w:numPr>"), qPrintable(xml4));
+    }
+
+    void testExtractColorValidatesHex() {
+        // D2：CSS 命名色/3 位缩写/非法值不得产出非法 ST_HexColor（Word 严格校验
+        // 弹修复框）；rgb()/6 位 hex 正常
+        QString xml = exportDocumentXml(
+            "<p><span style=\"color:red\">红</span>"
+            "<span style=\"color:#f00\">缩写</span>"
+            "<span style=\"color:#FF0000\">正常</span>"
+            "<span style=\"color:inherit\">非法</span>"
+            "<span style=\"background-color:rgb(255,200,0)\">背景</span></p>");
+        // 6 位 hex 与 rgb() 正常输出
+        QVERIFY2(xml.contains("w:val=\"FF0000\""), qPrintable(xml));
+        QVERIFY2(xml.contains("w:fill=\"FFC800\""), qPrintable(xml));
+        // 命名色 red → FF0000（转换而非原样大写 RED）
+        QVERIFY2(!xml.contains("w:val=\"RED\""), qPrintable(xml));
+        QVERIFY2(!xml.contains("w:val=\"F00\""), qPrintable(xml));
+        QVERIFY2(!xml.contains("w:val=\"INHERIT\""), qPrintable(xml));
+    }
+
+    void testNestedSpanColorsStacked() {
+        // D3：嵌套 span 颜色栈——内层闭合后外层颜色须恢复（曾无条件 clear）
+        QString xml = exportDocumentXml(
+            "<p><span style=\"color:#FF0000\">A"
+            "<span style=\"background-color:#FFFF00\">B</span>C</span></p>");
+        // A 纯红；B 红字黄底；C 内层闭合后恢复纯红（无黄底）
+        QVERIFY2(xml.contains(
+            "<w:color w:val=\"FF0000\"/></w:rPr><w:t xml:space=\"preserve\">A"),
+            qPrintable(xml));
+        QVERIFY2(xml.contains(
+            "<w:color w:val=\"FF0000\"/><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"FFFF00\"/></w:rPr><w:t xml:space=\"preserve\">B"),
+            qPrintable(xml));
+        QVERIFY2(xml.contains(
+            "<w:color w:val=\"FF0000\"/></w:rPr><w:t xml:space=\"preserve\">C"),
+            qPrintable(xml));
+    }
+
     void testBlockquoteCenteredParagraphSinglePPr() {
         // 引用块内居中段落：缩进 pPr 与对齐 pPr 必须合并为单个 <w:pPr>
         QString xml = exportDocumentXml(

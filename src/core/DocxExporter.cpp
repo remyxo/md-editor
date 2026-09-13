@@ -332,7 +332,26 @@ static QString buildImageDrawingXml(int docPrId, int pngRId,
         .arg(cxEmu).arg(cyEmu).arg(docPrId).arg(blip);
 }
 
-// 从 style 属性中提取颜色值并转为 RRGGBB 六位十六进制
+// CSS 命名色 → RRGGBB（Word 的 ST_HexColor 只认 6 位十六进制/auto，原样输出
+// 命名色或 3 位缩写会产出非法 OOXML，macOS Word 严格校验弹修复框）
+static QString cssNamedColorToHex(const QString &name)
+{
+    static const QHash<QString, QString> named = {
+        {"black", "000000"}, {"white", "FFFFFF"}, {"red", "FF0000"},
+        {"lime", "00FF00"},  {"green", "008000"}, {"blue", "0000FF"},
+        {"yellow", "FFFF00"},{"cyan", "00FFFF"},  {"aqua", "00FFFF"},
+        {"magenta", "FF00FF"},{"fuchsia", "FF00FF"},{"gray", "808080"},
+        {"grey", "808080"},  {"silver", "C0C0C0"}, {"maroon", "800000"},
+        {"olive", "808000"}, {"darkgray", "A9A9A9"},{"darkgrey", "A9A9A9"},
+        {"lightgray", "D3D3D3"},{"lightgrey", "D3D3D3"},{"navy", "000080"},
+        {"purple", "800080"},{"teal", "008080"},  {"orange", "FFA500"},
+        {"pink", "FFC0CB"},  {"brown", "A52A2A"}, {"gold", "FFD700"},
+    };
+    return named.value(name.toLower());
+}
+
+// 从 style 属性中提取颜色值并转为 RRGGBB 六位十六进制；非法值返回空串
+//（调用方跳过该颜色，不产出非法 OOXML）
 static QString extractColor(const QString &style, const QString &prop)
 {
     // (?:^|;\\s*) 确保匹配的属性名在开头或分号后，防止 color 误匹配 background-color 的子串
@@ -351,11 +370,21 @@ static QString extractColor(const QString &style, const QString &prop)
             .arg(rm.captured(3).toInt(), 2, 16, QChar('0'))
             .toUpper();
     }
-    // #RRGGBB
-    if (v.startsWith('#'))
-        return v.mid(1).toUpper();
-    // 其他：直接去掉 # 和空格
-    return v.remove(' ').remove('#').toUpper();
+    if (v.startsWith('#')) {
+        QString hex = v.mid(1).remove(' ');
+        // #RGB 3 位缩写展开为 #RRGGBB（每位重复一次，CSS 语义）
+        if (hex.size() == 3) {
+            QString expanded;
+            for (const QChar &c : hex)
+                expanded += QString(c) + c;
+            return expanded.toUpper();
+        }
+        if (hex.size() == 6)
+            return hex.toUpper();
+        return {};
+    }
+    // CSS 命名色查表；inherit/initial/auto 等关键字与其他未知值返回空（跳过）
+    return cssNamedColorToHex(v);
 }
 
 // 从 style 中提取 text-align 值
@@ -373,23 +402,36 @@ struct RunFormat {
     bool bold = false, italic = false, underline = false, strike = false;
     bool subscript = false, superscript = false, highlight = false, monospace = false;
     bool smallText = false;
-    QString textColor;   // RRGGBB
-    QString bgColor;     // RRGGBB
+    QStringList textColorStack;   // 嵌套 span 前景色栈（RRGGBB；空串=未设置，取值时继承外层）
+    QStringList bgColorStack;     // 嵌套 span 背景色栈
     bool hyperlink = false;
+
+    // 有效颜色 = 最近一层非空设置（CSS 级联语义：内层未设置则继承外层）
+    QString textColor() const {
+        for (int i = textColorStack.size() - 1; i >= 0; --i)
+            if (!textColorStack.at(i).isEmpty()) return textColorStack.at(i);
+        return {};
+    }
+    QString bgColor() const {
+        for (int i = bgColorStack.size() - 1; i >= 0; --i)
+            if (!bgColorStack.at(i).isEmpty()) return bgColorStack.at(i);
+        return {};
+    }
 
     bool operator==(const RunFormat &o) const {
         return bold == o.bold && italic == o.italic && underline == o.underline
             && strike == o.strike && subscript == o.subscript && superscript == o.superscript
             && highlight == o.highlight && monospace == o.monospace
             && smallText == o.smallText
-            && textColor == o.textColor && bgColor == o.bgColor && hyperlink == o.hyperlink;
+            && textColorStack == o.textColorStack && bgColorStack == o.bgColorStack
+            && hyperlink == o.hyperlink;
     }
     bool operator!=(const RunFormat &o) const { return !(*this == o); }
 
     QString toPrXml() const {
         if (!bold && !italic && !underline && !strike && !subscript && !superscript
             && !highlight && !monospace && !smallText
-            && textColor.isEmpty() && bgColor.isEmpty() && !hyperlink)
+            && textColor().isEmpty() && bgColor().isEmpty() && !hyperlink)
             return {};
         QString p;
         if (bold) p += "<w:b/>";
@@ -401,8 +443,8 @@ struct RunFormat {
         if (highlight) p += "<w:highlight w:val=\"yellow\"/>";
         if (smallText) p += "<w:sz w:val=\"18\"/>";   // <small>：11pt 正文 → 9pt（约 0.82×，对齐浏览器 smaller）
         if (monospace) p += "<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/>";
-        if (!textColor.isEmpty()) p += "<w:color w:val=\"" + textColor + "\"/>";
-        if (!bgColor.isEmpty()) p += "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"" + bgColor + "\"/>";
+        if (!textColor().isEmpty()) p += "<w:color w:val=\"" + textColor() + "\"/>";
+        if (!bgColor().isEmpty()) p += "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"" + bgColor() + "\"/>";
         if (hyperlink) p += "<w:rStyle w:val=\"Hyperlink\"/><w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/>";
         return "<w:rPr>" + p + "</w:rPr>";
     }
@@ -469,6 +511,9 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
     RunFormat fmt;
     QString textBuf;
     QString out;
+    // span 开合与颜色压栈的精确配对表（true=该 span 压了颜色层；数学 span 为
+    // false，闭合时不弹）——嵌套/穿插场景下 close 无法从上下文自行判别
+    QList<bool> spanColorPushed;
 
     // 输出一个 run，并根据文本中是否有 emoji 决定是否自动切分
     auto emitRun = [&](const QString &txt, bool isEmoji) {
@@ -569,6 +614,7 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                     QString omm = (idx >= 0 && idx < s.mathOMML.size()) ? s.mathOMML[idx] : QString();
                     if (!omm.isEmpty()) out += "<m:oMath>" + omm + "</m:oMath>";
                     else out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
+                    spanColorPushed.append(false);   // 不占颜色栈（闭合时不弹）
                 }
                 // 内联数学 span 内容为空（KaTeX 渲染），须取 data-latex；
                 // 此判断须先于颜色 span，否则 inline-math 被当普通 span 丢弃。
@@ -577,16 +623,17 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                     flushRun();
                     QString latex = r.attributes().value("data-latex").toString();
                     out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
+                    spanColorPushed.append(false);
                 } else {
+                    // 颜色 span：恒压一层（未设置的维度压空串 = 继承外层，CSS 级联
+                    // 语义，由 textColor()/bgColor() 取最近非空值）；空 style 的穿透
+                    // span 同样压空层，保证开合配对精确
+                    flushRun();
                     auto attrs = r.attributes();
                     QString sty = attrs.value("style").toString();
-                    QString c = extractColor(sty, "color");
-                    QString bg = extractColor(sty, "background-color");
-                    if (!c.isEmpty() || !bg.isEmpty()) {
-                        flushRun();
-                        if (!c.isEmpty()) fmt.textColor = c;
-                        if (!bg.isEmpty()) fmt.bgColor = bg;
-                    }
+                    fmt.textColorStack.append(extractColor(sty, "color"));
+                    fmt.bgColorStack.append(extractColor(sty, "background-color"));
+                    spanColorPushed.append(true);
                 }
             }
             // 链接
@@ -646,8 +693,12 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                 flushRun(); fmt.superscript = false;
             } else if (tag == "span") {
                 flushRun();
-                fmt.textColor.clear();
-                fmt.bgColor.clear();
+                // 嵌套 span 颜色栈弹层：仅弹「本层压过颜色」的 span（数学 span
+                // 闭合不弹）。曾无条件 clear：内层闭合后外层颜色即丢失
+                if (!spanColorPushed.isEmpty() && spanColorPushed.takeLast()) {
+                    if (!fmt.textColorStack.isEmpty()) fmt.textColorStack.removeLast();
+                    if (!fmt.bgColorStack.isEmpty()) fmt.bgColorStack.removeLast();
+                }
             } else if (tag == "a") {
                 flushRun();
                 if (fmt.hyperlink) {
@@ -763,9 +814,48 @@ static QString parseCodeBlock(QXmlStreamReader &r, ParseState &s)
     return result;
 }
 
-static QString parseBlockquote(QXmlStreamReader &r, ParseState &s)
+// 引用样式注入：对 blocks 里每个 <w:p> 加左侧蓝竖线 + 层级缩进。
+// 左侧竖线对齐 PDF/HTML 的 border-left，颜色 #0078d4 与 PdfExporter 一致；
+// 已有 pPr 的段落把属性插到已有内容之前（保持单个 <w:pPr>，否则非法 OOXML，
+// 顺序容忍先例见任务列表注入）。level 0 起，每层缩进递增 360
+static QString quoteStyled(const QString &blocks, int level)
 {
-    // <blockquote> 内部递归解析块元素
+    const QString quotePr = QStringLiteral(
+        "<w:pBdr><w:left w:val=\"single\" w:sz=\"18\" w:space=\"4\" w:color=\"0078d4\"/></w:pBdr>"
+        "<w:ind w:left=\"%1\" w:right=\"720\"/>").arg(720 + level * 360);
+    QString out;
+    int pos = 0;
+    while (pos < blocks.size()) {
+        const int pStart = blocks.indexOf("<w:p>", pos);
+        if (pStart < 0) {
+            out += blocks.mid(pos);
+            break;
+        }
+        const int afterTag = pStart + 5;   // 跳过 "<w:p>"
+        out += blocks.mid(pos, afterTag - pos);
+        if (blocks.mid(afterTag, 7) == QLatin1String("<w:pPr>")) {
+            out += QLatin1String("<w:pPr>") + quotePr;
+            pos = afterTag + 7;
+        } else {
+            out += QLatin1String("<w:pPr>") + quotePr + QLatin1String("</w:pPr>");
+            pos = afterTag;
+        }
+    }
+    return out;
+}
+
+// 前置声明：定义位于本函数之后（引用块分派到列表/表格/水平线）。parseList
+// 的 ilvl 缺省值放声明处，定义处不再重复（C++ 缺省实参只许出现一次）
+static QString parseHorizontalRule();
+static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int ilvl = 0);
+static QString parseTable(QXmlStreamReader &r, ParseState &s);
+
+static QString parseBlockquote(QXmlStreamReader &r, ParseState &s, int level = 0)
+{
+    // <blockquote> 内部递归解析块元素。曾只认 p/div/h1-h6 且循环在第一个
+    // </blockquote> 即 break：嵌套引用的内层闭合会截断外层（其后段落丢失），
+    // 引用内 pre/table 的文本无人消费（内容丢失）、ul/ol 结构退化、标题无
+    // 引用样式。现全量分派 + 嵌套递归 + 逐段样式注入
     QString result;
     while (!r.atEnd()) {
         auto tt = r.readNext();
@@ -775,32 +865,24 @@ static QString parseBlockquote(QXmlStreamReader &r, ParseState &s)
         if (tt != QXmlStreamReader::StartElement) continue;
         QString tag = r.name().toString().toLower();
         // 递归解析内部块
+        QString inner;
         if (tag == "p" || tag == "div") {
-            QString inner = parseParagraph(r, tag, s);
-            // 缩进 + 左侧蓝色竖线合并进已有 pPr（否则居中/对齐段落会产出两个 <w:pPr>，非法 OOXML）。
-            // 左侧竖线对齐 PDF/HTML 的 border-left，颜色 #0078d4 与 PdfExporter 一致。
-            const QString blockquotePr = "<w:pBdr><w:left w:val=\"single\" w:sz=\"18\" w:space=\"4\" w:color=\"0078d4\"/></w:pBdr>"
-                                         "<w:ind w:left=\"720\" w:right=\"720\"/>";
-            if (inner.startsWith("<w:p>")) {
-                int pPrStart = inner.indexOf("<w:pPr>");
-                int pPrEnd = inner.indexOf("</w:pPr>");
-                if (pPrStart >= 0 && pPrEnd > pPrStart) {
-                    // 已有 pPr：边框+缩进插到已有属性之前，保持单个 <w:pPr>
-                    QString existing = inner.mid(pPrStart + 7, pPrEnd - pPrStart - 7);
-                    inner = inner.left(pPrStart + 7) + blockquotePr + existing + inner.mid(pPrEnd);
-                } else {
-                    // 无 pPr：在 <w:p> 后插入
-                    inner.replace("<w:p>", "<w:p><w:pPr>" + blockquotePr + "</w:pPr>");
-                }
-            }
-            result += inner;
-        } else if (tag == "h1") result += parseHeading(r, 1, s);
-        else if (tag == "h2") result += parseHeading(r, 2, s);
-        else if (tag == "h3") result += parseHeading(r, 3, s);
-        else if (tag == "h4") result += parseHeading(r, 4, s);
-        else if (tag == "h5") result += parseHeading(r, 5, s);
-        else if (tag == "h6") result += parseHeading(r, 6, s);
-        // 其他忽略
+            inner = parseParagraph(r, tag, s);
+        } else if (tag == "blockquote") {
+            inner = parseBlockquote(r, s, level + 1);
+        } else if (tag == "h1") inner = parseHeading(r, 1, s);
+        else if (tag == "h2") inner = parseHeading(r, 2, s);
+        else if (tag == "h3") inner = parseHeading(r, 3, s);
+        else if (tag == "h4") inner = parseHeading(r, 4, s);
+        else if (tag == "h5") inner = parseHeading(r, 5, s);
+        else if (tag == "h6") inner = parseHeading(r, 6, s);
+        else if (tag == "pre") inner = parseCodeBlock(r, s);
+        else if (tag == "ul") inner = parseList(r, false, s);
+        else if (tag == "ol") inner = parseList(r, true, s);
+        else if (tag == "table") inner = parseTable(r, s);
+        else if (tag == "hr") inner = parseHorizontalRule();
+        else continue;
+        result += quoteStyled(inner, level);
     }
     return result;
 }
@@ -813,7 +895,7 @@ static QString parseHorizontalRule()
            "</w:pPr></w:p>";
 }
 
-static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int ilvl = 0)
+static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int ilvl)
 {
     int numId = s.nextNumId++;
     if (ordered) {
