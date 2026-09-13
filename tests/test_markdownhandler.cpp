@@ -399,6 +399,42 @@ private slots:
         QVERIFY2(html.contains("tail"), qPrintable(html));
     }
 
+    void testMultiDigitOrderedListParagraphBoundary() {
+        // isParagraphLine 曾只查 trimmed[1]=='.'：10. 及以上编号被判为正文行，
+        // 段落后插入软换行标记（与单位编号行为分叉）。修复后多位与单位编号
+        // 的「段落+列表」往返形态一致
+        QString a = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml("段落行\n1. item\n"));
+        // 归一化编号数字后比较结构（编号字面必然不同）
+        auto norm = [](QString s) { s.remove(QRegularExpression("\\d+")); return s; };
+        QString b = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml("段落行\n10. item\n"));
+        QCOMPARE(norm(b), norm(a));
+        QString c = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml("段落行\n999999999. item\n"));
+        QCOMPARE(norm(c), norm(a));
+        // 两位编号带右括号同样是列表
+        QString d = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml("段落行\n10) item\n"));
+        QCOMPARE(norm(d), norm(a));
+        QVERIFY(MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml("版本 1.5 发布\n")).contains("1.5"));
+    }
+
+    void testTableNormalizationSkipsCodeFences() {
+        // fromHtml 步骤 6/6b 表格规范化曾无围栏感知：代码围栏内的 |a|b| / |-|-|
+        // 被改写为 GFM 风格（违反代码块字节不可变），伪分隔行还会抢占真表格的
+        // 对齐/合并行对位
+        QString md = "```markdown\n|a|b|\n|-|-|\n|1|2|\n```\n\n|左|右|\n|---|---|\n|x|y|\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QString md2 = MarkdownHandler::fromHtml(html);
+        // 围栏内字节不变
+        QVERIFY2(md2.contains("|a|b|"), qPrintable(md2));
+        QVERIFY2(md2.contains("|-|-|"), qPrintable(md2));
+        // 真表格单元格保留
+        QVERIFY2(md2.contains("x") && md2.contains("y"), qPrintable(md2));
+    }
+
     void testBlockMathAfterMultipleBlankLines() {
         // 数学块前 ≥2 空行：ZZBL 把多余空行还原为 <p></p>，命中「清除紧邻 math div
         // 的空 <p>」清理正则——曾因正则仅 2 个捕获组却引用 \3（越界组号被 Qt 当

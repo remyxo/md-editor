@@ -179,6 +179,25 @@ static bool isTopLevelFenceLine(const QString &line, int *indent, int *run, QCha
     return true;
 }
 
+// md 行为顶层代码围栏行时更新围栏状态（fromHtml 产物恒为反引号围栏）。
+// 调用方循环携带 inFence/fenceLen：进围栏置位，出围栏（纯围栏行、长度 ≥
+// 开启围栏）复位。返回 true = 本行是围栏行（跳过其余处理）
+static bool updatesFenceState(const QString &trimmed, bool &inFence, int &fenceLen)
+{
+    if (!trimmed.startsWith("```"))
+        return false;
+    int len = 0;
+    while (len < trimmed.size() && trimmed[len] == QLatin1Char('`'))
+        ++len;
+    if (!inFence) {
+        inFence = true;
+        fenceLen = len;
+    } else if (len >= fenceLen && trimmed.mid(len).isEmpty()) {
+        inFence = false;
+    }
+    return true;
+}
+
 static bool isParagraphLine(const QString &line)
 {
     if (line.isEmpty()) return false;
@@ -224,9 +243,13 @@ static bool isParagraphLine(const QString &line)
     // 段落延续拼软换行标记，<hr> 不再走占位保护（escapeUnclosedHtmlTags
     // 转义为文本，帮助文档「<hr> 与 --- 等价」失效）。
     if (isHrTagLine(line)) return false;
+    // 多位有序列表编号（10. / 999. / 10)）：与 isListItemLine 的 \d{1,9}[.)]
+    // 对齐——曾只查 trimmed[1]=='.'，10 起的编号被判为正文行，段落边界插入
+    // 软换行标记（与单位编号行为分叉）。编号后须空白或行尾（1.5 小数仍是正文）
+    static const QRegularExpression ordListRe("^\\d{1,9}[.)](?:\\s|$)");
     return c != '#' && c != '-' && c != '|'
-           && !(c >= '0' && c <= '9' && trimmed.length() > 1
-                && trimmed[1] == '.');
+           && !(c >= '0' && c <= '9'
+                && ordListRe.match(trimmed).hasMatch());
 }
 
 // 块引用行（> 前缀）。用于 BRMARKER 软换行判定：CommonMark 规定块引用可打断
@@ -5034,9 +5057,15 @@ QString MarkdownHandler::fromHtml(const QString &html)
         int tableIdx = 0;
         QStringList lines = md.split('\n');
         static const QRegularExpression leadingWsRe(QStringLiteral("^[ \t]+"));
+        // 围栏状态机：代码围栏内的 |...| 行是字面代码内容，不参与规范化，
+        // 伪分隔行也不得抢占 tableAligns 对位（围栏行进出翻转）
+        bool inFence = false;
+        int fenceLen = 0;
         for (int i = 0; i < lines.size(); ++i) {
             QString line = lines[i];
             QString t = line.trimmed();
+            if (updatesFenceState(t, inFence, fenceLen)) continue;
+            if (inFence) continue;
             // 仅处理表格行（以 | 开头且以 | 结尾，非 blockquote 前缀 > |）
             if (!t.startsWith('|') || !t.endsWith('|')) continue;
             const auto wm = leadingWsRe.match(line);
@@ -5109,9 +5138,14 @@ QString MarkdownHandler::fromHtml(const QString &html)
         int tableIdx = 0;
         QStringList lines = md.split('\n');
         static const QRegularExpression leadingWsRe(QStringLiteral("^[ \t]+"));
+        // 与步骤 6 同款围栏状态机：围栏内的 |...| 行不参与区域识别与对位消费
+        bool inFence = false;
+        int fenceLen = 0;
         int i = 0;
         while (i < lines.size()) {
             QString t = lines[i].trimmed();
+            if (updatesFenceState(t, inFence, fenceLen)) { ++i; continue; }
+            if (inFence) { ++i; continue; }
             if (leadingWsRe.match(lines[i]).hasMatch()
                     || !(t.startsWith('|') && t.endsWith('|'))) { ++i; continue; }
             QList<int> run;   // 当前表格的连续表行索引
