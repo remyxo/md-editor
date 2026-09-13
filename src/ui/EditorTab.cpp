@@ -1,4 +1,5 @@
 #include "EditorTab.h"
+#include "../core/LocalImageSchemeHandler.h"
 #include "../core/MarkdownHandler.h"
 #include "../app/Application.h"
 #include <QVBoxLayout>
@@ -263,6 +264,10 @@ void EditorTab::loadFile(const QString &path, const QString &content)
 void EditorTab::setFilePath(const QString &path)
 {
     m_webView->setProperty("filePath", path);
+    // localimg:// 目录围栏：该文档目录内的本地图片才可被编辑器加载
+    const QString dir = QFileInfo(path).absolutePath();
+    if (!dir.isEmpty())
+        LocalImageSchemeHandler::addAllowedDir(dir);
     pushDocDir();   // 页面已就绪则立即推送；否则由 onPageLoadFinished 补推
 }
 

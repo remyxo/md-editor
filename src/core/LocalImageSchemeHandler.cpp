@@ -13,6 +13,18 @@ LocalImageSchemeHandler::LocalImageSchemeHandler(QObject *parent)
 {
 }
 
+// 文档目录白名单：localimg:// 曾是全盘任意图片读取通道（相对 src 的 ../ 可
+// 逃出 docDir，注入场景可枚举读取任意本地图片）。仅服务已打开文档目录内的
+// 文件（canonical 前缀围栏；EditorTab::setFilePath 注册）
+QSet<QString> LocalImageSchemeHandler::s_allowedDirs;
+
+void LocalImageSchemeHandler::addAllowedDir(const QString &dir)
+{
+    const QString canon = QFileInfo(dir).canonicalFilePath();
+    if (!canon.isEmpty())
+        s_allowedDirs.insert(canon);
+}
+
 void LocalImageSchemeHandler::requestStarted(QWebEngineUrlRequestJob *job)
 {
     // localimg:// 的 path 部分为磁盘路径（URL 以 '/' 为分隔符）
@@ -23,6 +35,22 @@ void LocalImageSchemeHandler::requestStarted(QWebEngineUrlRequestJob *job)
     if (path.size() >= 3 && path[0] == QLatin1Char('/') && path[2] == QLatin1Char(':'))
         path.remove(0, 1);
 #endif
+
+    // 目录围栏：解析后（canonical 化解 ../ 与符号链接）必须落在某个已打开
+    // 文档的目录内
+    const QString canon = QFileInfo(path).canonicalFilePath();
+    bool inside = false;
+    for (const QString &dir : s_allowedDirs) {
+        if (canon.startsWith(dir + QLatin1Char('/'))) {
+            inside = true;
+            break;
+        }
+    }
+    if (!inside) {
+        qWarning() << "LocalImageSchemeHandler: outside allowed doc dirs:" << path;
+        job->fail(QWebEngineUrlRequestJob::RequestDenied);
+        return;
+    }
 
     QFileInfo info(path);
     // 仅服务已存在的常规文件

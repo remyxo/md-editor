@@ -227,9 +227,12 @@ void HtmlExporter::exportToHtml(const QString &html, const QString &docDir,
     QString katexCss = inlineCssFonts(readResource(":/web/katex.min.css"), ":/web/fonts");
     // 高亮主题 CSS
     QString hljsCss = readResource(theme == "dark" ? ":/web/hljs-dark.css" : ":/web/hljs-light.css");
-    // 自定义 CSS（覆盖默认）
+    // 自定义 CSS（覆盖默认）。剥 </style> 序列：本地设置携带它会把 <style> 块
+    // 提前终结并向产物注入任意标记（自注入面）
     QSettings settings("md-editor", "md-editor");
     QString customCss = settings.value("editor/customCss").toString();
+    customCss.remove(QRegularExpression("</\\s*style\\s*>",
+                                        QRegularExpression::CaseInsensitiveOption));
 
     QString full = QStringLiteral(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">"

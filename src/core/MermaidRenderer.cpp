@@ -85,6 +85,17 @@ void MermaidRenderer::onLoadFinished(bool ok)
 
     int n = m_pending.size();   // clear 前捕获数量，供解析失败回退
     m_pending.clear();
+    m_finished = false;
+    // 30s 看门狗：渲染脚本挂死（mermaid 死循环/渲染进程僵死）时 runJavaScript
+    // 回调永不触发、finished 不发——导出无声失联且离屏视图滞留。超时发空
+    // 结果（调用侧按渲染失败回退源码文本），对齐 PdfExporter 的 30s 范式
+    QTimer::singleShot(30000, this, [this, n]() {
+        if (m_finished) return;
+        m_finished = true;
+        QVector<Result> fallback;
+        for (int i = 0; i < n; ++i) fallback.append(Result());
+        emit finished(fallback);
+    });
     m_view->page()->runJavaScript(script, [this, n](const QVariant &) {
         pollResults(n, 0);
     });
@@ -127,6 +138,7 @@ void MermaidRenderer::pollResults(int n, int attempt)
         } else {
             for (int i = 0; i < n; ++i) out.append(Result());
         }
+        m_finished = true;   // 看门狗失效（正常结算先到）
         emit finished(out);
     });
 }

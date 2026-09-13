@@ -392,7 +392,19 @@ void MainWindow::connectSignals()
                 EditorTab *tab = m_tabWidget->tabAt(index);
                 if (tab) {
                     QString path = tab->webView()->property("filePath").toString();
-                    if (!path.isEmpty()) m_fileManager->unwatchFile(path);
+                    // 其他标签页还开着同文件时不得停监控（曾按路径全局 unwatch，
+                    // 关一个 tab 误停另一个的外部变更检测）
+                    bool sharedElsewhere = false;
+                    for (int i = 0; i < m_tabWidget->count(); ++i) {
+                        EditorTab *other = m_tabWidget->tabAt(i);
+                        if (other && other != tab
+                            && other->webView()->property("filePath").toString() == path) {
+                            sharedElsewhere = true;
+                            break;
+                        }
+                    }
+                    if (!path.isEmpty() && !sharedElsewhere)
+                        m_fileManager->unwatchFile(path);
                 }
                 // tabClosed 在 removeTab 之前发出：count()<=1 说明这是最后一个标签页，
                 // 关闭后无活动文档——清空大纲并复位状态栏，避免残留上一文档的

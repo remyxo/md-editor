@@ -76,3 +76,11 @@ vendored 文件 SPDX 头为 `LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.
 - `==高亮==` 部分形态规范化为 `\=\=` 分支形态
 - `>` 引用符在特定上下文输出为 `\>`
 - 段落末尾单个尾随空格被 setHtml 裁剪
+
+## 已知上游缺陷（2026-09-13 全面代码审查发现，保持上游行为不改码）
+
+vendoring 原则零本地补丁，以下问题记录备查；触发条件均极边缘，本项目当前用法（wrap 恒 false）下无实际影响：
+
+1. **`adjacentBackticksCount` 空串越界**（上游 `QtMarkdownWriter.cpp:309`）：`s.at(len - 1)` 在 `len==0` 时为 `at(-1)`（release 下 UB，debug 断言）。仅当出现「空文本 mono fragment」时可达，罕见。
+2. **`escapeSpecialCharacters` 逐次 insert 的 O(K·n) 尾部搬移**（上游 `:345-362`）：超长行 + 大量 `<`/`*` 前缀字符时平方级。与 wrap 无关、始终执行，但本项目文档规模未见感知。
+3. **wrap 分支在本项目恒不执行**（`writeFrame` 的 `!table && m_wrapEnabled`）：折行分支（含历史吞字点 `i = j + 1`）与 `nearestWordWrapIndex` 为死代码。若将来有人改回 `wrap=true`，先重读「吞字」历史再动。

@@ -5,6 +5,7 @@
 #include <QWebEngineSettings>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QTimer>
 
 MathMlRenderer::MathMlRenderer(QObject *parent)
     : QObject(parent), m_view(new QWebEngineView())
@@ -52,6 +53,17 @@ void MathMlRenderer::onLoadFinished(bool ok)
     QString script = buildRenderScript(m_pending);
     int n = m_pending.size();   // clear 前捕获数量，供解析失败回退
     m_pending.clear();
+    m_finished = false;
+    // 30s 看门狗：渲染挂死时 runJavaScript 回调永不触发、finished 不发——导出
+    // 无声失联且离屏视图滞留。超时发空结果（调用侧回退 $...$ 源码文本），
+    // 对齐 PdfExporter 的 30s 范式
+    QTimer::singleShot(30000, this, [this, n]() {
+        if (m_finished) return;
+        m_finished = true;
+        QVector<QString> fallback;
+        for (int i = 0; i < n; ++i) fallback.append(QString());
+        emit finished(fallback);
+    });
     m_view->page()->runJavaScript(script, [this, n](const QVariant &res) {
         QVector<QString> out;
         QJsonParseError err;
@@ -62,6 +74,7 @@ void MathMlRenderer::onLoadFinished(bool ok)
         } else {
             for (int i = 0; i < n; ++i) out.append(QString());
         }
+        m_finished = true;   // 看门狗失效（正常结算先到）
         emit finished(out);
     });
 }

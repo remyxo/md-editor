@@ -42,6 +42,7 @@ private:
     QWebEngineView *m_view = nullptr;
     QStringList m_pending;
     bool m_loaded = false;
+    bool m_finished = false;   // 30s 看门狗与正常结算的互斥（防 finished 双发）
 };
 
 #endif // MD_EDITOR_MERMAIDRENDERER_H

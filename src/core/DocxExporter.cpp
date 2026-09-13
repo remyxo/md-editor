@@ -1076,7 +1076,9 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
                 if (ctt == QXmlStreamReader::StartElement
                     && r.name().toString().compare(QLatin1String("col"), Qt::CaseInsensitive) == 0) {
                     QString w = r.attributes().value("style").toString();
-                    QRegularExpression re("width:\\s*(\\d+)px");
+                    // 属性名锚定（(?:^|;)）：TipTap 序列化表格无 colwidth 时每列
+                    // 只有 min-width:25px，裸 width 子串匹配会把 25 当列宽
+                    QRegularExpression re("(?:^|;)\\s*width\\s*:\\s*(\\d+)px");
                     auto m = re.match(w);
                     int dxa = 2340; // 默认宽
                     if (m.hasMatch()) {

@@ -1998,6 +1998,10 @@ window.editorApi = {
         newEl.id = 'editor';
         parent.replaceChild(newEl, oldEl);
 
+        // 未回调的图片保存请求作废：其 marker 已随内容销毁，残留映射永不回收
+        //（文档中的占位图节点也一并被新内容覆盖）
+        this._imagePending = {};
+
         if (this.editor) {
             this.editor.destroy();
             this.editor = null;
@@ -2727,11 +2731,7 @@ window.editorApi = {
         var vh = window.innerHeight;
         var sy = window.scrollY;
         // 近视口顶部/底部 2 行内才滚动到垂直居中，中部不动（避免匹配贴边难见）
-        var lineH = 28.8;
-        try {
-            var lh = parseFloat(window.getComputedStyle(sv).lineHeight);
-            if (lh > 0) lineH = lh;
-        } catch (e) { /* 兜底 */ }
+        //（lineH 复用函数开头的计算；此处曾有第二段重复声明，前段结果被遮蔽）
         var edge = 2 * lineH;
         if (caretDocY < sy + edge || caretDocY > sy + vh - edge) {
             window.scrollTo(0, Math.max(0, caretDocY - (vh - lineH) / 2));

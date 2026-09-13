@@ -207,7 +207,9 @@ bool FileManager::writeFile(const QString &path, const QString &content)
 
 void FileManager::watchFile(const QString &path)
 {
-    if (QFile::exists(path)) {
+    // 去重：两个标签页打开同一文件时重复 addPath 触发 qWarning
+    //（onFileChanged 内部已有同款守卫，此处对齐）
+    if (QFile::exists(path) && !m_watcher->files().contains(path)) {
         m_watcher->addPath(path);
     }
 }

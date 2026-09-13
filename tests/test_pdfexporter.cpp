@@ -12,10 +12,18 @@
 class TestPdfExporter : public QObject {
     Q_OBJECT
 private slots:
+    // 1×1 真实 PNG 字节（inlineImages 内容级 MIME 校验后，伪字节夹具不再内联）
+    static QByteArray tinyPng() {
+        static const unsigned char png[] = {0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0x0d,0x49,0x48,0x44,0x52,
+                                     0,0,0,1,0,0,0,1,0x08,0x06,0,0,0,0x1f,0x15,0xc4,0x89,0,0,0,0x0a,0x49,0x44,0x41,0x54,
+                                     0x78,0x9c,0x63,0,1,0,0,0,0x05,0,1,0x0d,0x0a,0x2d,0xb4,0,0,0,0,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82};
+        return QByteArray(reinterpret_cast<const char*>(png), sizeof(png));
+    }
+
     void testBuildRenderHtmlInlinesImages() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QFile f(dir.path() + "/a.png");
-        QVERIFY(f.open(QIODevice::WriteOnly)); f.write("PNGDATA"); f.close();
+        QVERIFY(f.open(QIODevice::WriteOnly)); f.write(tinyPng()); f.close();
 
         QString html = "<p><img src=\"a.png\" alt=\"x\"></p>";
         QString out = PdfExporter::buildRenderHtml(html, dir.path(), "", "");
