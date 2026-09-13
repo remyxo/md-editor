@@ -131,6 +131,7 @@ ctest --output-on-failure
 ## 已知问题 & 待完善
 
 - `tiptap-all.js` 更新需在 `src/resources/web/` 下运行 `npx esbuild tiptap-entry.js --bundle --outfile=tiptap-all.js --format=iife`
+- **colorSpan 单 mark 无法嵌套继承（已知边界，2026-09-13 记录）**：TipTap/ProseMirror 的 mark 是集合语义，同型 mark 不能嵌套——嵌套 `<span style="color:red">外<span style="background-color:yellow">内</span>尾</span>` 载入编辑器时，内层 colorSpan **替换**外层（非叠加）：「内」= 默认色 + 黄底（CSS 规范应为继承的红字），且 getHTML 扁平化为兄弟 span。文字内容无损，视觉语义一轮往返改变。根治需把 colorSpan 拆为 color / background-color 两个独立 mark（牺牲「整串 style 原样保真」设计），属 schema 级重构，待独立需求评估。DOCX 导出的颜色栈（DocxExporter RunFormat）对嵌套/扁平两种输入各按其语义正确渲染
 - **切源码模式仍有可感知停顿（待进一步优化）**：2026-08-26 已把折行点测量改为异步分块 + 窗口界定二分，模式切换不再同步阻塞（8k 文档从 ~9s 降到 ~59ms），但大文档（4k+）高亮仍要 1–3s 异步补全，切换后有「空→高亮渐显」的停顿感。后续优化方向：① 先测当前匹配/可见行的高亮优先渲染，其余异步补全；② 探索上下文无关的快速折行算法（引擎折行点受前文影响，孤立切片法已验证不可靠）；③ 跨源码会话缓存折行点（`_srcStop` 目前清空 `_srcWrapCache`，重进必重测）
 
 ## 专题文档
