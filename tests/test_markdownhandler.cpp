@@ -435,6 +435,24 @@ private slots:
         QVERIFY2(md2.contains("x") && md2.contains("y"), qPrintable(md2));
     }
 
+    void testNestedSpanRoundTripBalanced() {
+        // 嵌套 <span style>：两处提取曾用非贪婪 (.*?)</span>——匹配停在第一个
+        // 闭合处，备份不平衡（<span a>外<span b>内</span>），尾部「尾</span>」
+        // 残留为字面文本，结构逐轮退化。修复后平衡扫描整段进备份
+        QString md = "<span style=\"color:red\">外<span style=\"background-color:yellow\">内</span>尾</span>\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.count("background-color:yellow") >= 1, qPrintable(md2));
+        QVERIFY2(md2.count("</span>") == md.count("</span>"), qPrintable(md2));
+        QVERIFY2(md2.count("<span") == md.count("<span"), qPrintable(md2));
+        QVERIFY2(md2.contains("外") && md2.contains("内") && md2.contains("尾"), qPrintable(md2));
+        // 收敛
+        QString cur = md2;
+        for (int i = 0; i < 3; ++i)
+            cur = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(cur));
+        QCOMPARE(cur, md2);
+    }
+
     void testBlockMathAfterMultipleBlankLines() {
         // 数学块前 ≥2 空行：ZZBL 把多余空行还原为 <p></p>，命中「清除紧邻 math div
         // 的空 <p>」清理正则——曾因正则仅 2 个捕获组却引用 \3（越界组号被 Qt 当

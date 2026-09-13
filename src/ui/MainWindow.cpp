@@ -1095,20 +1095,25 @@ void MainWindow::writeTabToFile(EditorTab *tab, const QString &path, bool setPat
 {
     if (!tab)
         return;
-    // 异步获取内容 → 写入。源码模式下编辑器文档是进入源码前的旧快照（内容在
-    // source-view textarea）：取 getSourceContent()——本身即 MD，无需 fromHtml。
-    // 否则源码编辑被静默丢弃，且 markClean 清掉脏标记后关闭标签页不再提示
+    // 异步获取内容 → 写入。快照携带文档版本：落盘后 markCleanIfUnchanged 比对，
+    // 保存窗口（getContent→writeFile 异步间隙）内再编辑则不清脏标记——旧
+    // markClean 无条件清，窗口内的击键静默失去未保存指示（关闭不再提示）。
+    // 源码模式下编辑器文档是进入源码前的旧快照：取 source-view 内容——本身即
+    // MD，无需 fromHtml；否则源码编辑被静默丢弃
     const bool sourceMode = tab->isSourceMode();
     tab->webView()->page()->runJavaScript(
-        sourceMode ? QStringLiteral("window.editorApi.getSourceContent();")
-                   : QStringLiteral("window.editorApi.getContent();"),
+        sourceMode ? QStringLiteral("window.editorApi.getSourceSnapshot();")
+                   : QStringLiteral("window.editorApi.getSaveSnapshot();"),
         [this, tab, path, setPathAfter, sourceMode, cb](const QVariant &result) {
-            QString md = sourceMode ? result.toString()
-                                    : MarkdownHandler::fromHtml(result.toString());
+            const QVariantMap snap = result.toMap();
+            QString md = sourceMode ? snap.value(QStringLiteral("source")).toString()
+                                    : MarkdownHandler::fromHtml(snap.value(QStringLiteral("html")).toString());
+            const int docVersion = snap.value(QStringLiteral("version"), -1).toInt();
             const bool ok = m_fileManager->writeFile(path, md);
             if (ok) {
                 m_statusBar->showMessage(tr("已保存"), 2000);
-                tab->runJsCommand("window.editorApi.markClean();");
+                tab->runJsCommand(
+                    QStringLiteral("window.editorApi.markCleanIfUnchanged(%1);").arg(docVersion));
                 if (setPathAfter)
                     tab->setFilePath(path);
                 int idx = m_tabWidget->indexOf(tab);

@@ -738,6 +738,9 @@ static QString extractEscapedExtDelims(QString line, QStringList &out, QStringLi
 // 行内代码 `...` 内的标签是字面文本（如 `H<sub>2</sub>O` 展示写法），
 // 先暂存代码段再提取（与 extractFootnoteRefs 的 \x01CODE 保护一致）。
 // 占位符经碰撞检测生成（实际串存 phs），还原时按存储值回填。
+// 前置声明（定义于 ~1150 行，脚注路径主用）：嵌套 span 平衡扫描
+static int findMatchingSpanClose(const QString &s, int openTagStart);
+
 static QString extractHtmlInlineElements(const QString &line,
                                          QStringList &backups, QStringList &phs,
                                          QSet<QString> &collisions)
@@ -746,8 +749,9 @@ static QString extractHtmlInlineElements(const QString &line,
     // QRegularExpression 要重新编译模式（含 JIT），累积 O(行数×构造开销)，
     // 实测成为 toHtml 行循环的最大成本（10k 行 ~1.5s）。
     static const QRegularExpression codeSpanRe("`([^`]+)`");
-    static const QRegularExpression spanRe(
-        R"(<span\b[^>]*\bstyle\s*=\s*"[^"]*"[^>]*>(.*?)</span>)");
+    // span 开标签（配 findMatchingSpanClose 平衡扫描，见下方提取块）
+    static const QRegularExpression spanOpenRe(
+        R"(<span\b[^>]*\bstyle\s*=\s*"[^"]*"[^>]*>)");
     static const QRegularExpression uRe(R"(<u>(.*?)</u>)");
     static const QRegularExpression kbdRe(R"(<kbd>(.*?)</kbd>)");
     static const QRegularExpression smallRe(R"(<small>(.*?)</small>)");
@@ -769,16 +773,25 @@ static QString extractHtmlInlineElements(const QString &line,
         codeOff = m.capturedStart() + cph.length();
     }
     int n = backups.size();
-    // <span style="...">text</span>
+    // <span style="...">text</span>（嵌套感知：平衡扫描到配对 </span>——
+    // 非贪婪 (.*?)</span> 停在第一个闭合处，嵌套 span 的备份不平衡、尾部
+    // 文本连同孤立 </span> 残留为字面输出，结构逐轮退化）
     {
         int offset = 0;
         while (true) {
-            auto m = spanRe.match(r, offset);
+            auto m = spanOpenRe.match(r, offset);
             if (!m.hasMatch()) break;
-            backups << m.captured();
+            const int closeStart = findMatchingSpanClose(r, m.capturedStart());
+            if (closeStart < 0) {
+                // 未闭合：跳过该开标签，交 escapeUnclosedHtmlTags 兜底
+                offset = m.capturedEnd();
+                continue;
+            }
+            const int end = closeStart + 7;   // 跳过 "</span>"
+            backups << r.mid(m.capturedStart(), end - m.capturedStart());
             phs << collisionFreePlaceholder(collisions, "HI", n++);
             QString ph = phs.last();
-            r.replace(m.capturedStart(), m.capturedLength(), ph);
+            r.replace(m.capturedStart(), end - m.capturedStart(), ph);
             offset = m.capturedStart() + ph.length();
         }
     }
@@ -4097,20 +4110,31 @@ QString MarkdownHandler::fromHtml(const QString &html)
     {
         int n = 0;
         int offset = 0;
-        // <span style="...">text</span>
-        QRegularExpression spanStyleRe(
-            R"(<span\b[^>]*\bstyle\s*=\s*"[^"]*"[^>]*>(.*?)</span>)",
-            QRegularExpression::DotMatchesEverythingOption);
-        globalReplaceWith(processed, spanStyleRe,
-            [&collisions, &placeholders, &backups, &n]
-            (const QRegularExpressionMatch &m) {
+        // <span style="...">text</span>（嵌套感知：平衡扫描到配对 </span>，
+        // 与 toHtml 侧 extractHtmlInlineElements 同型——非贪婪匹配在嵌套
+        // span 下备份不平衡、尾部残留）
+        {
+            static const QRegularExpression spanOpenRe(
+                R"(<span\b[^>]*\bstyle\s*=\s*"[^"]*"[^>]*>)");
+            while (true) {
+                auto m = spanOpenRe.match(processed, offset);
+                if (!m.hasMatch()) break;
+                const int closeStart = findMatchingSpanClose(processed, m.capturedStart());
+                if (closeStart < 0) {
+                    offset = m.capturedEnd();   // 未闭合：留原样交后续宽容解析
+                    continue;
+                }
+                const int end = closeStart + 7;
+                const QString whole = processed.mid(m.capturedStart(), end - m.capturedStart());
                 QString ph = collisionFreePlaceholder(collisions, "HS", n++);
                 placeholders << ph;
                 // 保留完整原始 HTML，但文本中的字面 ^/~/~~ 转义（重载时
                 // sup/sub/strike 后处理会误触发），标签与属性不受影响
-                backups << escapeExtDelimsOutsideTags(m.captured(), true);
-                return ph;
-            });
+                backups << escapeExtDelimsOutsideTags(whole, true);
+                processed.replace(m.capturedStart(), end - m.capturedStart(), ph);
+                offset = m.capturedStart() + ph.length();
+            }
+        }
         // <u>text</u>（<u> 可能位于最后一个 <span> 之前，故重新全局匹配）
         QRegularExpression uRe(
             R"(<u>(.*?)</u>)",

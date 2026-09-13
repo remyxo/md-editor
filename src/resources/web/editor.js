@@ -402,10 +402,15 @@ function buildColorSpanExtension() {
                 tag: 'span',
                 getAttrs: function(el) {
                     var s = el.getAttribute('style') || '';
-                    // 仅匹配含颜色或背景色的 span，纯字体样式（font-weight /
-                    // font-style / font-size）是 QTextDocument 的内联渲染，
-                    // 应由 Bold / Italic mark 处理，而非 colorSpan。
-                    return (/\bcolor\s*:/.test(s) || /\bbackground-color\s*:/.test(s)) ? {} : false;
+                    if (!s) return false;   // 无 style 的 span（脚注 marker 等）放行
+                    if (/\bcolor\s*:/.test(s) || /\bbackground-color\s*:/.test(s)) return {};
+                    // 其余属性若只剩 QTextDocument 内联渲染三件套
+                    // （font-weight/style/size 由 Bold/Italic mark 承载）则放行；
+                    // 携带其他属性（font-family/text-decoration 等）的 span
+                    // 接受并原样保真——曾一律 false，纯 font-family 的 span
+                    // 载入即剥壳，样式永久丢失
+                    var rest = s.replace(/(^|;)\s*font-(weight|style|size)\s*:[^;]*/g, '');
+                    return /[^;\s]/.test(rest) ? {} : false;
                 }
             }];
         },
@@ -1277,6 +1282,11 @@ window.editorApi = {
     editor: null,
     bridge: null,
     _dirty: false,
+    // 文档版本：每次内容变更递增（WYSIWYG onUpdate 与源码输入共用 _markDirty）。
+    // 保存链路取快照时的版本，落盘后 markCleanIfUnchanged 比对——保存窗口内
+    // 再编辑则不清脏（旧 markClean 无条件清，异步保存期间的击键静默失去
+    // 未保存指示）
+    _docVersion: 0,
     _loading: false,
     _mathEditing: false,
     isSourceMode: false,
@@ -1639,6 +1649,7 @@ window.editorApi = {
     },
 
     _markDirty: function() {
+        this._docVersion++;
         if (!this._dirty) {
             this._dirty = true;
             if (this.bridge) this.bridge.contentChanged(true);
@@ -1646,6 +1657,7 @@ window.editorApi = {
     },
 
     _forceDirty: function() {
+        this._docVersion++;
         this._dirty = true;
         if (this.bridge) this.bridge.contentChanged(true);
     },
@@ -3390,7 +3402,21 @@ window.editorApi = {
 
     markClean: function() {
         this._dirty = false;
+        this._docVersion = 0;   // 已接受状态归零（后续编辑从 1 重新计数）
         if (this.bridge) this.bridge.contentChanged(false);
+    },
+
+    // 保存快照：内容 + 文档版本（见 _docVersion 注释）
+    getSaveSnapshot: function() {
+        return { html: this.editor ? this.editor.getHTML() : '',
+                 version: this._docVersion };
+    },
+    getSourceSnapshot: function() {
+        var sv = document.getElementById('source-view');
+        return { source: sv ? sv.value : '', version: this._docVersion };
+    },
+    markCleanIfUnchanged: function(v) {
+        if (this._docVersion === v) this.markClean();
     },
 
     // 插入数学公式（C++ 侧调用）
