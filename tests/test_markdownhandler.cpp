@@ -325,6 +325,95 @@ private slots:
         QVERIFY(html.contains("E = mc^2"));
     }
 
+    void testBlockquoteInlineFormatRoundTrip() {
+        // 块引用内的行内格式：fromHtml 的引用步骤曾先于行内转换运行，
+        // inner.remove(<[^>]*>) 把引用内所有标签剥成纯文本——WYSIWYG 里对
+        // 引用内文字加粗，每次保存即丢语义（> **加粗** → > 加粗）。
+        // 修复：引用抽取后移至行内占位保护之后，Qt 侧标签族手动转 MD 语法。
+        QString md = "> **加粗** *斜体* ~~删除~~ `代码` ==高亮==\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("**加粗**"), qPrintable(md2));
+        QVERIFY2(md2.contains("*斜体*"), qPrintable(md2));
+        QVERIFY2(md2.contains("~~删除~~"), qPrintable(md2));
+        QVERIFY2(md2.contains("`代码`"), qPrintable(md2));
+        QVERIFY2(md2.contains("==高亮=="), qPrintable(md2));
+        // 引用前缀仍在前
+        QVERIFY2(md2.trimmed().startsWith("> "), qPrintable(md2));
+        // 4 轮收敛（1 轮归一后稳定）
+        QString cur = md2;
+        for (int i = 0; i < 3; ++i)
+            cur = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(cur));
+        QCOMPARE(cur, md2);
+    }
+
+    void testTildeFenceRoundTrip() {
+        // 顶层 ~~~ 波浪围栏：曾只认 ``` 反引号围栏，~~~ 行落入 BRMARKER 段落逻辑，
+        // 行尾被注入 <br data-brk>，fromHtml 剥离后代码行无分隔拼接、语言串打碎
+        QString md = "~~~js\nvar a = 1;\nvar b = 2;\n~~~\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("language-js"), qPrintable(html));
+        QVERIFY2(html.contains("var a = 1;"), qPrintable(html));
+        QVERIFY2(html.contains("var b = 2;"), qPrintable(html));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("var a = 1;\nvar b = 2;"), qPrintable(md2));
+        // 收敛（首往返归一为反引号围栏是预期，之后须稳定）
+        QString cur = md2;
+        for (int i = 0; i < 3; ++i)
+            cur = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(cur));
+        QCOMPARE(cur, md2);
+    }
+
+    void testIndentedFenceRoundTrip() {
+        // ≤3 空格缩进的围栏（CommonMark 合法）：曾与 ~~~ 同病
+        QString md = "  ```cpp\nint x = 0;\n  ```\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("language-cpp"), qPrintable(html));
+        QVERIFY2(html.contains("int x = 0;"), qPrintable(html));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("int x = 0;"), qPrintable(md2));
+        QString cur = md2;
+        for (int i = 0; i < 3; ++i)
+            cur = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(cur));
+        QCOMPARE(cur, md2);
+    }
+
+    void testFenceMutualExclusion() {
+        // 围栏互斥：``` 围栏内的 ~~~ 行是内容（同字符才可闭合），反之亦然。
+        // 曾无 ~~~ 状态机，``` 内的 ~~~ 会错误开启波浪围栏吞掉后续正文
+        QString md = "```\n~~~\ninner\n```\nafter\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("~~~"), qPrintable(html));
+        QVERIFY2(html.contains("inner"), qPrintable(html));
+        QVERIFY2(html.contains("after"), qPrintable(html));
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("~~~"), qPrintable(md2));
+        QVERIFY2(md2.contains("after"), qPrintable(md2));
+    }
+
+    void testTildeFenceNotClosedByBackticks() {
+        // ~~~ 围栏内的 ``` 行是内容，直到同字符 ~~~ 才闭合
+        QString md = "~~~\ncode ``` line\n~~~\ntail\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains("code ``` line"), qPrintable(html));
+        QVERIFY2(html.contains("tail"), qPrintable(html));
+    }
+
+    void testBlockMathAfterMultipleBlankLines() {
+        // 数学块前 ≥2 空行：ZZBL 把多余空行还原为 <p></p>，命中「清除紧邻 math div
+        // 的空 <p>」清理正则——曾因正则仅 2 个捕获组却引用 \3（越界组号被 Qt 当
+        // 字面量输出），div 开标签被替换成字面 "\3"，数学块损坏 + 垃圾文本注入。
+        QString md = "a\n\n\n$$\nx\n$$\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(!html.contains("\\3"), qPrintable(html));
+        QVERIFY(html.contains("data-type=\"block-math\""));
+        QVERIFY(html.contains("data-latex=\"x\""));
+        // 往返：数学块语义保留
+        QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains("$$"), qPrintable(md2));
+        QVERIFY(md2.contains("x"));
+    }
+
     void testMultiLineBlockMath() {
         // 多行块级公式 → aligned 环境
         QString md = "$$\na = 1\nb = 2\nc = 3\n$$\n";

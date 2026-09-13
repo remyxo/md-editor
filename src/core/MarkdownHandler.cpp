@@ -153,6 +153,32 @@ static bool isHrTagLine(const QString &line)
     return re.match(line).hasMatch();
 }
 
+// 顶层围栏行判定（CommonMark 全族）：≤3 空格缩进 + ≥3 个连续同种围栏字符
+// （反引号或波浪号）。此前只认零缩进反引号围栏，~~~ 波浪围栏与合法缩进围栏
+// 整族漏保护——围栏行与内容行落入 BRMARKER 段落逻辑被注入 <br data-brk>，
+// fromHtml 剥离后代码行无分隔拼接、语言信息串被打碎。
+// 返回 false = 非围栏行；true 时 *indent/*run/*ch 给出缩进列、围栏长度与字符。
+static bool isTopLevelFenceLine(const QString &line, int *indent, int *run, QChar *ch)
+{
+    int i = 0;
+    while (i < line.size() && line[i] == QLatin1Char(' '))
+        ++i;
+    if (i > 3 || i >= line.size())
+        return false;
+    const QChar c = line[i];
+    if (c != QLatin1Char('`') && c != QLatin1Char('~'))
+        return false;
+    int r = 0;
+    while (i + r < line.size() && line[i + r] == c)
+        ++r;
+    if (r < 3)
+        return false;
+    *indent = i;
+    *run = r;
+    *ch = c;
+    return true;
+}
+
 static bool isParagraphLine(const QString &line)
 {
     if (line.isEmpty()) return false;
@@ -164,6 +190,13 @@ static bool isParagraphLine(const QString &line)
     QChar c = trimmed[0];
     if (c == '`') {
         if (!trimmed.startsWith("```"))
+            return true;
+        return false;
+    }
+    // ~~~ 波浪围栏行：与 ``` 对称排除（段落行不应把后续围栏行当延续——
+    // 顶层围栏是块边界，非软换行）
+    if (c == '~') {
+        if (!trimmed.startsWith("~~~"))
             return true;
         return false;
     }
@@ -1582,7 +1615,10 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
 
     QStringList lines = markdown.split('\n');
     QString processed;
-    int codeFenceLen = 0; // 当前代码块开启围栏的反引号数（0 = 不在代码块）
+    int codeFenceLen = 0; // 当前代码块开启围栏的字符数（0 = 不在代码块；``` 或 ~~~）
+    QChar codeFenceChar = QLatin1Char('`');   // 开启围栏的字符（闭合须同字符，CommonMark）
+    int tlFenceIndent = 0, tlFenceRun = 0;    // isTopLevelFenceLine 出参（当前行）
+    QChar tlFenceChar = QLatin1Char('`');
     int bqCodeFenceLen = 0; // 当前块引用内代码围栏长度（0 = 不在块引用代码块）
     QString bqCodeFenceLang;    // 当前块引用代码块语言（围栏信息串）
     QStringList bqCodeContent;  // 当前块引用代码块内容行
@@ -1722,25 +1758,26 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             lastBlock = BT_NONE;
         } else if (inMathBlock) {
             mathLines << line;
-        } else if (line.startsWith("```")) {
-            // 统计本行前导反引号数量（围栏长度）
-            int fenceLen = 0;
-            while (fenceLen < line.size() && line[fenceLen] == QLatin1Char('`'))
-                ++fenceLen;
+        } else if (isTopLevelFenceLine(line, &tlFenceIndent, &tlFenceRun, &tlFenceChar)) {
+            // 顶层围栏行（``` / ~~~，≤3 空格缩进，CommonMark 全族）
             if (codeFenceLen == 0) {
                 // 开启新代码块：提取语言（信息串为围栏后的文本），整块用占位符保护，
-                // 内容不经 setMarkdown（其围栏解析同样朴素，嵌套围栏会二次错乱）
-                codeFenceLang = line.mid(fenceLen).trimmed();
-                codeFenceLen = fenceLen;
+                // 内容不经 setMarkdown（其围栏解析同样朴素，嵌套围栏会二次错乱）。
+                // 内容行保留原始缩进（CommonMark 的去缩进归一化由往返收敛完成）
+                codeFenceLang = line.mid(tlFenceIndent + tlFenceRun).trimmed();
+                codeFenceLen = tlFenceRun;
+                codeFenceChar = tlFenceChar;
                 codeContent.clear();
                 // 占位符序号须避开源文档/已产出内容中的字面同串（如 audit 文档
                 // 里示例的 `ZZCB0ZZ`），否则还原时用户文本被误替换。串存 codeBlockPhs，
                 // 与 codeBlocks 一一对应，还原时按存储值回填。
-                codeBlockPhs << collisionFreePlaceholder(collisions, 
+                codeBlockPhs << collisionFreePlaceholder(collisions,
                     "CB", codeBlocks.size());
                 processed += codeBlockPhs.last() + "\n";
-            } else if (fenceLen >= codeFenceLen && line.mid(fenceLen).trimmed().isEmpty()) {
-                // 闭合代码块：本行为纯反引号且长度 >= 开启围栏
+            } else if (tlFenceChar == codeFenceChar && tlFenceRun >= codeFenceLen
+                       && line.mid(tlFenceIndent + tlFenceRun).trimmed().isEmpty()) {
+                // 闭合代码块：同种围栏字符、纯围栏行、长度 >= 开启围栏
+                //（异种围栏行（``` 块内的 ~~~）落入下方内容分支，互斥天然成立）
                 QString content = codeContent.join('\n');
                 QString codeOpen = codeFenceLang.isEmpty()
                     ? QStringLiteral("<code>")
@@ -1748,7 +1785,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                 codeBlocks << "<pre>" + codeOpen + content.toHtmlEscaped() + "</code></pre>";
                 codeFenceLen = 0;
             } else {
-                // 代码块内容（含以 ``` 开头但不足以闭合的嵌套围栏行）
+                // 代码块内容（含异种围栏行、以围栏开头但不足以闭合的嵌套围栏行）
                 codeContent << line;
             }
             lastBlock = BT_NONE;
@@ -3059,7 +3096,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     batchRestorePlaceholders(html, mathBlockPhs, mathBlocks);
     // 清除紧邻 math div 的空 <p>（占位符产生的伪影，不误删正文空行）
     html.replace(QRegularExpression(
-        "<p[^>]*>(<br[^>]*>)?</p>\\s*(<div data-type=\"block-math\")"), "\\3");
+        "<p[^>]*>(<br[^>]*>)?</p>\\s*(<div data-type=\"block-math\")"), "\\2");
     html.replace(QRegularExpression(
         "(</div>)\\s*<p[^>]*>(<br[^>]*>)?</p>"), "\\1");
 
@@ -3241,6 +3278,43 @@ static QString mdEquivTagsToSyntax(const QString &s, const char *selfTag)
                        + QString::fromLatin1(f.close);
             });
     }
+    return r;
+}
+
+// 块引用 inner 的行内标签 → MD 语法：引用步骤先于 Qt 转换抽取（防 > 前缀被
+// toMarkdown 折叠），Qt 侧管理的标签族（strong/em/s/mark/sub/sup/a/img）到不了
+// toMarkdown，须手动转换；handler 管理的行内元素（mark/code/span/u/kbd/small）
+// 在引用抽取前已是 ZZ* 占位符，不在其列。selfTag 传 "blockquote"（不在任何
+// 标签族内，六族全部转换）。
+static QString blockquoteInnerInlineToMd(const QString &inner)
+{
+    QString r = mdEquivTagsToSyntax(inner, "blockquote");
+    // 链接：<a href="URL">TEXT</a> → [TEXT](URL)。置于 mdEquiv 之后：链接文本
+    // 内的 strong/em 先转 **/*，得到 [**b**](u) 嵌套形态。正则内含 )" 序列，
+    // 原始字符串须用自定义定界符 re，否则 )" 提前终结字面量
+    globalReplaceWith(r,
+        QRegularExpression(
+            R"re(<a\b[^>]*\bhref\s*=\s*"([^"]*)"[^>]*>(.*?)</a>)re",
+            QRegularExpression::DotMatchesEverythingOption),
+        [](const QRegularExpressionMatch &m) {
+            return "[" + m.captured(2) + "]("
+                   + unescapeHtmlEntities(m.captured(1)) + ")";
+        });
+    // 图片：<img ...> → ![alt](src)；无 src 的畸形 img 保留原样交后续剥离
+    globalReplaceWith(r, QRegularExpression(R"(<img\b[^>]*>)"),
+        [](const QRegularExpressionMatch &m) {
+            const QString tag = m.captured(0);
+            auto attr = [&tag](const char *name) {
+                QRegularExpression re(
+                    QStringLiteral("\\b%1\\s*=\\s*\"([^\"]*)\"")
+                        .arg(QLatin1String(name)));
+                auto am = re.match(tag);
+                return am.hasMatch() ? am.captured(1) : QString();
+            };
+            const QString src = attr("src");
+            if (src.isEmpty()) return tag;
+            return "![" + attr("alt") + "](" + unescapeHtmlEntities(src) + ")";
+        });
     return r;
 }
 
@@ -3540,63 +3614,6 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 QString ph = collisionFreePlaceholder(collisions, "HR", n++);
                 placeholders << ph;
                 backups << "---";
-                return wrapBlock(ph);
-            });
-    }
-
-    // 2) 引用 → > 前缀
-    //    （跳过已被 <blockquote> 包裹的，由后续 blockquote 标签步处理）
-    {
-        int n = 0;
-        // <blockquote> 标签先处理
-        QRegularExpression bqTagRe(
-            R"(<blockquote[^>]*>(.*?)</blockquote>)",
-            QRegularExpression::DotMatchesEverythingOption);
-        globalReplaceWith(processed, bqTagRe,
-            [&n, &collisions, &placeholders, &backups, &wrapBlock]
-            (const QRegularExpressionMatch &m) {
-                QString inner = m.captured(1);
-                // 块级标签 → 换行，保留段落边界
-                inner.replace(QRegularExpression("</?p[^>]*>"), "\n");
-                inner.replace(QRegularExpression("</?div[^>]*>"), "\n");
-                inner.replace(QRegularExpression("<br\\b[^>]*>"), "\n");
-                inner.remove(QRegularExpression("<[^>]*>"));
-                inner = inner.trimmed();
-                QStringList lines = inner.split('\n');
-                QString quoted;
-                for (const QString &l : lines) {
-                    QString t = l.trimmed();
-                    if (!t.isEmpty())
-                        quoted += "> " + t + "\n";
-                }
-                quoted = quoted.trimmed();
-                QString ph = collisionFreePlaceholder(collisions, "BQ", n++);
-                placeholders << ph;
-                backups << quoted;
-                return wrapBlock(ph);
-            });
-        // 裸 margin-left <p>（未被 <blockquote> 包裹的）
-        QRegularExpression bqRe(
-            R"(<p[^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*>(.*?)</p>)",
-            QRegularExpression::DotMatchesEverythingOption);
-        globalReplaceWith(processed, bqRe,
-            [&n, &collisions, &placeholders, &backups, &wrapBlock]
-            (const QRegularExpressionMatch &m) {
-                QString text = m.captured(1);
-                text.replace(QRegularExpression("<br\\b[^>]*>"), "\n");
-                text.remove(QRegularExpression("<[^>]*>"));
-                text = text.trimmed();
-                QStringList lines = text.split('\n');
-                QString quoted;
-                for (const QString &l : lines) {
-                    QString t = l.trimmed();
-                    if (!t.isEmpty())
-                        quoted += "> " + t + "\n";
-                }
-                quoted = quoted.trimmed();
-                QString ph = collisionFreePlaceholder(collisions, "BQ", n++);
-                placeholders << ph;
-                backups << quoted;
                 return wrapBlock(ph);
             });
     }
@@ -4107,6 +4124,67 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 backups << escapeExtDelimsOutsideTags(m.captured(), true);
                 return ph;
             });
+
+        // 2) 引用 → > 前缀。后移至行内占位保护（code/mark/span/u/kbd/small）之后：
+        //    曾位于行内转换之前，inner 的无条件标签剥离把引用内所有行内格式连同
+        //    标签剥掉——WYSIWYG 对引用内文字加粗，每次保存即丢语义
+        //    （> **加粗** → > 加粗）。后移后：handler 管理的行内元素已是 ZZ*
+        //    占位符（剥离无伤）；Qt 侧管理的标签族（strong/em/s/mark/sub/sup/
+        //    a/img）到不了 Qt 转换，由 blockquoteInnerInlineToMd 手动转 MD 语法。
+        {
+            int n = 0;
+            // <blockquote> 标签先处理
+            QRegularExpression bqTagRe(
+                R"(<blockquote[^>]*>(.*?)</blockquote>)",
+                QRegularExpression::DotMatchesEverythingOption);
+            globalReplaceWith(processed, bqTagRe,
+                [&n, &collisions, &placeholders, &backups, &wrapBlock]
+                (const QRegularExpressionMatch &m) {
+                    QString inner = blockquoteInnerInlineToMd(m.captured(1));
+                    // 块级标签 → 换行，保留段落边界
+                    inner.replace(QRegularExpression("</?p[^>]*>"), "\n");
+                    inner.replace(QRegularExpression("</?div[^>]*>"), "\n");
+                    inner.replace(QRegularExpression("<br\\b[^>]*>"), "\n");
+                    inner.remove(QRegularExpression("<[^>]*>"));
+                    inner = inner.trimmed();
+                    QStringList lines = inner.split('\n');
+                    QString quoted;
+                    for (const QString &l : lines) {
+                        QString t = l.trimmed();
+                        if (!t.isEmpty())
+                            quoted += "> " + t + "\n";
+                    }
+                    quoted = quoted.trimmed();
+                    QString ph = collisionFreePlaceholder(collisions, "BQ", n++);
+                    placeholders << ph;
+                    backups << quoted;
+                    return wrapBlock(ph);
+                });
+            // 裸 margin-left <p>（未被 <blockquote> 包裹的）
+            QRegularExpression bqRe(
+                R"(<p[^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*>(.*?)</p>)",
+                QRegularExpression::DotMatchesEverythingOption);
+            globalReplaceWith(processed, bqRe,
+                [&n, &collisions, &placeholders, &backups, &wrapBlock]
+                (const QRegularExpressionMatch &m) {
+                    QString text = blockquoteInnerInlineToMd(m.captured(1));
+                    text.replace(QRegularExpression("<br\\b[^>]*>"), "\n");
+                    text.remove(QRegularExpression("<[^>]*>"));
+                    text = text.trimmed();
+                    QStringList lines = text.split('\n');
+                    QString quoted;
+                    for (const QString &l : lines) {
+                        QString t = l.trimmed();
+                        if (!t.isEmpty())
+                            quoted += "> " + t + "\n";
+                    }
+                    quoted = quoted.trimmed();
+                    QString ph = collisionFreePlaceholder(collisions, "BQ", n++);
+                    placeholders << ph;
+                    backups << quoted;
+                    return wrapBlock(ph);
+                });
+        }
         // <div>（块级容器，排除 data-type 内部结构）。
         // TipTap taskItem 的结构性内容容器 <div>（紧跟 </label>）是编辑器契约
         // 结构而非用户手写 div，不保护：保留原始标签，由 taskListInnerToMd 的
