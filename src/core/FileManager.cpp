@@ -1,5 +1,6 @@
 #include "FileManager.h"
 #include <QFile>
+#include <QSaveFile>
 #include <QTextStream>
 #include <QStringConverter>
 #include <QStringDecoder>
@@ -163,11 +164,17 @@ bool FileManager::writeFile(const QString &path, const QString &content)
         }
     }
 
-    // 先写入临时文件，成功后重命名（原子写入）
-    QString tmpPath = path + ".tmp";
-    QFile file(tmpPath);
+    // QSaveFile 原子写入：写临时文件，commit 时原子替换（POSIX rename /
+    // Windows ReplaceFile）。此前手写「写 tmp → remove 原文件 → rename」三步
+    // 有三处缺陷：① 不查 QTextStream/设备错误——磁盘满时只有部分内容的 tmp
+    // 直接替换原文件（静默截断 + 界面仍报已保存）；② remove 与 rename 之间
+    // 失败则原文件已删、tmp 也被清（内容仅存内存）；③ 无 fsync，掉电时 rename
+    // 可能先于数据落盘。QSaveFile 的 commit() 在任何写错误下丢弃临时文件、
+    // 原文件保持完整
+    QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         emit fileWriteError(path, file.errorString());
+        watchFile(path);   // 失败同样恢复监控（曾只在成功路径重挂，失败即永久失守）
         return false;
     }
 
@@ -177,15 +184,19 @@ bool FileManager::writeFile(const QString &path, const QString &content)
     if (writeBom)
         out.setGenerateByteOrderMark(true);
     out << content;
-    file.close();
-
-    // 原子替换
-    if (QFile::exists(path)) {
-        QFile::remove(path);
+    out.flush();
+    if (out.status() != QTextStream::Ok) {
+        file.cancelWriting();
+        emit fileWriteError(path, QStringLiteral("写入失败：数据写入出错"));
+        watchFile(path);
+        return false;
     }
-    if (!QFile::rename(tmpPath, path)) {
-        QFile::remove(tmpPath);
-        emit fileWriteError(path, "写入失败：无法替换原文件");
+    if (!file.commit()) {
+        // commit 失败（替换失败/设备错误）：临时文件已自动丢弃，原文件完整
+        emit fileWriteError(path, file.errorString().isEmpty()
+            ? QStringLiteral("写入失败：无法替换原文件")
+            : file.errorString());
+        watchFile(path);
         return false;
     }
 

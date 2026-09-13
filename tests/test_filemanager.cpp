@@ -2,6 +2,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QFile>
+#include <QFileInfo>
 #include <cstdio>
 #include "../src/core/FileManager.h"
 
@@ -21,6 +22,55 @@ private slots:
 
         QString read = fm.readFile(path);
         QCOMPARE(read, content);
+    }
+
+    void testWriteLargeContentExact() {
+        // 大内容（远超 QTextStream 缓冲边界）逐字节精确落盘：写路径的
+        // flush/commit 顺序回归——写失败/半写不得静默替换原文件
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/big.md";
+        QString content;
+        for (int i = 0; i < 20000; ++i)
+            content += QStringLiteral("第%1行 中文内容 mixed text\n").arg(i);
+        QVERIFY(content.size() > 200000);
+        QVERIFY(fm.writeFile(path, content));
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        QByteArray bytes = f.readAll();
+        f.close();
+        QCOMPARE(QString::fromUtf8(bytes), content);
+        QCOMPARE(bytes.size(), content.toUtf8().size());
+    }
+
+    void testWriteFailureKeepsOriginalAndSignals() {
+        // 写失败（目录只读，临时文件无法创建）：返回 false、发 fileWriteError、
+        // 原文件内容完整不被替换
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/orig.md";
+        QVERIFY(fm.writeFile(path, "原始内容"));
+        // QFile 对目录同时返回 Owner/User 两个视图的权限位（0700 → Owner 三位
+        // + User 三位都置位），掩码须同时去掉两视图的写位，否则 chmod 后仍可写
+        QVERIFY2(QFile::setPermissions(dir.path(),
+            QFile::permissions(dir.path())
+            & ~(QFile::WriteOwner | QFile::WriteUser
+                | QFile::WriteGroup | QFile::WriteOther)),
+            "目录去写权限失败");
+        QSignalSpy spy(&fm, &FileManager::fileWriteError);
+        QVERIFY2(!fm.writeFile(path, "替换尝试"), "只读目录写入竟成功");
+        QCOMPARE(spy.count(), 1);
+        QFile::setPermissions(dir.path(),
+            QFile::permissions(dir.path()) | QFile::ReadOwner | QFile::WriteOwner
+            | QFile::ReadGroup | QFile::ReadOther | QFile::ExeOwner);
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        QCOMPARE(QString::fromUtf8(f.readAll()), QStringLiteral("原始内容"));
+        f.close();
+        // 失败后目录里不得残留 .tmp
+        QVERIFY(!QFile::exists(path + ".tmp"));
     }
 
     void testReadNonExistent() {

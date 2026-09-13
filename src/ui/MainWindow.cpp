@@ -380,6 +380,12 @@ void MainWindow::connectSignals()
     // 统一弹窗（打开对话框/双击/拖放/命令行/外部变更重载）；会话恢复期间静默
     // （读失败条目直接跳过，见 restoreSession——此前该信号无人连接，读失败
     // 静默返回 null：会话恢复开空标签页、重载静默放弃）
+    // 写失败详情捕获（writeFile 同步发射，false 返回前已送达此处）：
+    // 供 writeTabToFile 的失败弹窗展示具体错误（权限/磁盘满等）
+    connect(m_fileManager, &FileManager::fileWriteError, this,
+            [this](const QString &, const QString &error) {
+                m_lastWriteError = error;
+            });
     connect(m_fileManager, &FileManager::fileReadError, this,
             [this](const QString &path, const QString &error) {
                 if (m_suppressReadErrors) return;
@@ -816,6 +822,24 @@ static QString exportDefaultName(const QString &filePath, const QString &ext)
     return base + "." + ext;
 }
 
+// 异步取编辑器 HTML：源码模式下编辑器文档是进入源码前的旧快照（内容在
+// source-view textarea），取 getSourceContent() 经 toHtml 转换，用户保持源码
+// 模式不动；WYSIWYG 模式直接 getContent()
+static void getEditorHtmlAsync(EditorTab *tab,
+                               std::function<void(const QString &)> cb)
+{
+    if (!tab || !tab->webView())
+        return;
+    const bool src = tab->isSourceMode();
+    tab->webView()->page()->runJavaScript(
+        src ? QStringLiteral("window.editorApi.getSourceContent();")
+            : QStringLiteral("window.editorApi.getContent();"),
+        [src, cb](const QVariant &result) {
+            QString s = result.toString();
+            cb(src ? MarkdownHandler::toHtml(s) : s);
+        });
+}
+
 void MainWindow::onExportPdf()
 {
     EditorTab *tab = m_tabWidget->currentEditorTab();
@@ -831,11 +855,9 @@ void MainWindow::onExportPdf()
     // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
     QString docDir = QFileInfo(filePath).absolutePath();
 
-    // 异步获取编辑器 HTML 内容
-    tab->webView()->page()->runJavaScript(
-        "window.editorApi.getContent();",
-        [this, path, docDir](const QVariant &result) {
-            QString html = result.toString();
+    // 异步获取编辑器 HTML 内容（源码模式下取 source-view 当前内容经 toHtml，
+    // 否则导出的是进入源码前的旧快照）
+    getEditorHtmlAsync(tab, [this, path, docDir](const QString &html) {
             auto *exporter = new PdfExporter(this);
             connect(exporter, &PdfExporter::exportFinished, this,
                     [this, exporter](bool ok, const QString &out) {
@@ -873,11 +895,9 @@ void MainWindow::onExportDocx()
     // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
     QString docDir = QFileInfo(filePath).absolutePath();
 
-    // 异步获取编辑器 HTML 内容
-    tab->webView()->page()->runJavaScript(
-        "window.editorApi.getContent();",
-        [this, path, docDir](const QVariant &result) {
-            QString html = result.toString();
+    // 异步获取编辑器 HTML 内容（源码模式下取 source-view 当前内容经 toHtml，
+    // 否则导出的是进入源码前的旧快照）
+    getEditorHtmlAsync(tab, [this, path, docDir](const QString &html) {
             auto *exporter = new DocxExporter(this);
             connect(exporter, &DocxExporter::exportFinished, this,
                     [this, exporter](bool ok, const QString &out) {
@@ -903,10 +923,8 @@ void MainWindow::onExportHtml()
     QString docDir = QFileInfo(filePath).absolutePath();
     QString theme = Application::instance()->themeManager()->currentTheme();
 
-    tab->webView()->page()->runJavaScript(
-        "window.editorApi.getContent();",
-        [this, path, docDir, theme](const QVariant &result) {
-            QString html = result.toString();
+    // 源码模式下取 source-view 当前内容经 toHtml，否则导出的是进入源码前的旧快照
+    getEditorHtmlAsync(tab, [this, path, docDir, theme](const QString &html) {
             auto *exporter = new HtmlExporter(this);
             connect(exporter, &HtmlExporter::exportFinished, this,
                     [this, exporter](bool ok, const QString &out) {
@@ -1016,6 +1034,45 @@ void MainWindow::onNewFile()
     m_tabWidget->openNewTab();
 }
 
+void MainWindow::writeTabToFile(EditorTab *tab, const QString &path, bool setPathAfter,
+                                 std::function<void(bool)> cb)
+{
+    if (!tab)
+        return;
+    // 异步获取内容 → 写入。源码模式下编辑器文档是进入源码前的旧快照（内容在
+    // source-view textarea）：取 getSourceContent()——本身即 MD，无需 fromHtml。
+    // 否则源码编辑被静默丢弃，且 markClean 清掉脏标记后关闭标签页不再提示
+    const bool sourceMode = tab->isSourceMode();
+    tab->webView()->page()->runJavaScript(
+        sourceMode ? QStringLiteral("window.editorApi.getSourceContent();")
+                   : QStringLiteral("window.editorApi.getContent();"),
+        [this, tab, path, setPathAfter, sourceMode, cb](const QVariant &result) {
+            QString md = sourceMode ? result.toString()
+                                    : MarkdownHandler::fromHtml(result.toString());
+            const bool ok = m_fileManager->writeFile(path, md);
+            if (ok) {
+                m_statusBar->showMessage(tr("已保存"), 2000);
+                tab->runJsCommand("window.editorApi.markClean();");
+                if (setPathAfter)
+                    tab->setFilePath(path);
+                int idx = m_tabWidget->indexOf(tab);
+                if (idx >= 0) {
+                    m_tabWidget->markTabSaved(idx, path);
+                }
+                m_tabWidget->completePendingTabClose();
+            } else {
+                m_statusBar->showMessage(tr("保存失败"), 3000);
+                // 模态警告框：状态栏 3 秒小字在真实故障（磁盘满/只读目录/权限）
+                // 下等于没有提示（用户实测向 /usr 另存「没有任何提示」）
+                QMessageBox::warning(this, tr("保存失败"),
+                    tr("无法写入 %1：\n%2").arg(path,
+                        m_lastWriteError.isEmpty() ? tr("未知错误") : m_lastWriteError));
+            }
+            if (cb)
+                cb(ok);
+        });
+}
+
 void MainWindow::onSaveFile()
 {
     EditorTab *tab = m_tabWidget->currentEditorTab();
@@ -1026,25 +1083,7 @@ void MainWindow::onSaveFile()
         onSaveFileAs();
         return;
     }
-    // 异步获取 JS HTML 内容 → 转 Markdown → 写入
-    tab->webView()->page()->runJavaScript(
-        "window.editorApi.getContent();",
-        [this, tab, filePath](const QVariant &result) {
-            QString html = result.toString();
-            QString md = MarkdownHandler::fromHtml(html);
-            if (m_fileManager->writeFile(filePath, md)) {
-                m_statusBar->showMessage(tr("已保存"), 2000);
-                tab->runJsCommand("window.editorApi.markClean();");
-                int idx = m_tabWidget->indexOf(tab);
-                if (idx >= 0) {
-                    m_tabWidget->markTabSaved(idx, filePath);
-                }
-                m_tabWidget->completePendingTabClose();
-            } else {
-                m_statusBar->showMessage(tr("保存失败"), 3000);
-            }
-        }
-    );
+    writeTabToFile(tab, filePath, false, {});
 }
 
 void MainWindow::onSaveFileAs()
@@ -1056,25 +1095,7 @@ void MainWindow::onSaveFileAs()
                                                  tr("Markdown 文件 (*.md *.markdown)"));
     if (path.isEmpty()) return;
 
-    tab->webView()->page()->runJavaScript(
-        "window.editorApi.getContent();",
-        [this, tab, path](const QVariant &result) {
-            QString html = result.toString();
-            QString md = MarkdownHandler::fromHtml(html);
-            if (m_fileManager->writeFile(path, md)) {
-                m_statusBar->showMessage(tr("已保存"), 2000);
-                tab->runJsCommand("window.editorApi.markClean();");
-                tab->setFilePath(path);
-                int idx = m_tabWidget->indexOf(tab);
-                if (idx >= 0) {
-                    m_tabWidget->markTabSaved(idx, path);
-                }
-                m_tabWidget->completePendingTabClose();
-            } else {
-                m_statusBar->showMessage(tr("保存失败"), 3000);
-            }
-        }
-    );
+    writeTabToFile(tab, path, true, {});
 }
 
 void MainWindow::onFormatChanged(const QJsonObject &format, int /*tabId*/)
@@ -1171,7 +1192,14 @@ void MainWindow::applyCustomCss()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // 异步保存队列进行中：忽略再次关闭请求（等队列完成后主动 close()）
+    if (m_closeSavePending) {
+        event->ignore();
+        return;
+    }
+
     // 检查所有标签页是否有未保存的更改
+    QList<EditorTab *> toSave;
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         QString title = m_tabWidget->tabText(i);
         if (title.startsWith("● ")) {
@@ -1187,13 +1215,66 @@ void MainWindow::closeEvent(QCloseEvent *event)
                 return;
             }
             if (r == QMessageBox::Save) {
-                m_tabWidget->setCurrentIndex(i);
-                onSaveFile(); // 保存当前文件
+                EditorTab *tab = m_tabWidget->tabAt(i);
+                if (tab)
+                    toSave << tab;
             }
         }
     }
+
+    if (toSave.isEmpty()) {
+        saveSession();
+        QMainWindow::closeEvent(event);
+        return;
+    }
+
+    // 逐 tab 异步保存，全部落盘后再真正关闭。旧实现调 onSaveFile()（异步）
+    // 后立即 accept：窗口随事件循环销毁，runJavaScript 回调不再执行——
+    // 用户点了「保存」但文件未落盘
+    event->ignore();
+    m_closeSavePending = true;
+    m_closeSaveQueue = toSave;
+    processCloseSaveQueue();
+}
+
+void MainWindow::processCloseSaveQueue()
+{
+    while (!m_closeSaveQueue.isEmpty()) {
+        EditorTab *tab = m_closeSaveQueue.takeFirst();
+        if (m_tabWidget->indexOf(tab) < 0)
+            continue;   // 队列处理期间该 tab 已被关闭
+        QString filePath = tab->webView()->property("filePath").toString();
+        if (filePath.isEmpty() || !QFile::exists(filePath)) {
+            // 无路径的脏 tab：走另存为对话框；取消视为放弃关闭
+            QString path = QFileDialog::getSaveFileName(this, tr("另存为"),
+                                                        "untitled.md",
+                                                        tr("Markdown 文件 (*.md *.markdown)"));
+            if (path.isEmpty()) {
+                abortCloseSaves();
+                return;
+            }
+            writeTabToFile(tab, path, true, [this](bool) { processCloseSaveQueue(); });
+        } else {
+            writeTabToFile(tab, filePath, false, [this](bool ok) {
+                if (!ok) {
+                    abortCloseSaves();   // 保存失败：留在应用（状态栏已报错）
+                    return;
+                }
+                processCloseSaveQueue();
+            });
+        }
+        return;   // 异步等待回调续跑队列
+    }
+    // 队列清空：全部落盘，真正关闭
+    m_closeSavePending = false;
     saveSession();
-    QMainWindow::closeEvent(event);
+    close();
+}
+
+void MainWindow::abortCloseSaves()
+{
+    m_closeSavePending = false;
+    m_closeSaveQueue.clear();
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
