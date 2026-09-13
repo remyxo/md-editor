@@ -2,6 +2,37 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.16.0] — 2026-09-13
+
+全面代码审查修复批次（3 个并行审查覆盖往返保真核心 / Web 层 / C++ 外壳与安全面，约 50 项发现，本版完成 P0-P3 四个批次）。
+
+### 修复 — 数据丢失与损坏（P0）
+- **块引用内行内格式全剥离** — fromHtml 引用步骤先于行内转换运行，`inner.remove(<[^>]*>)` 把引用内所有标签剥掉：WYSIWYG 对引用内文字加粗每次保存即丢语义（`> **加粗**` → `> 加粗`），链接/图片直接消失。修复：引用抽取后移至行内占位保护之后 + `blockquoteInnerInlineToMd` 手动转换 Qt 侧标签族
+- **数学块正则 `\3` 反向引用越界** — 仅 2 个捕获组引用 `\3`（越界组号被 Qt 当字面量输出），数学块前 ≥2 空行时 div 开标签被替换成字面 `\3`（数据损坏）
+- **`~~~` 波浪围栏与缩进围栏整族无保护** — 顶层围栏状态机只认零缩进反引号：`~~~` 内容行被 BRMARKER 注入 `<br data-brk>`，往返后代码行无分隔拼接、语言串打碎。新增 `isTopLevelFenceLine`（CommonMark 全族）+ 闭合同字符互斥
+- **源码模式保存/导出旧快照** — `getContent()` 恒取 WYSIWYG 文档，源码模式编辑后 Ctrl+S 写入旧内容、编辑静默丢失且 markClean 清脏标记；三导出同受害。保存取 `getSourceContent()` 原样写盘，导出经 `getEditorHtmlAsync`
+- **writeFile 不查写错误** — 磁盘满时部分内容的 tmp 直接替换原文件（静默截断 + 界面报已保存）。重构为 QSaveFile 原子提交 + 状态检查，失败路径恢复监控 + 模态警告框（曾 fileWriteError 零连接，唯一反馈是 3 秒状态栏小字）
+- **关闭窗口不等异步保存** — closeEvent 调异步保存后立即退出，回调随窗口销毁不再执行：点了「保存」但未落盘。改逐 tab 异步保存队列
+- **mermaid XSS（编辑器 + 导出双面）** — `securityLevel:'loose'` 跳过 sanitizeUrl/sanitizeText，恶意图表标签把 `<img onerror=…>` 带进 SVG 经 innerHTML 执行（编辑器页持有 QWebChannel bridge 即特权执行；导出的自包含 HTML 打开即触发）。三处改 strict + `_sanitizeMermaidSvg` 增补 script/事件属性/javascript: 清洗纵深
+- **HTML 导出任意本地文件内联** — `inlineImages` 无围栏无校验无上限：`![](../../.ssh/id_rsa)` 把任意文件 base64 嵌进产物。docDir canonical 围栏 + 内容级 MIME 白名单 + 50MB 上限
+
+### 修复 — 保真与嵌套完整性（P1）
+- **DOCX 引用块完整化** — 曾嵌套引用内层闭合截断外层（其后段落丢失）、引用内 pre/table 文本丢失、列表退化。全量分派 + 递归 + 逐段引用样式（层级缩进）
+- **DOCX 色值校验** — CSS 命名色查表 / `#RGB` 展开 / 非法值跳过（曾输出 `w:val="RED"` 违反 ST_HexColor，Word 弹修复框）
+- **DOCX 嵌套 span 颜色栈** — CSS 级联语义（内层闭合后外层颜色恢复）+ 数学 span 精确配对
+- **嵌套 span 平衡提取** — toHtml/fromHtml 两处 `(.*?)</span>` 停在第一个闭合处，备份不平衡、结构逐轮退化。改 `findMatchingSpanClose` 平衡扫描
+- **多位有序列表边界**（`10.` 与 `1.` 行为一致）、**表格规范化围栏感知**（围栏内 `|a|b|` 字节不变）、**无色 span 不再剥壳**（保留 font-family 等）
+- **后台标签页通知污染当前页 UI** — headings/format/history 加当前 tab 守卫 + 切页主动重推
+- **保存窗口脏标记竞态** — `_docVersion` 快照比对，保存期间再编辑不清脏
+- 标签关闭记指针（防下标漂移关错页）、三导出器 exportError 接线、外部重载 dirty 警示、编辑器导航白名单（qrc/localimg/about）、openUrl/扩展名白名单、insertImage 路径转义、localimg 目录围栏（docDir 白名单注册）
+
+### 优化 — 性能（P2）
+- MarkdownHandler 六处热点单趟化/缓存：escapeUnclosedHtmlTags（每标签正则构造 + 全尾扫描 → indexOf 词边界）、ZZHI 终止判定、软换行还原、脚注定义展开（token 扫描 + 查表）、列表容器/等宽字体模式缓存
+- 编辑器上报防抖（大纲 300ms/字数 200ms，onSelectionUpdate 去冗余上报）、源码区输入合批 80ms（曾每击键强制回流 + 全文正则）、会话恢复去 O(N²)（新 tab 单页应用配置）
+
+### 加固 — 择要（P3）
+- Math/Mermaid 离屏渲染器 30s 看门狗（挂死不再无声失联）；watcher 重复注册去重 + 关 tab 不误停同文件监控；customCss 剥 `</style>` 防注入；DOCX colgroup 列宽正则锚定；`_imagePending` 清理与死代码清理；vendored QtMarkdownWriter 上游缺陷记录入文档
+
 ## [0.15.0] — 2026-09-13
 
 ### 新增
