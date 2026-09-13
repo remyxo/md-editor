@@ -1,7 +1,9 @@
 #include <QTest>
+#include <QCoreApplication>
 #include <QTemporaryDir>
 #include <QDir>
 #include <QFile>
+#include <QJSEngine>
 #include <QPageSize>
 #include <QRegularExpression>
 #include "../src/core/PdfExporter.h"
@@ -81,6 +83,63 @@ private slots:
                 < out.indexOf("PagedPolyfill.preview()"));
         QVERIFY(out.indexOf("window.__verifyContent()")
                 > out.indexOf("PagedPolyfill.preview()"));
+    }
+
+    void testBuildRenderHtmlTableColumnFixer() {
+        // 超宽表格（列 min-content 之和 > 页宽）两症状的根治前置：
+        // ① th,td 可任意断行：长 URL 等无断行点 token 不再撑大列 min-content
+        //    （auto 布局表格永不小于 min-content → 右溢页宽被 sheet 静默右裁）。
+        //    规则在 @media print 之外：paged.js 屏幕分页测量与打印折行必须一致，
+        //    否则测量行高失真（打印侧折行更高 → 行溢出页底）
+        // ② __fixTableColumns：首行列几何 → 百分比固定列（重写 colgroup + 每行
+        //    单元格内联百分比宽 + table-layout:fixed + 清 min-width）。paged.js
+        //    跨页碎片是 cloneNode(false) 浅克隆，丢 colgroup 子元素——列几何必须
+        //    自描述在行单元格上，换页前后碎片列才能对齐。调用点在指纹快照之前
+        //    （与 __splitPreLines 同一前置区，重排不改 textContent）
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", specWithHeader());
+        QVERIFY2(out.contains("th,td{overflow-wrap:anywhere;}"), qPrintable(out));
+        QVERIFY(out.indexOf("th,td{overflow-wrap:anywhere;}")
+                < out.indexOf("@media print{"));
+        QVERIFY2(out.contains("window.__fixTableColumns=function()"), qPrintable(out));
+        QVERIFY2(out.contains("table.style.tableLayout='fixed'"), qPrintable(out));
+        // 列宽分配基准：页面内容宽（px）注入为 JS 全局（@page 宽−左右边距，
+        // 横向换向取短边），不能拿屏幕视口宽度当可用宽
+        QVERIFY2(out.contains("window.__pageContentWidthPx="), qPrintable(out));
+        // 两趟 intrinsic 测量（min-content 作保底宽、max-content 作期望宽）：
+        // 直接量取屏幕 auto 布局会把短列（编号/状态）压到单字宽——anywhere 使
+        // min-content 塌缩为单字符，富余宽度按 max-content 比例尽归长列
+        QVERIFY2(out.contains("table.style.width='min-content'"), qPrintable(out));
+        QVERIFY2(out.contains("table.style.width='max-content'"), qPrintable(out));
+        QVERIFY(out.indexOf("window.__fixTableColumns();")
+                < out.indexOf("window.__preText=document.body.textContent;"));
+    }
+
+    void testBuildRenderHtmlInlineScriptsSyntaxValid() {
+        // 内联 <script> 的 JS 语法有效性：preparePrint 是几十段拼接的字符串字面量，
+        // 子串断言测不出语法错误——一处语法错即整块解析失败，__preparePrint 不存在、
+        // __printState 永不置位 → C++ 侧 30s 超时回退原生分页（产物丢页眉页脚），
+        // 且无任何报错指向真因。用 QJSEngine 包一层【不被调用】的函数体做纯语法
+        // 检查：解析覆盖全串，顶层语句（window.* 赋值等）不执行，无 DOM 依赖
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", specWithHeader());
+        QRegularExpression re("<script>(.*?)</script>",
+                              QRegularExpression::DotMatchesEverythingOption);
+        auto it = re.globalMatch(out);
+        int n = 0;
+        while (it.hasNext()) {
+            QString js = it.next().captured(1);
+            // QJSEngine 要求先有 QCoreApplication（本测试族是 QTEST_APPLESS_MAIN）；
+            // 函数级静态只构造一次，非 GUI 应用无平台插件依赖
+            static int argc = 1;
+            static char arg0[] = "test";
+            static char *argv[] = {arg0, nullptr};
+            static QCoreApplication app(argc, argv);
+            QJSEngine engine;
+            QJSValue r = engine.evaluate("(function(){\n" + js + "\n})");
+            QVERIFY2(!r.isError(),
+                     qPrintable(QStringLiteral("内联脚本%1语法错误: %2").arg(n).arg(r.toString())));
+            ++n;
+        }
+        QVERIFY(n >= 3);   // rAF 垫片 + PagedConfig + preparePrint + KaTeX 引导
     }
 
     void testBuildRenderHtmlVerifyContentCoversImages() {

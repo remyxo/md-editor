@@ -47,6 +47,9 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     QString body = HtmlExporter::inlineImages(html, docDir);
 
     const bool paged = spec.pagedActive();
+    // 页面内容宽（CSS px，96dpi）：__fixTableColumns 列宽分配的可用宽基准。
+    // 声明在 if(paged) 外——pagedScripts 拼接处也要用
+    double pageContentWidthPx = 0;
     // @page 规则（paged 激活时）：置于 @media print 之外——paged.js 在屏幕媒体
     // 上解析分页；margin 顺序 CSS = 上 右 下 左
     QString pageCss;
@@ -132,6 +135,16 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                        "img:not([width]):not([style]){max-height:%1mm!important;"
                        "width:auto!important;}")
                        .arg(capH, 0, 'f', 1);
+        // 表格长 token 断行：长 URL/连续串无断行点 → 列 min-content 撑大 → auto
+        // 布局表格永不小于 min-content → 右溢页宽被 sheet（overflow:hidden）静默
+        // 右裁（与图片右裁同型的纯几何损失，指纹拦不住）。与 pre/code 的 anywhere
+        // 同型；须在 @media print 之外——paged.js 屏幕分页测量与打印折行必须一致，
+        // 否则测量行高失真（打印侧折行更高 → 行溢出页底）
+        pageCss += QStringLiteral("th,td{overflow-wrap:anywhere;}");
+        // 内容宽 = 纸宽 − 左右边距（横向换向取短边），mm→px 与 Chromium CSS px 一致
+        const double contentWmm = (spec.orientation == QPageLayout::Landscape ? paperMm.height() : paperMm.width())
+                                  - spec.marginsMm.left() - spec.marginsMm.right();
+        pageContentWidthPx = contentWmm / 25.4 * 96.0;
     }
     // 旧 @page{margin:0}（Qt QPageLayout 边距方案）仅 legacy 路保留；
     // paged 路径下若同存，@media print 内的后位规则会级联覆盖新 margin
@@ -251,6 +264,97 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "}"
         "window.Paged.registerHandlers(TableRowBreakFixer);"
         "};"
+        // 表格列宽归一化（仅 paged 路径调用）：超宽表格右溢、跨页列错位、短列被
+        // 挤压三个症状的根治。症状：① 列 min-content 之和 > 页宽（12 列 + 长
+        // URL）→ auto 布局右溢被裁；② paged.js 跨页碎片是 cloneNode(false) 浅
+        // 克隆——保 style 属性、丢 colgroup 子元素，碎片 auto 布局按自身内容重算
+        // 列宽 → 换页前后列不对齐；③ 直接量取屏幕 auto 布局的列宽再锁定，短列
+        // （编号/状态）被长列（备注/URL）的 max-content 按比例挤到单字宽，
+        // 「001」「已完成」逐字竖排折行。方案：两趟 intrinsic 测量（min-content
+        // 作保底、max-content 作期望；测量时内联打印字号/边距/字族——打印 CSS
+        // 不作用于屏幕，且暂关 anywhere：拉丁整词/CJK 逐字才是自然断行单元）
+        // → 「短列保真、长列吸收」分配：floor=min(max, 3×min, 等份额)，常态把
+        // 富余按 slack 比例摊给长列 → 百分比固定列（colgroup + 每行单元格内联
+        // 宽 + table-layout:fixed）：列几何与内容解耦且自描述在行上（碎片浅克
+        // 隆也带走），换页前后一致
+        "window.__fixTableColumns=function(){"
+        "var avail=(window.__pageContentWidthPx>0)?window.__pageContentWidthPx:"
+        "(document.body?document.body.clientWidth:0);"
+        "if(!(avail>0))return;"
+        "document.querySelectorAll('table').forEach(function(table){"
+        "var firstRow=table.querySelector('tr');"
+        "if(!firstRow||!firstRow.children.length)return;"
+        "var saved=[],all=table.querySelectorAll('td,th');"
+        "for(var i=0;i<all.length;i++){"
+        "saved.push([all[i],all[i].getAttribute('style')]);"
+        "all[i].style.fontSize='10pt';"
+        "all[i].style.padding='4px 8px';"
+        "all[i].style.overflowWrap='normal';"
+        "}"
+        "var savedTable=table.getAttribute('style');"
+        "table.style.borderCollapse='collapse';"
+        "table.style.fontFamily='Noto Sans SC,DejaVu Sans,sans-serif';"
+        "table.style.tableLayout='auto';"
+        "var expand=function(){"
+        "var out=[],ci=0;"
+        "for(var i=0;i<firstRow.children.length;i++){"
+        "var span=Math.max(1,parseInt(firstRow.children[i].getAttribute('colspan')||'1',10));"
+        "var w=firstRow.children[i].getBoundingClientRect().width/span;"
+        "for(var s=0;s<span;s++)out[ci++]=w;"
+        "}"
+        "return out;"
+        "};"
+        "table.style.width='min-content';"
+        "var minW=expand();"
+        "table.style.width='max-content';"
+        "var maxW=expand();"
+        "var n=minW.length,floor=[],sumMax=0,sumFloor=0;"
+        "for(var j=0;j<n;j++){"
+        "if(!(maxW[j]>0))maxW[j]=(minW[j]>0)?minW[j]:1;"
+        "if(!(minW[j]>0))minW[j]=maxW[j];"
+        "floor[j]=Math.min(maxW[j],Math.min(minW[j]*3,avail/n));"
+        "sumMax+=maxW[j];sumFloor+=floor[j];"
+        "}"
+        "var w=[];"
+        "if(sumMax<=avail){"
+        "for(j=0;j<n;j++)w.push(maxW[j]*avail/sumMax);"
+        "}else if(sumFloor<=avail){"
+        "var k=(avail-sumFloor)/(sumMax-sumFloor);"
+        "for(j=0;j<n;j++)w.push(floor[j]+(maxW[j]-floor[j])*k);"
+        "}else{"
+        "for(j=0;j<n;j++)w.push(floor[j]*avail/sumFloor);"
+        "}"
+        "var total=0;for(j=0;j<n;j++)total+=w[j];"
+        "if(!(total>0))return;"
+        "for(i=0;i<all.length;i++){"
+        "if(saved[i][1]===null)all[i].removeAttribute('style');"
+        "else all[i].setAttribute('style',saved[i][1]);"
+        "}"
+        "if(savedTable===null)table.removeAttribute('style');"
+        "else table.setAttribute('style',savedTable);"
+        "var old=table.querySelector('colgroup');if(old)old.remove();"
+        "var cg=document.createElement('colgroup');"
+        "for(var c2=0;c2<n;c2++){"
+        "var col=document.createElement('col');"
+        "col.style.width=(w[c2]/total*100).toFixed(3)+'%';"
+        "cg.appendChild(col);"
+        "}"
+        "table.insertBefore(cg,table.firstChild);"
+        "var rows=table.querySelectorAll('tr');"
+        "for(var r=0;r<rows.length;r++){"
+        "var idx=0;"
+        "for(var c=0;c<rows[r].children.length;c++){"
+        "var sp=Math.max(1,parseInt(rows[r].children[c].getAttribute('colspan')||'1',10));"
+        "var wp=0;for(var q=0;q<sp&&idx+q<n;q++)wp+=w[idx+q];"
+        "rows[r].children[c].style.width=(wp/total*100).toFixed(3)+'%';"
+        "idx+=sp;"
+        "}"
+        "}"
+        "table.style.width='100%';"
+        "table.style.minWidth='0';"
+        "table.style.tableLayout='fixed';"
+        "});"
+        "};"
         // 内容指纹自检（保底零丢失）：分页前快照 body 文本（覆盖所有块类型——
         // 段落/标题/表格/代码/公式/图注），分页后汇总 .pagedjs_page_content 文本
         // 比对（页眉页脚在 .pagedjs_margin 盒内，不计入）。任何静默丢失（未知的
@@ -301,6 +405,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         ".then(function(){"
         "if(!window.PagedPolyfill){window.__printState='legacy';return 'legacy';}"
         "try{window.__fixTableBreaks();}catch(e){console.warn('表格断点修正注册失败: '+(e&&e.message||e));}"
+        "try{window.__fixTableColumns();}catch(e){console.warn('表格列宽归一化失败: '+(e&&e.message||e));}"
         "try{window.__splitPreLines();}catch(e){console.warn('代码块逐行重排失败: '+(e&&e.message||e));}"
         // 指纹快照必须在 splitPreLines 之后（它重排 pre 文本，前后快照要同基线）
         "window.__preText=document.body.textContent;"
@@ -334,8 +439,10 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                          "window.requestAnimationFrame=function(cb){"
                          "return setTimeout(function(){cb(performance.now());},0);};"
                          "</script>"
+                         "<script>window.__pageContentWidthPx=%1;</script>"
                          "<script>window.PagedConfig={auto:false};</script>"
                          "<script src=\"paged.polyfill.js\"></script>")
+              .arg(pageContentWidthPx, 0, 'f', 1)
         : QString();
 
     QString fullHtml = QString(
