@@ -2,6 +2,18 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.15.0] — 2026-09-13
+
+### 新增
+- **DOCX 导出页眉页脚与页码（Word 原生部件 + 活字段）** — 页眉部件为文档标题居中单段（9pt 灰 #808080），页脚「第 X 页 / 共 Y 页」右对齐，X/Y 为 PAGE/NUMPAGES 简单字段——Word 打开时按字段重算（活页码，续编辑自动更新）；sectPr 同步声明纸张尺寸与页边距（twips），使 DOCX 页与导出设置一致、图片上限与实际页宽匹配；设置页独立开关（默认开，与 PDF 的页眉页脚开关互不影响），标题取导出文件名基名、无标题防御性不产页眉部件；headerReference/footerReference 置于 pgSz 之前（CT_SectPr schema 顺序），部件关系与 [Content_Types] 完整声明
+- **PDF 导出内联脚本语法校验测试** — buildRenderHtml 的 preparePrint 是几十段拼接的 JS 字符串，子串断言测不出语法错误：一处语法错即整块解析失败、`__printState` 永不置位、C++ 侧 30s 超时静默回退原生分页（产物丢页眉页脚且无报错指向真因）。新增 QJSEngine 包未调用函数体的纯语法检查（解析覆盖全串、顶层语句不执行、无 DOM 依赖）
+
+### 修复
+- **DOCX 导出超高图片/超长 mermaid 图被截断** — 嵌入图片此前只有宽度上限（clampToMaxWidth），纵向超长 mermaid（TB 数十节点）宽度远小于页宽而高度数倍于页高，Word 不对内联图片跨页排版、超出页高部分直接被裁。改为宽高联合等比缩放（clampToPageArea，取更紧约束、只收缩不放大），高度上限与 PDF 导出的 capH 同源（页高 − 上下边距 − 2mm 安全间隙）；mermaid 绘图、块级 `<img>`、行内 `<img>` 三个嵌入点统一生效，长竖版截图同受益
+- **DOCX 导出 `<small>` 小号字与正文一样大** — parseInline 内联标签分支无 small（strong/em/u/s/code/mark/sub/sup 均有），穿透后文字继承 docDefaults 的 11pt；编辑器与 PDF 走浏览器 small 默认缩放（约 0.83×），仅 DOCX 丢效果。RunFormat 增 smallText 标志，toPrXml 输出 `w:sz=18`（9pt，对齐浏览器 smaller 比例）
+- **PDF 导出超宽表格右溢截断、跨页列错位、短列被挤压** — 三个同源症状：① 长 URL 等无断行点 token 撑大列 min-content（auto 布局表格永不小于 min-content）→ 整表右溢页宽被 sheet（overflow:hidden）静默右裁：th/td 增 anywhere 断行（规则置于 @media print 之外——paged.js 屏幕分页测量与打印折行必须一致，否则测高分页高度失真）；② paged.js 跨页表格碎片是 cloneNode(false) 浅克隆（保 style 属性、丢 colgroup 子元素），各碎片 auto 布局按自身内容重算列宽 → 换页前后列不对齐；③ 直接锁定屏幕量取的 auto 布局列宽，短列（编号/状态）被长列 max-content 按比例挤到单字宽、「001」「已完成」逐字竖排折行。修复：`__fixTableColumns` 分页前预处理——两趟 intrinsic 测量（min-content 作保底、max-content 作期望；测量时内联打印字号/边距/字族，暂关 anywhere——拉丁整词/CJK 逐字才是自然断行单元）→「短列保真、长列吸收」分配（floor = min(期望, 3×保底, 等份额)，富余按 slack 比例摊给长列，极多列等比压缩）→ colgroup 重写为百分比固定列 + 每行单元格内联百分比宽 + table-layout:fixed（列几何与内容解耦且自描述在行上，碎片浅克隆也带走）；可用宽为 C++ 注入的页面内容宽 px（@page 宽 − 左右边距，横向取短边）
+- **README License 修正** — MIT 残留声明改为 GPL-3.0（0.13.0 起项目已统一 GPL-3.0）
+
 ## [0.14.0] — 2026-09-07
 
 ### 新增
