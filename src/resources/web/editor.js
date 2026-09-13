@@ -1808,8 +1808,10 @@ window.editorApi = {
                     self._markDirty();
                 }
                 self._scheduleLineGutter();
-                self.notifyHeadings();
-                self.notifyWordCount();
+                // 大纲/字数为全文档扫描 + IPC：防抖上报（曾每击键一次，
+                // 大文档下打字卡顿来源之一）；历史状态轻量，保持逐事务
+                self._scheduleHeadings();
+                self._scheduleWordCount();
                 self.notifyHistory();
                 self._notifySearchCount();
             },
@@ -1821,8 +1823,8 @@ window.editorApi = {
                     self.bridge.cursorChanged(lc.line, lc.col, pos);
                     self.notifyFormat();
                 }
-                self.notifyHeadings();
-                self.notifyHistory();
+                // 标题结构与撤销栈只在内容变更事务中变化（onUpdate 已覆盖），
+                // 纯选区变化上报它们是每击键/每光标移动两次全量扫描 + IPC
             },
         };
         if (content !== undefined) config.content = content;
@@ -1876,6 +1878,24 @@ window.editorApi = {
     },
 
     // === 通知方法 ===
+
+    // 防抖上报：等待录入停顿再全量扫描（300ms 大纲 / 200ms 字数）
+    _scheduleHeadings: function() {
+        var self = this;
+        if (this._headingsTimer) return;
+        this._headingsTimer = setTimeout(function() {
+            self._headingsTimer = null;
+            self.notifyHeadings();
+        }, 300);
+    },
+    _scheduleWordCount: function() {
+        var self = this;
+        if (this._wcTimer) return;
+        this._wcTimer = setTimeout(function() {
+            self._wcTimer = null;
+            self.notifyWordCount();
+        }, 200);
+    },
 
     notifyHeadings: function() {
         if (!this.editor || !this.bridge) return;
@@ -2365,10 +2385,16 @@ window.editorApi = {
         // 程序化 sourceView.value = md 不会触发 input 事件，初始填充安全。
         var api = this;
         this._onSourceInput = function() {
-            api._resizeSourceView();
+            // 立即置脏（轻量标志）；重排与搜索重算合批防抖——曾每击键触发：
+            // _resizeSourceView 读 scrollHeight 强制回流 + 搜索激活时
+            // _srcOnSourceEdit 全文正则 + 全部匹配重测量（数百次回流/击键）
             api._markDirty();
-            // 手动编辑源码时重算搜索匹配并刷新高亮（否则 overlay 底色停在旧位置）。
-            api._srcOnSourceEdit();
+            if (api._srcEditTimer) return;
+            api._srcEditTimer = setTimeout(function() {
+                api._srcEditTimer = null;
+                api._resizeSourceView();
+                api._srcOnSourceEdit();
+            }, 80);
         };
         sourceView.addEventListener('input', this._onSourceInput);
         // keep-warm 适配：窗口缩放改变隐藏编辑器的高度，负 margin 需随之更新

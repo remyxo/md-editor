@@ -53,6 +53,23 @@ static QString jsSingleQuoted(const QString &s)
     return t;
 }
 
+// 读编辑器设置并应用到单个 tab（新 tab 页面加载完成时用）。曾直接调用四个
+// apply*（各自遍历全部标签页）——N 个标签的会话恢复产生 O(N²) 次
+// runJavaScript 与 4N 次 QSettings 构造解析；全局设置变更仍走完整 apply*
+static void applyEditorConfigTo(EditorTab *tab)
+{
+    QSettings settings("md-editor", "md-editor");
+    tab->setEditorFont(settings.value("editor/font", "Sans Serif").toString(),
+                       settings.value("editor/fontSize", 18).toInt());
+    tab->setEditorWidth(settings.value("editor/width", 80).toInt());
+    QJsonObject s;
+    s["lineNumbers"] = settings.value("editor/lineNumbers", false).toBool();
+    s["wordWrap"] = settings.value("editor/wordWrap", true).toBool();
+    s["tabSize"] = settings.value("editor/tabSize", 4).toInt();
+    tab->setEditorSettings(s);
+    tab->applyCustomCss(settings.value("editor/customCss").toString());
+}
+
 MainWindow::MainWindow(const QString &initialFile, QWidget *parent)
     : QMainWindow(parent)
 {
@@ -565,7 +582,8 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
         connect(tab, &EditorTab::pageLoadFinished, this,
                 [this, tab](bool ok) {
             if (!ok) return;
-            applyEditorFont(); applyEditorWidth(); applyEditorSettings(); applyCustomCss();
+            // 只应用本 tab（曾调四个 apply* 全量广播所有标签页，会话恢复 O(N²)）
+            applyEditorConfigTo(tab);
             // 补推当前实际主题，新 tab 与全局一致（缺口①）
             tab->setEditorTheme(
                 Application::instance()->themeManager()->currentTheme());
