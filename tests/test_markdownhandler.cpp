@@ -4433,6 +4433,70 @@ private slots:
                  qPrintable(QStringLiteral("10k 行往返超时: %1 ms").arg(totalMs)));
     }
 
+    void testFromHtmlHotpathBenchmark()
+    {
+        // 审查 P1-6 热点用例的防回归基准（2026-09-13 阶段 2 修复）。
+        // 修复前（while(true){ re.match(s,offset); s.replace(...) } 的 O(K·n)
+        // 模式，18 处 + isInsideGeneralList/span 平衡扫描）：
+        //   3000 <span style> → fromHtml 9.3s（span 提取独占 5.2s）
+        //   4000 行表格 → fromHtml 16.3s（同一 <table> 被完整扫描两遍）
+        //   4000 行内公式 → fromHtml 3.7s
+        // 修复后（globalMatch 单遍重建 + span 栈配对预计算 + 表格单趟合并）：
+        //   76ms / 276ms / 64ms（表格已低于纯 Qt setHtml+toMarkdown 的 341ms
+        //   基线，后处理成本不再是瓶颈）。
+        // 上限取修复后基线 5-10 倍余量：正常 CI 差异远低于此，任何 O(K·n)
+        // 回归（回到秒级）都会被捕获。
+#ifndef QT_NO_DEBUG
+        // Debug 构建的 QString/正则开销数倍于 Release，计时结果无意义且会误触上限
+        QSKIP("计时基准仅 Release 构建运行");
+#endif
+        QElapsedTimer timer;
+
+        // 用例 1：3000 个 <span style>（step N 的 span 提取）
+        QString spanHtml;
+        spanHtml.reserve(3000 * 90);
+        for (int i = 0; i < 3000; ++i)
+            spanHtml += QStringLiteral(
+                "<p>前文 %1 <span style=\"color:red\">红字 %1</span> 尾文</p>\n").arg(i);
+        timer.start();
+        const QString spanMd = MarkdownHandler::fromHtml(spanHtml);
+        const qint64 spanMs = timer.elapsed();
+        QCOMPARE(spanMd.count(QStringLiteral("<span style=")), 3000);
+        QVERIFY2(spanMs < 1000,
+                 qPrintable(QStringLiteral("3000-span fromHtml 超时: %1 ms").arg(spanMs)));
+
+        // 用例 2：4000 行表格（对齐提取 + 空单元格防护 + 合并行提取）
+        QString tableHtml = QStringLiteral("<table><tr><th>H1</th><th>H2</th></tr>");
+        tableHtml.reserve(4000 * 40);
+        for (int i = 0; i < 4000; ++i)
+            tableHtml += QStringLiteral("<tr><td>a%1</td><td>b%1</td></tr>").arg(i);
+        tableHtml += QStringLiteral("</table>");
+        timer.start();
+        const QString tableMd = MarkdownHandler::fromHtml(tableHtml);
+        const qint64 tableMs = timer.elapsed();
+        QCOMPARE(tableMd.count(QStringLiteral("| a")), 4000);
+        QVERIFY(tableMd.contains(QStringLiteral("| a0 | b0 |")));
+        QVERIFY(tableMd.contains(QStringLiteral("| a3999 | b3999 |")));
+        QVERIFY2(tableMs < 2000,
+                 qPrintable(QStringLiteral("4000-row-table fromHtml 超时: %1 ms").arg(tableMs)));
+
+        // 用例 3：4000 个行内公式（data-latex 提取 + 实体解码）
+        QString mathHtml;
+        mathHtml.reserve(4000 * 90);
+        for (int i = 0; i < 4000; ++i)
+            mathHtml += QStringLiteral(
+                "<p>前 %1 <span data-type=\"inline-math\" data-latex=\"x_%1\"></span> 后</p>\n").arg(i);
+        timer.start();
+        const QString mathMd = MarkdownHandler::fromHtml(mathHtml);
+        const qint64 mathMs = timer.elapsed();
+        QCOMPARE(mathMd.count(QStringLiteral("$x_")), 4000);
+        QVERIFY2(mathMs < 800,
+                 qPrintable(QStringLiteral("4000-inline-math fromHtml 超时: %1 ms").arg(mathMs)));
+
+        qDebug() << "热点基准: span" << spanMs << "ms, table" << tableMs
+                 << "ms, math" << mathMs << "ms";
+    }
+
     void testInlineCodeTagNotDoubleEscaped()
     {
         // 行内代码内的字面标签（`<hr>`）是 code span 文本，不是 HTML 标签：

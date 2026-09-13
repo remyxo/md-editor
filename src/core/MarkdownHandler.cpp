@@ -498,6 +498,77 @@ static void globalReplaceWith(QString &s, const QRegularExpression &re, F fn)
     result += s.mid(last);
     s = result;
 }
+
+// 单遍重建（区域消费版）：适用于「匹配到开标签后由平衡扫描确定整个消费区域」
+// 的提取循环（任务列表/脚注容器/style span 等）。fn(m, replacement, consumedTo)
+// 返回 true 表示消费 [m.capturedStart(), consumedTo) 并以 replacement 替换；
+// 返回 false 表示跳过——保留原文，消费至 m.capturedEnd()。
+// 与旧 while(true){ re.match(s,off); s.replace(...) } 循环的等价性依据：
+// ① 匹配在原始串一次收集（globalMatch O(n)），替换串/占位符不参与后续扫描
+//   （占位符形态 ZZxxNNZZ 不含标签语法，不会命中）；
+// ② 消费区域必为平衡结构（开标签..配对闭标签），落在区域内的后续匹配在旧
+//   流程中该区域已被占位符替换、不可能再命中，此处以 capturedStart() < last
+//   跳过，语义一致；
+// ③ fn 内的上下文/平衡扫描读原始串：旧流程中先前消费区域已替换为占位符
+//   （无标签），本流程是原始标签——但消费区域内各标签自平衡，对深度/配对
+//   判定无净影响。
+template <typename F>
+static void globalExtractWith(QString &s, const QRegularExpression &re, F fn)
+{
+    QString result;
+    result.reserve(s.size());
+    int last = 0;
+    auto it = re.globalMatch(s);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        if (m.capturedStart() < last)
+            continue;   // 已消费区域内
+        QString replacement;
+        int consumedTo = m.capturedEnd();
+        if (fn(m, replacement, consumedTo)) {
+            result += s.mid(last, m.capturedStart() - last);
+            result += replacement;
+            last = consumedTo;
+        }
+    }
+    result += s.mid(last);
+    s = result;
+}
+
+// toHtml 侧 <div>（非 data-type）占位暂存的单遍重建（递归）。
+// 旧循环的跳过分支（捕获文本含 \x01 行内代码占位符时 offset=start+1 重搜）
+// 具重叠语义：本正则无 DotMatchesEverything（行限定）且内层为懒匹配，被跳过
+// 捕获必以 </div> 结尾、其中重命中的配对闭标签不会晚于该结尾，故重命中必
+// 落于被跳过捕获的内部——在 mid(1) 上递归单遍处理即可，发现序与占位符
+// 编号与旧循环一致。
+static QString stashPlainDivs(const QString &seg, QSet<QString> &collisions,
+                              QStringList &divBackups, QStringList &divPhs)
+{
+    static const QRegularExpression divRe(
+        R"(<div\b(?![^>]*\bdata-type\s*=)[^>]*>(.*?)</div>)");
+    QString out;
+    out.reserve(seg.size());
+    int last = 0;
+    auto it = divRe.globalMatch(seg);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        if (m.capturedStart() < last)
+            continue;   // 已消费区域内（嵌套 div 已随外层入备份）
+        out += seg.mid(last, m.capturedStart() - last);
+        if (m.captured().contains(QChar(1))) {
+            // 跳过：保留首字符，段内（去首字符）递归重搜（保旧 +1 重叠语义）
+            out += m.captured().left(1)
+                 + stashPlainDivs(m.captured().mid(1), collisions, divBackups, divPhs);
+        } else {
+            divPhs << collisionFreePlaceholder(collisions, "DV", divPhs.size());
+            divBackups << m.captured();
+            out += divPhs.last();
+        }
+        last = m.capturedEnd();
+    }
+    out += seg.mid(last);
+    return out;
+}
 // 空 alt 图片保形（toHtml 侧，全文档范围）。
 // Qt setMarkdown 对 alt 为空/空白的图片**整条丢弃**（实测 `![](a.png)` 只产出
 // 空段落，`![x](a.png)` 正常），图片在「打开→保存」一次往返后从文档消失
@@ -512,17 +583,11 @@ static void protectEmptyAltImages(QString &processed,
 {
     static const QRegularExpression csRe("(`+)([^`\n]+)\\1(?!`)");
     QStringList codes;
-    {
-        int off = 0;
-        while (true) {
-            const auto cm = csRe.match(processed, off);
-            if (!cm.hasMatch()) break;
-            codes << cm.captured(0);
-            const QString stash = "\x01EUI" + QString::number(codes.size() - 1) + "\x01";
-            processed.replace(cm.capturedStart(), cm.capturedLength(), stash);
-            off = cm.capturedStart() + stash.length();
-        }
-    }
+    globalReplaceWith(processed, csRe,
+        [&codes](const QRegularExpressionMatch &m) {
+            codes << m.captured(0);
+            return "\x01EUI" + QString::number(codes.size() - 1) + "\x01";
+        });
     static const QRegularExpression imgRe(
         R"(!\[([^\]\n]*)\]\(([^)\n]*)\))");
     globalReplaceWith(processed, imgRe,
@@ -1628,25 +1693,28 @@ static bool isInsideGeneralList(const QString &s, int pos)
     static const QRegularExpression olTagRe("<(/?)ol\\b[^>]*>");
     static const QRegularExpression ulTagRe(
         "<(/?)ul\\b(?![^>]*\\bdata-type\\s*=\\s*\"taskList\")[^>]*>");
+    // 单遍双流归并：两个 globalMatch 迭代器按位置序推进（Qt 的 match(s, scan)
+    // 每次从 scan 全串扫描到末尾，循环即 O(标签数×n)；globalMatch 单遍 O(n)）。
+    // 遇首个 start >= pos 的标签即停——后续标签位置更靠后，不可能再计入。
+    auto nextOf = [](QRegularExpressionMatchIterator &it, QRegularExpressionMatch &m) {
+        if (!it.hasNext()) return false;
+        m = it.next();
+        return true;
+    };
+    QRegularExpressionMatchIterator oi = olTagRe.globalMatch(s);
+    QRegularExpressionMatchIterator ui = ulTagRe.globalMatch(s);
+    QRegularExpressionMatch om, um;
+    bool hasO = nextOf(oi, om);
+    bool hasU = nextOf(ui, um);
     int depth = 0;
-    int scan = 0;
-    while (scan < pos) {
-        auto om = olTagRe.match(s, scan);
-        auto um = ulTagRe.match(s, scan);
-        const int op = om.hasMatch() ? om.capturedStart() : -1;
-        const int up = um.hasMatch() ? um.capturedStart() : -1;
-        if (op < 0 && up < 0) break;
-        // match 从 scan 开始找，结果可能落在 pos 之后——不计入深度，直接终止
-        // （首个标签已越过 pos，后续更不可能在 pos 之前）。
-        if (up < 0 || (op >= 0 && op < up)) {
-            if (op >= pos) break;
-            depth += om.captured(1).isEmpty() ? 1 : -1;
-            scan = om.capturedEnd();
-        } else {
-            if (up >= pos) break;
-            depth += um.captured(1).isEmpty() ? 1 : -1;
-            scan = um.capturedEnd();
-        }
+    while (hasO || hasU) {
+        // 取位置较小者（<ol 与 <ul 开头互斥，不存在同起点）
+        const bool takeO = hasO && (!hasU || om.capturedStart() < um.capturedStart());
+        const QRegularExpressionMatch &m = takeO ? om : um;
+        if (m.capturedStart() >= pos) break;
+        depth += m.captured(1).isEmpty() ? 1 : -1;
+        if (takeO) hasO = nextOf(oi, om);
+        else       hasU = nextOf(ui, um);
     }
     return depth > 0;
 }
@@ -2456,24 +2524,9 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
         // 2) 保护 <div>。捕获文本含 \x01（行内代码占位符）时跳过——说明该
         // <div> 与 </div> 之间的配对不可靠（占位符还原后才是真实文本），
         // 此时不能备份，否则占位符被吞进 divBackups、步骤 3 还原不到，
-        // 最终 \x01 泄漏进 HTML。
-        QRegularExpression divRe(
-            R"(<div\b(?![^>]*\bdata-type\s*=)[^>]*>(.*?)</div>)");
-        int n = 0;
-        int offset = 0;
-        while (true) {
-            auto m = divRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            if (m.captured().contains(QChar(1))) {
-                offset = m.capturedStart() + 1;
-                continue;
-            }
-            divBackups << m.captured();
-            divPhs << collisionFreePlaceholder(collisions, "DV", n++);
-            QString ph = divPhs.last();
-            processed.replace(m.capturedStart(), m.capturedLength(), ph);
-            offset = m.capturedStart() + ph.length();
-        }
+        // 最终 \x01 泄漏进 HTML。单遍重建（stashPlainDivs：跳过分支在捕获
+        // 段内递归，保旧 offset+1 重叠语义）。
+        processed = stashPlainDivs(processed, collisions, divBackups, divPhs);
         // 3) 还原行内代码
         for (int i = 0; i < codes.size(); ++i)
             processed.replace("\x01CODE" + QString::number(i) + "\x01", codes[i]);
@@ -3764,48 +3817,42 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //    注: 属性顺序不固定 — toHtml 输出 data-type 在前，TipTap 输出 data-latex 在前
     {
         int n = 0;
-        int offset = 0;
-        // 先匹配整个元素，再从中提取 data-latex（属性顺序无关）
-        QRegularExpression blockMathTagRe(
+        // 先匹配整个元素，再从中提取 data-latex（属性顺序无关）。
+        // 单遍重建：跳过分支（无 data-latex）返回原文——块级/行内公式均为空
+        // 元素（<div ...></div> / <span ...></span>，标签内无内容），旧循环
+        // 的 offset=+1 重搜不可能在其中再命中，语义等价。
+        static const QRegularExpression blockMathTagRe(
             R"re(<div\b[^>]*\bdata-type\s*=\s*"block-math"[^>]*></div>)re");
-        QRegularExpression latexRe(R"re(data-latex\s*=\s*"([^"]*)")re");
-        while (true) {
-            auto m = blockMathTagRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            QString tag = m.captured();
-            auto lm = latexRe.match(tag);
-            if (!lm.hasMatch()) { offset = m.capturedStart() + 1; continue; }
-            // 属性值实体解码：data-latex 的值经 TipTap getHTML() 的 innerHTML
-            // 序列化恒被转义（& → &amp;、< → &lt;、" → &quot;），toHtml 侧现在
-            // 也走 escapeHtmlAttr。不解码则 & 类公式（aligned/matrix 的对齐列
-            // `&`）每保存一轮就多一层转义（&amp; → &amp;amp;），永不收敛。
-            QString latex = unescapeHtmlEntities(lm.captured(1));
-            QString md = blockMathLatexToMarkdown(latex);
-            QString ph = collisionFreePlaceholder(collisions, "BM", n++);
-            placeholders << ph;
-            backups << md;
-            QString wrapped = wrapBlock(ph);
-            processed.replace(m.capturedStart(), m.capturedLength(), wrapped);
-            offset = m.capturedStart() + wrapped.length();
-        }
-        // 行内公式（同理：属性顺序无关）
-        QRegularExpression inlineMathTagRe(
+        static const QRegularExpression latexRe(R"re(data-latex\s*=\s*"([^"]*)")re");
+        globalReplaceWith(processed, blockMathTagRe,
+            [&](const QRegularExpressionMatch &m) {
+                const auto lm = latexRe.match(m.captured());
+                if (!lm.hasMatch()) return m.captured();
+                // 属性值实体解码：data-latex 的值经 TipTap getHTML() 的 innerHTML
+                // 序列化恒被转义（& → &amp;、< → &lt;、" → &quot;），toHtml 侧现在
+                // 也走 escapeHtmlAttr。不解码则 & 类公式（aligned/matrix 的对齐列
+                // `&`）每保存一轮就多一层转义（&amp; → &amp;amp;），永不收敛。
+                QString latex = unescapeHtmlEntities(lm.captured(1));
+                QString md = blockMathLatexToMarkdown(latex);
+                QString ph = collisionFreePlaceholder(collisions, "BM", n++);
+                placeholders << ph;
+                backups << md;
+                return wrapBlock(ph);
+            });
+        // 行内公式（同理：属性顺序无关；空元素，跳过分支无重叠语义）
+        static const QRegularExpression inlineMathTagRe(
             R"re(<span\b[^>]*\bdata-type\s*=\s*"inline-math"[^>]*></span>)re");
-        offset = 0;
-        while (true) {
-            auto m = inlineMathTagRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            QString tag = m.captured();
-            auto lm = latexRe.match(tag);
-            if (!lm.hasMatch()) { offset = m.capturedStart() + 1; continue; }
-            QString latex = unescapeHtmlEntities(lm.captured(1));   // 见上方块级公式注释
-            QString md = "$" + latex + "$";
-            QString ph = collisionFreePlaceholder(collisions, "IM", n++);
-            placeholders << ph;
-            backups << md;
-            processed.replace(m.capturedStart(), m.capturedLength(), ph);
-            offset = m.capturedStart() + ph.length();
-        }
+        globalReplaceWith(processed, inlineMathTagRe,
+            [&](const QRegularExpressionMatch &m) {
+                const auto lm = latexRe.match(m.captured());
+                if (!lm.hasMatch()) return m.captured();
+                QString latex = unescapeHtmlEntities(lm.captured(1));   // 见上方块级公式注释
+                QString md = "$" + latex + "$";
+                QString ph = collisionFreePlaceholder(collisions, "IM", n++);
+                placeholders << ph;
+                backups << md;
+                return ph;
+            });
     }
 
     // 1) 代码块：多重 <pre>（每行一个，QTextDocument 特有）→ 合并
@@ -4114,32 +4161,31 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //    置于行内代码/上下标/高亮/公式占位保护之后：条目文本中的 ZZ* 占位符
     //    被原样保留，最终在逆序还原阶段统一还原。
     {
-        QRegularExpression ulOpenRe(
+        static const QRegularExpression ulOpenRe(
             "<ul\\b[^>]*\\bdata-type\\s*=\\s*\"taskList\"[^>]*>");
         int n = 0;
-        int offset = 0;
-        while (true) {
-            auto m = ulOpenRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            // 嵌在通用列表内的 taskList 不在此提取（提升会丢失嵌套缩进），
-            // 留给步骤 5b 的 generalListInnerToMd 一并序列化
-            if (isInsideGeneralList(processed, m.capturedStart())) {
-                offset = m.capturedStart() + 1;
-                continue;
-            }
-            int closeStart = findMatchingUlClose(processed, m.capturedStart());
-            if (closeStart < 0) { offset = m.capturedStart() + 1; continue; }
-            QString md2 = taskListInnerToMd(
-                processed.mid(m.capturedEnd(), closeStart - m.capturedEnd()), 0);
-            while (md2.endsWith('\n')) md2.chop(1);
-            QString ph = collisionFreePlaceholder(collisions, "TL", n++);
-            placeholders << ph;
-            backups << md2;
-            int totalLen = closeStart + 5 - m.capturedStart(); // 含 </ul>
-            QString wrapped = wrapBlock(ph);
-            processed.replace(m.capturedStart(), totalLen, wrapped);
-            offset = m.capturedStart() + wrapped.length();
-        }
+        // 单遍重建（globalExtractWith）：开标签匹配不重叠；跳过分支的旧
+        // offset=+1 重搜只能落在本就互斥的开标签内部属性区，实际不可命中，
+        // 保留原文即等价。fn 内 isInsideGeneralList/findMatchingUlClose 读
+        // 原始串——先前消费区域各标签自平衡，深度判定不受影响。
+        globalExtractWith(processed, ulOpenRe,
+            [&](const QRegularExpressionMatch &m, QString &wrapped, int &consumedTo) {
+                // 嵌在通用列表内的 taskList 不在此提取（提升会丢失嵌套缩进），
+                // 留给步骤 5b 的 generalListInnerToMd 一并序列化
+                if (isInsideGeneralList(processed, m.capturedStart()))
+                    return false;
+                const int closeStart = findMatchingUlClose(processed, m.capturedStart());
+                if (closeStart < 0) return false;
+                QString md2 = taskListInnerToMd(
+                    processed.mid(m.capturedEnd(), closeStart - m.capturedEnd()), 0);
+                while (md2.endsWith('\n')) md2.chop(1);
+                QString ph = collisionFreePlaceholder(collisions, "TL", n++);
+                placeholders << ph;
+                backups << md2;
+                consumedTo = closeStart + 5;   // 含 </ul>
+                wrapped = wrapBlock(ph);
+                return true;
+            });
     }
 
     // 7) 脚注容器 <div data-type="footnoteContainer"> → [^id]: 内容（多条）
@@ -4148,24 +4194,25 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //    匹配）；内容经完整 fromHtml 主管线嵌套转换后按缩进续行输出。
     //    依赖前置的 Step 6：footnoteRef 的 <sup> 已先隔离为 ZZFR。
     {
-        QRegularExpression contOpenRe(
+        static const QRegularExpression contOpenRe(
             R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteContainer"[^>]*>)");
+        // 定位每条 def 开标签（定界交给平衡扫描）
+        static const QRegularExpression defOpenRe(
+            R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteDef"[^>]*>)");
+        static const QRegularExpression defIdRe("data-id\\s*=\\s*\"([^\"]*)\"");
+        // content 容器：div（块级新形态）| span（内联旧形态）
+        static const QRegularExpression contentOpenRe(
+            R"(<(div|span)\b[^>]*class\s*=\s*"footnote-content"[^>]*>)");
         int n = 0;
-        int offset = 0;
-        while (true) {
-            auto om = contOpenRe.match(processed, offset);
-            if (!om.hasMatch()) break;
-            int closeStart = findMatchingDivClose(processed, om.capturedStart());
-            if (closeStart < 0) { offset = om.capturedStart() + 1; continue; }
+        // 单遍重建（globalExtractWith）：跳过分支（无配对闭标签）保留原文即
+        // 等价（开标签互斥，+1 重搜不可命中）；fn 内 findMatchingDivClose 读
+        // 原始串，先前消费区域自平衡、深度判定不受影响。
+        globalExtractWith(processed, contOpenRe,
+            [&](const QRegularExpressionMatch &om, QString &wrapped, int &consumedTo) {
+            const int closeStart = findMatchingDivClose(processed, om.capturedStart());
+            if (closeStart < 0) return false;
             QString inner = processed.mid(om.capturedEnd(),
                                           closeStart - om.capturedEnd());
-            // 定位每条 def 开标签（定界交给平衡扫描）
-            QRegularExpression defOpenRe(
-                R"(<div\b[^>]*\bdata-type\s*=\s*"footnoteDef"[^>]*>)");
-            QRegularExpression defIdRe("data-id\\s*=\\s*\"([^\"]*)\"");
-            // content 容器：div（块级新形态）| span（内联旧形态）
-            QRegularExpression contentOpenRe(
-                R"(<(div|span)\b[^>]*class\s*=\s*"footnote-content"[^>]*>)");
             QString mdBlock;
             int doff = 0;
             while (true) {
@@ -4248,14 +4295,13 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 mdBlock += '\n';
                 doff = defClose + 6;   // 跳过 </div>
             }
-            QString ph = collisionFreePlaceholder(collisions, "FD", n++);
+            const QString ph = collisionFreePlaceholder(collisions, "FD", n++);
             placeholders << ph;
             backups << mdBlock;
-            int totalLen = closeStart + 6 - om.capturedStart();  // 含 </div>
-            QString wrapped = wrapBlock(ph);
-            processed.replace(om.capturedStart(), totalLen, wrapped);
-            offset = om.capturedStart() + wrapped.length();
-        }
+            consumedTo = closeStart + 6;   // 含 </div>
+            wrapped = wrapBlock(ph);
+            return true;
+        });
     }
 
     // X) 剥离表头 <th> 内的 font-span 与 <strong> 冗余标记。
@@ -4270,34 +4316,23 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //    高亮等）已先行保护；先剥离 th 级冗余标记，N) 再保护用户手写的
     //    <span style>（如颜色/字体等非 font-weight 样式），互不覆盖。
     {
-        int off = 0;
         // 模式 a: <th...><span ...font-weight:700...>text</span></th>
+        // 单遍重建：替换串 <th…>…</th> 内不含 span/strong 主体，不会再命中。
         static const QRegularExpression thFontSpanRe(
             QStringLiteral("<(th)(\\b[^>]*)>\\s*<span\\b[^>]*\\bfont-weight\\s*:\\s*700[^>]*>(.*?)</span>\\s*</\\1>"),
             QRegularExpression::DotMatchesEverythingOption);
-        while (true) {
-            auto m = thFontSpanRe.match(processed, off);
-            if (!m.hasMatch()) break;
-            QString thAttrs = m.captured(2);
-            QString content = m.captured(3);
-            QString replacement = QString("<th%1>%2</th>").arg(thAttrs, content);
-            processed.replace(m.capturedStart(), m.capturedLength(), replacement);
-            off = m.capturedStart() + replacement.length();
-        }
+        globalReplaceWith(processed, thFontSpanRe,
+            [](const QRegularExpressionMatch &m) {
+                return QString("<th%1>%2</th>").arg(m.captured(2), m.captured(3));
+            });
         // 模式 b: <th...><strong>text</strong></th>（TipTap Bold mark 产物）
-        off = 0;
         static const QRegularExpression thStrongRe(
             QStringLiteral("<(th)(\\b[^>]*)>\\s*<strong\\b[^>]*>(.*?)</strong>\\s*</\\1>"),
             QRegularExpression::DotMatchesEverythingOption);
-        while (true) {
-            auto m = thStrongRe.match(processed, off);
-            if (!m.hasMatch()) break;
-            QString thAttrs = m.captured(2);
-            QString content = m.captured(3);
-            QString replacement = QString("<th%1>%2</th>").arg(thAttrs, content);
-            processed.replace(m.capturedStart(), m.capturedLength(), replacement);
-            off = m.capturedStart() + replacement.length();
-        }
+        globalReplaceWith(processed, thStrongRe,
+            [](const QRegularExpressionMatch &m) {
+                return QString("<th%1>%2</th>").arg(m.captured(2), m.captured(3));
+            });
     }
 
     // 0) 删除线 ⚡ 加粗/斜体 互嵌保护（HTML 兜底）。
@@ -4398,38 +4433,32 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //   ZZST 先开、ZZSB 后开（~~H~2~O~~ 逐字往返）。
     {
         int n = 0;
-        int offset = 0;
-        QRegularExpression strikeRe(R"(<(s|del|strike)\b[^>]*>(.*?)</\1>)",
+        static const QRegularExpression strikeRe(R"(<(s|del|strike)\b[^>]*>(.*?)</\1>)",
             QRegularExpression::DotMatchesEverythingOption);
-        while (true) {
-            auto m = strikeRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            QString ph = collisionFreePlaceholder(collisions, "ST", n++);
-            placeholders << ph;
-            // 内层下标贴删除线分隔符边缘（~X~ 贴 ~~）时 ~~…~~ 不可解析，
-            // 保留字面 <s>…</s>（m.captured(0)，含已占位的内层 ZZSB，逆序还原）
-            QString inner = escapeExtDelimsOutsideTags(m.captured(2), true);
-            backups << (strikeEdgeTildeCollision(inner)
-                        ? m.captured(0) : "~~" + inner + "~~");
-            processed.replace(m.capturedStart(), m.capturedLength(), ph);
-            offset = m.capturedStart() + ph.length();
-        }
+        globalReplaceWith(processed, strikeRe,
+            [&collisions, &placeholders, &backups, &n](const QRegularExpressionMatch &m) {
+                QString ph = collisionFreePlaceholder(collisions, "ST", n++);
+                placeholders << ph;
+                // 内层下标贴删除线分隔符边缘（~X~ 贴 ~~）时 ~~…~~ 不可解析，
+                // 保留字面 <s>…</s>（m.captured(0)，含已占位的内层 ZZSB，逆序还原）
+                QString inner = escapeExtDelimsOutsideTags(m.captured(2), true);
+                backups << (strikeEdgeTildeCollision(inner)
+                            ? m.captured(0) : "~~" + inner + "~~");
+                return ph;
+            });
         // <span text-decoration:line-through>（兼容外部 HTML / 旧 toHtml 输出）
-        offset = 0;
-        QRegularExpression lineThroughRe(
+        static const QRegularExpression lineThroughRe(
             R"(<span\b[^>]*\btext-decoration\s*:\s*line-through[^>]*>(.*?)</span>)",
             QRegularExpression::DotMatchesEverythingOption);
-        while (true) {
-            auto m = lineThroughRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            QString ph = collisionFreePlaceholder(collisions, "ST", n++);
-            placeholders << ph;
-            QString inner = escapeExtDelimsOutsideTags(m.captured(1), true);
-            backups << (strikeEdgeTildeCollision(inner)
-                        ? m.captured(0) : "~~" + inner + "~~");
-            processed.replace(m.capturedStart(), m.capturedLength(), ph);
-            offset = m.capturedStart() + ph.length();
-        }
+        globalReplaceWith(processed, lineThroughRe,
+            [&collisions, &placeholders, &backups, &n](const QRegularExpressionMatch &m) {
+                QString ph = collisionFreePlaceholder(collisions, "ST", n++);
+                placeholders << ph;
+                QString inner = escapeExtDelimsOutsideTags(m.captured(1), true);
+                backups << (strikeEdgeTildeCollision(inner)
+                            ? m.captured(0) : "~~" + inner + "~~");
+                return ph;
+            });
     }
 
     // N) 保护 Markdown 无法表达的 HTML 内联元素 → 占位符
@@ -4445,26 +4474,42 @@ QString MarkdownHandler::fromHtml(const QString &html)
         // 与 toHtml 侧 extractHtmlInlineElements 同型——非贪婪匹配在嵌套
         // span 下备份不平衡、尾部残留）
         {
+            // 单遍栈配对预计算每个 span 开标签的配对闭标签（O(n) 总成本）。
+            // 替代对每个开标签调用 findMatchingSpanClose 的 O(K·n) 逐次平衡
+            // 扫描（match(s,pos) 每次从 pos 全串扫描；实测 3000 span 文档该
+            // 扫描独占 ~2s）。栈配对与「从开标签起数深度」同为标准括号配对，
+            // 对良构/未闭合/孤闭标签的行为一致。
+            static const QRegularExpression spanTagRe("<(/?)span\\b[^>]*>");
+            QHash<int, int> closeByOpen;
+            {
+                QVector<int> openStack;
+                auto tit = spanTagRe.globalMatch(processed);
+                while (tit.hasNext()) {
+                    const auto t = tit.next();
+                    if (t.captured(1).isEmpty())
+                        openStack.append(t.capturedStart());
+                    else if (!openStack.isEmpty())
+                        closeByOpen.insert(openStack.takeLast(), t.capturedStart());
+                }
+            }
             static const QRegularExpression spanOpenRe(
                 R"(<span\b[^>]*\bstyle\s*=\s*"[^"]*"[^>]*>)");
-            while (true) {
-                auto m = spanOpenRe.match(processed, offset);
-                if (!m.hasMatch()) break;
-                const int closeStart = findMatchingSpanClose(processed, m.capturedStart());
-                if (closeStart < 0) {
-                    offset = m.capturedEnd();   // 未闭合：留原样交后续宽容解析
-                    continue;
-                }
-                const int end = closeStart + 7;
-                const QString whole = processed.mid(m.capturedStart(), end - m.capturedStart());
-                QString ph = collisionFreePlaceholder(collisions, "HS", n++);
-                placeholders << ph;
-                // 保留完整原始 HTML，但文本中的字面 ^/~/~~ 转义（重载时
-                // sup/sub/strike 后处理会误触发），标签与属性不受影响
-                backups << escapeExtDelimsOutsideTags(whole, true);
-                processed.replace(m.capturedStart(), end - m.capturedStart(), ph);
-                offset = m.capturedStart() + ph.length();
-            }
+            globalExtractWith(processed, spanOpenRe,
+                [&](const QRegularExpressionMatch &m, QString &phOut, int &consumedTo) {
+                    const int closeStart = closeByOpen.value(m.capturedStart(), -1);
+                    if (closeStart < 0)
+                        return false;   // 未闭合：留原样交后续宽容解析
+                    const int end = closeStart + 7;
+                    const QString whole = processed.mid(m.capturedStart(), end - m.capturedStart());
+                    QString ph = collisionFreePlaceholder(collisions, "HS", n++);
+                    placeholders << ph;
+                    // 保留完整原始 HTML，但文本中的字面 ^/~/~~ 转义（重载时
+                    // sup/sub/strike 后处理会误触发），标签与属性不受影响
+                    backups << escapeExtDelimsOutsideTags(whole, true);
+                    consumedTo = end;
+                    phOut = ph;
+                    return true;
+                });
         }
         // <u>text</u>（<u> 可能位于最后一个 <span> 之前，故重新全局匹配）
         QRegularExpression uRe(
@@ -4589,171 +4634,159 @@ QString MarkdownHandler::fromHtml(const QString &html)
         // 同时剥离表格内 td/th 与 p 上的 text-align 声明：p 上的若留存会被
         // 下方 ZZA 对齐保护包成 <div align> 占位符，破坏表格结构（单元格内容
         // 变为内嵌 HTML 字面量）。
-        QRegularExpression tableRegionRe(
+        //
+        // 单趟合并处理：原「对齐提取+防护+剥离」与「合并行提取」两趟
+        // tableRegionRe.match(processed, offset) 全串扫描合并为一趟 globalMatch
+        // 重建。列对齐在原始 region 上提取、合并行判定在防护/剥离后的 region
+        // 上进行——与原两趟的先后次序一致；TC 注入只改空单元格文本、剥离只动
+        // style 属性，均不改 colspan/行列结构，判定结果不受影响。行级扫描同样
+        // 单遍化（globalMatch 收集全部 <tr>，替代 rowRe.match(region, roff) 的
+        // O(行数×|region|) 逐次全串扫描；逐格扫描是行内小串，保留）。
+        static const QRegularExpression tableRegionRe(
             QStringLiteral("(<table\\b[^>]*>)(.*?)(</table>)"),
             QRegularExpression::DotMatchesEverythingOption);
-        offset = 0;
-        while (true) {
-            auto tm = tableRegionRe.match(processed, offset);
-            if (!tm.hasMatch()) break;
-            QString region = tm.captured(2);
-            QStringList colAligns;
-            {
-                QRegularExpression rowRe(
-                    QStringLiteral("<tr\\b[^>]*>(.*?)</tr>"),
-                    QRegularExpression::DotMatchesEverythingOption);
-                QRegularExpression cellAttrRe(QStringLiteral("<t[dh]\\b([^>]*)>"));
-                // style 的 text-align 优先，其次 align 属性（与 TipTap parseAlign 同序）
-                QRegularExpression styleAlignRe(
-                    QStringLiteral("\\btext-align\\s*:\\s*(center|right|left)"));
-                QRegularExpression attrAlignRe(
-                    QStringLiteral("\\balign\\s*=\\s*\"(center|right|left)\""));
-                int roff = 0;
-                while (true) {
-                    auto rm = rowRe.match(region, roff);
-                    if (!rm.hasMatch()) break;
-                    QString row = rm.captured(1);
-                    int coff = 0, col = 0;
-                    while (true) {
-                        auto cm = cellAttrRe.match(row, coff);
-                        if (!cm.hasMatch()) break;
-                        while (colAligns.size() < col + 1) colAligns << QString();
-                        if (colAligns[col].isEmpty()) {
-                            QString attrs = cm.captured(1);
-                            auto sm = styleAlignRe.match(attrs);
-                            auto am = attrAlignRe.match(attrs);
-                            if (sm.hasMatch()) colAligns[col] = sm.captured(1);
-                            else if (am.hasMatch()) colAligns[col] = am.captured(1);
-                        }
-                        coff = cm.capturedEnd();
-                        ++col;
-                    }
-                    roff = rm.capturedEnd();
-                }
-            }
-            // 空单元格注入占位符（与 toHtml protectTableRowForQt 的 ZZTC 防护
-            // 对偶）：Qt toMarkdown 按列宽生成分隔行连字符，空列 0 宽 → 全空
-            // 表格分隔行退化 |||（与数据行无异，重开即丢表格）。注入非空文本
-            // 使每列获得 ≥1 连字符；占位符入共享 placeholders/backups（backup
-            // 为空串），通用还原（步骤 4）回空后由规范化（步骤 6）补 |  | 形态，
-            // 幂等。两种空形态均匹配：裸 <td></td> 与 TipTap 实际产的
-            // <td><p></p></td>（vitest 探针实测 insertTable 产物）。位于脚注
-            // 容器提取之后 → 天然只作用于正文表格；定义内表格由嵌套 fromHtml
-            // 递归获得同款防护。
-            {
-                QRegularExpression emptyCellRe(
-                    QStringLiteral(
-                        "(<t[dh]\\b[^>]*>)(\\s*(?:<p>\\s*</p>\\s*)?)(</t[dh]>)"));
-                globalReplaceWith(region, emptyCellRe,
-                    [&collisions, &placeholders, &backups]
-                    (const QRegularExpressionMatch &m) {
-                        const QString ph = collisionFreePlaceholder(
-                            collisions, "TC", placeholders.size());
-                        placeholders << ph;
-                        backups << QString();   // 还原为空
-                        return m.captured(1) + ph + m.captured(3);
-                    });
-            }
-            // 剥离 text-align 声明（含由此变空的 style 属性）。仅作用于表格
-            // 区域：顶层段落/标题的 text-align 由下方 ZZA 继续处理。
-            region.replace(
-                QRegularExpression(QStringLiteral(
-                    "(style\\s*=\\s*\"[^\"]*)\\s*text-align\\s*:\\s*(?:center|right|left)\\s*;?([^\"]*\")")),
-                QStringLiteral("\\1\\2"));
-            region.replace(
-                QRegularExpression(QStringLiteral("\\s*style\\s*=\\s*\"\\s*;?\\s*\"")),
-                QString());
-            QString replacement = tm.captured(1) + region + tm.captured(3);
-            processed.replace(tm.capturedStart(), tm.capturedLength(), replacement);
-            tableAligns << colAligns;
-            offset = tm.capturedStart() + replacement.length();
-        }
-        // 提取 tableFullMergeRows：源码单格行（| x |，toHtml 产 <td colspan="N">
-        // 占满所有列）经 Qt toMarkdown 会被展开成 N 格，步骤 6b 据此折叠回单格，
-        // 保证合并单元格往返保真。与 toHtml protectTableRowForQt 的「恰 1 个显式
-        // 单元格 → colspan」规则对偶。判定：数据行首格 colspan == 表头列数（含
-        // colspan 求和），即整行占满。
-        {
-            QRegularExpression tableRegionRe(QStringLiteral("(<table\\b[^>]*>)(.*?)(</table>)"),
-                QRegularExpression::DotMatchesEverythingOption);
-            QRegularExpression rowRe(QStringLiteral("<tr\\b[^>]*>(.*?)</tr>"),
-                QRegularExpression::DotMatchesEverythingOption);
-            QRegularExpression cellRe(QStringLiteral("<t[dh]\\b([^>]*)>(.*?)</t[dh]>"),
-                QRegularExpression::DotMatchesEverythingOption);
-            static const QRegularExpression colspanRe(
-                QStringLiteral("\\bcolspan\\s*=\\s*[\"'](\\d+)[\"']"));
-            int off = 0;
-            while (true) {
-                auto tm = tableRegionRe.match(processed, off);
-                if (!tm.hasMatch()) break;
+        static const QRegularExpression tblRowRe(
+            QStringLiteral("<tr\\b[^>]*>(.*?)</tr>"),
+            QRegularExpression::DotMatchesEverythingOption);
+        static const QRegularExpression tblCellRe(
+            QStringLiteral("<t[dh]\\b([^>]*)>(.*?)</t[dh]>"),
+            QRegularExpression::DotMatchesEverythingOption);
+        static const QRegularExpression colspanRe(
+            QStringLiteral("\\bcolspan\\s*=\\s*[\"'](\\d+)[\"']"));
+        globalReplaceWith(processed, tableRegionRe,
+            [&](const QRegularExpressionMatch &tm) {
                 QString region = tm.captured(2);
-                int colCount = 0;
-                QList<int> mergedRows;
-                int roff = 0, rowIdx = 0;
-                while (true) {
-                    auto rm = rowRe.match(region, roff);
-                    if (!rm.hasMatch()) break;
-                    QString row = rm.captured(1);
-                    if (rowIdx == 0) {
-                        // 表头行：列数 = 各格 colspan 之和（无 colspan 即 1）
-                        int coff = 0;
+                QStringList colAligns;
+                {
+                    static const QRegularExpression cellAttrRe(
+                        QStringLiteral("<t[dh]\\b([^>]*)>"));
+                    // style 的 text-align 优先，其次 align 属性（与 TipTap parseAlign 同序）
+                    static const QRegularExpression styleAlignRe(
+                        QStringLiteral("\\btext-align\\s*:\\s*(center|right|left)"));
+                    static const QRegularExpression attrAlignRe(
+                        QStringLiteral("\\balign\\s*=\\s*\"(center|right|left)\""));
+                    auto rit = tblRowRe.globalMatch(region);
+                    while (rit.hasNext()) {
+                        auto rm = rit.next();
+                        QString row = rm.captured(1);
+                        int coff = 0, col = 0;
                         while (true) {
-                            auto cm = cellRe.match(row, coff);
+                            auto cm = cellAttrRe.match(row, coff);
                             if (!cm.hasMatch()) break;
-                            auto cs = colspanRe.match(cm.captured(1));
-                            colCount += cs.hasMatch() ? cs.captured(1).toInt() : 1;
+                            while (colAligns.size() < col + 1) colAligns << QString();
+                            if (colAligns[col].isEmpty()) {
+                                QString attrs = cm.captured(1);
+                                auto sm = styleAlignRe.match(attrs);
+                                auto am = attrAlignRe.match(attrs);
+                                if (sm.hasMatch()) colAligns[col] = sm.captured(1);
+                                else if (am.hasMatch()) colAligns[col] = am.captured(1);
+                            }
                             coff = cm.capturedEnd();
-                        }
-                    } else {
-                        // 数据行：首格 colspan == 列数 → 整行合并（0-based body 索引）
-                        auto cm = cellRe.match(row);
-                        if (cm.hasMatch()) {
-                            auto cs = colspanRe.match(cm.captured(1));
-                            if (cs.hasMatch() && cs.captured(1).toInt() == colCount)
-                                mergedRows << (rowIdx - 1);
+                            ++col;
                         }
                     }
-                    ++rowIdx;
-                    roff = rm.capturedEnd();
                 }
-                tableFullMergeRows << mergedRows;
-                off = tm.capturedEnd();
-            }
-        }
+                // 空单元格注入占位符（与 toHtml protectTableRowForQt 的 ZZTC 防护
+                // 对偶）：Qt toMarkdown 按列宽生成分隔行连字符，空列 0 宽 → 全空
+                // 表格分隔行退化 |||（与数据行无异，重开即丢表格）。注入非空文本
+                // 使每列获得 ≥1 连字符；占位符入共享 placeholders/backups（backup
+                // 为空串），通用还原（步骤 4）回空后由规范化（步骤 6）补 |  | 形态，
+                // 幂等。两种空形态均匹配：裸 <td></td> 与 TipTap 实际产的
+                // <td><p></p></td>（vitest 探针实测 insertTable 产物）。位于脚注
+                // 容器提取之后 → 天然只作用于正文表格；定义内表格由嵌套 fromHtml
+                // 递归获得同款防护。
+                {
+                    static const QRegularExpression emptyCellRe(
+                        QStringLiteral(
+                            "(<t[dh]\\b[^>]*>)(\\s*(?:<p>\\s*</p>\\s*)?)(</t[dh]>)"));
+                    globalReplaceWith(region, emptyCellRe,
+                        [&collisions, &placeholders, &backups]
+                        (const QRegularExpressionMatch &m) {
+                            const QString ph = collisionFreePlaceholder(
+                                collisions, "TC", placeholders.size());
+                            placeholders << ph;
+                            backups << QString();   // 还原为空
+                            return m.captured(1) + ph + m.captured(3);
+                        });
+                }
+                // 剥离 text-align 声明（含由此变空的 style 属性）。仅作用于表格
+                // 区域：顶层段落/标题的 text-align 由下方 ZZA 继续处理。
+                region.replace(
+                    QRegularExpression(QStringLiteral(
+                        "(style\\s*=\\s*\"[^\"]*)\\s*text-align\\s*:\\s*(?:center|right|left)\\s*;?([^\"]*\")")),
+                    QStringLiteral("\\1\\2"));
+                region.replace(
+                    QRegularExpression(QStringLiteral("\\s*style\\s*=\\s*\"\\s*;?\\s*\"")),
+                    QString());
+                // 提取 tableFullMergeRows（防护/剥离后的 region，与原第二趟一致）：
+                // 源码单格行（| x |，toHtml 产 <td colspan="N"> 占满所有列）经 Qt
+                // toMarkdown 会被展开成 N 格，步骤 6b 据此折叠回单格，保证合并
+                // 单元格往返保真。与 toHtml protectTableRowForQt 的「恰 1 个显式
+                // 单元格 → colspan」规则对偶。判定：数据行首格 colspan == 表头
+                // 列数（含 colspan 求和），即整行占满。
+                {
+                    int colCount = 0;
+                    QList<int> mergedRows;
+                    int rowIdx = 0;
+                    auto rit = tblRowRe.globalMatch(region);
+                    while (rit.hasNext()) {
+                        auto rm = rit.next();
+                        QString row = rm.captured(1);
+                        if (rowIdx == 0) {
+                            // 表头行：列数 = 各格 colspan 之和（无 colspan 即 1）
+                            int coff = 0;
+                            while (true) {
+                                auto cm = tblCellRe.match(row, coff);
+                                if (!cm.hasMatch()) break;
+                                auto cs = colspanRe.match(cm.captured(1));
+                                colCount += cs.hasMatch() ? cs.captured(1).toInt() : 1;
+                                coff = cm.capturedEnd();
+                            }
+                        } else {
+                            // 数据行：首格 colspan == 列数 → 整行合并（0-based body 索引）
+                            auto cm = tblCellRe.match(row);
+                            if (cm.hasMatch()) {
+                                auto cs = colspanRe.match(cm.captured(1));
+                                if (cs.hasMatch() && cs.captured(1).toInt() == colCount)
+                                    mergedRows << (rowIdx - 1);
+                            }
+                        }
+                        ++rowIdx;
+                    }
+                    tableFullMergeRows << mergedRows;
+                }
+                tableAligns << colAligns;
+                return tm.captured(1) + region + tm.captured(3);
+            });
         // 对齐：<p style="text-align:..."> / 标题 text-align → <div align="...">
         // TipTap TextAlign 为段落/标题注入 text-align CSS，toMarkdown 丢弃。
         // 提取对齐值并还原为 <div align="...">（已支持往返），内容 ZZ* 占位符
         // 在逆序还原阶段后续解析。
-        offset = 0;
-        QRegularExpression alignRe(
+        static const QRegularExpression alignRe(
             R"re(<(p|h[1-6])\b[^>]*\bstyle\s*=\s*"([^"]*\btext-align\s*:\s*(left|center|right)[^"]*)"[^>]*>(.*?)</\1>)re",
             QRegularExpression::DotMatchesEverythingOption);
-        while (true) {
-            auto m = alignRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            QString tag = m.captured(1);
-            QString fullStyle = m.captured(2);
-            QString align = m.captured(3);
-            QString content = m.captured(4);
-            // 从 style 中剥离 text-align:XXX（含前后分号/空格）
-            QString stripped = fullStyle;
-            stripped.remove(QRegularExpression(
-                R"(\s*text-align\s*:\s*(left|center|right)\s*;?)"));
-            stripped = stripped.trimmed();
-            if (stripped.endsWith(';'))
-                stripped.chop(1);
-            stripped = stripped.trimmed();
-            QString ph = collisionFreePlaceholder(collisions, "A", n++);
-            placeholders << ph;
-            backups << QString("<div align=\"%1\">%2</div>").arg(align, content);
-            QString replacement;
-            if (stripped.isEmpty())
-                replacement = QString("<%1>%2</%1>").arg(tag, ph);
-            else
-                replacement = QString("<%1 style=\"%2\">%3</%1>").arg(tag, stripped, ph);
-            processed.replace(m.capturedStart(), m.capturedLength(), replacement);
-            offset = m.capturedStart() + replacement.length();
-        }
+        globalReplaceWith(processed, alignRe,
+            [&collisions, &placeholders, &backups, &n](const QRegularExpressionMatch &m) {
+                QString tag = m.captured(1);
+                QString fullStyle = m.captured(2);
+                QString align = m.captured(3);
+                QString content = m.captured(4);
+                // 从 style 中剥离 text-align:XXX（含前后分号/空格）
+                QString stripped = fullStyle;
+                static const QRegularExpression stripAlignRe(
+                    R"(\s*text-align\s*:\s*(left|center|right)\s*;?)");
+                stripped.remove(stripAlignRe);
+                stripped = stripped.trimmed();
+                if (stripped.endsWith(';'))
+                    stripped.chop(1);
+                stripped = stripped.trimmed();
+                QString ph = collisionFreePlaceholder(collisions, "A", n++);
+                placeholders << ph;
+                backups << QString("<div align=\"%1\">%2</div>").arg(align, content);
+                if (stripped.isEmpty())
+                    return QString("<%1>%2</%1>").arg(tag, ph);
+                return QString("<%1 style=\"%2\">%3</%1>").arg(tag, stripped, ph);
+            });
         // 空段落保护（&nbsp; 空行方案）：<p></p> / <p><br></p> / <p>&nbsp;</p>
         // （含 NBSP 字符）→ 占位符段落。
         // WYSIWYG 空行 = 空段落（TipTap getHTML 输出 <p></p>；toHtml 的连续空行
@@ -4797,25 +4830,19 @@ QString MarkdownHandler::fromHtml(const QString &html)
             // 既可能是 &nbsp; 实体（TipTap getHTML 的空段落），也可能是 NBSP
             // 字符（toHtml setMarkdown 把字面 &nbsp; 行转成的段落），二者均须
             // 显式列入备选；识别后统一还原为字面 &nbsp; 行（跨编辑器可移植）。
-            QRegularExpression emptyPRe(
+            static const QRegularExpression emptyPRe(
                 R"(<p\b[^>]*>(?:(?:\s|&nbsp;|\x{00a0})*(?:<br\s*/?>)?(?:\s|&nbsp;|\x{00a0})*)</p>)");
-            int blOff = 0, blN = 0;
-            while (true) {
-                auto m = emptyPRe.match(processed, blOff);
-                if (!m.hasMatch()) break;
-                const int p = m.capturedStart();
-                if (!insideListContainer(processed, p)) {
-                    const QString ph = collisionFreePlaceholder(collisions, 
-                        "BL", blN);
+            int blN = 0;
+            globalReplaceWith(processed, emptyPRe,
+                [&collisions, &blankLinePhs, &blN, &processed, &insideListContainer]
+                (const QRegularExpressionMatch &m) {
+                    if (insideListContainer(processed, m.capturedStart()))
+                        return m.captured();   // 列表/表格容器内：保留
+                    const QString ph = collisionFreePlaceholder(collisions, "BL", blN);
                     ++blN;
                     blankLinePhs << ph;
-                    const QString replacement = QStringLiteral("<p>%1</p>").arg(ph);
-                    processed.replace(p, m.capturedLength(), replacement);
-                    blOff = p + replacement.length();
-                } else {
-                    blOff = m.capturedEnd();
-                }
-            }
+                    return QStringLiteral("<p>%1</p>").arg(ph);
+                });
         }
         // 行内连续 NBSP（WYSIWYG 多空格）→ 占位符 → 还原 &nbsp; 实体。
         // 用户 WYSIWYG 输入连续空格（ProseMirror 以 NBSP 保留）序列化为
@@ -4824,52 +4851,50 @@ QString MarkdownHandler::fromHtml(const QString &html)
         // 2+ 个（单空格往返安全，无需转义）。空段落保护已消费整段 NBSP 的段落，
         // 此处剩余的 &nbsp; 必为行内（与其他文本混排）。
         {
-            QRegularExpression nbspRe(R"((?:&nbsp;|\x{00a0}){2,})");
-            int nbspOff = 0, nbspN = 0;
-            while (true) {
-                auto m = nbspRe.match(processed, nbspOff);
-                if (!m.hasMatch()) break;
-                const QString cap = m.captured(0);
-                int cnt = 0;
-                for (const QChar &c : cap)
-                    if (c == QChar(0x00a0)) ++cnt;
-                cnt += cap.count(QStringLiteral("&nbsp;"));
-                const QString ph = collisionFreePlaceholder(collisions, 
-                    "NB", nbspN);
-                ++nbspN;
-                placeholders << ph;
-                backups << QStringLiteral("&nbsp;").repeated(cnt);
-                processed.replace(m.capturedStart(), m.capturedLength(), ph);
-                nbspOff = m.capturedStart() + ph.length();
-            }
+            static const QRegularExpression nbspRe(R"((?:&nbsp;|\x{00a0}){2,})");
+            int nbspN = 0;
+            globalReplaceWith(processed, nbspRe,
+                [&collisions, &placeholders, &backups, &nbspN]
+                (const QRegularExpressionMatch &m) {
+                    const QString cap = m.captured(0);
+                    int cnt = 0;
+                    for (const QChar &c : cap)
+                        if (c == QChar(0x00a0)) ++cnt;
+                    cnt += cap.count(QStringLiteral("&nbsp;"));
+                    const QString ph = collisionFreePlaceholder(collisions, "NB", nbspN);
+                    ++nbspN;
+                    placeholders << ph;
+                    backups << QStringLiteral("&nbsp;").repeated(cnt);
+                    return ph;
+                });
         }
         // <br> 硬换行（不含 data-brk 标记——BRMARKER 生成的由 toMarkdown 处理）
-        offset = 0;
-        QRegularExpression brRe(
-            R"re(<br\b(?![^>]*\bdata-brk)[^>]*>)re");
-        while (true) {
-            auto m = brRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            QString ph = collisionFreePlaceholder(collisions, "BR", n++);
-            placeholders << ph;
-            backups << m.captured();  // 保留原样 <br> 标签
-            processed.replace(m.capturedStart(), m.capturedLength(), ph);
-            offset = m.capturedStart() + ph.length();
+        {
+            static const QRegularExpression brRe(
+                R"re(<br\b(?![^>]*\bdata-brk)[^>]*>)re");
+            globalReplaceWith(processed, brRe,
+                [&collisions, &placeholders, &backups, &n]
+                (const QRegularExpressionMatch &m) {
+                    QString ph = collisionFreePlaceholder(collisions, "BR", n++);
+                    placeholders << ph;
+                    backups << m.captured();  // 保留原样 <br> 标签
+                    return ph;
+                });
         }
         // <br data-brk>（编辑器软换行）：同样在 setHtml 前保护为占位符，
         // 否则 toMarkdown 把它转成 \n / \n····，软换行语义与块边界不可区分
         // （历史上还须与 80 列折行区分，折行已由 vendored writer 根治）。
         // 占位符存活到序列化之后，再按上下文还原。
-        offset = 0;
-        QRegularExpression brSoftRe(
-            R"re(<br\b[^>]*\bdata-brk[^>]*>)re");
-        while (true) {
-            auto m = brSoftRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            QString ph = collisionFreePlaceholder(collisions, "BK", n++);
-            brSoftPlaceholders << ph;
-            processed.replace(m.capturedStart(), m.capturedLength(), ph);
-            offset = m.capturedStart() + ph.length();
+        {
+            static const QRegularExpression brSoftRe(
+                R"re(<br\b[^>]*\bdata-brk[^>]*>)re");
+            globalReplaceWith(processed, brSoftRe,
+                [&collisions, &brSoftPlaceholders, &n]
+                (const QRegularExpressionMatch &m) {
+                    QString ph = collisionFreePlaceholder(collisions, "BK", n++);
+                    brSoftPlaceholders << ph;
+                    return ph;
+                });
         }
     }
 
@@ -5127,26 +5152,24 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //    标记用占位符保护后穿过 setHtml/toMarkdown（占位符为字母数字，无列表形态），
     //    逆序还原阶段还原为转义形式（1\. / 1\) / \- / \+）。
     {
-        QRegularExpression pListMarkerRe(
+        static const QRegularExpression pListMarkerRe(
             R"((<p\b[^>]*>)\s*(\d{1,9}[.)]|[+\-])(?=\s))");
         int n = 0;
-        int offset = 0;
-        while (true) {
-            auto m = pListMarkerRe.match(processed, offset);
-            if (!m.hasMatch()) break;
-            QString marker = m.captured(2);
-            // 转义标记中的标点字符：1.→1\. / 1)→1\) / -→\- / +→\+
-            QString escaped;
-            if (marker.size() == 2)
-                escaped = marker.left(1) + QStringLiteral("\\") + marker.right(1);
-            else
-                escaped = QStringLiteral("\\") + marker;
-            QString ph = collisionFreePlaceholder(collisions, "LM", n++);
-            placeholders << ph;
-            backups << escaped;
-            processed.replace(m.capturedStart(2), m.capturedLength(2), ph);
-            offset = m.capturedStart(2) + ph.length();
-        }
+        globalReplaceWith(processed, pListMarkerRe,
+            [&collisions, &placeholders, &backups, &n]
+            (const QRegularExpressionMatch &m) {
+                QString marker = m.captured(2);
+                // 转义标记中的标点字符：1.→1\. / 1)→1\) / -→\- / +→\+
+                QString escaped;
+                if (marker.size() == 2)
+                    escaped = marker.left(1) + QStringLiteral("\\") + marker.right(1);
+                else
+                    escaped = QStringLiteral("\\") + marker;
+                QString ph = collisionFreePlaceholder(collisions, "LM", n++);
+                placeholders << ph;
+                backups << escaped;
+                return m.captured(1) + ph;   // 保留 <p> 前缀，只替换标记部分
+            });
     }
 
     QTextDocument doc;
