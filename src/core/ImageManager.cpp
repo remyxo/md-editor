@@ -24,14 +24,25 @@ QString ImageManager::saveImage(const QString &docFilePath, const QByteArray &by
         return QString();
 
     // 决定主名与扩展名
+    // 扩展名白名单（ext 可能来自 JS 侧 fallbackExt，注入场景可拼 ../ 逃出
+    // images/ 目录；白名单后任何非图片扩展一律回落 png）
+    static const QStringList kAllowedExt = {
+        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+        QStringLiteral("gif"), QStringLiteral("webp"), QStringLiteral("bmp"),
+        QStringLiteral("svg"),
+    };
+    auto sanitizeExt = [](QString e) -> QString {
+        e = e.toLower();
+        return kAllowedExt.contains(e) ? e : QStringLiteral("png");
+    };
     QString baseName, ext;
     if (!suggestedName.isEmpty()) {
         QString full = QFileInfo(suggestedName).fileName(); // 防路径穿越
-        ext = extFromName(full, fallbackExt);
+        ext = sanitizeExt(extFromName(full, fallbackExt));
         baseName = QFileInfo(full).completeBaseName();
         if (baseName.isEmpty()) baseName = QStringLiteral("image");
     } else {
-        ext = fallbackExt.isEmpty() ? QStringLiteral("png") : fallbackExt;
+        ext = fallbackExt.isEmpty() ? QStringLiteral("png") : sanitizeExt(fallbackExt);
         baseName = QStringLiteral("image-")
                    + QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-HHmmss-zzz"));
     }

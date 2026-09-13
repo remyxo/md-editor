@@ -38,7 +38,7 @@ private slots:
 
 private:
     int m_nextTabId;
-    int m_pendingCloseIndex;
+    EditorTab *m_pendingCloseTab = nullptr;   // 待关闭 tab（记指针防下标漂移）
     QMap<int, EditorTab *> m_tabs;
     QSet<EditorTab *> m_untitledTabs;   // 显式追踪未命名 tab（帮助页无 tooltip 但非未命名）
     QString generateUntitledName();

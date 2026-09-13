@@ -41,6 +41,18 @@
 #include <QMimeData>
 #include <QKeySequence>
 
+// JS 单引号字符串字面量转义（路径等嵌入 runJavaScript；反斜杠/引号/换行——
+// Windows 路径 C:\Users\.. 的 \ 与含 ' 的 Unix 路径都会破坏字面量）
+static QString jsSingleQuoted(const QString &s)
+{
+    QString t(s);
+    t.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    t.replace(QLatin1Char('\''), QStringLiteral("\\'"));
+    t.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    t.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
+    return t;
+}
+
 MainWindow::MainWindow(const QString &initialFile, QWidget *parent)
     : QMainWindow(parent)
 {
@@ -403,8 +415,13 @@ void MainWindow::connectSignals()
                 for (int i = 0; i < m_tabWidget->count(); ++i) {
                     EditorTab *tab = m_tabWidget->tabAt(i);
                     if (tab && tab->webView()->property("filePath").toString() == path) {
+                        // 本页有未保存修改时明确警告丢弃后果（曾无差别「是否重
+                        // 新加载」，用户确认即静默覆盖本地编辑）
+                        const bool dirty = m_tabWidget->tabText(i).startsWith("● ");
                         QMessageBox box(QMessageBox::Question, tr("文件已变更"),
-                            tr("文件 %1 已被外部程序修改。\n是否重新加载？").arg(path),
+                            dirty
+                                ? tr("文件 %1 已被外部程序修改，且本页有未保存的修改。\n重新加载将丢弃本地修改，是否重新加载？").arg(path)
+                                : tr("文件 %1 已被外部程序修改。\n是否重新加载？").arg(path),
                             QMessageBox::Yes | QMessageBox::No, this);
                         box.button(QMessageBox::Yes)->setText(tr("是"));
                         box.button(QMessageBox::No)->setText(tr("否"));
@@ -440,7 +457,8 @@ void MainWindow::connectSignals()
     // JS 字符串字面量转义（query / rep 嵌入 runJavaScript）
     auto jsStr = [](const QString &s) {
         QString t(s);
-        t.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
+        t.replace("\\", "\\\\").replace("'", "\\'")
+         .replace("\n", "\\n").replace("\r", "\\r");
         return t;
     };
     auto runSearchJs = [this](const QString &jsBody) {
@@ -484,10 +502,14 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
                 }
             });
 
-    // 连接大纲更新
+    // 连接大纲更新（仅当前标签页：后台标签页的异步事务——图片回填、mermaid
+    // 确认、低亮批次等触发的 onUpdate——曾会把当前页大纲整体重建成后台页的
+    // 标题结构。切页时由 onTabChanged 主动重推）
     connect(bridge, &EditorBridge::headingsUpdated, this,
-            [this](const QJsonArray &headings, int /*tabId*/) {
-                m_sideBar->outlineTree()->updateHeadings(headings);
+            [this, bridge](const QJsonArray &headings, int /*tabId*/) {
+                EditorTab *cur = m_tabWidget->currentEditorTab();
+                if (cur && cur->bridge() == bridge)
+                    m_sideBar->outlineTree()->updateHeadings(headings);
             });
 
     // 连接字数统计 → 状态栏（仅当前标签页）
@@ -498,14 +520,20 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
                     m_statusBar->updateWordCount(chars, words, 0);
             });
 
-    // 连接格式状态同步 → 工具栏
+    // 连接格式状态同步 → 工具栏（仅当前标签页，同上守卫）
     connect(bridge, &EditorBridge::formatStateChanged, this,
-            &MainWindow::onFormatChanged);
+            [this, bridge](const QJsonObject &format, int tabId) {
+                EditorTab *cur = m_tabWidget->currentEditorTab();
+                if (cur && cur->bridge() == bridge)
+                    onFormatChanged(format, tabId);
+            });
 
-    // 连接撤销/重做状态 → 工具栏
+    // 连接撤销/重做状态 → 工具栏（仅当前标签页，同上守卫）
     connect(bridge, &EditorBridge::historyStateChanged, this,
-            [this](bool canUndo, bool canRedo, int /*tabId*/) {
-                m_toolBar->updateHistoryState(canUndo, canRedo);
+            [this, bridge](bool canUndo, bool canRedo, int /*tabId*/) {
+                EditorTab *cur = m_tabWidget->currentEditorTab();
+                if (cur && cur->bridge() == bridge)
+                    m_toolBar->updateHistoryState(canUndo, canRedo);
             });
 
     // 搜索计数回传 → 仅更新当前 tab 的搜索栏
@@ -561,6 +589,14 @@ void MainWindow::onTabChanged(int tabId)
     if (QAction *act = m_menuBar->findChild<QAction *>(
             QStringLiteral("sourceModeAction")))
         act->setChecked(srcMode);
+    // 重推新标签页的大纲/格式/撤销状态：这些信号带「当前标签页」守卫后，后台
+    // 标签页的异步通知不再污染当前页 UI，切页时须主动请求重推
+    if (tab) {
+        tab->runJsCommand(
+            QStringLiteral("window.editorApi.notifyHeadings();"
+                           "window.editorApi.notifyFormat();"
+                           "window.editorApi.notifyHistory();"));
+    }
     if (tab) {
         tab->setInTable(false);
         // 同步新标签页的格式状态到工具栏
@@ -715,7 +751,9 @@ void MainWindow::onInsertImage()
     QString path = QFileDialog::getOpenFileName(this, tr("插入图片"), "",
                                                  tr("图片文件 (*.png *.jpg *.jpeg *.gif *.svg *.webp)"));
     if (!path.isEmpty()) {
-        QString js = QString("window.editorApi.insertImage('%1');").arg(path);
+        // 路径含 ' 或 \（Windows）时须转义，否则 JS 语法错误、插入静默失败
+        QString js = QString("window.editorApi.insertImage('%1');")
+                         .arg(jsSingleQuoted(path));
         runEditorCommand(js);
     }
 }
@@ -859,6 +897,13 @@ void MainWindow::onExportPdf()
     // 否则导出的是进入源码前的旧快照）
     getEditorHtmlAsync(tab, [this, path, docDir](const QString &html) {
             auto *exporter = new PdfExporter(this);
+            // 失败路径（空内容/引擎故障）须有反馈且回收导出器（其持有隐藏
+            // 渲染视图，滞留即整个渲染进程泄漏到窗口关闭）
+            connect(exporter, &PdfExporter::exportError, this,
+                    [this, exporter](const QString &err) {
+                m_statusBar->showMessage(tr("导出失败: %1").arg(err), 5000);
+                exporter->deleteLater();
+            });
             connect(exporter, &PdfExporter::exportFinished, this,
                     [this, exporter](bool ok, const QString &out) {
                 // 本条是状态栏最后一条消息：走回退时并入回退说明并延长展示——
@@ -899,6 +944,12 @@ void MainWindow::onExportDocx()
     // 否则导出的是进入源码前的旧快照）
     getEditorHtmlAsync(tab, [this, path, docDir](const QString &html) {
             auto *exporter = new DocxExporter(this);
+            // 失败路径（空内容/生成失败/mermaid 挂死）须有反馈且回收导出器
+            connect(exporter, &DocxExporter::exportError, this,
+                    [this, exporter](const QString &err) {
+                m_statusBar->showMessage(tr("导出失败: %1").arg(err), 5000);
+                exporter->deleteLater();
+            });
             connect(exporter, &DocxExporter::exportFinished, this,
                     [this, exporter](bool ok, const QString &out) {
                 m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
@@ -926,6 +977,11 @@ void MainWindow::onExportHtml()
     // 源码模式下取 source-view 当前内容经 toHtml，否则导出的是进入源码前的旧快照
     getEditorHtmlAsync(tab, [this, path, docDir, theme](const QString &html) {
             auto *exporter = new HtmlExporter(this);
+            connect(exporter, &HtmlExporter::exportError, this,
+                    [this, exporter](const QString &err) {
+                m_statusBar->showMessage(tr("导出失败: %1").arg(err), 5000);
+                exporter->deleteLater();
+            });
             connect(exporter, &HtmlExporter::exportFinished, this,
                     [this, exporter](bool ok, const QString &out) {
                 m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);

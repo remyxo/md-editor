@@ -21,6 +21,17 @@ class EditorWebPage : public QWebEnginePage {
 public:
     using QWebEnginePage::QWebEnginePage;
 protected:
+    // 导航白名单：编辑器页只允许 qrc（自身资源）与 localimg（本地图片），
+    // about 为引擎内部页。SVG 锚点（mermaid 图内链接）与任何注入产生的顶层
+    // 导航（file:/javascript:/远程页）一律拒绝——曾可把整个编辑器 WebView
+    // 导航离页（标签页白屏）
+    bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override {
+        Q_UNUSED(type); Q_UNUSED(isMainFrame);
+        const QString scheme = url.scheme();
+        return scheme == QLatin1String("qrc")
+            || scheme == QLatin1String("localimg")
+            || scheme == QLatin1String("about");
+    }
     void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level,
         const QString &msg, int line, const QString &src) override {
         Q_UNUSED(level); Q_UNUSED(line); Q_UNUSED(src);

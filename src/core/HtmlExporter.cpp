@@ -254,7 +254,13 @@ void HtmlExporter::exportToHtml(const QString &html, const QString &docDir,
         emit exportError("HTML 写入失败");
         return;
     }
-    out.write(full.toUtf8());
+    const QByteArray bytes = full.toUtf8();
+    if (out.write(bytes) != bytes.size()) {
+        // 磁盘满/写入中断：不得报成功（产物是不完整文件）
+        out.close();
+        emit exportError("HTML 写入失败：数据未完整落盘");
+        return;
+    }
     out.close();
     emit exportFinished(true, outputPath);
 }

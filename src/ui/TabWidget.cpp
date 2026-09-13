@@ -8,7 +8,7 @@
 #include <QFileInfo>
 
 TabWidget::TabWidget(QWidget *parent)
-    : QTabWidget(parent), m_nextTabId(1), m_pendingCloseIndex(-1)
+    : QTabWidget(parent), m_nextTabId(1)
 {
     setTabsClosable(true);
     setMovable(true);
@@ -127,7 +127,9 @@ void TabWidget::onTabCloseRequested(int index)
         auto r = box.exec();
         if (r == QMessageBox::Cancel) return;
         if (r == QMessageBox::Save) {
-            m_pendingCloseIndex = index;
+            // 记 tab 指针而非下标：保存窗口期（异步 JS 往返期间 UI 可交互）
+            // 用户拖动标签或开关其他 tab 会使下标漂移，按陈旧下标会关错页
+            m_pendingCloseTab = tab;
             emit tabSaveRequested(index);
             return; // 保存由 MainWindow 异步处理，完成后调用 completePendingTabClose()
         }
@@ -141,18 +143,18 @@ void TabWidget::onTabCloseRequested(int index)
 
 void TabWidget::completePendingTabClose()
 {
-    if (m_pendingCloseIndex < 0 || m_pendingCloseIndex >= count())
+    EditorTab *tab = m_pendingCloseTab;
+    m_pendingCloseTab = nullptr;
+    if (!tab)
         return;
-    int idx = m_pendingCloseIndex;
-    m_pendingCloseIndex = -1;
-    EditorTab *tab = tabAt(idx);
-    if (tab) {
-        emit tabClosed(idx);
-        m_tabs.remove(tab->bridge()->tabId());
-        m_untitledTabs.remove(tab);
-        removeTab(idx);
-        tab->deleteLater();
-    }
+    const int idx = indexOf(tab);
+    if (idx < 0)
+        return;   // 保存期间该 tab 已被其他路径关闭
+    emit tabClosed(idx);
+    m_tabs.remove(tab->bridge()->tabId());
+    m_untitledTabs.remove(tab);
+    removeTab(idx);
+    tab->deleteLater();
 }
 
 void TabWidget::onCurrentChanged(int index)

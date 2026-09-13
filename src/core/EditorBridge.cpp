@@ -58,7 +58,13 @@ void EditorBridge::modalDialogChanged(bool open)
 
 void EditorBridge::openUrl(const QString &url)
 {
-    QDesktopServices::openUrl(QUrl(url));
+    // scheme 白名单：该槽对页面内任意脚本可达，注入场景下可传 file:/smb:/
+    // 自定义协议处理器等任意目标。正常 UI 的链接本就只有 http(s)/mailto
+    const QUrl u(url);
+    const QString s = u.scheme();
+    if (s == QLatin1String("http") || s == QLatin1String("https")
+        || s == QLatin1String("mailto"))
+        QDesktopServices::openUrl(u);
 }
 
 void EditorBridge::formatChanged(const QString &json)
