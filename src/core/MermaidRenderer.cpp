@@ -43,7 +43,7 @@ QString MermaidRenderer::buildRenderScript(const QStringList &sources)
     // 被污染，toDataURL 抛 SecurityError，PNG 兜底为空。
     return QStringLiteral(
         "(function(){"
-        "mermaid.initialize({startOnLoad:false,securityLevel:'loose',theme:'default',"
+        "mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'default',"
         "htmlLabels:false,flowchart:{htmlLabels:false},themeVariables:{fontSize:'16px'}});"
         "var sources=%1;"
         "function svgDims(svg){var d=document.createElement('div');d.style.cssText='position:absolute;left:-9999px';"

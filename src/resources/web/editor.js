@@ -101,7 +101,12 @@ function _sanitizeMermaidSvg(svgString) {
     // clamp 为 1 而非 0：Gantt 甘特图等 task bar 需要可见（0 宽完全不可见）
     svgString = svgString
         .replace(/\b(width|height)\s*=\s*"-\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"/g, '$1="1"')
-        .replace(/\b(width|height)\s*=\s*'-(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)'/g, "$1='1'");
+        .replace(/\b(width|height)\s*=\s*'-(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)'/g, "$1='1'")
+        // 纵深防御（securityLevel 已 strict，此为双保险，覆盖 mermaid 上游回归）：
+        // 剥 <script> 块、事件属性（on*）、javascript: 链接
+        .replace(/<script\b[\s\S]*?<\/script\s*>/gi, '')
+        .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/(href|xlink:href)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*')/gi, '');
     // 后置 DOM 修正兜底：innerHTML 解析后若仍有漏网负值 rect，
     // 在 _fixNegativeRects 中 clamp 为 1（regex 漏网 + mermaid 动态 SVG 均能兜住）
     svgString = svgString.replace(/<svg\b/, '<svg data-sanitized="1"');
@@ -142,7 +147,11 @@ function _ensureMermaidInited() {
     var dark = document.body.classList.contains('dark');
     window.mermaid.initialize({
         startOnLoad: false,
-        securityLevel: 'loose',
+        // strict：禁 click call 回调与未消毒链接（loose 会跳过 sanitizeUrl/
+        // sanitizeText，恶意 mermaid 标签可把 <img onerror=…> 带进 SVG——本页持
+        // 有 QWebChannel bridge（requestImageSave/openUrl），注入即特权执行）。
+        // 编辑器不使用 mermaid 的 click 交互，strict 无功能损失
+        securityLevel: 'strict',
         theme: dark ? 'dark' : 'default',
         // 图表字号：编辑区正文为 18px，图表文字略小
         // SVG 按 viewBox 真实尺寸显示（非 100% 等比放大），16px 比例协调

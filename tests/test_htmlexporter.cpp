@@ -41,11 +41,19 @@ private slots:
         QVERIFY(!out.contains("url(fonts/"));
     }
 
+    // 1×1 真实 PNG 字节（内容级 MIME 校验后，伪字节夹具不再被内联）
+    static QByteArray tinyPng() {
+        static const unsigned char png[] = {0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0x0d,0x49,0x48,0x44,0x52,
+                                     0,0,0,1,0,0,0,1,0x08,0x06,0,0,0,0x1f,0x15,0xc4,0x89,0,0,0,0x0a,0x49,0x44,0x41,0x54,
+                                     0x78,0x9c,0x63,0,1,0,0,0,0x05,0,1,0x0d,0x0a,0x2d,0xb4,0,0,0,0,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82};
+        return QByteArray(reinterpret_cast<const char*>(png), sizeof(png));
+    }
+
     void testInlineImagesReplacesRelativeSrcWithBase64() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QFile f(dir.path() + "/a.png");
         QVERIFY(f.open(QIODevice::WriteOnly));
-        f.write("PNGDATA"); f.close();
+        f.write(tinyPng()); f.close();
 
         QString html = "<p><img src=\"a.png\" alt=\"x\"></p>";
         QString out = HtmlExporter::inlineImages(html, dir.path());
@@ -64,7 +72,7 @@ private slots:
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QFile f(dir.path() + "/b.png");
         QVERIFY(f.open(QIODevice::WriteOnly));
-        f.write("PNG2"); f.close();
+        f.write(tinyPng()); f.close();
 
         QString html = "<p><img src='b.png'></p>";
         QString out = HtmlExporter::inlineImages(html, dir.path());
@@ -93,6 +101,61 @@ private slots:
     void testRenderScriptUsesTheme() {
         QVERIFY(HtmlExporter::renderScript("dark").contains("'dark'"));
         QVERIFY(HtmlExporter::renderScript("light").contains("'default'"));
+    }
+
+    void testRenderScriptMermaidStrictSecurity() {
+        // mermaid securityLevel 必须 strict：loose 跳过 sanitizeUrl/DOMPurify，
+        // 恶意图表标签（A["<img src=x onerror=…>"]）以原始 HTML 进 SVG、经
+        // innerHTML 在导出产物里直接执行（受害者打开即触发）
+        const QString js = HtmlExporter::renderScript("light");
+        QVERIFY2(js.contains("securityLevel:'strict'"), qPrintable(js));
+        QVERIFY(!js.contains("securityLevel:'loose'"));
+        QVERIFY(!js.contains("securityLevel: 'loose'"));
+    }
+
+    void testInlineImagesFenceAndValidation() {
+        // 内联防护三件套：① docDir 围栏（../ 逃逸与目录外绝对路径不内联）；
+        // ② 内容级校验（伪装扩展名的非图片文件不内联——曾 ![](../../.ssh/id_rsa)
+        // 把任意本地文件 base64 嵌进导出产物）；③ 真实图片正常内联
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QDir docDir(dir.path());
+        docDir.mkdir("assets");
+        // 1×1 真实 PNG（同 testImageEmbeddedAsMedia 的字节）
+        const unsigned char png[] = {0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0x0d,0x49,0x48,0x44,0x52,
+                                     0,0,0,1,0,0,0,1,0x08,0x06,0,0,0,0x1f,0x15,0xc4,0x89,0,0,0,0x0a,0x49,0x44,0x41,0x54,
+                                     0x78,0x9c,0x63,0,1,0,0,0,0x05,0,1,0x0d,0x0a,0x2d,0xb4,0,0,0,0,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82};
+        QFile good(dir.path() + "/assets/ok.png");
+        QVERIFY(good.open(QIODevice::WriteOnly));
+        good.write(reinterpret_cast<const char*>(png), sizeof(png)); good.close();
+        // docDir 外的同字节 PNG
+        QTemporaryDir outside; QVERIFY(outside.isValid());
+        QFile esc(outside.path() + "/secret.png");
+        QVERIFY(esc.open(QIODevice::WriteOnly));
+        esc.write(reinterpret_cast<const char*>(png), sizeof(png)); esc.close();
+        // docDir 内伪装成 .png 的文本
+        QFile fake(dir.path() + "/assets/fake.png");
+        QVERIFY(fake.open(QIODevice::WriteOnly));
+        fake.write("this is definitely not an image, maybe /etc/passwd content");
+        fake.close();
+
+        // 围栏内真图 → 内联为 data:
+        QString out = HtmlExporter::inlineImages(
+            "<p><img src=\"assets/ok.png\"></p>", dir.path());
+        QVERIFY2(out.contains("data:image/png;base64,"), qPrintable(out));
+        // ../ 逃出 docDir → 保留原 src，不内联
+        QString escRel = QString("<p><img src=\"../../%1/secret.png\"></p>")
+                             .arg(QFileInfo(outside.path()).fileName());
+        // 相对 ../ 在临时目录父层不稳定，直接用绝对路径测围栏（更直接）
+        Q_UNUSED(escRel);
+        QString out2 = HtmlExporter::inlineImages(
+            QString("<p><img src=\"%1/secret.png\"></p>").arg(outside.path()), dir.path());
+        QVERIFY2(!out2.contains("data:"), qPrintable(out2));
+        QVERIFY(out2.contains("secret.png"));
+        // 伪装图片 → 不内联
+        QString out3 = HtmlExporter::inlineImages(
+            "<p><img src=\"assets/fake.png\"></p>", dir.path());
+        QVERIFY2(!out3.contains("data:"), qPrintable(out3));
+        QVERIFY(out3.contains("fake.png"));
     }
 
     void testRenderScriptMermaidRenderIdDecoupledFromHolder() {

@@ -2,6 +2,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QMimeDatabase>
 #include <QRegularExpression>
 #include <QSettings>
 
@@ -58,18 +59,47 @@ QString HtmlExporter::inlineImages(const QString &html, const QString &docDir)
     QRegularExpression re("<img\\b[^>]*src\\s*=\\s*[\"']([^\"']+)[\"']");
     QString out = html;
     int offset = 0;
+    // docDir 围栏基准：未保存文档（docDir 空/不存在）不做本地内联——相对路径
+    // 将落到 CWD，等于无围栏
+    const QString canonDocDir = QFileInfo(docDir).canonicalFilePath();
     QRegularExpressionMatchIterator it = re.globalMatch(html);
     while (it.hasNext()) {
         auto m = it.next();
         QString src = m.captured(1);
         if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://"))
             continue;
+        if (canonDocDir.isEmpty())
+            continue;
         QString path = QDir::isAbsolutePath(src) ? src : QDir(docDir).filePath(src);
+        // 围栏：解析后（canonical 化解 ../ 与符号链接）必须仍在文档目录内。
+        // 曾无任何校验：![](../../.ssh/id_rsa) 经导出把任意本地文件 base64
+        // 嵌进产物（HTML 源码可直接提取字节）
+        const QString canon = QFileInfo(path).canonicalFilePath();
+        if (canon.isEmpty()
+            || !canon.startsWith(canonDocDir + QLatin1Char('/')))
+            continue;
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly)) continue;
         QByteArray bytes = f.readAll();
         f.close();
-        QString mime = mimeForExt(QFileInfo(src).suffix());
+        // 内容级 MIME 校验（不信任扩展名）+ 大小上限：伪装成图片的任意文件
+        // 不得内联（与 DocxExporter::readImageFile 同型防线）。svg 无可靠内容
+        // magic，按文本前缀判定（<img> 上下文的 svg 不执行脚本，可安全内联）
+        if (bytes.isEmpty() || bytes.size() > 50 * 1024 * 1024)
+            continue;
+        QString mime;
+        const QByteArray head = bytes.left(512);
+        if (head.trimmed().startsWith("<svg")
+            || head.contains("<svg")) {
+            mime = QStringLiteral("image/svg+xml");
+        } else {
+            QMimeDatabase db;
+            const QString realMime = db.mimeTypeForData(bytes).name();
+            if (realMime != "image/png" && realMime != "image/jpeg"
+                && realMime != "image/gif" && realMime != "image/webp")
+                continue;
+            mime = realMime;
+        }
         QString dataUri = "data:" + mime + ";base64," + QString::fromLatin1(bytes.toBase64());
         int start = m.capturedStart(1) + offset;
         int len = m.capturedLength(1);
@@ -149,7 +179,7 @@ QString HtmlExporter::mermaidRenderScript(const QString &theme)
         "window.__renderAllMermaid=function(){"
         "return new Promise(function(resolve){"
         "if(!window.mermaid){resolve();return;}"
-        "mermaid.initialize({startOnLoad:false,securityLevel:'loose',theme:'%1',"
+        "mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'%1',"
         "themeVariables:{fontSize:'16px'}});"
         "var pres=document.querySelectorAll('pre code.language-mermaid');"
         "if(!pres.length){resolve();return;}"
