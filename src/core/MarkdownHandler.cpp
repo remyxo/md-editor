@@ -379,6 +379,25 @@ static bool isTableBreakingBlock(const QString &line)
     return false;
 }
 
+// HTML 属性值 / 元素文本转义，与 unescapeHtmlEntities 成对。
+// 用于把**来自文档的文本**拼进 HTML 属性或元素内容（块级公式 latex、代码围栏
+// 信息串、脚注 id）。此前这些位置直接裸拼 + 拼接，缺转义造成两类破坏：
+//   ① 值含 " → 属性提前终结，后续内容变成游离属性/文本：`$$\text{"hi"}$$` 产出
+//      data-latex="\text{"hi"}"，浏览器解析出的 latex 只剩 `\text{`，公式被截断；
+//      脚注 [^a"b] 的 id 被截断成 a（引用与定义同时改名）。
+//   ② 值含 & / < / > → 经 TipTap getHTML() 的 innerHTML 序列化二次转义（&→&amp;），
+//      与 fromHtml 侧的实体解码不对称，往返逐轮膨胀（&amp;→&amp;amp;）。
+// 顺序：& 必须先转，否则会二次转义后续插入的实体起始符。
+static QString escapeHtmlAttr(const QString &s)
+{
+    QString r = s;
+    r.replace(QLatin1Char('&'), QStringLiteral("&amp;"));
+    r.replace(QLatin1Char('"'), QStringLiteral("&quot;"));
+    r.replace(QLatin1Char('<'), QStringLiteral("&lt;"));
+    r.replace(QLatin1Char('>'), QStringLiteral("&gt;"));
+    return r;
+}
+
 // 反转义代码块 / 行内代码内容中的 HTML 实体。
 // 代码内容以占位符形式绕过了 QTextDocument::setHtml 的实体解码，需手动还原，
 // 否则保存到 .md 时会残留 &gt; / &lt; / &amp;（影响 Mermaid 源码 A-->B 等）。
@@ -479,6 +498,81 @@ static void globalReplaceWith(QString &s, const QRegularExpression &re, F fn)
     result += s.mid(last);
     s = result;
 }
+// 空 alt 图片保形（toHtml 侧，全文档范围）。
+// Qt setMarkdown 对 alt 为空/空白的图片**整条丢弃**（实测 `![](a.png)` 只产出
+// 空段落，`![x](a.png)` 正常），图片在「打开→保存」一次往返后从文档消失
+// （.md 原语法被写成 &nbsp;）。此处把空 alt 换成占位符再交给 setMarkdown，
+// 产出 <img alt="ZZIA0ZZ" …> 后由后处理 -1 清空 alt 还原语义（图片保住、
+// alt 语义仍为空）。覆盖独占行/段落内/引用内/列表内全部位置。
+// 行内代码段内的 `![](x)` 是字面文本（CommonMark 规定不解码、不解析标签），
+// 先按 escapeUnclosedHtmlTags 同款规则暂存，避免被当成真图片改写。
+static void protectEmptyAltImages(QString &processed,
+                                  QSet<QString> &collisions,
+                                  QStringList &sentinels)
+{
+    static const QRegularExpression csRe("(`+)([^`\n]+)\\1(?!`)");
+    QStringList codes;
+    {
+        int off = 0;
+        while (true) {
+            const auto cm = csRe.match(processed, off);
+            if (!cm.hasMatch()) break;
+            codes << cm.captured(0);
+            const QString stash = "\x01EUI" + QString::number(codes.size() - 1) + "\x01";
+            processed.replace(cm.capturedStart(), cm.capturedLength(), stash);
+            off = cm.capturedStart() + stash.length();
+        }
+    }
+    static const QRegularExpression imgRe(
+        R"(!\[([^\]\n]*)\]\(([^)\n]*)\))");
+    globalReplaceWith(processed, imgRe,
+        [&collisions, &sentinels](const QRegularExpressionMatch &m) {
+            if (!m.captured(1).trimmed().isEmpty())
+                return m.captured(0);   // 非空 alt：Qt 正常转换，不动
+            const QString ph = collisionFreePlaceholder(
+                collisions, "IA", sentinels.size());
+            sentinels << ph;
+            return "![" + ph + "](" + m.captured(2) + ")";
+        });
+    for (int i = 0; i < codes.size(); ++i)
+        processed.replace("\x01EUI" + QString::number(i) + "\x01", codes[i]);
+}
+
+// 空 alt 图片的 alt 占位注入（fromHtml 侧，与 toHtml 的 ZZIA 保形对偶）。
+// vendored Qt writer 对空 alt 的图片输出 ![image](src)——凭空造出 alt 文本，
+// 使 ![](src) 无法字节往返。此处给「无 alt 或 alt 为空」的 <img> 补占位 alt，
+// toMarkdown 之后由调用侧统一替换回 ![](...)。
+// full 为完整标签串，attrs 为其属性部分（tagRe 的第 3 组，含首空格与可能的
+// 结尾 '/'）。非空 alt 原样返回。
+static QString injectEmptyAltSentinel(const QString &full, const QString &attrs,
+                                      QSet<QString> &collisions,
+                                      QStringList &sentinels)
+{
+    static const QRegularExpression altRe(
+        QStringLiteral("\\balt\\s*=\\s*\"([^\"]*)\""));
+    const auto am = altRe.match(attrs);
+    if (am.hasMatch() && !am.captured(1).isEmpty())
+        return full;   // 已有非空 alt：不动
+    const QString ph = collisionFreePlaceholder(collisions, "IB", sentinels.size());
+    sentinels << ph;
+    if (am.hasMatch()) {
+        // alt="" → 就地替换属性值。base 为属性段在 full 中的起点（tagRe 的
+        // 第 3 组紧接标签名，full 比 attrs 多标签名与结尾 '>'）
+        const int base = full.indexOf(attrs);
+        QString out = full;
+        out.replace(base + am.capturedStart(1), am.capturedLength(1), ph);
+        return out;
+    }
+    // 无 alt 属性：在标签名之后插入
+    const int nameEnd = full.indexOf(QLatin1Char(' '), 1);
+    const int insertAt = (nameEnd < 0) ? full.indexOf(QLatin1Char('>'), 1)
+                                       : nameEnd;
+    if (insertAt < 0) return full;
+    QString out = full;
+    out.insert(insertAt, QStringLiteral(" alt=\"") + ph + QLatin1Char('"'));
+    return out;
+}
+
 
 // 批量还原占位符为备份内容（phs 与 backups 一一对应，序号可非连续）：
 // 两遍单遍重建，替代「逐占位符全串 replace」的 O(K·n) 模式。
@@ -947,9 +1041,11 @@ static QString extractFootnoteRefs(QString line, QStringList &refs, QStringList 
     while (true) {
         auto m = refRe.match(line, off);
         if (!m.hasMatch()) break;
-        QString id = m.captured(1).trimmed();
-        refs << ("<sup data-type=\"footnoteRef\" data-id=\"" + id + "\">"
-                 + id + "</sup>");
+        // 实体解码：修复历史损坏文件（与定义侧同款，见 buildFootnoteDefHtml 调用点）
+        QString id = unescapeHtmlEntities(m.captured(1).trimmed());
+        // id 来自文档正文（[^id] 的 id 部分），须转义后才可进属性/元素文本
+        refs << ("<sup data-type=\"footnoteRef\" data-id=\"" + escapeHtmlAttr(id) + "\">"
+                 + escapeHtmlAttr(id) + "</sup>");
         phs << collisionFreePlaceholder(collisions, "FR", refs.size() - 1);
         QString ph = phs.last();
         line.replace(m.capturedStart(), m.capturedLength(), ph);
@@ -980,8 +1076,8 @@ static QString buildFootnoteDefHtml(const QString &id, const QString &contentMd)
         inner.remove(QStringLiteral("<!--StartFragment-->"));
         inner.remove(QStringLiteral("<!--EndFragment-->"));
     }
-    return "<div data-type=\"footnoteDef\" data-id=\"" + id + "\">"
-         + "<span class=\"footnote-marker\">" + id + "</span>"
+    return "<div data-type=\"footnoteDef\" data-id=\"" + escapeHtmlAttr(id) + "\">"
+         + "<span class=\"footnote-marker\">" + escapeHtmlAttr(id) + "</span>"
          + "<div class=\"footnote-content\">" + inner + "</div></div>";
 }
 
@@ -1725,6 +1821,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     QStringList escapedDelimPhs; // ZZED（转义扩展定界符，与 escapedDelimBackups 对应）
     QStringList subPhs;          // ZZSB（下标，与 subContents 对应）
     QStringList footnoteRefPhs;  // ZZFR（脚注引用，与 footnoteRefs 对应）
+    QStringList emptyAltSentinels; // ZZIA（空 alt 图片的 alt 占位，见 protectEmptyAltImages）
     QStringList htmlInlinePhs;   // ZZHI（HTML 内联标签，与 htmlInlineBackups 对应）
     QStringList tableCellPhs;    // ZZTC（表格空单元格）
     QStringList emphCodePhs;     // ZZEC/ZZEM（强调包裹行内代码，与 emphCodeHtml 对应）
@@ -1781,7 +1878,15 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                 QString trimmedLine = line.trimmed();
                 if (trimmedLine.size() > 4 && trimmedLine.endsWith("$$")) {
                     QString latex = trimmedLine.mid(2, trimmedLine.size() - 4).trimmed();
-                    mathBlocks << ("<div data-type=\"block-math\" data-latex=\"" + latex + "\"></div>");
+                    // 读取侧实体解码（unescapeHtmlEntities）：修复历史损坏文件。
+                    // 6.8.2 及以前 fromHtml 不解属性实体，把 aligned 的对齐列 `&`
+                    // 写成了字面 `&amp;` 存进 .md；若载入时不解码，toHtml 会把
+                    // `&amp;` 再次转义成 `&amp;amp;`，编辑器只解一层 → 公式显示成
+                    // 字面「x&amp;= a + b」且成为稳定不动点，永不自愈。
+                    // 解码后：编辑器显示正确，下次保存回写干净的 `&`（一次性修复）。
+                    mathBlocks << ("<div data-type=\"block-math\" data-latex=\""
+                                   + escapeHtmlAttr(unescapeHtmlEntities(latex))
+                                   + "\"></div>");
                     mathBlockPhs << collisionFreePlaceholder(collisions,
                         "MB", mathBlocks.size() - 1);
                     processed += mathBlockPhs.last() + "\n";
@@ -1819,7 +1924,10 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                         latex = "\\begin{aligned}" + parts.join(" \\\\ ") + "\\end{aligned}";
                     }
                 }
-                mathBlocks << ("<div data-type=\"block-math\" data-latex=\"" + latex + "\"></div>");
+                // 实体解码见上方单行块级公式注释（修复历史损坏文件）
+                mathBlocks << ("<div data-type=\"block-math\" data-latex=\""
+                               + escapeHtmlAttr(unescapeHtmlEntities(latex))
+                               + "\"></div>");
                 inMathBlock = false;
             }
             lastBlock = BT_NONE;
@@ -1831,7 +1939,10 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                 // 开启新代码块：提取语言（信息串为围栏后的文本），整块用占位符保护，
                 // 内容不经 setMarkdown（其围栏解析同样朴素，嵌套围栏会二次错乱）。
                 // 内容行保留原始缩进（CommonMark 的去缩进归一化由往返收敛完成）
-                codeFenceLang = line.mid(tlFenceIndent + tlFenceRun).trimmed();
+                // 实体解码：修复历史损坏文件（旧版 fromHtml 不解属性实体，
+                // 信息串含 & 时被写成字面 &amp; 存进 .md）
+                codeFenceLang = unescapeHtmlEntities(
+                    line.mid(tlFenceIndent + tlFenceRun).trimmed());
                 codeFenceLen = tlFenceRun;
                 codeFenceChar = tlFenceChar;
                 codeContent.clear();
@@ -1848,7 +1959,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                 QString content = codeContent.join('\n');
                 QString codeOpen = codeFenceLang.isEmpty()
                     ? QStringLiteral("<code>")
-                    : QStringLiteral("<code class=\"language-") + codeFenceLang + "\">";
+                    : QStringLiteral("<code class=\"language-") + escapeHtmlAttr(codeFenceLang) + "\">";
                 codeBlocks << "<pre>" + codeOpen + content.toHtmlEscaped() + "</code></pre>";
                 codeFenceLen = 0;
             } else {
@@ -1872,7 +1983,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                 ++fenceLen;
             if (bqCodeFenceLen == 0) {
                 // 开启：提取语言（信息串为围栏后的文本）
-                bqCodeFenceLang = stripped.mid(fenceLen).trimmed();
+                bqCodeFenceLang = unescapeHtmlEntities(
+                    stripped.mid(fenceLen).trimmed());   // 实体解码见顶层围栏同款
                 bqCodeFenceLen = fenceLen;
                 bqCodeContent.clear();
             } else if (fenceLen >= bqCodeFenceLen && stripped.mid(fenceLen).trimmed().isEmpty()) {
@@ -1880,7 +1992,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                 QString content = bqCodeContent.join('\n');
                 QString codeOpen = bqCodeFenceLang.isEmpty()
                     ? QStringLiteral("<code>")
-                    : QStringLiteral("<code class=\"language-") + bqCodeFenceLang + "\">";
+                    : QStringLiteral("<code class=\"language-") + escapeHtmlAttr(bqCodeFenceLang) + "\">";
                 bqCodeBlocks << "<pre style=\" margin-left:40px; margin-right:40px;\">"
                                 + codeOpen + content.toHtmlEscaped() + "</code></pre>";
                 bqCodeFenceLen = 0;
@@ -1913,7 +2025,10 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             // 嵌套层（extractFootnotes=false）不进此分支：定义行按字面输出。
             // 块级定义：缩进续行（≥4 空格 / 1 tab）归属定义；空行后仍有缩进行 =
             // 定义内新段落（pandoc 式）；非缩进行（含懒续行）即定义结束留在正文
-            QString fid = footnoteDefMatch.captured(1).trimmed();
+            // 实体解码：修复历史损坏文件（旧版 fromHtml 不解属性实体，id 含 &
+            // 时被写成字面 &amp; 存进 .md，见 escapeHtmlAttr 注释）。解码后与引用
+            // 侧（extractFootnoteRefs 同款）保持一致，两端 id 仍配对。
+            QString fid = unescapeHtmlEntities(footnoteDefMatch.captured(1).trimmed());
             QString contentMd = footnoteDefMatch.captured(2).trimmed();
             int j = i + 1;
             while (j < lines.size()) {
@@ -2265,7 +2380,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
         QString content = codeContent.join('\n');
         QString codeOpen = codeFenceLang.isEmpty()
             ? QStringLiteral("<code>")
-            : QStringLiteral("<code class=\"language-") + codeFenceLang + "\">";
+            : QStringLiteral("<code class=\"language-") + escapeHtmlAttr(codeFenceLang) + "\">";
         codeBlocks << "<pre>" + codeOpen + content.toHtmlEscaped() + "</code></pre>";
         codeFenceLen = 0;
     }
@@ -2276,7 +2391,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
         QString content = bqCodeContent.join('\n');
         QString codeOpen = bqCodeFenceLang.isEmpty()
             ? QStringLiteral("<code>")
-            : QStringLiteral("<code class=\"language-") + bqCodeFenceLang + "\">";
+            : QStringLiteral("<code class=\"language-") + escapeHtmlAttr(bqCodeFenceLang) + "\">";
         bqCodeBlocks << "<pre style=\" margin-left:40px; margin-right:40px;\">"
                         + codeOpen + content.toHtmlEscaped() + "</code></pre>";
         bqCodeFenceLen = 0;
@@ -2513,9 +2628,27 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     // 标签才安全转义为实体。
     escapeUnclosedHtmlTags(processed);
 
+    // 空 alt 图片保形（须在任何解析之前）：Qt setMarkdown 会整条丢弃空 alt 图片
+    protectEmptyAltImages(processed, collisions, emptyAltSentinels);
+
     QTextDocument doc;
     doc.setMarkdown(processed);
     QString html = doc.toHtml();
+
+    // 后处理 -1: 清空空 alt 图片的占位 alt（见 protectEmptyAltImages）。
+    //   占位 alt 只用于让 Qt 保留图片，此处统一还原为 alt=""。通用 token 正则
+    //   + 集合判断（不按个数拼 alternation），未命中集合的是用户字面同形文本，
+    //   原样保留。
+    if (!emptyAltSentinels.isEmpty()) {
+        QSet<QString> sentinelSet(emptyAltSentinels.cbegin(),
+                                  emptyAltSentinels.cend());
+        globalReplaceWith(html,
+            QRegularExpression(QStringLiteral("alt=\"(ZZ[A-Z]+[0-9]+ZZ)\"")),
+            [&sentinelSet](const QRegularExpressionMatch &m) {
+                return sentinelSet.contains(m.captured(1))
+                           ? QStringLiteral("alt=\"\"") : m.captured(0);
+            });
+    }
 
     // 后处理 0: 链式级联中被 md4c 整对丢弃的直接包裹 code 补 <strong>/<em>。
     //   必须在一切占位符还原之前：此刻 html 中 mono span 恰为 md4c 从 processed
@@ -2886,16 +3019,42 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     // 上面重组 regex 只处理含 <div align> 的标题且限于 h1（xx-large），工具栏
     // 反复操作后 TipTap getHTML() 可能产生非常规格式导致重组不匹配，未剥离的
     // font span（font-weight:700）被 TipTap Bold parseHTML 解析为 <strong> mark，
-    // 后续往返持续污染。此处兜底剥离所有 h1-h3 标题内的纯字体 span，阻断污染链。
+    // 后续往返持续污染。此处兜底剥离所有 h1-h6 标题内的标题级 font span。
+    //
+    // 只删该 span 的**开闭标签**、保留内容与其间其余内联标记（平衡扫描配对）。
+    // 早前用单正则 <hN…><span font-size…>(.*?)</span></hN> 整体重组，惰性捕获组
+    // 在「标题含 ≥2 个内联段」时会吞掉中间标记：`# a **c**` 的 Qt 输出是
+    // <span font-size…;font-weight:700>a </span><span font-weight:700>c</span>，
+    // 惰性组只能扩张到末尾的 </span> 才能满足末尾的 </hN>，于是产出
+    // <h1 …>a </span><span style=" font-weight:700;">c</h1>——**悬空 </span> 的
+    // 畸形 HTML**（TipTap 仅靠 DOMParser 容错），且 `**c**` 的强调信息在后续
+    // 保存中丢失。仅当 font-size 为标题级关键字（xx-large/x-large/large）才剥离，
+    // 用户手写的其它 font-size span 不受影响。
     {
-        // 匹配 <hN...><span style="font-size:(xx-large|x-large|large);...font-weight:700...">content</span></hN>
-        static const QRegularExpression fallbackRe(
-            R"re(<(h[1-6])(\b[^>]*)>\s*<span\b[^>]*\bfont-size\s*:\s*(?:xx-large|x-large|large)\b[^>]*\bfont-weight\s*:\s*700[^>]*>(.*?)</span>\s*</\1>)re",
+        static const QRegularExpression headingRe(
+            R"re(<(h[1-6])\b[^>]*>.*?</\1>)re",
             QRegularExpression::DotMatchesEverythingOption);
-        globalReplaceWith(html, fallbackRe,
-            [](const QRegularExpressionMatch &m) {
-                return QString("<%1%2>%3</%1>")
-                    .arg(m.captured(1), m.captured(2), m.captured(3));
+        static const QRegularExpression headingFontSpanRe(
+            R"re(<span\b[^>]*\bfont-size\s*:\s*(?:xx-large|x-large|large)\b[^>]*>)re");
+        globalReplaceWith(html, headingRe,
+            [](const QRegularExpressionMatch &hm) {
+                const QString h = hm.captured();
+                if (!h.contains(QLatin1String("font-size")))
+                    return h;   // 无标题级 font span：原样返回
+                QString out;
+                out.reserve(h.size());
+                int pos = 0;
+                while (true) {
+                    const auto sm = headingFontSpanRe.match(h, pos);
+                    if (!sm.hasMatch()) break;
+                    const int closeStart = findMatchingSpanClose(h, sm.capturedStart());
+                    if (closeStart < 0) { pos = sm.capturedEnd(); continue; }
+                    out += h.mid(pos, sm.capturedStart() - pos);   // 开标签之前
+                    out += h.mid(sm.capturedEnd(), closeStart - sm.capturedEnd());
+                    pos = closeStart + 7;                          // 跳过 </span>
+                }
+                out += h.mid(pos);
+                return out;
             });
     }
 
@@ -3213,7 +3372,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
         {&codeBlockPhs, &blankLinePhs, &mathBlockPhs, &bqCodeBlockPhs,
          &bqSepPhs, &taskListPhs, &brSoftPhs, &hrPhs, &divPhs,
          &escapedEqPhs, &escapedDelimPhs, &subPhs, &footnoteRefPhs,
-         &htmlInlinePhs, &tableCellPhs, &emphCodePhs});
+         &htmlInlinePhs, &tableCellPhs, &emphCodePhs, &emptyAltSentinels});
 #endif
 
     return html;
@@ -3510,6 +3669,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
     // 策略：先替换代码为占位符 → toMarkdown() → 还原占位符
 
     QStringList placeholders, backups;
+    // 空 alt 图片的 alt 占位串（ZZIB*，见 injectEmptyAltSentinel）。不参与批次
+    // 还原，仅用于把 Qt writer 的 ![image](…) 改回 ![](...)，故单独记录。
+    QStringList emptyAltSentinels;
     // <br data-brk>（编辑器软换行）占位符：与 backups 分开记录，因其还原需按
     // 所在行上下文决定缩进（段落 \n / 有序列表 \n···· / 无序列表 \n··），
     // 无法在保护阶段预先确定，统一按行上下文还原。
@@ -3562,7 +3724,11 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString tag = m.captured();
             auto lm = latexRe.match(tag);
             if (!lm.hasMatch()) { offset = m.capturedStart() + 1; continue; }
-            QString latex = lm.captured(1);
+            // 属性值实体解码：data-latex 的值经 TipTap getHTML() 的 innerHTML
+            // 序列化恒被转义（& → &amp;、< → &lt;、" → &quot;），toHtml 侧现在
+            // 也走 escapeHtmlAttr。不解码则 & 类公式（aligned/matrix 的对齐列
+            // `&`）每保存一轮就多一层转义（&amp; → &amp;amp;），永不收敛。
+            QString latex = unescapeHtmlEntities(lm.captured(1));
             QString md = blockMathLatexToMarkdown(latex);
             QString ph = collisionFreePlaceholder(collisions, "BM", n++);
             placeholders << ph;
@@ -3581,7 +3747,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString tag = m.captured();
             auto lm = latexRe.match(tag);
             if (!lm.hasMatch()) { offset = m.capturedStart() + 1; continue; }
-            QString latex = lm.captured(1);
+            QString latex = unescapeHtmlEntities(lm.captured(1));   // 见上方块级公式注释
             QString md = "$" + latex + "$";
             QString ph = collisionFreePlaceholder(collisions, "IM", n++);
             placeholders << ph;
@@ -3637,7 +3803,8 @@ QString MarkdownHandler::fromHtml(const QString &html)
             // 提取语言（TipTap codeBlock 输出 <code class="language-xxx">）
             QString lang;
             auto lm = langRe.match(code);
-            if (lm.hasMatch()) lang = lm.captured(1);
+            // 实体解码：toHtml 侧经 escapeHtmlAttr 写入信息串（见该函数注释）
+            if (lm.hasMatch()) lang = unescapeHtmlEntities(lm.captured(1));
             code.remove(stripTagRe);
             code = unescapeHtmlEntities(code);
             code = code.trimmed();
@@ -3834,7 +4001,10 @@ QString MarkdownHandler::fromHtml(const QString &html)
             [&n, &collisions, &placeholders, &backups, &idRe]
             (const QRegularExpressionMatch &m) {
                 auto im = idRe.match(m.captured());
-                QString id = im.hasMatch() ? im.captured(1) : QString();
+                // 实体解码：toHtml 侧经 escapeHtmlAttr 写入，且 TipTap getHTML()
+                // 的 innerHTML 序列化会二次转义（见 escapeHtmlAttr 注释）
+                QString id = im.hasMatch() ? unescapeHtmlEntities(im.captured(1))
+                                           : QString();
                 QString ph = collisionFreePlaceholder(collisions, "FR", n++);
                 placeholders << ph;
                 backups << "[^" + id + "]";
@@ -3953,7 +4123,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 int defClose = findMatchingDivClose(inner, dm.capturedStart());
                 if (defClose < 0) { doff = dm.capturedEnd(); continue; }
                 auto iim = defIdRe.match(dm.captured());
-                QString id = iim.hasMatch() ? iim.captured(1) : QString();
+                // 实体解码（与上方脚注引用、escapeHtmlAttr 成对）
+                QString id = iim.hasMatch() ? unescapeHtmlEntities(iim.captured(1))
+                                            : QString();
                 QString defInner = inner.mid(dm.capturedEnd(),
                                              defClose - dm.capturedEnd());
                 auto com = contentOpenRe.match(defInner);
@@ -4119,6 +4291,53 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 placeholders << ph;
                 backups << m.captured(0);
                 return ph;
+            });
+    }
+
+    // 标题内强调保护：<strong>/<b>/<em>/<i> → 占位符 + MD 语法备份。
+    // Qt 的 toMarkdown **不输出 <hN> 内的强调标记**（<p> 内正常；实测
+    // setHtml("<h1><strong>c</strong></h1>").toMarkdown() == "# c"），标题里用户
+    // 写的 **粗** / *斜* 在保存时被静默丢弃（编辑器显示粗体、存盘后消失，
+    // `# a **c**` → `# a c`、`# a *c*` → `# a c`）。code/mark/s/strike/sub/sup/
+    // span 各有占位保护，唯独 strong/em 没有——此步补齐，与它们同款：
+    // 占位 + 还原（逆序还原使内层占位符先于外层展开）。
+    // 内容含裸标签的（如 <strong><s>x</s></strong>）不在此处理：上方删除线互嵌
+    // 步骤已按字面 HTML 保护，与既有约定一致。
+    {
+        int n = 0;
+        static const QRegularExpression headingRe(
+            R"re(<(h[1-6])\b[^>]*>.*?</\1>)re",
+            QRegularExpression::DotMatchesEverythingOption);
+        // 内容限定无裸标签（[^<>]*）——嵌套标记交给其它步骤，避免备份不成立
+        static const QRegularExpression emphRe(
+            R"re(<((?:strong|b)|(?:em|i))\b[^>]*>([^<>]*)</\1>)re");
+        globalReplaceWith(processed, headingRe,
+            [&collisions, &placeholders, &backups, &n]
+            (const QRegularExpressionMatch &hm) {
+                QString h = hm.captured();
+                globalReplaceWith(h, emphRe,
+                    [&collisions, &placeholders, &backups, &n]
+                    (const QRegularExpressionMatch &em) {
+                        const QString tag = em.captured(1).toLower();
+                        const bool bold = (tag == QLatin1String("strong")
+                                           || tag == QLatin1String("b"));
+                        const QString inner =
+                            escapeExtDelimsOutsideTags(em.captured(2), true);
+                        // 空内容或贴边星号：**/* 会与内容并成歧义序列
+                        //（***a*** 等），保留字面 HTML（与 ST 步的贴边处理同型）
+                        if (inner.isEmpty() || inner.startsWith(QLatin1Char('*'))
+                            || inner.endsWith(QLatin1Char('*')))
+                            return em.captured(0);
+                        const QString ph = collisionFreePlaceholder(
+                            collisions, "HE", n++);
+                        placeholders << ph;
+                        backups << (bold ? QStringLiteral("**") + inner
+                                                + QStringLiteral("**")
+                                         : QStringLiteral("*") + inner
+                                                + QStringLiteral("*"));
+                        return ph;
+                    });
+                return h;
             });
     }
 
@@ -4823,10 +5042,21 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (isClosing) {
                 if (depth > 0) --depth;
                 result += full;
-            } else if (name == "img" && depth == 0) {
-                // 裸顶层图片 → 包进 <p>，强制独立块（img 为 void，深度不变）
-                result += "<p>" + full + "</p>";
-                changed = true;
+            } else if (name == "img") {
+                // 空 alt 保形：<img> 无 alt 或 alt="" 时注入占位 alt，令 vendored
+                // Qt writer 写出 ![ZZIB0ZZ](src) 而非凭空造出的 ![image](src)
+                // （qtextmarkdownwriter.cpp:589 对空 alt 填字面 "image"），
+                // toMarkdown 之后统一替换回 ![](...)。
+                const QString withAlt = injectEmptyAltSentinel(
+                    full, attrs, collisions, emptyAltSentinels);
+                if (depth == 0) {
+                    // 裸顶层图片 → 包进 <p>，强制独立块（img 为 void，深度不变）
+                    result += "<p>" + withAlt + "</p>";
+                    changed = true;
+                } else {
+                    result += withAlt;
+                    if (withAlt != full) changed = true;
+                }
             } else if (voidTags.contains(name) || selfClosed) {
                 result += full;   // void / 自闭合标签，深度不变
             } else {
@@ -5308,9 +5538,22 @@ QString MarkdownHandler::fromHtml(const QString &html)
     while (md.startsWith('\n'))
         md.remove(0, 1);
 
+    // 空 alt 图片还原：![ZZIB0ZZ](src) → ![](src)（见 injectEmptyAltSentinel）。
+    // 通用 token 正则 + 集合判断，未命中集合的是用户字面同形 alt，原样保留。
+    if (!emptyAltSentinels.isEmpty()) {
+        QSet<QString> sentinelSet(emptyAltSentinels.cbegin(),
+                                  emptyAltSentinels.cend());
+        globalReplaceWith(md,
+            QRegularExpression(QStringLiteral("!\\[(ZZ[A-Z]+[0-9]+ZZ)\\]\\(")),
+            [&sentinelSet](const QRegularExpressionMatch &m) {
+                return sentinelSet.contains(m.captured(1))
+                           ? QStringLiteral("![](") : m.captured(0);
+            });
+    }
+
 #ifndef QT_NO_DEBUG
     assertNoPlaceholderLeak(md,
-        {&placeholders, &brSoftPlaceholders, &blankLinePhs});
+        {&placeholders, &brSoftPlaceholders, &blankLinePhs, &emptyAltSentinels});
 #endif
 
     return md;

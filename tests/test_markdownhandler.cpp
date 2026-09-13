@@ -3,6 +3,7 @@
 #include <QRegularExpression>
 #include <QFile>
 #include "../src/core/MarkdownHandler.h"
+#include "tiptap_serialize.h"   // simulateTipTapSerialization（TipTap 序列化近似）
 
 // 构造含空格、长度远超 80 列的测试文本。QTextDocument::toMarkdown() 硬编码
 // 80 列换行，只有含空格（词边界）的文本才会触发折行——纯中文无空格不会折。
@@ -12,6 +13,15 @@ static QString longSpacedText(int words)
     for (int i = 1; i <= words; ++i)
         s += QStringLiteral("单词%1 ").arg(i);
     return s;
+}
+
+// 模拟 TipTap 序列化的辅助见 tiptap_serialize.h（与 test_roundtrip_matrix 共用）
+
+// 端到端往返：MD → toHtml → [TipTap 序列化] → fromHtml
+static QString e2eRoundTrip(const QString &md)
+{
+    return MarkdownHandler::fromHtml(
+        simulateTipTapSerialization(MarkdownHandler::toHtml(md)));
 }
 
 class TestMarkdownHandler : public QObject {
@@ -4439,6 +4449,161 @@ private slots:
                  qPrintable(QString("code 内容应单次转义存在，HTML[%1]").arg(html)));
         // 往返保真（code span 内容原样回）
         QCOMPARE(MarkdownHandler::fromHtml(html), md);
+    }
+
+    // ===== 阶段 1 往返保真修复 =====
+
+    void testEmptyAltImageRoundTrip()
+    {
+        // `![](path)`（空 alt）曾整条被删：Qt setMarkdown 对空 alt 图片不产出
+        // <img>，打开即看不见图、保存后原语法被写成 &nbsp;。修复为「临时补
+        // 占位 alt 交给 setMarkdown，产出后清空 alt」。
+        const QStringList cases = {
+            QStringLiteral("![](a.png)"),
+            QStringLiteral("![](images/a.png)"),
+            QStringLiteral("![](a.png \"t\")"),
+            QStringLiteral("正文 ![](a.png) 正文"),
+            QStringLiteral("> ![](a.png)"),
+        };
+        for (const QString &md : cases) {
+            const QString html = MarkdownHandler::toHtml(md);
+            QVERIFY2(html.contains(QLatin1String("<img")),
+                     qPrintable(QString("图片不应被丢弃，MD=[%1] HTML=[%2]").arg(md, html)));
+            // 占位 alt 不得泄漏到编辑器内容
+            QVERIFY2(!html.contains(QLatin1String("ZZIA")),
+                     qPrintable(QString("alt 占位符泄漏，HTML=[%1]").arg(html)));
+            QCOMPARE(e2eRoundTrip(md), md);
+        }
+        // 多张相邻图片：块间空行被折叠是既有归一化（非空 alt 对照同样如此），
+        // 此处只守「两张都在、无实体残留、收敛」——旧实现是整段变 &nbsp;
+        {
+            const QString md = QStringLiteral("![](a.png)\n\n![](b.png)");
+            const QString e2e = e2eRoundTrip(md);
+            QVERIFY2(e2e.contains(QLatin1String("![](a.png)"))
+                         && e2e.contains(QLatin1String("![](b.png)")),
+                     qPrintable(QString("两张图片都应保留，往返=[%1]").arg(e2e)));
+            QCOMPARE(e2eRoundTrip(e2e), e2e);
+            // 对照：非空 alt 的相邻两图同样折叠块间空行（既有行为，非本次引入）
+            QCOMPARE(e2eRoundTrip(QStringLiteral("![x](a.png)\n\n![y](b.png)")),
+                     QStringLiteral("![x](a.png)![y](b.png)"));
+        }
+        // 对照：非空 alt 既有行为不回归
+        QCOMPARE(e2eRoundTrip(QStringLiteral("![x](a.png)")), QStringLiteral("![x](a.png)"));
+        // 行内代码内的字面 ![](x) 不是图片，不得改写
+        QCOMPARE(e2eRoundTrip(QStringLiteral("写法：`![](a.png)`")),
+                 QStringLiteral("写法：`![](a.png)`"));
+    }
+
+    void testHeadingEmphasisRoundTrip()
+    {
+        // 标题内强调曾静默丢失：Qt toMarkdown 不输出 <hN> 内的强调标记
+        //（`# a **c**` → `# a c`），且 toHtml 兜底正则会把多 span 标题吞成
+        // 悬空 </span> 的畸形 HTML。
+        const QStringList cases = {
+            QStringLiteral("# **c**"),
+            QStringLiteral("# a **c**"),
+            QStringLiteral("# **c** b"),
+            QStringLiteral("# **a** x **b**"),
+            QStringLiteral("# 标题**粗**"),
+            QStringLiteral("# 标**粗**题"),
+            QStringLiteral("## a **c**"),
+            QStringLiteral("# a *c*"),
+            QStringLiteral("# a **b** *c* d"),
+            QStringLiteral("### a *i* b **b** 尾"),
+        };
+        for (const QString &md : cases) {
+            const QString html = MarkdownHandler::toHtml(md);
+            // 畸形 HTML 回归：旧兜底正则在多内联段标题上产出 `a </span><span …>`
+            QVERIFY2(!html.contains(QLatin1String("</span><span")),
+                     qPrintable(QString("标题 HTML 不应含悬空 </span>，HTML=[%1]").arg(html)));
+            QCOMPARE(e2eRoundTrip(md), md);
+        }
+    }
+
+    void testMathAttributeEscapingRoundTrip()
+    {
+        // data-latex 属性转义（toHtml）+ 实体解码（fromHtml）：
+        //   - latex 含 " 曾提前终结属性，公式被截断（$$\text{"hi"}$$ → 只剩 \text{）
+        //   - latex 含 & / < 曾逐轮膨胀（&amp; → &amp;amp;，对齐环境 & 是列分隔符）
+        // expect 为既有归一化的目标形态（与本次修复无关，一并钉住防漂移）：
+        //   - 单行块级公式 $$…$$ 规范化为多行形态（blockMathLatexToMarkdown 恒多行）
+        //   - `\&` 在 toHtml 侧（经 setMarkdown）本就归一化为 `&`
+        const struct { const char *md; const char *expect; } cases[] = {
+            {"$\\text{\"hi\"}$",                "$\\text{\"hi\"}$"},
+            {"$$\\text{\"hi\"}$$",              "$$\n\\text{\"hi\"}\n$$"},
+            {"$a < b$",                         "$a < b$"},
+            {"$a \\& b$",                       "$a & b$"},
+            {"$$\n\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}\n$$",
+             "$$\n\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}\n$$"},
+            {"$$\n\\begin{matrix}\na & b \\\\\nc & d\n\\end{matrix}\n$$",
+             "$$\n\\begin{matrix}\na & b \\\\\nc & d\n\\end{matrix}\n$$"},
+        };
+        for (const auto &c : cases) {
+            const QString md = QString::fromUtf8(c.md);
+            const QString e2e = e2eRoundTrip(md);
+            QVERIFY2(!e2e.contains(QLatin1String("&amp;"))
+                         && !e2e.contains(QLatin1String("&lt;"))
+                         && !e2e.contains(QLatin1String("&gt;"))
+                         && !e2e.contains(QLatin1String("&quot;")),
+                     qPrintable(QString("公式不应残留 HTML 实体，MD=[%1] 往返=[%2]").arg(md, e2e)));
+            QCOMPARE(e2e, QString::fromUtf8(c.expect));
+            // 收敛：再走一轮不得继续变化（旧实现的 &amp; 会逐轮膨胀）
+            QCOMPARE(e2eRoundTrip(e2e), e2e);
+        }
+        // 转义本身：属性值应带实体而非裸符
+        const QString html = MarkdownHandler::toHtml(
+            QStringLiteral("$$\n\\begin{aligned}\na &= b\n\\end{aligned}\n$$"));
+        QVERIFY2(html.contains(QLatin1String("&amp;=")),
+                 qPrintable(QString("data-latex 应做属性转义，HTML=[%1]").arg(html)));
+    }
+
+    void testLegacyEntityEscapedHeals()
+    {
+        // 历史损坏文件的修复：6.8.2 及以前 fromHtml 不解属性实体，把 aligned 的
+        // 对齐列 `&` 以字面 `&amp;` 写进了 .md。载入时若不解码，toHtml 会把
+        // `&amp;` 再转义成 `&amp;amp;`，编辑器只解一层 → 公式显示成字面
+        // 「x&amp;= a + b」，且成为稳定不动点、永不自愈（用户实测）。
+        // 期望：载入即显示正确的 `&`，下次保存回写干净的 `&`（一次性修复）。
+        const QString legacy = QStringLiteral(
+            "$$\n\\begin{aligned}\nx &amp;= a + b \\\\\ny &amp;= c + d\n\\end{aligned}\n$$");
+        const QString html = MarkdownHandler::toHtml(legacy);
+        // 属性值恰好一层转义：DOM 解码后即干净的 &
+        QVERIFY2(html.contains(QLatin1String("x &amp;= a + b")),
+                 qPrintable(QString("载入应解一层实体，HTML=[%1]").arg(html)));
+        QVERIFY2(!html.contains(QLatin1String("&amp;amp;")),
+                 qPrintable(QString("不得二次转义，HTML=[%1]").arg(html)));
+        // 保存回写干净实体（文件自愈），且此后收敛
+        const QString healed = QStringLiteral(
+            "$$\n\\begin{aligned}\nx &= a + b \\\\\ny &= c + d\n\\end{aligned}\n$$");
+        QCOMPARE(MarkdownHandler::fromHtml(html), healed);
+        QCOMPARE(e2eRoundTrip(healed), healed);
+        // 干净源不受影响（解码对无实体文本是恒等变换）
+        QCOMPARE(MarkdownHandler::toHtml(healed), html);
+
+        // 同类历史损坏：围栏信息串 / 脚注 id（旧版写坏 → 载入解码 → 保存自愈）
+        const struct { const char *legacy; const char *healed; } others[] = {
+            {"```c&amp;x\ncode\n```",          "```c&x\ncode\n```"},
+            {"```c&quot;x\ncode\n```",         "```c\"x\ncode\n```"},
+            {"文字[^a&amp;b]\n\n[^a&amp;b]: 定义", "文字[^a&b]\n\n[^a&b]: 定义"},
+            {"$a &amp; b$",                     "$a & b$"},
+        };
+        for (const auto &c : others) {
+            const QString load = MarkdownHandler::toHtml(QString::fromUtf8(c.legacy));
+            QVERIFY2(!load.contains(QLatin1String("&amp;amp;")),
+                     qPrintable(QString("载入不得二次转义，HTML=[%1]").arg(load)));
+            QCOMPARE(MarkdownHandler::fromHtml(load), QString::fromUtf8(c.healed));
+            QCOMPARE(e2eRoundTrip(QString::fromUtf8(c.healed)), QString::fromUtf8(c.healed));
+        }
+    }
+
+    void testFootnoteIdAndCodeLangEscaping()
+    {
+        // 脚注 id / 围栏信息串同属「拼进 HTML 属性」的位置，缺转义时 id 被截断
+        //（[^a"b] 往返成 [^a]）、语言丢失。
+        QCOMPARE(e2eRoundTrip(QStringLiteral("文字[^a\"b]\n\n[^a\"b]: 定义")),
+                 QStringLiteral("文字[^a\"b]\n\n[^a\"b]: 定义"));
+        QCOMPARE(e2eRoundTrip(QStringLiteral("```c\"x\ncode\n```")),
+                 QStringLiteral("```c\"x\ncode\n```"));
     }
 
 };

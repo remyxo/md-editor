@@ -40,6 +40,7 @@
 #include <QSet>
 #include <QVector>
 #include "../src/core/MarkdownHandler.h"
+#include "tiptap_serialize.h"   // simulateTipTapSerialization（TipTap 序列化近似）
 
 // ═══════════════════════════════════════════════════════════════════════
 // 区块 A：往返检查器
@@ -187,8 +188,10 @@ static RoundTripOutcome roundTrip(const QString &md)
     o.rounds << md;
     for (int i = 0; i < kMaxRounds; ++i) {
         // htmls 存归一化后的 HTML——生产链路编辑区持有的是浏览器 DOM
-        // 规范化结果（TipTap mark 集合），守卫与 fromHtml 都应基于它
-        o.htmls << tipTapNormalizeInlineOverlap(MarkdownHandler::toHtml(o.rounds.last()));
+        // 规范化结果（TipTap mark 集合），守卫与 fromHtml 都应基于它；
+        // 另经 TipTap 序列化近似（属性值实体解码 + 重编码，见 tiptap_serialize.h）
+        o.htmls << tipTapNormalizeInlineOverlap(simulateTipTapSerialization(
+            MarkdownHandler::toHtml(o.rounds.last())));
         o.rounds << MarkdownHandler::fromHtml(o.htmls.last());
     }
     for (int i = 1; i + 1 < o.rounds.size(); ++i) {
