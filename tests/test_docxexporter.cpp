@@ -306,15 +306,121 @@ private slots:
     }
 
     void testFootnoteReferenceAndDefinition() {
-        // 脚注引用导出为上标，定义导出为 [^id]: 内容（不得丢失内容为 "..."）
-        QString xml = exportDocumentXml(
+        // 脚注真导出（审查 P1-7）：引用 → Word 原生 footnoteReference（自动编号
+        // 上标），定义内容进 footnotes.xml 部件（旧实现解析出内容后丢弃、正文
+        // 固定写 "[^1]: ..."），包结构同步补 [Content_Types]/rels 声明
+        const QString html =
             "<p>正文<sup data-type=\"footnoteRef\" data-id=\"1\">1</sup></p>"
             "<div data-type=\"footnoteContainer\">"
             "<div data-type=\"footnoteDef\" data-id=\"1\">"
             "<span class=\"footnote-marker\">1</span>"
             "<span class=\"footnote-content\">这是脚注内容</span>"
-            "</div></div>");
-        QVERIFY(xml.contains("这是脚注内容"));
+            "</div></div>";
+        auto parts = exportParts(html, {"word/document.xml", "word/footnotes.xml",
+                                        "word/_rels/document.xml.rels",
+                                        "[Content_Types].xml"});
+        const QString &xml = parts["word/document.xml"];
+        // 引用侧：原生脚注引用（0/1 为内置分隔符，正文脚注从 2 起）
+        QVERIFY(xml.contains("<w:footnoteReference w:id=\"2\"/>"));
+        QVERIFY(xml.contains("FootnoteReference"));
+        QVERIFY(!xml.contains("[^1]"));           // 旧字面形态不得残留
+        QVERIFY(!xml.contains("这是脚注内容"));    // 定义内容不进正文
+        // 定义侧：footnotes.xml 部件齐全
+        const QString &footnotes = parts["word/footnotes.xml"];
+        QVERIFY(footnotes.contains("<w:footnotes"));
+        QVERIFY(footnotes.contains("w:type=\"separator\""));
+        QVERIFY(footnotes.contains("w:type=\"continuationSeparator\""));
+        QVERIFY(footnotes.contains("<w:footnote w:id=\"2\">"));
+        QVERIFY(footnotes.contains("<w:footnoteRef/>"));
+        QVERIFY(footnotes.contains("这是脚注内容"));
+        // 包声明：Content-Types Override + document.xml.rels 关系
+        QVERIFY(parts["[Content_Types].xml"].contains("/word/footnotes.xml"));
+        QVERIFY(parts["word/_rels/document.xml.rels"].contains("footnotes.xml"));
+    }
+
+    void testFootnoteMultipleAndRepeatedRefs() {
+        // 多脚注编号连续（2、3）；同一 data-id 二次引用复用同号；无定义的引用
+        // 也占号（footnotes.xml 中该号只有编号标记无内容）
+        const QString html =
+            "<p>a<sup data-type=\"footnoteRef\" data-id=\"x\">x</sup>"
+            "b<sup data-type=\"footnoteRef\" data-id=\"y\">y</sup>"
+            "c<sup data-type=\"footnoteRef\" data-id=\"x\">x</sup>"
+            "d<sup data-type=\"footnoteRef\" data-id=\"z\">z</sup></p>"
+            "<div data-type=\"footnoteContainer\">"
+            "<div data-type=\"footnoteDef\" data-id=\"x\"><span class=\"footnote-content\">定义甲</span></div>"
+            "<div data-type=\"footnoteDef\" data-id=\"y\"><span class=\"footnote-content\">定义乙</span></div>"
+            "</div>";
+        auto parts = exportParts(html, {"word/document.xml", "word/footnotes.xml"});
+        const QString &xml = parts["word/document.xml"];
+        QCOMPARE(xml.count("<w:footnoteReference w:id=\"2\"/>"), 2);   // x 两次
+        QCOMPARE(xml.count("<w:footnoteReference w:id=\"3\"/>"), 1);   // y
+        QCOMPARE(xml.count("<w:footnoteReference w:id=\"4\"/>"), 1);   // z（无定义）
+        const QString &fn = parts["word/footnotes.xml"];
+        QVERIFY(fn.contains("定义甲"));
+        QVERIFY(fn.contains("定义乙"));
+    }
+
+    void testRunPropertiesOrderFollowsSchema() {
+        // CT_RPr 子元素须按 schema 序列：rStyle → rFonts → b → i → strike →
+        // color → sz → highlight → u → shd → vertAlign（审查 P2-9：原顺序 u 早于
+        // strike、vertAlign 早于 highlight/sz、rFonts 晚于 sz、rStyle 追加末位）
+        QString xml = exportDocumentXml(
+            "<p><span style=\"color:#123456;background-color:#ABCDEF\">"
+            "<code><strong><em><u><s><mark><small>全格式</small></mark></s></u></em></strong></code>"
+            "</span></p>"
+            "<p><sub>下</sub>和<sup>上</sup></p>");
+        int rFonts = xml.indexOf("<w:rFonts w:ascii=\"Consolas\"");
+        int b = xml.indexOf("<w:b/>");
+        int i = xml.indexOf("<w:i/>");
+        int strike = xml.indexOf("<w:strike/>");
+        int color = xml.indexOf("<w:color w:val=\"123456\"/>");
+        int sz = xml.indexOf("<w:sz w:val=\"18\"/>");
+        int highlight = xml.indexOf("<w:highlight");
+        int u = xml.indexOf("<w:u w:val=\"single\"/>");
+        int shd = xml.indexOf("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"ABCDEF\"/>");
+        QVERIFY(rFonts >= 0 && b > rFonts && i > b && strike > i && color > strike
+                && sz > color && highlight > sz && u > highlight && shd > u);
+        int vaSub = xml.indexOf("<w:vertAlign w:val=\"subscript\"/>");
+        QVERIFY2(vaSub > shd, qPrintable(xml));   // vertAlign 在 shd 之后
+        // 各元素恰好一次（hyperlink 曾重复输出第二个 w:color/w:u）
+        QCOMPARE(xml.count("<w:color w:val=\"123456\"/>"), 1);
+    }
+
+    void testExtractColorClampsOutOfRangeAndPercent() {
+        // rgb 分量 clamp 0-255（超界曾产出 7 位非 ST_HexColor）+ 百分比写法支持
+        QString xml = exportDocumentXml(
+            "<p><span style=\"color:rgb(300,0,0)\">甲</span>"
+            "<span style=\"color:rgb(100%,0%,0%)\">乙</span>"
+            "<span style=\"color:rgb(50%,50%,50%)\">丙</span></p>");
+        QVERIFY(xml.contains("<w:color w:val=\"FF0000\"/>"));   // 300→255；100%→255
+        QVERIFY(xml.contains("<w:color w:val=\"808080\"/>"));   // 50%→127.5→128=0x80
+        QVERIFY(!xml.contains("12C"));                           // 旧泄漏形态
+    }
+
+    void testImageOutsideDocDirFallsBackToPlaceholder() {
+        // 目录围栏：../ 逃逸出文档目录的图片不读字节，降级 [图片] 占位。
+        // 外部文件必须真实存在（否则「文件不存在」也会降级，测不出围栏本身）
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString outside = QFileInfo(dir.path()).absolutePath()
+                                + "/md-editor-fence-test.png";
+        QFile f(outside);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        const unsigned char png[] = {0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0x0d,0x49,0x48,0x44,0x52,
+                                     0,0,0,1,0,0,0,1,0x08,0x06,0,0,0,0x1f,0x15,0xc4,0x89,0,0,0,0x0a,0x49,0x44,0x41,0x54,
+                                     0x78,0x9c,0x63,0,1,0,0,0x05,0,1,0x0d,0x0a,0x2d,0xb4,0,0,0,0,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82};
+        f.write(reinterpret_cast<const char*>(png), sizeof(png)); f.close();
+
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx("<p><img src=\"../md-editor-fence-test.png\" alt=\"外\"></p>",
+                        dir.path(), out);
+        f.remove();
+        QProcess unzip;
+        unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        const QString xml = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY(xml.contains("[图片"));          // 降级占位
+        QVERIFY(!xml.contains("<w:drawing>"));   // 未嵌入
     }
 
     void testHyperlinkCreatesRelationship() {

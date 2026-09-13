@@ -260,6 +260,15 @@ static bool readImageFile(const QString &src, const QString &docDir,
         *bytes = QByteArray::fromBase64(src.mid(comma + 1).toLatin1());
     } else {
         QString path = QDir::isAbsolutePath(src) ? src : QDir(docDir).filePath(src);
+        // 目录围栏（与 HtmlExporter::inlineImages 同型）：canonical 化（解 ../ 与
+        // 符号链接）后必须仍在文档目录内。曾无校验——![](../../x) 经导出可把
+        // 目录外文件字节读入（虽被内容级 MIME 拒绝嵌入，读字节本身应受约束）；
+        // 未保存文档（docDir 空/不存在）不读本地文件，相对路径等于无围栏
+        const QString canonDocDir = QFileInfo(docDir).canonicalFilePath();
+        const QString canon = QFileInfo(path).canonicalFilePath();
+        if (canonDocDir.isEmpty() || canon.isEmpty()
+            || !canon.startsWith(canonDocDir + QLatin1Char('/')))
+            return false;
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly)) return false;
         *bytes = f.readAll();
@@ -360,14 +369,23 @@ static QString extractColor(const QString &style, const QString &prop)
     if (!m.hasMatch()) return {};
     QString v = m.captured(1).trimmed();
 
-    // rgb(R, G, B) 或 rgba(R, G, B, A)
-    QRegularExpression rgbRe("rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)");
+    // rgb(R, G, B) / rgba(R, G, B, A)：分量支持 0-255 数值与百分比两种写法
+    // （从 Word/浏览器粘贴的 HTML 常带 rgb(100%,0%,0%)）；clamp 到 0-255 后
+    // 转 6 位十六进制——原样透传超界值会产出 7 位非 ST_HexColor（审查 P2-10：
+    // rgb(300,0,0) 曾输出 12C0000，macOS Word 严格校验不过）
+    QRegularExpression rgbRe(
+        "rgba?\\(\\s*([\\d.]+)(%)?\\s*,\\s*([\\d.]+)(%)?\\s*,\\s*([\\d.]+)(%)?");
     auto rm = rgbRe.match(v);
     if (rm.hasMatch()) {
+        auto chan = [](const QString &num, const QString &pct) {
+            double d = num.toDouble();
+            if (pct == QLatin1String("%")) d = d * 255.0 / 100.0;
+            return qBound(0, qRound(d), 255);
+        };
         return QString("%1%2%3")
-            .arg(rm.captured(1).toInt(), 2, 16, QChar('0'))
-            .arg(rm.captured(2).toInt(), 2, 16, QChar('0'))
-            .arg(rm.captured(3).toInt(), 2, 16, QChar('0'))
+            .arg(chan(rm.captured(1), rm.captured(2)), 2, 16, QChar('0'))
+            .arg(chan(rm.captured(3), rm.captured(4)), 2, 16, QChar('0'))
+            .arg(chan(rm.captured(5), rm.captured(6)), 2, 16, QChar('0'))
             .toUpper();
     }
     if (v.startsWith('#')) {
@@ -428,24 +446,38 @@ struct RunFormat {
     }
     bool operator!=(const RunFormat &o) const { return !(*this == o); }
 
-    QString toPrXml() const {
+    // fontFamily 非空时覆盖 rFonts（emoji run 换 Noto Color Emoji），并保持
+    // rStyle→rFonts 的 schema 前置位置
+    QString toPrXml(const char *fontFamily = nullptr) const {
         if (!bold && !italic && !underline && !strike && !subscript && !superscript
             && !highlight && !monospace && !smallText
-            && textColor().isEmpty() && bgColor().isEmpty() && !hyperlink)
+            && textColor().isEmpty() && bgColor().isEmpty() && !hyperlink
+            && !fontFamily)
             return {};
+        // CT_RPr 子元素按 schema 序列输出：rStyle → rFonts → b → i → strike →
+        // color → sz → highlight → u → shd → vertAlign。原实现顺序违反序列
+        // （u 早于 strike、vertAlign 早于 highlight/sz、rFonts 晚于 sz、rStyle
+        // 追加在末位；hyperlink 组合还重复输出第二个 w:color/w:u——CT_RPr 各
+        // 元素 maxOccurs=1）。显式颜色优先于超链接默认蓝（覆盖 rStyle 的语义）。
+        const QString tc = textColor();
+        const bool ul = underline || hyperlink;
         QString p;
+        if (hyperlink) p += "<w:rStyle w:val=\"Hyperlink\"/>";
+        if (fontFamily)
+            p += QString("<w:rFonts w:ascii=\"%1\" w:hAnsi=\"%1\" w:eastAsia=\"%1\" w:cs=\"%1\"/>").arg(QLatin1String(fontFamily));
+        else if (monospace)
+            p += "<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/>";
         if (bold) p += "<w:b/>";
         if (italic) p += "<w:i/>";
-        if (underline) p += "<w:u w:val=\"single\"/>";
         if (strike) p += "<w:strike/>";
-        if (subscript) p += "<w:vertAlign w:val=\"subscript\"/>";
-        if (superscript) p += "<w:vertAlign w:val=\"superscript\"/>";
-        if (highlight) p += "<w:highlight w:val=\"yellow\"/>";
+        if (!tc.isEmpty()) p += "<w:color w:val=\"" + tc + "\"/>";
+        else if (hyperlink) p += "<w:color w:val=\"0563C1\"/>";
         if (smallText) p += "<w:sz w:val=\"18\"/>";   // <small>：11pt 正文 → 9pt（约 0.82×，对齐浏览器 smaller）
-        if (monospace) p += "<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/>";
-        if (!textColor().isEmpty()) p += "<w:color w:val=\"" + textColor() + "\"/>";
+        if (highlight) p += "<w:highlight w:val=\"yellow\"/>";
+        if (ul) p += "<w:u w:val=\"single\"/>";
         if (!bgColor().isEmpty()) p += "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"" + bgColor() + "\"/>";
-        if (hyperlink) p += "<w:rStyle w:val=\"Hyperlink\"/><w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/>";
+        if (subscript) p += "<w:vertAlign w:val=\"subscript\"/>";
+        else if (superscript) p += "<w:vertAlign w:val=\"superscript\"/>";
         return "<w:rPr>" + p + "</w:rPr>";
     }
 };
@@ -481,6 +513,11 @@ struct ParseState {
     QStringList mathSources;                              // 公式 LaTeX 源码（按 idx，失败回退用）
     QStringList mathOMML;                                 // 公式 OMML 片段（按 idx，失败项空）
 
+    // 脚注真导出（审查 P1-7）：引用与定义共用编号分配，定义内容进 footnotes.xml
+    QHash<QString, int> footnoteNumById;    // data-id → Word 脚注号（2 起；0/1 为内置分隔符）
+    QStringList footnoteOrder;              // data-id 按首次出现（引用或定义）排序
+    QHash<int, QString> footnoteRunsByNum;  // 脚注号 → 定义内容 OOXML runs
+
     QString makeRId(const QString &url) {
         QString rid = QString("rId%1").arg(nextRId++);
         relsXml += QString("  <Relationship Id=\"%1\""
@@ -503,6 +540,34 @@ static int addMedia(ParseState &s, const QByteArray &bytes, const QString &conte
     return rId;
 }
 
+// 脚注编号分配：Word 约定 0=separator、1=continuationSeparator，正文脚注从 2 起。
+// 引用与定义谁先出现谁分配；同一 data-id 复用同号（Markdown [^x] 多处引用同一定义）。
+static int footnoteNumFor(const QString &id, ParseState &s)
+{
+    auto it = s.footnoteNumById.constFind(id);
+    if (it != s.footnoteNumById.constEnd()) return it.value();
+    const int num = 2 + s.footnoteNumById.size();
+    s.footnoteNumById.insert(id, num);
+    s.footnoteOrder.append(id);
+    return num;
+}
+
+// 脚注定义 runs 的部件级关系清洗：parseInline 产出的 <w:hyperlink r:id> 与图片
+// <w:drawing> 引用的是 document.xml.rels 的关系 id，而脚注内容位于独立的
+// footnotes.xml 部件（OOXML 关系按部件解析，悬挂 r:id 会被 Word 判「无法读取的
+// 内容」）。剥掉超链接外壳（文字保留、不可点）与整块 drawing（图片舍弃，脚注内
+// 图片极罕见），保 Word 严格校验通过（docx-word-strict-validation 经验：本机
+// WPS/LibreOffice 宽容测不出）。
+static QString sanitizeFootnoteRuns(QString runs)
+{
+    static const QRegularExpression hyperlinkOpenRe("<w:hyperlink\\b[^>]*>");
+    static const QRegularExpression drawingRe("<w:drawing>.*?</w:drawing>");
+    runs.remove(hyperlinkOpenRe);
+    runs.remove(QStringLiteral("</w:hyperlink>"));
+    runs.remove(drawingRe);
+    return runs;
+}
+
 // ============ 内联内容解析 ============
 
 // 在 <w:p>/<w:tc> 等块容器内解析内联内容，返回 OOXML 游程序列
@@ -519,20 +584,9 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
     auto emitRun = [&](const QString &txt, bool isEmoji) {
         if (txt.isEmpty()) return;
         QString pr;
-        if (isEmoji) {
-            // emoji run：继承当前格式但使用 emoji 字体
-            pr = fmt.toPrXml();
-            // emoji run：继承当前格式但使用 emoji 字体
-            if (!pr.isEmpty()) {
-                pr.chop(8); // 去掉 </w:rPr>
-                pr += "<w:rFonts w:ascii=\"Noto Color Emoji\" w:hAnsi=\"Noto Color Emoji\" w:eastAsia=\"Noto Color Emoji\" w:cs=\"Noto Color Emoji\"/>";
-                pr += "</w:rPr>";
-            } else {
-                pr = "<w:rPr><w:rFonts w:ascii=\"Noto Color Emoji\" w:hAnsi=\"Noto Color Emoji\" w:eastAsia=\"Noto Color Emoji\" w:cs=\"Noto Color Emoji\"/></w:rPr>";
-            }
-        } else {
-            pr = fmt.toPrXml();
-        }
+        // emoji run：继承当前格式但换 emoji 字体（rFonts 经 toPrXml 参数注入，
+        // 保持 CT_RPr 子元素顺序——原字符串截断拼接会把 rFonts 追加到末尾）
+        pr = fmt.toPrXml(isEmoji ? "Noto Color Emoji" : nullptr);
         out += "<w:r>";
         if (!pr.isEmpty()) out += pr;
         out += "<w:t xml:space=\"preserve\">" + xmlEscape(xmlSanitize(txt)) + "</w:t>";
@@ -602,6 +656,25 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
             } else if (tag == "sub") {
                 flushRun(); fmt.subscript = true;
             } else if (tag == "sup") {
+                // 脚注引用（TipTap 契约 <sup data-type="footnoteRef" data-id="x">x</sup>）：
+                // 转 Word 原生脚注引用（FootnoteReference 样式 + footnoteReference 指向
+                // footnotes.xml 的定义），Word 自动编号上标；元素内的 id 文本丢弃。
+                if (r.attributes().value("data-type").toString() == "footnoteRef") {
+                    flushRun();
+                    const QString fid = r.attributes().value("data-id").toString();
+                    const int num = footnoteNumFor(fid, s);
+                    out += QStringLiteral(
+                        "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/>"
+                        "<w:vertAlign w:val=\"superscript\"/></w:rPr>"
+                        "<w:footnoteReference w:id=\"%1\"/></w:r>").arg(num);
+                    int depth = 1;
+                    while (!r.atEnd() && depth > 0) {
+                        const auto t2 = r.readNext();
+                        if (t2 == QXmlStreamReader::StartElement) ++depth;
+                        else if (t2 == QXmlStreamReader::EndElement) --depth;
+                    }
+                    continue;
+                }
                 flushRun(); fmt.superscript = true;
             }
             // span（内联数学 / 颜色）
@@ -669,6 +742,16 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
             else if (tag == "input" || tag == "col") {
                 // 无操作
             }
+            // 脚注容器内的定义 div（块级元素穿过内联上下文，footnoteContainer
+            // 分支走 parseInline 时到达这里）：收集到 footnotes.xml，正文不输出
+            else if (tag == "div"
+                     && r.attributes().value("data-type").toString() == "footnoteDef") {
+                flushRun();
+                const QString fid = r.attributes().value("data-id").toString();
+                const int num = footnoteNumFor(fid, s);
+                s.footnoteRunsByNum.insert(
+                    num, sanitizeFootnoteRuns(parseInline(r, "div", s)));
+            }
             // 其他内联标签当作纯文本穿透
         } else if (tt == QXmlStreamReader::EndElement) {
             QString tag = r.name().toString().toLower();
@@ -717,13 +800,6 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
 
 // ============ 块级元素解析 ============
 
-// 查找当前上下文应该停止的块标签
-static QString stopTagFor(QXmlStreamReader &r)
-{
-    // 返回触发当前块结束的标签
-    return {}; // 在 dispatch 层面处理
-}
-
 static QString parseParagraph(QXmlStreamReader &r, const QString &tag, ParseState &s)
 {
     // 提取 text-align（style 属性 + HTML align 属性）
@@ -735,11 +811,13 @@ static QString parseParagraph(QXmlStreamReader &r, const QString &tag, ParseStat
     // 检查 data-type 属性（脚注、数学等非标准块）
     QString dataType = r.attributes().value("data-type").toString();
     if (dataType == "footnoteDef") {
-        // 脚注定义：提取内容和编号
+        // 脚注定义：真导出为 Word 原生脚注（内容进 footnotes.xml，正文不输出）。
+        // 旧实现解析出内容后丢弃、正文固定写 "[^id]: ..."（审查 P1-7）。
         QString id = r.attributes().value("data-id").toString();
-        // 跳过到 </div>
-        QString inner = parseInline(r, tag, s);
-        return "<w:p><w:r><w:t>[^" + xmlEscape(id) + "]: " + xmlEscape(inner.isEmpty() ? "" : "...") + "</w:t></w:r></w:p>";
+        const int num = footnoteNumFor(id, s);
+        s.footnoteRunsByNum.insert(
+            num, sanitizeFootnoteRuns(parseInline(r, tag, s)));
+        return {};
     }
     if (dataType == "block-math") {
         QString latex = r.attributes().value("data-latex").toString();
@@ -1311,7 +1389,53 @@ static QString makeStylesXml()
         "  <w:style w:type=\"paragraph\" w:styleId=\"Heading6\"><w:name w:val=\"heading 6\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:outlineLvl w:val=\"5\"/><w:spacing w:before=\"80\" w:after=\"40\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"21\"/></w:rPr></w:style>\n"
         "  <w:style w:type=\"paragraph\" w:styleId=\"ListParagraph\"><w:name w:val=\"List Paragraph\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:ind w:left=\"720\"/></w:pPr></w:style>\n"
         "  <w:style w:type=\"character\" w:styleId=\"Hyperlink\"><w:name w:val=\"Hyperlink\"/><w:basedOn w:val=\"DefaultParagraphFont\"/><w:rPr><w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/></w:rPr></w:style>\n"
+        // 脚注真导出：Word 内置样式名（footnote text / footnote reference），
+        // 页脚区 9pt + 编号上标；引用处另带显式 vertAlign 兜底（样式缺失时不丢上标）
+        "  <w:style w:type=\"paragraph\" w:styleId=\"FootnoteText\"><w:name w:val=\"footnote text\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:rPr><w:sz w:val=\"18\"/></w:rPr></w:style>\n"
+        "  <w:style w:type=\"character\" w:styleId=\"FootnoteReference\"><w:name w:val=\"footnote reference\"/><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr></w:style>\n"
         "</w:styles>\n");
+}
+
+// word/footnotes.xml：0=separator、1=continuationSeparator（Word 约定内置，缺省
+// 也能工作但补齐更规范），2..=各脚注定义。定义段落挂 FootnoteText 样式，
+// w:footnoteRef 由 Word 自动渲染为该脚注的编号上标；其后接一个空格 run 再接
+// 定义内容（与 Word 自身产物一致）。namespace 集与 document.xml 根元素对齐
+// （定义 runs 可能含 m:oMath 等前缀）。
+static QByteArray makeFootnotesXml(const ParseState &s)
+{
+    QString xml = QStringLiteral(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<w:footnotes"
+        " xmlns:wpc=\"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas\""
+        " xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\""
+        " xmlns:o=\"urn:schemas-microsoft-com:office:office\""
+        " xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\""
+        " xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\""
+        " xmlns:v=\"urn:schemas-microsoft-com:vml\""
+        " xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\""
+        " xmlns:w10=\"urn:schemas-microsoft-com:office:word\""
+        " xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\""
+        " xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\""
+        " xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\""
+        " xmlns:wne=\"http://schemas.microsoft.com/office/word/2006/wordml\""
+        ">\n"
+        "  <w:footnote w:type=\"separator\" w:id=\"0\"><w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:r><w:separator/></w:r></w:p></w:footnote>\n"
+        "  <w:footnote w:type=\"continuationSeparator\" w:id=\"1\"><w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>\n");
+    for (const QString &id : s.footnoteOrder) {
+        const int num = s.footnoteNumById.value(id);
+        const QString runs = s.footnoteRunsByNum.value(num);
+        // 编号标记后补一个空格（Word 自身产物形态）；无定义内容时只剩编号
+        xml += QStringLiteral(
+            "  <w:footnote w:id=\"%1\"><w:p><w:pPr><w:pStyle w:val=\"FootnoteText\"/>"
+            "<w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>"
+            "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/></w:rPr><w:footnoteRef/></w:r>"
+            "%2</w:p></w:footnote>\n")
+            .arg(num)
+            .arg(runs.isEmpty() ? QString()
+                 : QStringLiteral("<w:r><w:t xml:space=\"preserve\"> </w:t></w:r>") + runs);
+    }
+    xml += QStringLiteral("</w:footnotes>\n");
+    return xml.toUtf8();
 }
 
 static QString makeNumberingXml(const ParseState &s)
@@ -1501,6 +1625,10 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
         docRelsXml += "  <Relationship Id=\"rIdFooter1\""
             " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\""
             " Target=\"footer1.xml\"/>\n";
+    if (!state.footnoteOrder.isEmpty())
+        docRelsXml += "  <Relationship Id=\"rIdFootnotes\""
+            " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes\""
+            " Target=\"footnotes.xml\"/>\n";
     if (!state.relsXml.isEmpty()) {
         docRelsXml += state.relsXml.toUtf8();
     }
@@ -1523,6 +1651,9 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
     if (footerEnabled)
         contentTypes += "  <Override PartName=\"/word/footer1.xml\""
             " ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>\n";
+    if (!state.footnoteOrder.isEmpty())
+        contentTypes += "  <Override PartName=\"/word/footnotes.xml\""
+            " ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml\"/>\n";
     // 图片 media 部件：按实际出现的扩展名去重追加 Default（否则 Word 打不开图片）
     if (!state.media.isEmpty()) {
         QSet<QString> exts;
@@ -1579,6 +1710,8 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
         add("word/header1.xml", makeHeaderXml(headerTitle).toUtf8(), MZ_BEST_COMPRESSION);
     if (footerEnabled)
         add("word/footer1.xml", makeFooterXml().toUtf8(), MZ_BEST_COMPRESSION);
+    if (!state.footnoteOrder.isEmpty())
+        add("word/footnotes.xml", makeFootnotesXml(state), MZ_BEST_COMPRESSION);
     for (const auto &mp : state.media) {
         const QByteArray name = "word/media/" + mp.fileName.toUtf8();
         add(name.constData(), mp.bytes, MZ_BEST_COMPRESSION);
