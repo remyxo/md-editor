@@ -372,6 +372,7 @@ static QString extractAlign(const QString &style)
 struct RunFormat {
     bool bold = false, italic = false, underline = false, strike = false;
     bool subscript = false, superscript = false, highlight = false, monospace = false;
+    bool smallText = false;
     QString textColor;   // RRGGBB
     QString bgColor;     // RRGGBB
     bool hyperlink = false;
@@ -380,14 +381,15 @@ struct RunFormat {
         return bold == o.bold && italic == o.italic && underline == o.underline
             && strike == o.strike && subscript == o.subscript && superscript == o.superscript
             && highlight == o.highlight && monospace == o.monospace
+            && smallText == o.smallText
             && textColor == o.textColor && bgColor == o.bgColor && hyperlink == o.hyperlink;
     }
     bool operator!=(const RunFormat &o) const { return !(*this == o); }
 
     QString toPrXml() const {
         if (!bold && !italic && !underline && !strike && !subscript && !superscript
-            && !highlight && !monospace && textColor.isEmpty() && bgColor.isEmpty()
-            && !hyperlink)
+            && !highlight && !monospace && !smallText
+            && textColor.isEmpty() && bgColor.isEmpty() && !hyperlink)
             return {};
         QString p;
         if (bold) p += "<w:b/>";
@@ -397,6 +399,7 @@ struct RunFormat {
         if (subscript) p += "<w:vertAlign w:val=\"subscript\"/>";
         if (superscript) p += "<w:vertAlign w:val=\"superscript\"/>";
         if (highlight) p += "<w:highlight w:val=\"yellow\"/>";
+        if (smallText) p += "<w:sz w:val=\"18\"/>";   // <small>：11pt 正文 → 9pt（约 0.82×，对齐浏览器 smaller）
         if (monospace) p += "<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/>";
         if (!textColor.isEmpty()) p += "<w:color w:val=\"" + textColor + "\"/>";
         if (!bgColor.isEmpty()) p += "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"" + bgColor + "\"/>";
@@ -549,6 +552,8 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                 flushRun(); fmt.monospace = true;
             } else if (tag == "mark") {
                 flushRun(); fmt.highlight = true;
+            } else if (tag == "small") {
+                flushRun(); fmt.smallText = true;
             } else if (tag == "sub") {
                 flushRun(); fmt.subscript = true;
             } else if (tag == "sup") {
@@ -633,6 +638,8 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                 flushRun(); fmt.monospace = false;
             } else if (tag == "mark") {
                 flushRun(); fmt.highlight = false;
+            } else if (tag == "small") {
+                flushRun(); fmt.smallText = false;
             } else if (tag == "sub") {
                 flushRun(); fmt.subscript = false;
             } else if (tag == "sup") {

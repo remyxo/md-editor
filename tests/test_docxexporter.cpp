@@ -872,6 +872,20 @@ private slots:
         if (oldMb.isValid()) s.setValue("export/marginBottom", oldMb); else s.remove("export/marginBottom");
     }
 
+    void testSmallTagUsesSmallerFontSize() {
+        // <small> 小号字：DOCX 须输出缩小字号（正文 11pt → 9pt，w:sz=18），
+        // 与编辑器/PDF 的浏览器 small 默认缩放（约 0.83×）对齐。
+        // 曾无 small 分支，穿透后继承 docDefaults 11pt，与周围文字一样大。
+        QString xml = exportDocumentXml(
+            "<p>正常文字<small>小号补充</small>恢复正常</p>");
+        QVERIFY(xml.contains("正常文字"));
+        QVERIFY2(xml.contains("<w:sz w:val=\"18\"/></w:rPr><w:t xml:space=\"preserve\">小号补充"),
+                 qPrintable(xml));
+        // small 外的文字不得带 sz=18
+        QVERIFY(!xml.contains("sz w:val=\"18\"/></w:rPr><w:t xml:space=\"preserve\">正常"));
+        QVERIFY(!xml.contains("sz w:val=\"18\"/></w:rPr><w:t xml:space=\"preserve\">恢复正常"));
+    }
+
     void testZipStructureOpcCompliant() {
         // 回归：DOCX 是 OPC 包，不是 ODF——不得写 ODF 式 mimetype 首条目。
         // mimetype 部件无扩展名、[Content_Types].xml 又未 Override 它，属
