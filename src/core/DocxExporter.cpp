@@ -290,13 +290,26 @@ static bool readImageFile(const QString &src, const QString &docDir,
     return true;
 }
 
-// 图片超宽时按比例缩小到页面文本宽度（长边对齐 maxWidthEmu，保持宽高比）。
-// maxWidthEmu <= 0 视为不限制。使用 qint64 防 cyEmu*maxWidthEmu 溢出（约 240e12，仍在 int64 范围）。
-static void clampToMaxWidth(int &cxEmu, int &cyEmu, int maxWidthEmu)
+// 图片超宽/超高时按比例缩小到页面文本区域内（保持宽高比，只收缩不放大）。
+// 宽高约束取更紧的一方联合等比缩放：超宽或超高单独超限各自生效，双超取比例小者。
+// maxEmu <= 0 的维度视为不限制。使用 qint64 防乘积溢出（约 240e12，仍在 int64 范围）。
+static void clampToPageArea(int &cxEmu, int &cyEmu, int maxWidthEmu, int maxHeightEmu)
 {
-    if (maxWidthEmu <= 0 || cxEmu <= maxWidthEmu) return;
-    cyEmu = static_cast<int>((static_cast<qint64>(cyEmu) * maxWidthEmu) / cxEmu);
-    cxEmu = maxWidthEmu;
+    if (cxEmu <= 0 || cyEmu <= 0) return;
+    const bool overW = maxWidthEmu > 0 && cxEmu > maxWidthEmu;
+    const bool overH = maxHeightEmu > 0 && cyEmu > maxHeightEmu;
+    if (!overW && !overH) return;
+    // 宽超且（高不超或宽约束更紧）→ 按宽缩；否则按高缩。
+    // 高度约束缺不得：纵向超长 mermaid 图宽度远小于页宽、高度数倍于页高，
+    // Word 不会把内联图片跨页排版，超高部分直接被裁掉（PDF 侧同型 capH 约束）。
+    if (overW && (!overH || static_cast<qint64>(cyEmu) * maxWidthEmu
+                                   <= static_cast<qint64>(cxEmu) * maxHeightEmu)) {
+        cyEmu = static_cast<int>((static_cast<qint64>(cyEmu) * maxWidthEmu) / cxEmu);
+        cxEmu = maxWidthEmu;
+    } else {
+        cxEmu = static_cast<int>((static_cast<qint64>(cxEmu) * maxHeightEmu) / cyEmu);
+        cyEmu = maxHeightEmu;
+    }
 }
 
 // 生成 <w:drawing> 内联图片 XML。仅嵌入 PNG（mermaid 的 SVG 依赖 <style> 与 <marker>，
@@ -416,6 +429,7 @@ struct ParseState {
     int nextDocPrId = 1;
     QString docDir;                                       // 文档所在目录，用于解析相对图片路径
     int maxImageWidthEmu = 0;                             // 图片最大宽（EMU），0=不限制；超宽按比例缩小
+    int maxImageHeightEmu = 0;                            // 图片最大高（EMU），0=不限制；超高按比例缩小（mermaid 长图）
     QString sectPrXml;                                    // 节属性（纸张尺寸+页边距），使 DOCX 页与导出设置一致
     QVector<MermaidRenderer::Result> mermaidResults;      // 渲染结果（按 idx）
     QStringList mermaidSources;                           // 源码（渲染失败回退用）
@@ -591,7 +605,7 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                 QString alt = r.attributes().value("alt").toString();
                 QByteArray bytes; QString mime; int cx = 0, cy = 0;
                 if (readImageFile(r.attributes().value("src").toString(), s.docDir, &bytes, &mime, &cx, &cy)) {
-                    clampToMaxWidth(cx, cy, s.maxImageWidthEmu);
+                    clampToPageArea(cx, cy, s.maxImageWidthEmu, s.maxImageHeightEmu);
                     QString ext = (mime == "image/png") ? "png" : (mime == "image/gif" ? "gif" : "jpg");
                     int rId = addMedia(s, bytes, mime, ext);
                     out += "<w:r>" + buildImageDrawingXml(s.nextDocPrId++, rId, cx, cy) + "</w:r>";
@@ -1071,7 +1085,7 @@ static void parseBody(QXmlStreamReader &r, ParseState &s)
                         const auto &res = s.mermaidResults[idx];
                         if (!res.png.isEmpty()) {
                             int cx = res.cxEmu, cy = res.cyEmu;
-                            clampToMaxWidth(cx, cy, s.maxImageWidthEmu);
+                            clampToPageArea(cx, cy, s.maxImageWidthEmu, s.maxImageHeightEmu);
                             // 仅嵌入 PNG，不挂 <asvg:svgBlip>。mermaid 的时序图箭头依赖
                             // <style> CSS 类（.messageLineN{stroke:#333}）与 <marker>（marker-end
                             // 箭头），二者 Word/WPS 的 SVG 渲染器均不支持（忽略 <style>、
@@ -1139,7 +1153,7 @@ static void parseBody(QXmlStreamReader &r, ParseState &s)
             QString alt = r.attributes().value("alt").toString();
             QByteArray bytes; QString mime; int cx = 0, cy = 0;
             if (readImageFile(r.attributes().value("src").toString(), s.docDir, &bytes, &mime, &cx, &cy)) {
-                clampToMaxWidth(cx, cy, s.maxImageWidthEmu);
+                clampToPageArea(cx, cy, s.maxImageWidthEmu, s.maxImageHeightEmu);
                 QString ext = (mime == "image/png") ? "png" : (mime == "image/gif" ? "gif" : "jpg");
                 int rId = addMedia(s, bytes, mime, ext);
                 s.bodyXml += "<w:p><w:r>" + buildImageDrawingXml(s.nextDocPrId++, rId, cx, cy) + "</w:r></w:p>\n";
@@ -1340,6 +1354,11 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
         const double pageH = landscape ? ps.width() : ps.height();
         const double contentMm = pageW - (ml + mr) * 10.0;
         state.maxImageWidthEmu = contentMm > 0 ? static_cast<int>(contentMm * 36000.0) : 0;
+        // 图片页高容纳上限：与 PDF 导出的 capH 同源（页高 − 上下边距 − 2mm 安全间隙）。
+        // Word 不会把内联图片跨页排版，超高直接裁掉；纵向超长 mermaid 图（TB 数十节点）
+        // 宽度远小于页宽而高度数倍于页高，必须等比缩进一页内才完整可见。
+        const double capHMm = pageH - (mt + mb) * 10.0 - 2.0;
+        state.maxImageHeightEmu = capHMm > 0 ? static_cast<int>(capHMm * 36000.0) : 0;
         const auto mm2twips = [](double mm) { return static_cast<int>(qRound(mm * 56.6929134)); };
         headerEnabled = settings.value("export/docxHeaderEnabled", true).toBool();
         footerEnabled = settings.value("export/docxFooterEnabled", true).toBool();

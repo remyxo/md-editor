@@ -834,6 +834,44 @@ private slots:
 
 
 
+    void testTallImageShrinksToPageHeight() {
+        // 超高图片（纵向超长 mermaid 图同路径）须等比缩到页面内容高度内：
+        // <wp:extent cy> 超页高时 Word 不会把内联图片跨页排版，超出部分直接裁掉。
+        // 上限与 PDF 导出同源：A4 纵向 297mm − 上下边距 36mm − 2mm 安全间隙 = 259mm
+        // = 9,324,000 EMU。400×4000px 图：高 38,100,000 EMU 超限，等比缩放后
+        // cy=9,324,000、cx=3,810,000×9,324,000/38,100,000=932,400。
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QImage tall(400, 4000, QImage::Format_ARGB32);
+        tall.fill(Qt::blue);
+        QVERIFY(tall.save(dir.path() + "/tall.png", "PNG"));
+
+        QSettings s("md-editor", "md-editor");
+        const QVariant oldPaper = s.value("export/paperSize");
+        const QVariant oldOrient = s.value("export/orientation");
+        const QVariant oldMt = s.value("export/marginTop");
+        const QVariant oldMb = s.value("export/marginBottom");
+        s.setValue("export/paperSize", static_cast<int>(QPageSize::A4));
+        s.setValue("export/orientation", static_cast<int>(QPageLayout::Portrait));
+        s.setValue("export/marginTop", 1.8);
+        s.setValue("export/marginBottom", 1.8);
+
+        QString out = dir.path() + "/o.docx";
+        DocxExporter ex;
+        ex.exportToDocx("<p><img src=\"tall.png\"></p>", dir.path(), out);
+        QVERIFY(QFile::exists(out));
+
+        QProcess unzip; unzip.start("unzip", QStringList() << "-p" << out << "word/document.xml");
+        QVERIFY(unzip.waitForFinished(10000));
+        QString docXml = QString::fromUtf8(unzip.readAllStandardOutput());
+        QVERIFY2(docXml.contains("cy=\"9324000\""), qPrintable(docXml));
+        QVERIFY2(docXml.contains("cx=\"932400\""), qPrintable(docXml));
+
+        if (oldPaper.isValid()) s.setValue("export/paperSize", oldPaper); else s.remove("export/paperSize");
+        if (oldOrient.isValid()) s.setValue("export/orientation", oldOrient); else s.remove("export/orientation");
+        if (oldMt.isValid()) s.setValue("export/marginTop", oldMt); else s.remove("export/marginTop");
+        if (oldMb.isValid()) s.setValue("export/marginBottom", oldMb); else s.remove("export/marginBottom");
+    }
+
     void testZipStructureOpcCompliant() {
         // 回归：DOCX 是 OPC 包，不是 ODF——不得写 ODF 式 mimetype 首条目。
         // mimetype 部件无扩展名、[Content_Types].xml 又未 Override 它，属
