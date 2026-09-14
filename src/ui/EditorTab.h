@@ -31,6 +31,7 @@ class EditorTab : public QWidget {
     Q_OBJECT
 public:
     explicit EditorTab(int tabId, QWidget *parent = nullptr);
+    ~EditorTab() override;
 
     EditorBridge *bridge() const;
     QWebEngineView *webView() const;
@@ -73,6 +74,8 @@ private:
     QString m_pendingContent;   // 惰性加载的待载内容（非活动标签页，激活时 flush）
     bool m_permanentReadOnly = false;
     bool m_sourceMode = false;
+    // 已注册进 localimg:// 目录围栏的文档目录（换文件/析构时撤销，见 setFilePath）
+    QString m_allowedDir;
 };
 
 #endif // MD_EDITOR_EDITORTAB_H

@@ -242,6 +242,23 @@ private slots:
         QVERIFY(!omm.contains("E=mc^2"));
     }
 
+    void testMathMlConverterSelfClosingElements() {
+        // 自闭合元素（审查 P2-13）：KaTeX 对 \,/\quad 等间距输出 <mspace/>——
+        // 其 StartElement token 即结束，skipElement 等再读 token 会吞掉父级
+        // 闭合或后续兄弟元素（转换失步、内容丢失）
+        QString out = MathMlConverter::toOMML(
+            "<math><mrow><mfrac><mi>a</mi><mspace/></mfrac><mi>b</mi></mrow></math>");
+        QVERIFY2(out.contains("b"), qPrintable(out));   // 曾被 mspace 后的失步吞掉
+        QVERIFY(out.contains("<m:f>"));
+        QString out2 = MathMlConverter::toOMML(
+            "<math><mrow><mspace/><mi>c</mi></mrow></math>");
+        QVERIFY2(out2.contains("c"), qPrintable(out2));
+        // 自闭合透传元素（<mrow/>）不产生内容、不吞后续兄弟
+        QString out3 = MathMlConverter::toOMML(
+            "<math><mrow/><mi>d</mi></math>");
+        QVERIFY2(out3.contains("d"), qPrintable(out3));
+    }
+
     void testMathMlConverterFractionAndRadicals() {
         // 分数 → m:f/m:num/m:den
         QString frac = MathMlConverter::toOMML(
@@ -251,7 +268,6 @@ private slots:
         QVERIFY(frac.contains("<m:den>"));
         QVERIFY(frac.contains("a"));
         QVERIFY(frac.contains("b"));
-
         // 平方根 → m:rad 且隐藏根指数
         QString sqrt = MathMlConverter::toOMML(
             "<math><msqrt><mi>x</mi></msqrt></math>");

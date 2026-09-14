@@ -6,6 +6,7 @@
 #include <QSettings>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 
 PdfExporter::PdfExporter(QObject *parent)
     : QObject(parent)
@@ -515,7 +516,12 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         QString("<script>%1</script></head>").arg(HtmlExporter::mermaidRenderScript("default")));
 
     if (!customCss.isEmpty()) {
-        fullHtml.replace("</head>", QString("<style>%1</style></head>").arg(customCss));
+        // 剥 </style> 序列（与 HtmlExporter 对称）：本地设置携带它会把 <style>
+        // 块提前终结并向产物注入任意标记（自注入面）
+        QString safeCss = customCss;
+        safeCss.remove(QRegularExpression("</\\s*style\\s*>",
+                                          QRegularExpression::CaseInsensitiveOption));
+        fullHtml.replace("</head>", QString("<style>%1</style></head>").arg(safeCss));
     }
     return fullHtml;
 }

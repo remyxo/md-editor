@@ -44,6 +44,23 @@ private slots:
         QVERIFY(out.contains("__renderAllMermaid"));
     }
 
+    void testBuildRenderHtmlStripsStyleCloseFromCustomCss() {
+        // 自注入面：customCss 携带 </style> 会提前终结注入的样式块、向产物
+        // 注入任意标记。与 HtmlExporter 对称剥离（大小写不敏感、容忍空白）。
+        // 剥离后剩余的 <script> 等文本是 <style> rawtext 内的惰性内容——
+        // 样式块只被我们追加的 </style> 终结，注入无法逃出样式上下文。
+        QString out = PdfExporter::buildRenderHtml(
+            "<p>x</p>", "/tmp", "",
+            "body{color:red}</style><script>alert(1)</script>");
+        QVERIFY(out.contains("body{color:red"));
+        QVERIFY(!out.contains("</style><script>"));
+        // 剥离后注入块内不再有第二个 </style>（只保留我们追加的收尾）
+        QString out2 = PdfExporter::buildRenderHtml(
+            "<p>x</p>", "/tmp", "", "a{b:c}</  STYLE  >");
+        QVERIFY(!out2.contains("</  STYLE  >"));
+        QVERIFY(out2.count("</style>") <= out2.count("<style>"));
+    }
+
     void testBuildRenderHtmlIncludesTaskListCss() {
         // 任务列表复选框与文字须同行：直接 li 用 flex 并排（复选框一行、文字一行）。
         // 必须用子代选择器 > 限定直接 li——嵌套在任务项内的通用列表 li（如 列表2-2

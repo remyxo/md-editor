@@ -5098,8 +5098,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 || rest.startsWith(QLatin1String("</bl"))
                 || rest.startsWith(QLatin1String("</pre"))
                 || rest.startsWith(QLatin1String("</tab"))
-                || rest.startsWith(QLatin1String("</div"))
-                || rest.startsWith(QLatin1String("</hr"));
+                || rest.startsWith(QLatin1String("</div"));
         };
         for (int i = 0; i < processed.size(); ++i) {
             QChar c = processed[i];
@@ -5477,12 +5476,6 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //    a) 已有标题前缀：剥离 span/strong，并按 font-size 重新定级前缀
     //    b) 无标题前缀：剥离后按 font-size 恢复标题前缀（xx-large→#, x-large→##, large→###）
     {
-        // 匹配 <span style="...font-size:(xx-large|x-large|large)...font-weight:700...">text</span>
-        // 使用前瞻断言确保同时存在 font-size 和 font-weight:700，不限属性顺序
-        auto makeSpanRe = []() {
-            return QRegularExpression(
-                R"re(<span\s+style\s*=\s*"(?=.*\bfont-size\s*:\s*(xx-large|x-large|large)\b)(?=.*\bfont-weight\s*:\s*700\b)[^"]*"[^>]*>(.*?)</span>)re");
-        };
         auto headingForSize = [](const QString &fs) -> QString {
             if (fs == "xx-large") return "# ";
             if (fs == "x-large") return "## ";

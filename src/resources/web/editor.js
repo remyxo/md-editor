@@ -1658,8 +1658,22 @@ window.editorApi = {
 
     _forceDirty: function() {
         this._docVersion++;
-        this._dirty = true;
-        if (this.bridge) this.bridge.contentChanged(true);
+        // 守卫与 _markDirty 对齐：已脏时不再重复下发 IPC（contentChanged 是
+        // 幂等状态通知，重复发送纯属冗余）
+        if (!this._dirty) {
+            this._dirty = true;
+            if (this.bridge) this.bridge.contentChanged(true);
+        }
+    },
+
+    // 模态对话框取消时恢复脏状态（带版本守卫，审查 P2-12）：
+    // 对话框打开期间若有异步事务（mermaid/lowlight 回填等）触发 onUpdate
+    // 置脏（_docVersion 递增），无条件恢复旧值会把脏标记回退成假干净
+    // （关窗不提示、跳过保存）。版本未变才恢复。
+    _restoreDirtyIfUnchanged: function(versionBefore, dirtyBefore) {
+        if (this._docVersion !== versionBefore) return;   // 期间已置脏：保持现状
+        this._dirty = dirtyBefore;
+        if (this.bridge) this.bridge.contentChanged(!!dirtyBefore);
     },
 
     _notifyDirty: function() {
@@ -3646,6 +3660,7 @@ window.editorApi = {
             var ed = window.editorApi.editor;
             if (!ed) return;
             this._dirtyBefore = (dirtyBefore !== undefined) ? dirtyBefore : window.editorApi._dirty;
+            this._versionBefore = window.editorApi._docVersion;
             this._confirmed = false;
             window.editorApi._mathEditing = true;
             if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
@@ -3664,6 +3679,7 @@ window.editorApi = {
             var ed = window.editorApi.editor;
             if (!ed) return;
             this._dirtyBefore = window.editorApi._dirty;
+            this._versionBefore = window.editorApi._docVersion;
             this._confirmed = false;
             window.editorApi._mathEditing = true;
             if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
@@ -3844,10 +3860,7 @@ window.editorApi = {
             this.mathEl = null;
             // 取消时立即恢复脏状态
             if (!this._confirmed) {
-                window.editorApi._dirty = this._dirtyBefore;
-                if (window.editorApi.bridge) {
-                    window.editorApi.bridge.contentChanged(!!this._dirtyBefore);
-                }
+                window.editorApi._restoreDirtyIfUnchanged(this._versionBefore, this._dirtyBefore);
             }
             // 延迟恢复焦点；保持 _mathEditing 直到 focus 后续事件处理完毕
             var self = this;
@@ -3858,10 +3871,7 @@ window.editorApi = {
                     window.editorApi._mathEditing = false;
                     // 兜底：若 focus 触发了 onUpdate，再次恢复
                     if (!self._confirmed) {
-                        window.editorApi._dirty = self._dirtyBefore;
-                        if (window.editorApi.bridge) {
-                            window.editorApi.bridge.contentChanged(!!self._dirtyBefore);
-                        }
+                        window.editorApi._restoreDirtyIfUnchanged(self._versionBefore, self._dirtyBefore);
                     }
                 }, 150);
             }, 50);
@@ -3890,6 +3900,7 @@ window.editorApi = {
             var ed = window.editorApi.editor;
             if (!ed) return;
             this._dirtyBefore = window.editorApi._dirty;
+            this._versionBefore = window.editorApi._docVersion;
             this._confirmed = false;
             window.editorApi._mathEditing = true;
             if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
@@ -3912,6 +3923,7 @@ window.editorApi = {
             var ed = window.editorApi.editor;
             if (!ed) return;
             this._dirtyBefore = window.editorApi._dirty;
+            this._versionBefore = window.editorApi._docVersion;
             this._confirmed = false;
             window.editorApi._mathEditing = true;
             if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
@@ -4099,10 +4111,7 @@ window.editorApi = {
                 document.body.scrollTop = this._bodyScrollTop;
             }
             if (!this._confirmed) {
-                window.editorApi._dirty = this._dirtyBefore;
-                if (window.editorApi.bridge) {
-                    window.editorApi.bridge.contentChanged(!!this._dirtyBefore);
-                }
+                window.editorApi._restoreDirtyIfUnchanged(this._versionBefore, this._dirtyBefore);
             }
             var self = this;
             setTimeout(function() {
@@ -4111,10 +4120,7 @@ window.editorApi = {
                 setTimeout(function() {
                     window.editorApi._mathEditing = false;
                     if (!self._confirmed) {
-                        window.editorApi._dirty = self._dirtyBefore;
-                        if (window.editorApi.bridge) {
-                            window.editorApi.bridge.contentChanged(!!self._dirtyBefore);
-                        }
+                        window.editorApi._restoreDirtyIfUnchanged(self._versionBefore, self._dirtyBefore);
                     }
                 }, 150);
             }, 50);
@@ -4233,6 +4239,7 @@ window.editorApi = {
             }
 
             this._dirtyBefore = window.editorApi._dirty;
+            this._versionBefore = window.editorApi._docVersion;
             this._confirmed = false;
             window.editorApi._mathEditing = true;
             if (window.editorApi.bridge) window.editorApi.bridge.modalDialogChanged(true);
@@ -4401,10 +4408,7 @@ window.editorApi = {
             this.cleanupDom();
             document.body.style.overflow = this._bodyOverflow || '';
             if (!this._confirmed) {
-                window.editorApi._dirty = this._dirtyBefore;
-                if (window.editorApi.bridge) {
-                    window.editorApi.bridge.contentChanged(!!this._dirtyBefore);
-                }
+                window.editorApi._restoreDirtyIfUnchanged(this._versionBefore, this._dirtyBefore);
             }
             var self = this;
             setTimeout(function() {
@@ -4413,10 +4417,7 @@ window.editorApi = {
                 setTimeout(function() {
                     window.editorApi._mathEditing = false;
                     if (!self._confirmed) {
-                        window.editorApi._dirty = self._dirtyBefore;
-                        if (window.editorApi.bridge) {
-                            window.editorApi.bridge.contentChanged(!!self._dirtyBefore);
-                        }
+                        window.editorApi._restoreDirtyIfUnchanged(self._versionBefore, self._dirtyBefore);
                     }
                 }, 150);
             }, 50);

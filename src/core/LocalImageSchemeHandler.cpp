@@ -17,12 +17,29 @@ LocalImageSchemeHandler::LocalImageSchemeHandler(QObject *parent)
 // 逃出 docDir，注入场景可枚举读取任意本地图片）。仅服务已打开文档目录内的
 // 文件（canonical 前缀围栏；EditorTab::setFilePath 注册）
 QSet<QString> LocalImageSchemeHandler::s_allowedDirs;
+QHash<QString, int> LocalImageSchemeHandler::s_dirRefs;
 
 void LocalImageSchemeHandler::addAllowedDir(const QString &dir)
 {
     const QString canon = QFileInfo(dir).canonicalFilePath();
-    if (!canon.isEmpty())
+    if (!canon.isEmpty()) {
         s_allowedDirs.insert(canon);
+        s_dirRefs[canon] = s_dirRefs.value(canon, 0) + 1;
+    }
+}
+
+void LocalImageSchemeHandler::removeAllowedDir(const QString &dir)
+{
+    const QString canon = QFileInfo(dir).canonicalFilePath();
+    if (canon.isEmpty())
+        return;
+    const int refs = s_dirRefs.value(canon, 0);
+    if (refs <= 1) {
+        s_dirRefs.remove(canon);
+        s_allowedDirs.remove(canon);
+    } else {
+        s_dirRefs[canon] = refs - 1;
+    }
 }
 
 void LocalImageSchemeHandler::requestStarted(QWebEngineUrlRequestJob *job)

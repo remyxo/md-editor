@@ -22,14 +22,19 @@ class LocalImageSchemeHandler : public QWebEngineUrlSchemeHandler {
 public:
     explicit LocalImageSchemeHandler(QObject *parent = nullptr);
 
-    // 注册允许服务的文档目录（EditorTab::setFilePath 时调用；进程级集合）
+    // 注册允许服务的文档目录（EditorTab::setFilePath 时调用；进程级集合）。
+    // 按引用计数管理：同目录多标签页打开各持一引，全部关闭后撤销（历史上
+    // 只增不减，长期会话的授权面随打开过的目录单调增长）
     static void addAllowedDir(const QString &dir);
+    // 撤销一次注册（EditorTab 换文件路径 / 标签页析构时调用；计数归零移除）
+    static void removeAllowedDir(const QString &dir);
 
 protected:
     void requestStarted(QWebEngineUrlRequestJob *job) override;
 
 private:
     static QSet<QString> s_allowedDirs;
+    static QHash<QString, int> s_dirRefs;
 };
 
 // 自定义协议名（小写 ASCII）

@@ -261,13 +261,31 @@ void EditorTab::loadFile(const QString &path, const QString &content)
     }
 }
 
+EditorTab::~EditorTab()
+{
+    // 撤销 localimg:// 目录围栏注册（引用计数，同目录其他标签页不受影响）。
+    // 曾只增不减：长期会话中授权面随打开过的目录单调增长
+    if (!m_allowedDir.isEmpty())
+        LocalImageSchemeHandler::removeAllowedDir(m_allowedDir);
+}
+
 void EditorTab::setFilePath(const QString &path)
 {
     m_webView->setProperty("filePath", path);
-    // localimg:// 目录围栏：该文档目录内的本地图片才可被编辑器加载
+    // localimg:// 目录围栏：该文档目录内的本地图片才可被编辑器加载。
+    // 目录变更时撤销旧注册（引用计数，同目录多标签不受影响）；同路径
+    // 重复调用不再叠加引用
     const QString dir = QFileInfo(path).absolutePath();
-    if (!dir.isEmpty())
-        LocalImageSchemeHandler::addAllowedDir(dir);
+    if (dir != m_allowedDir) {
+        if (!m_allowedDir.isEmpty())
+            LocalImageSchemeHandler::removeAllowedDir(m_allowedDir);
+        if (!dir.isEmpty()) {
+            LocalImageSchemeHandler::addAllowedDir(dir);
+            m_allowedDir = dir;
+        } else {
+            m_allowedDir.clear();
+        }
+    }
     pushDocDir();   // 页面已就绪则立即推送；否则由 onPageLoadFinished 补推
 }
 

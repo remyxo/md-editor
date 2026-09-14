@@ -142,6 +142,7 @@ ctest --output-on-failure
 - **[模态对话框 ESC 关闭机制](docs/modal-dialog-esc-handling.md)** — Qt QShortcut 拦截 Esc → Bridge 通知 → 分流处理
 - **[\<br\> 与软换行往返机制](docs/br-and-softbreak-roundtrip.md)** — BRMARKER/data-brk 标记 / 双 TipTap 节点 / toHtml/fromHtml 三层分离架构
 - **[Qt 转义兼容（6.8.2→6.10.2）](docs/qt-642-escaping-compat.md)** — 各版本 toMarkdown 转义差异 / 占位符保护范式 / 容器验证法
+- **[HTML 属性转义与实体解码](docs/html-attr-escape-and-entity-decode.md)** — 属性值 escapeHtmlAttr/unescapeHtmlEntities 对称规则 / TipTap innerHTML 恒转义 / tiptap_serialize 真实链路夹具
 - **[跨平台等宽字体与行内代码往返](docs/cross-platform-monospace-font.md)** — FixedFont 族名平台相关（monospace/Courier New/Menlo）/ Linux 测不出 Windows bug / monoSpanFamilyPattern 动态匹配
 - **[代码块围栏往返机制](docs/code-fence-roundtrip.md)** — 嵌套围栏三坑：解析层围栏长度 / 序列化层反引号数推断 / 占位符段落重排粘连
 - **[vendor QtMarkdownWriter 说明](docs/vendor-qt-markdown-writer.md)** — 80 列折行根治 / 与上游等价性验证 / 上游同步 diff 流程 / LGPL 义务与 GPL-3.0 决策
