@@ -71,6 +71,56 @@ private slots:
         QVERIFY(out.contains("ul[data-type=\"taskList\"] > li > div > p{margin:0;}"));
     }
 
+    void testFootnotePerPageFloatWiring() {
+        // 脚注随页浮动（Word 形态）：paged 路径注入 float:footnote 指令 +
+        // 脚注区分隔线样式 + call 自动编号抑制 + __floatFootnotes 重排（须先于
+        // 指纹快照——def 移位改变文本顺序，快照基线取移动后文档）；legacy
+        // 路径无这些注入。基础版式（marker 浮动 + 首子元素去顶距）两路径都有
+        // ——footnote-content 是块级 div，缺规则时行内 marker 后跟块级元素拆
+        // 匿名块、编号独占一行（PDF 模板不加载 editor.css 的教训）
+        PdfPageSpec spec;
+        spec.headerEnabled = true;   // 任一开关激活 paged 分页
+        const QString paged = PdfExporter::buildRenderHtml(
+            "<p>正文<sup data-type=\"footnoteRef\" data-id=\"1\">1</sup></p>",
+            "/tmp", "", "", spec);
+        QVERIFY(paged.contains("div[data-type=\"footnoteDef\"].pdf-fn{float:footnote;}"));
+        QVERIFY(paged.contains(".pagedjs_footnote_area>.pagedjs_footnote_content"));
+        QVERIFY(paged.contains("[data-footnote-call]::after{content:none!important;}"));
+        // 溢出拆分碎片的 text-align-last:justify 抑制：上游 Footnotes.
+        // handleAlignment 对碎片无条件 justify（正文版同款方法有 text-align:
+        // justify 前置），短行尾行被撑满全宽逐字拉开（多段脚注跨页拆分实测）
+        QVERIFY(paged.contains(
+            ".pagedjs_footnote_area [data-align-last-split-element='justify']"
+            "{text-align-last:auto;}"));
+        // 页脚 counter(pages) 修正须在 preview 之后（页元素已定型）、指纹校验
+        // 之前：clonePage 不更新 this.total → 渲染收尾把 --pagedjs-page-count
+        // 写成不含脚注续页的旧值（「第3页/共2页」实测）
+        const qsizetype cp = paged.indexOf("'--pagedjs-page-count'");
+        QVERIFY(cp >= 0);
+        QVERIFY(cp > paged.indexOf("PagedPolyfill.preview()"));
+        QVERIFY(cp < paged.indexOf("window.__verifyContent();"));
+        QVERIFY(paged.indexOf("__floatFootnotes();") >= 0);
+        // 浮动重排在指纹快照之后（正文指纹取剔除 def 的克隆，def 走字符
+        // 多重集 __preFns——重排/跨页拆分不误伤）、preview 之前
+        QVERIFY(paged.indexOf("__preText=") < paged.indexOf("__floatFootnotes();"));
+        QVERIFY(paged.indexOf("__floatFootnotes();")
+                < paged.indexOf("PagedPolyfill.preview()"));
+        QVERIFY(paged.contains(".footnote-marker{float:left"));
+        QVERIFY(paged.contains(".footnote-content>*:first-child{margin-top:0;}"));
+
+        const QString legacy = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
+        QVERIFY(!legacy.contains("float:footnote"));      // 浮动指令仅 paged 注入
+        // .pagedjs_footnote_area 裸串不能作判据——__verifyContent 脚本文本两路径
+        // 共有（legacy 分支提前 return 不执行），锁 CSS 规则形态（含 > 子选择器）
+        QVERIFY(!legacy.contains(".pagedjs_footnote_area>.pagedjs_footnote_content"));
+        QVERIFY(!legacy.contains("[data-footnote-call]"));
+        // 脚本文本两条路径都在 HTML 里（legacy 分支提前 return 不执行），
+        // 执行守卫 = 调用点位于 PagedPolyfill 存在性检查之后（splitPreLines 同款）
+        QVERIFY(legacy.indexOf("__floatFootnotes();")
+                > legacy.indexOf("if(!window.PagedPolyfill)"));
+        QVERIFY(legacy.contains(".footnote-marker{float:left"));
+    }
+
     void testBuildRenderHtmlPrintCssSplittable() {
         // R2 内容丢失回归防线（两条路径共用 @media print 块）：
         // 1) pre 禁用 overflow-x:auto（滚动容器让分页器 breakToken 卡死→静默丢段），
@@ -101,10 +151,12 @@ private slots:
                 > out.indexOf("if(!window.PagedPolyfill)"));
         // R3 内容指纹自检：分页前后文本比对，静默丢失即回退 fallback 原生打印
         // （保底零丢失优先于页眉页脚）；快照在 splitPreLines 之后、preview 之前
+        // （快照形态为 IIFE：剔除脚注 def 的 body 克隆文本——def 随页浮动后文本
+        // 顺序必然改变，def 文本走独立字符多重集指纹 __preFns）
         QVERIFY(out.contains("__verifyContent"));
-        QVERIFY(out.indexOf("window.__preText=document.body.textContent;")
+        QVERIFY(out.indexOf("window.__preText=(function(){")
                 > out.lastIndexOf("window.__splitPreLines();"));
-        QVERIFY(out.indexOf("window.__preText=document.body.textContent;")
+        QVERIFY(out.indexOf("window.__preText=(function(){")
                 < out.indexOf("PagedPolyfill.preview()"));
         QVERIFY(out.indexOf("window.__verifyContent()")
                 > out.indexOf("PagedPolyfill.preview()"));
@@ -136,7 +188,7 @@ private slots:
         QVERIFY2(out.contains("table.style.width='min-content'"), qPrintable(out));
         QVERIFY2(out.contains("table.style.width='max-content'"), qPrintable(out));
         QVERIFY(out.indexOf("window.__fixTableColumns();")
-                < out.indexOf("window.__preText=document.body.textContent;"));
+                < out.indexOf("window.__preText=(function(){"));
     }
 
     void testBuildRenderHtmlInlineScriptsSyntaxValid() {
@@ -180,7 +232,7 @@ private slots:
         // 3) 文本指纹 '内容指纹不一致' 原样仍在（img 维度是叠加不是替换）
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", specWithHeader());
         // 快照侧：标识存在 + 时机与 __preText 对称（splitPreLines 后、preview 前）
-        QVERIFY(out.contains("window.__preText=document.body.textContent;"));
+        QVERIFY(out.contains("window.__preText=(function(){"));
         QVERIFY(out.contains("window.__preImgs="));
         QVERIFY(out.contains("document.body.querySelectorAll('img')"));
         QVERIFY(out.indexOf("window.__preImgs=")

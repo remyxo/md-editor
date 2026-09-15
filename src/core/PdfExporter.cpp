@@ -142,6 +142,39 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 同型；须在 @media print 之外——paged.js 屏幕分页测量与打印折行必须一致，
         // 否则测量行高失真（打印侧折行更高 → 行溢出页底）
         pageCss += QStringLiteral("th,td{overflow-wrap:anywhere;}");
+        // 脚注随页浮动（Word 形态）：pdf-fn 类的 def 由 paged.js Footnotes 处理器
+        // 搬入所在页的页底脚注区（.pagedjs_footnote_area，flex 列贴内容区底）。
+        // 浮动前提：def 在文档流中位于引用点旁边——__floatFootnotes 已把文末
+        // 容器里的 def 移到首个 sup 引用之后，才能落在引用所在页
+        pageCss += QStringLiteral(
+                       "div[data-type=\"footnoteDef\"].pdf-fn{float:footnote;}");
+        // 分页流内临时形态：inline-block 参与行盒（块级会在引用处把段落拆成
+        // 匿名块断行）；搬入脚注区后恢复块级占满区宽
+        pageCss += QStringLiteral(
+                       ".pagedjs_page_content div[data-type=\"footnoteDef\"].pdf-fn"
+                       "{display:inline-block;}"
+                       ".pagedjs_footnote_area div[data-type=\"footnoteDef\"].pdf-fn"
+                       "{display:block;margin:.2em 0;}");
+        // 脚注区分隔线（Word 同款：横线之上正文、之下脚注）——仅当页确有脚注
+        // （空态 pagedjs_footnote_empty 由引擎 display:none）；字号缩小对齐 Word
+        pageCss += QStringLiteral(
+                       ".pagedjs_footnote_area>.pagedjs_footnote_content"
+                       ":not(.pagedjs_footnote_empty)"
+                       "{border-top:1px solid #999;padding-top:.25em;"
+                       "font-size:.8em;line-height:1.5;}");
+        // paged.js 会在引用位自动插 [data-footnote-call]::after{
+        // content:counter(footnote)} 自动编号——与源码 sup 编号重复，抑制之
+        pageCss += QStringLiteral(
+                       "[data-footnote-call]::after{content:none!important;}");
+        // 脚注碎片禁用 text-align-last:justify：上游 Footnotes.handleAlignment
+        // 对溢出拆分的碎片无条件打 justify（正文 Breaks 处理器的同款方法还要求
+        // text-align:justify，脚注版没有这一前置）——配合上游内置规则
+        // [data-align-last-split-element='justify']，拆分残留碎片的尾行被撑满
+        // 全宽、逐字拉开（多段脚注跨页拆分实测：一行短文逐字散布整行）。本
+        // 模板正文左对齐，碎片尾行恢复默认（auto=随 text-align）即可
+        pageCss += QStringLiteral(
+                       ".pagedjs_footnote_area [data-align-last-split-element='justify']"
+                       "{text-align-last:auto;}");
         // 内容宽 = 纸宽 − 左右边距（横向换向取短边），mm→px 与 Chromium CSS px 一致
         const double contentWmm = (spec.orientation == QPageLayout::Landscape ? paperMm.height() : paperMm.width())
                                   - spec.marginsMm.left() - spec.marginsMm.right();
@@ -164,6 +197,27 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "var t=document.querySelector(\"body > template[data-ref='pagedjs-content']\");"
         "if(t){var c=t.content;while(c.firstChild){document.body.insertBefore(c.firstChild,t);}t.remove();}"
         "var ps=document.querySelector('body > .pagedjs_pages');if(ps)ps.remove();"
+        "};"
+        // 脚注随页浮动前置（仅 paged 路径调用）：文末容器里的 def 移到各自首个
+        // sup 引用之后并打 pdf-fn 类（float:footnote 指令由注入 CSS 承载），
+        // paged.js 分页时将其搬入引用所在页的页底脚注区。同一 id 的后续引用
+        // 不再移动（Word/DOCX 同款：一脚注一锚点）；无引用的 def 留在文末
+        // 容器（保留容器分隔线形态）；全部移走后容器只剩空白则整体移除
+        "window.__floatFootnotes=function(){"
+        "var defs={};"
+        "document.querySelectorAll('div[data-type=\"footnoteDef\"]').forEach(function(d){"
+        "var id=d.getAttribute('data-id');if(id!==null)defs[id]=d;});"
+        "var seen={};"
+        "var sups=document.querySelectorAll('sup[data-type=\"footnoteRef\"]');"
+        "for(var i=0;i<sups.length;i++){"
+        "var sup=sups[i],id=sup.getAttribute('data-id');"
+        "if(!id||seen[id]||!defs[id])continue;"
+        "seen[id]=1;"
+        "sup.insertAdjacentElement('afterend',defs[id]);"
+        "defs[id].classList.add('pdf-fn');"
+        "}"
+        "var c=document.querySelector('div[data-type=\"footnoteContainer\"]');"
+        "if(c&&!c.querySelector('div[data-type=\"footnoteDef\"]')&&!c.textContent.trim())c.remove();"
         "};"
         // 代码块逐行重排（仅 paged 路径调用）：把 pre 内容按源码行拆成块级 span。
         // paged.js 对 pre 文本节点的字符偏移断点在行间空白区几何不可靠（pre-wrap 下
@@ -366,16 +420,30 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "try{"
         "var pages=document.querySelectorAll('.pagedjs_page_content');"
         "if(!pages.length)return '无分页内容';"
-        // 脚注渲染进 .pagedjs_area 内独立的 footnote 盒（内容盒之外），一并计入
-        "var fns=document.querySelectorAll('.pagedjs_footnote_content');"
-        "var post='';for(var i=0;i<pages.length;i++)post+=pages[i].textContent;"
-        "for(var k=0;k<fns.length;k++)post+=fns[k].textContent;"
+        // 正文指纹：页面内容盒文本（剔除 def——随页浮动后 def 进各页脚注盒，
+        // 无引用的 def 留在内容盒，两种去向都不属正文流）；def 文本单独走
+        // 字符多重集（见下方脚注指纹）
+        "var post='',fnText='';"
+        "for(var i=0;i<pages.length;i++){"
+        "var c=pages[i].cloneNode(true);"
+        "var ds=c.querySelectorAll('div[data-type=\"footnoteDef\"]');"
+        "for(var k=0;k<ds.length;k++){fnText+=ds[k].textContent;ds[k].remove();}"
+        "post+=c.textContent;"
+        "}"
+        // 浮动进脚注盒的 def（.pagedjs_area 内独立盒，内容盒之外）
+        "var fd=document.querySelectorAll('.pagedjs_footnote_area div[data-type=\"footnoteDef\"]');"
+        "for(var q=0;q<fd.length;q++)fnText+=fd[q].textContent;"
         "var a=(window.__preText||'').replace(/\\s+/g,'');"
         "var b=post.replace(/\\s+/g,'');"
         "if(a!==b){"
         "var j=0;while(j<Math.min(a.length,b.length)&&a.charAt(j)===b.charAt(j))j++;"
         "return '内容指纹不一致 '+a.length+'→'+b.length+' 首异位@'+j;"
         "}"
+        // 脚注指纹（字符多重集）：def 随引用重排（顺序变）、长脚注跨页拆分
+        // （分块变），字符集合不变——纯重排/拆分不误伤，真丢失/重复仍拦截
+        "var fa=window.__preFns||'';"
+        "var fb=fnText.replace(/\\s+/g,'').split('').sort().join('');"
+        "if(fa!==fb)return '脚注指纹不一致 '+fa.length+'→'+fb.length;"
         // img 维度指纹（文本比对之后）：图片无文本，文本指纹对图片丢失/裁切/
         // 重复铺排全无感知，须独立比对。签名取 src 多重集（收集后排序 join('|')）
         // 而非仅计数——同 src 合法重复出现 N 次须保留次数语义，总量守恒的
@@ -384,6 +452,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // base64 data URI 会巨长，返回值截断为前 8 字符+总长，勿整串回填
         // （风格对齐上方文本指纹的 a.length+'→'+b.length）
         "var ims=[];"
+        "var fns=document.querySelectorAll('.pagedjs_footnote_content');"
         "for(var n=0;n<pages.length;n++){var pg=pages[n].querySelectorAll('img');"
         "for(var m=0;m<pg.length;m++)ims.push(pg[m]);}"
         "for(n=0;n<fns.length;n++){var fg=fns[n].querySelectorAll('img');"
@@ -408,8 +477,18 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "try{window.__fixTableBreaks();}catch(e){console.warn('表格断点修正注册失败: '+(e&&e.message||e));}"
         "try{window.__fixTableColumns();}catch(e){console.warn('表格列宽归一化失败: '+(e&&e.message||e));}"
         "try{window.__splitPreLines();}catch(e){console.warn('代码块逐行重排失败: '+(e&&e.message||e));}"
-        // 指纹快照必须在 splitPreLines 之后（它重排 pre 文本，前后快照要同基线）
-        "window.__preText=document.body.textContent;"
+        // 指纹快照在 splitPreLines 后（同基线）、脚注浮动前：正文指纹取
+        // 「剔除 def 的 body 克隆」文本——def 即将被移进各页脚注盒（文本顺序
+        // 必然改变），其文本单独走字符多重集指纹（__preFns）
+        "window.__preFns=(function(){"
+        "var t='',ds=document.querySelectorAll('div[data-type=\"footnoteDef\"]');"
+        "for(var i=0;i<ds.length;i++)t+=ds[i].textContent;"
+        "return t.replace(/\\s+/g,'').split('').sort().join('');})();"
+        "window.__preText=(function(){"
+        "var c=document.body.cloneNode(true);"
+        "var ds=c.querySelectorAll('div[data-type=\"footnoteDef\"]');"
+        "for(var i=0;i<ds.length;i++)ds[i].remove();"
+        "return c.textContent;})();"
         // img src 多重集快照与文本快照同点：splitPreLines 不动 img，同点即与
         // 比对侧（__verifyContent）完全对称。body 内全部 img 的 src 排序后
         // join('|')——多重集语义：同 src 合法重复出现保留次数（仅计数会被
@@ -417,8 +496,18 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "window.__preImgs=(function(){var s=[],is=document.body.querySelectorAll('img');"
         "for(var i=0;i<is.length;i++)s.push(is[i].src);"
         "s.sort();return s.join('|');})();"
+        // 脚注浮动重排最后跑（快照之后）：把 def 移到首个引用旁并打 pdf-fn，
+        // 分页引擎随即将其搬入引用所在页的页底脚注区
+        "try{window.__floatFootnotes();}catch(e){console.warn('脚注随页浮动重排失败: '+(e&&e.message||e));}"
         "return PagedPolyfill.preview()"
         ".then(function(){"
+        // 页脚 counter(pages) 修正：脚注溢出产生的续页走 chunker.clonePage——
+        // 它 push 页面元素但不更新 this.total，渲染收尾把
+        // --pagedjs-page-count 写成不含续页的旧值，页脚呈现「第3页/共2页」
+        // （脚注多段跨页拆分实测）。inline 变量按页元素实际数覆写
+        "try{var pw=document.querySelector('.pagedjs_pages');"
+        "if(pw)pw.style.setProperty('--pagedjs-page-count',"
+        "document.querySelectorAll('.pagedjs_page').length);}catch(e){}"
         "var ok=window.__verifyContent();"
         "if(ok!==true){"
         "console.warn('分页内容校验失败，回退原生分页: '+ok);"
@@ -487,6 +576,15 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "ul[data-type=\"taskList\"] > li{display:flex;align-items:flex-start;gap:8px;}"
         "ul[data-type=\"taskList\"] > li label{margin-top:3px;}"
         "ul[data-type=\"taskList\"] > li > div > p{margin:0;}"
+        // 脚注基础版式（编号与内容同行的关键）：marker 浮动 + 首子元素去顶距。
+        // footnote-content 是块级 div（块级定义），无此规则时行内 marker 后跟
+        // 块级元素被拆成匿名块、编号独占一行——PDF 模板不加载 editor.css，
+        // 编辑器的 float:left 绕排规则须在此复刻（paged/legacy 两路径共用）
+        "div[data-type=\"footnoteContainer\"]{margin-top:2em;padding-top:.75em;"
+        "border-top:1px solid #bbb;font-size:.85em;}"
+        "div[data-type=\"footnoteDef\"]{margin:.25em 0;overflow:hidden;}"
+        ".footnote-marker{float:left;margin-right:.4em;font-weight:600;color:#1967d2;}"
+        "div[data-type=\"footnoteDef\"] .footnote-content>*:first-child{margin-top:0;}"
         "}"
         "%3"                                    // KaTeX CSS
         "</style>"
