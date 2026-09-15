@@ -2,9 +2,9 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.16.0] — 2026-09-13
+## [0.16.0] — 2026-09-15
 
-全面代码审查修复批次（3 个并行审查覆盖往返保真核心 / Web 层 / C++ 外壳与安全面，约 50 项发现，本版完成 P0-P3 四个批次）。
+全面代码审查修复批次（3 个并行审查覆盖往返保真核心 / Web 层 / C++ 外壳与安全面，约 50 项发现，本版完成 P0-P3 四个批次），叠加阶段 1-5 补充批次（往返保真 / 性能 / DOCX 脚注 / 块引用嵌套 / 收尾加固）与 DOCX/PDF 脚注导出的 Word 对齐。
 
 ### 修复 — 数据丢失与损坏（P0）
 - **块引用内行内格式全剥离** — fromHtml 引用步骤先于行内转换运行，`inner.remove(<[^>]*>)` 把引用内所有标签剥掉：WYSIWYG 对引用内文字加粗每次保存即丢语义（`> **加粗**` → `> 加粗`），链接/图片直接消失。修复：引用抽取后移至行内占位保护之后 + `blockquoteInnerInlineToMd` 手动转换 Qt 侧标签族
@@ -32,6 +32,24 @@
 
 ### 加固 — 择要（P3）
 - Math/Mermaid 离屏渲染器 30s 看门狗（挂死不再无声失联）；watcher 重复注册去重 + 关 tab 不误停同文件监控；customCss 剥 `</style>` 防注入；DOCX colgroup 列宽正则锚定；`_imagePending` 清理与死代码清理；vendored QtMarkdownWriter 上游缺陷记录入文档
+
+### 修复 — 审查补充批次：往返保真（阶段 1、4）
+- **空 alt 图片整条丢失（P0）** — Qt setMarkdown 对 `![](x)` 整条丢弃，图片「打开→保存」一次即从文档消失（独占行/段落内/引用内均复现）。toHtml 占位 alt 保形 + fromHtml 空标记哨兵（vendored writer 不再凭空写 `![image](x)`）；行内代码内字面 `![](x)` 暂存豁免
+- **标题内强调保存退化（P1）** — Qt toMarkdown 不输出 `<hN>` 内的强调标记（`<p>` 内正常），`# a **c**` 保存即退化为 `# a c`。fromHtml 补 strong/em 占位保护；toHtml 兜底正则改平衡扫描（标题含多内联段时惰性组曾产悬空 `</span>` 畸形 HTML）
+- **列表项内图片保存即丢（含任务列表/嵌套列表）** — ① fromHtml 列表序列化把 `<img>` 当无意义标签剥掉；② toHtml 产出的 `<li><img></li>` 被 TipTap 弹出列表、留下用户从未写的空条目——图片前补空 `<p>` 成稳定不动点；③ 含图条目其余内容并入单行（Qt 续行机制对块级内容不可用）。七种列表形态经真实 TipTap 链路字节往返验证
+- **属性转义与实体解码（P1）** — 块级公式 data-latex / 围栏语言串 / 脚注 data-id 此前裸拼，值含 `"` 时属性提前终结（公式后半段丢失）；读取侧不做 HTML 实体解码，对齐列 `&` 每保存一轮多一层且不收敛（`&amp;` → `&amp;amp;`）。escapeHtmlAttr 统一转义 + 读取侧统一解码；历史已损坏文件载入即自愈。505 条往返矩阵改走真实实体路径（此前 C++ 直连漏掉整类「未转义/未解码」问题）
+- **块引用嵌套结构保真（阶段 4 / P2-8）** — 引用内列表变裸列表（Qt 把 `<ul>` 弹出引用）、`> > a` 塌平、`> ---` 的 hr 逃出引用、`> ``` 围栏体丢 `>` 前缀（重开即逃出引用）。toHtml 复杂引用预抽取走字面 blockquote 通道；fromHtml 平衡配对替代惰性首闭 + 内容递归 + 占位符就地展开再加前缀
+
+### 新增 — DOCX/PDF 脚注导出对齐 Word（阶段 3 + macOS Word 校验）
+- **DOCX 原生脚注（P1-7）** — `[^id]` 引用导出为 Word 原生脚注（新增 word/footnotes.xml 部件 + 自动编号上标 + FootnoteText/FootnoteReference 样式），正文不再输出 `[^id]: ...` 字面段落；同一 id 多处引用复用同号；定义内 runs 经部件级关系清洗（跨部件悬挂 r:id 会被 Word 判「无法读取的内容」）
+- **重复引用兼容 macOS Word** — Word 脚注「一脚注一锚点」，同一 w:id 的第二个 footnoteReference 触发修复框（4 变体 A/B 隔离实证）：首引用 = 原生标记 + 隐藏书签 `_RefFtn<N>`，重复引用 = NOTEREF 交叉引用域（显示同号、可点击跳转、随重编号更新）。同批修 CT_PPrBase/CT_RPr 序列三处违规（代码块 pPr、docDefaults rPr、Heading 样式）、悬空样式引用补定义、marker 双编号、容器空白泄漏；macOS Word 复验无弹窗
+- **PDF 脚注随页浮动 + 分隔线** — paged 路径注入 `float:footnote`：文末容器定义移到首个引用旁，分页引擎搬入引用所在页页底脚注区（灰色分隔线 + 缩小字号，Word 同款）；重复引用不重复锚点（与 DOCX NOTEREF 同构）。编号与内容同行（marker 浮动版式注入，paged/legacy 共用）。修上游 paged.js 两缺陷：溢出拆分碎片被无条件 `text-align-last:justify` 逐字拉伸（注入 CSS 覆盖）、脚注续页 `clonePage` 不更新总页数（「第3页/共2页」→ 按真实页元素数覆写）；内容指纹拆维（正文剔除脚注 + 脚注字符多重集），重排/拆分不误报、真丢失仍拦截
+
+### 优化 — 性能（阶段 2）
+- **fromHtml 热点 O(K·n) 清零（P1-6）** — 剩余 18 处 `match(s,offset)` 全串扫描循环单遍化（globalMatch 单遍重建、span 单遍栈配对、表格两趟并一）；热点路径正则全部 static const。实测（-O2）：3000-span 9342ms→76ms（123×）、4000 行表格 16316ms→276ms、4000 行内公式 3738ms→64ms；新增 Release-only 基准测试（5-10 倍余量防数量级回归）
+
+### 加固 — 阶段 5 择要
+- PdfExporter customCss 剥 `</style>`（与 HtmlExporter 对称，防样式块提前终结注入任意标记）；localimg:// 目录白名单改引用计数（换文件撤销旧目录注册，长期会话授权面不随打开目录单调增长）；模态对话框恢复脏状态加 `_docVersion` 版本守卫（对话框期间置脏不再回退假干净）；MathMlConverter 自闭合经探针实证为误报（新增回归护栏固化）；新增 docs/html-attr-escape-and-entity-decode.md 专题文档
 
 ## [0.15.0] — 2026-09-13
 
