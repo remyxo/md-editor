@@ -517,6 +517,7 @@ struct ParseState {
     QHash<QString, int> footnoteNumById;    // data-id → Word 脚注号（2 起；0/1 为内置分隔符）
     QStringList footnoteOrder;              // data-id 按首次出现（引用或定义）排序
     QHash<int, QString> footnoteRunsByNum;  // 脚注号 → 定义内容 OOXML runs
+    QSet<QString> footnoteBodyMarkDone;     // 已发出原生正文标记（+书签）的 data-id
 
     QString makeRId(const QString &url) {
         QString rid = QString("rId%1").arg(nextRId++);
@@ -663,10 +664,33 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                     flushRun();
                     const QString fid = r.attributes().value("data-id").toString();
                     const int num = footnoteNumFor(fid, s);
-                    out += QStringLiteral(
-                        "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/>"
-                        "<w:vertAlign w:val=\"superscript\"/></w:rPr>"
-                        "<w:footnoteReference w:id=\"%1\"/></w:r>").arg(num);
+                    if (!s.footnoteBodyMarkDone.contains(fid)) {
+                        // 首个正文引用：原生脚注标记，外裹隐藏书签（_RefFtn<N>）
+                        // 供重复引用的 NOTEREF 域定位——Word 交叉引用同款机制
+                        s.footnoteBodyMarkDone.insert(fid);
+                        out += QStringLiteral(
+                                   "<w:bookmarkStart w:id=\"%1\" w:name=\"_RefFtn%1\"/>"
+                                   "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/>"
+                                   "<w:vertAlign w:val=\"superscript\"/></w:rPr>"
+                                   "<w:footnoteReference w:id=\"%1\"/></w:r>"
+                                   "<w:bookmarkEnd w:id=\"%1\"/>").arg(num);
+                    } else {
+                        // 重复引用：Word 脚注标记一脚注一锚点，同 id 第二个
+                        // footnoteReference 会触发「无法读取的内容」修复框
+                        // （macOS Word A/B 隔离实证 2026-09-15）——改用 Word 原生
+                        // 交叉引用域 NOTEREF（显示同号、可点击、随重编号更新）
+                        out += QStringLiteral(
+                                   "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>"
+                                   "<w:r><w:instrText xml:space=\"preserve\">"
+                                   " NOTEREF _RefFtn%1 \\r \\h </w:instrText></w:r>"
+                                   "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>"
+                                   "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/>"
+                                   "<w:vertAlign w:val=\"superscript\"/></w:rPr>"
+                                   "<w:t>%2</w:t></w:r>"
+                                   "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>")
+                                   .arg(num)
+                                   .arg(num - 1);   // 显示号：正文脚注按序 1 起
+                    }
                     int depth = 1;
                     while (!r.atEnd() && depth > 0) {
                         const auto t2 = r.readNext();
@@ -679,6 +703,19 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
             }
             // span（内联数学 / 颜色）
             else if (tag == "span") {
+                // 脚注定义里的编号 marker（class=footnote-marker，toHtml 恒输出，
+                // 内含返回按钮等 UI 辅件）：Word 原生 footnoteRef 已渲染编号，
+                // marker 再输出会双编号——整体消费丢弃
+                if (r.attributes().value("class").toString()
+                        .split(' ').contains("footnote-marker")) {
+                    int depth = 1;
+                    while (!r.atEnd() && depth > 0) {
+                        const auto t2 = r.readNext();
+                        if (t2 == QXmlStreamReader::StartElement) ++depth;
+                        else if (t2 == QXmlStreamReader::EndElement) --depth;
+                    }
+                    continue;
+                }
                 // 内联公式占位：替换为 <m:oMath> 原生公式（OMML）；渲染失败回退 $...$
                 if (r.attributes().hasAttribute("data-math-idx")) {
                     flushRun();
@@ -825,8 +862,10 @@ static QString parseParagraph(QXmlStreamReader &r, const QString &tag, ParseStat
                "<w:r><w:t>$$" + xmlEscape(latex) + "$$</w:t></w:r></w:p>";
     }
     if (dataType == "footnoteContainer") {
-        QString inner = parseInline(r, tag, s);
-        return inner.isEmpty() ? QString() : inner;
+        // 容器本体不产出正文（def 在内联上下文已收集进 footnotes 状态）；
+        // def 之间的杂散文本（手写/格式化 HTML 的换行空白）一并丢弃
+        parseInline(r, tag, s);
+        return {};
     }
 
     QString jc;
@@ -869,11 +908,13 @@ static QString parseCodeBlock(QXmlStreamReader &r, ParseState &s)
         // 跳过 <code> 起止标签和其他内联标签
     }
 
-    // 逐行生成 <w:p>，等宽字体 + 灰底
+    // 逐行生成 <w:p>，等宽字体 + 灰底。
+    // CT_PPrBase 子元素须按 schema 序列（… → shd → … → spacing → ind → …），
+    // ind 不得早于 spacing——顺序违规触发 Word「无法读取的内容」修复框
     QString pPr = "<w:pPr>"
                   "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F2F2F2\"/>"
-                  "<w:ind w:left=\"360\" w:right=\"360\"/>"
                   "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>"
+                  "<w:ind w:left=\"360\" w:right=\"360\"/>"
                   "</w:pPr>";
     QString rPr = "<w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/><w:sz w:val=\"22\"/></w:rPr>";
 
@@ -1377,17 +1418,23 @@ static QString makeStylesXml()
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
         "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n"
         "  <w:docDefaults>"
-        "<w:rPrDefault><w:rPr><w:sz w:val=\"22\"/><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"黑体\" w:cs=\"Arial\"/></w:rPr></w:rPrDefault>"
+        // rPr 子元素同样受 CT_RPr 序列约束：rFonts 必须早于 sz
+        "<w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"黑体\" w:cs=\"Arial\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault>"
         "<w:pPrDefault><w:pPr><w:spacing w:line=\"276\" w:lineRule=\"auto\"/></w:pPr></w:pPrDefault>"
         "</w:docDefaults>\n"
         "  <w:style w:type=\"paragraph\" w:styleId=\"Normal\" w:default=\"1\"><w:name w:val=\"Normal\"/><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>\n"
-        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:outlineLvl w:val=\"0\"/><w:spacing w:before=\"240\" w:after=\"120\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"32\"/></w:rPr></w:style>\n"
-        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading2\"><w:name w:val=\"heading 2\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:outlineLvl w:val=\"1\"/><w:spacing w:before=\"200\" w:after=\"100\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"28\"/></w:rPr></w:style>\n"
-        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading3\"><w:name w:val=\"heading 3\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:outlineLvl w:val=\"2\"/><w:spacing w:before=\"160\" w:after=\"80\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"26\"/></w:rPr></w:style>\n"
-        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading4\"><w:name w:val=\"heading 4\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:outlineLvl w:val=\"3\"/><w:spacing w:before=\"120\" w:after=\"60\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"24\"/></w:rPr></w:style>\n"
-        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading5\"><w:name w:val=\"heading 5\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:outlineLvl w:val=\"4\"/><w:spacing w:before=\"100\" w:after=\"40\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"22\"/></w:rPr></w:style>\n"
-        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading6\"><w:name w:val=\"heading 6\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:outlineLvl w:val=\"5\"/><w:spacing w:before=\"80\" w:after=\"40\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"21\"/></w:rPr></w:style>\n"
+        // Heading 样式 pPr：CT_PPrBase 序列中 spacing 早于 outlineLvl
+        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"240\" w:after=\"120\"/><w:outlineLvl w:val=\"0\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"32\"/></w:rPr></w:style>\n"
+        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading2\"><w:name w:val=\"heading 2\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"200\" w:after=\"100\"/><w:outlineLvl w:val=\"1\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"28\"/></w:rPr></w:style>\n"
+        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading3\"><w:name w:val=\"heading 3\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"160\" w:after=\"80\"/><w:outlineLvl w:val=\"2\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"26\"/></w:rPr></w:style>\n"
+        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading4\"><w:name w:val=\"heading 4\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"120\" w:after=\"60\"/><w:outlineLvl w:val=\"3\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"24\"/></w:rPr></w:style>\n"
+        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading5\"><w:name w:val=\"heading 5\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"100\" w:after=\"40\"/><w:outlineLvl w:val=\"4\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"22\"/></w:rPr></w:style>\n"
+        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading6\"><w:name w:val=\"heading 6\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"80\" w:after=\"40\"/><w:outlineLvl w:val=\"5\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"21\"/></w:rPr></w:style>\n"
         "  <w:style w:type=\"paragraph\" w:styleId=\"ListParagraph\"><w:name w:val=\"List Paragraph\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:ind w:left=\"720\"/></w:pPr></w:style>\n"
+        // 表格引用的 TableGrid 与 Hyperlink 的 basedOn 目标都补上定义：
+        // 悬空引用 Word 会忽略（不致修复框），但定义齐备才与 Word 自产文档一致
+        "  <w:style w:type=\"table\" w:styleId=\"TableGrid\" w:default=\"1\"><w:name w:val=\"Table Grid\"/><w:tblPr/></w:style>\n"
+        "  <w:style w:type=\"character\" w:styleId=\"DefaultParagraphFont\" w:default=\"1\"><w:name w:val=\"Default Paragraph Font\"/></w:style>\n"
         "  <w:style w:type=\"character\" w:styleId=\"Hyperlink\"><w:name w:val=\"Hyperlink\"/><w:basedOn w:val=\"DefaultParagraphFont\"/><w:rPr><w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/></w:rPr></w:style>\n"
         // 脚注真导出：Word 内置样式名（footnote text / footnote reference），
         // 页脚区 9pt + 编号上标；引用处另带显式 vertAlign 兜底（样式缺失时不丢上标）

@@ -327,7 +327,7 @@ private slots:
         // 固定写 "[^1]: ..."），包结构同步补 [Content_Types]/rels 声明
         const QString html =
             "<p>正文<sup data-type=\"footnoteRef\" data-id=\"1\">1</sup></p>"
-            "<div data-type=\"footnoteContainer\">"
+            "<div data-type=\"footnoteContainer\">\n"
             "<div data-type=\"footnoteDef\" data-id=\"1\">"
             "<span class=\"footnote-marker\">1</span>"
             "<span class=\"footnote-content\">这是脚注内容</span>"
@@ -349,6 +349,11 @@ private slots:
         QVERIFY(footnotes.contains("<w:footnote w:id=\"2\">"));
         QVERIFY(footnotes.contains("<w:footnoteRef/>"));
         QVERIFY(footnotes.contains("这是脚注内容"));
+        // marker 编号不得重复输出：footnoteRef 已渲染编号，footnote-marker span
+        // 是编辑器 UI 辅件（内含返回按钮），导出时整体跳过
+        QVERIFY(!footnotes.contains("<w:t xml:space=\"preserve\">1</w:t>"));
+        // 容器 open 与 def 之间的换行空白（\n）不得泄漏为正文 run
+        QVERIFY(!xml.contains("<w:t xml:space=\"preserve\">\n"));
         // 包声明：Content-Types Override + document.xml.rels 关系
         QVERIFY(parts["[Content_Types].xml"].contains("/word/footnotes.xml"));
         QVERIFY(parts["word/_rels/document.xml.rels"].contains("footnotes.xml"));
@@ -363,17 +368,30 @@ private slots:
             "c<sup data-type=\"footnoteRef\" data-id=\"x\">x</sup>"
             "d<sup data-type=\"footnoteRef\" data-id=\"z\">z</sup></p>"
             "<div data-type=\"footnoteContainer\">"
-            "<div data-type=\"footnoteDef\" data-id=\"x\"><span class=\"footnote-content\">定义甲</span></div>"
+            "<div data-type=\"footnoteDef\" data-id=\"x\"><span class=\"footnote-content\">定义甲</span></div>\n"
             "<div data-type=\"footnoteDef\" data-id=\"y\"><span class=\"footnote-content\">定义乙</span></div>"
             "</div>";
         auto parts = exportParts(html, {"word/document.xml", "word/footnotes.xml"});
         const QString &xml = parts["word/document.xml"];
-        QCOMPARE(xml.count("<w:footnoteReference w:id=\"2\"/>"), 2);   // x 两次
+        // Word 脚注标记一脚注一锚点：同 id 第二个 footnoteReference 触发
+        // 「无法读取的内容」修复框（macOS Word A/B 隔离实证 2026-09-15）。
+        // 首引用 = 原生标记 + 隐藏书签；重复引用 = NOTEREF 交叉引用域（显示同号）
+        QCOMPARE(xml.count("<w:footnoteReference w:id=\"2\"/>"), 1);   // x 首引用
+        QVERIFY(xml.contains("<w:bookmarkStart w:id=\"2\" w:name=\"_RefFtn2\"/>"));
+        QVERIFY(xml.contains("<w:bookmarkEnd w:id=\"2\"/>"));
+        QVERIFY(xml.contains(
+            "<w:instrText xml:space=\"preserve\"> NOTEREF _RefFtn2 \\r \\h </w:instrText>"));
+        // 域缓存结果：上标样式 + 当前显示号（x 为第 1 条内容脚注）
+        QVERIFY(xml.contains(
+            "<w:rPr><w:rStyle w:val=\"FootnoteReference\"/>"
+            "<w:vertAlign w:val=\"superscript\"/></w:rPr><w:t>1</w:t>"));
         QCOMPARE(xml.count("<w:footnoteReference w:id=\"3\"/>"), 1);   // y
         QCOMPARE(xml.count("<w:footnoteReference w:id=\"4\"/>"), 1);   // z（无定义）
         const QString &fn = parts["word/footnotes.xml"];
         QVERIFY(fn.contains("定义甲"));
         QVERIFY(fn.contains("定义乙"));
+        // def 之间的换行空白不得泄漏为正文 run
+        QVERIFY(!xml.contains("<w:t xml:space=\"preserve\">\n"));
     }
 
     void testRunPropertiesOrderFollowsSchema() {
@@ -400,6 +418,38 @@ private slots:
         QVERIFY2(vaSub > shd, qPrintable(xml));   // vertAlign 在 shd 之后
         // 各元素恰好一次（hyperlink 曾重复输出第二个 w:color/w:u）
         QCOMPARE(xml.count("<w:color w:val=\"123456\"/>"), 1);
+    }
+
+    void testParagraphPropertiesOrderFollowsSchema() {
+        // CT_PPrBase 子元素须按 schema 序列（… → pBdr → shd → … → spacing → ind →
+        // … → jc → … → outlineLvl …），rPr 内 rFonts 早于 sz。顺序违规触发 Word
+        // 「无法读取的内容」修复框（macOS Word A/B 实证，2026-09-14）：代码块段落
+        // 曾 ind 早于 spacing、styles.xml 的 Heading 曾 outlineLvl 早于 spacing、
+        // docDefaults 的 rPr 曾 sz 早于 rFonts
+        auto parts = exportParts(
+            "<pre><code class=\"language-cpp\">int a;</code></pre>"
+            "<h2>标题</h2>",
+            {"word/document.xml", "word/styles.xml"});
+        const QString &doc = parts["word/document.xml"];
+        int shd = doc.indexOf("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F2F2F2\"/>");
+        int spacing = doc.indexOf("<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>");
+        int ind = doc.indexOf("<w:ind w:left=\"360\" w:right=\"360\"/>");
+        QVERIFY2(shd >= 0 && spacing > shd && ind > spacing, qPrintable(doc));
+
+        const QString &styles = parts["word/styles.xml"];
+        // docDefaults：rFonts 早于 sz（首个 sz=22 即 docDefaults 中的）
+        int rFonts = styles.indexOf("<w:rFonts w:ascii=\"Arial\"");
+        int sz = styles.indexOf("<w:sz w:val=\"22\"/>");
+        QVERIFY2(rFonts >= 0 && sz > rFonts, qPrintable(styles));
+        // Heading2 样式：spacing 早于 outlineLvl
+        int h2 = styles.indexOf("w:styleId=\"Heading2\"");
+        int sp2 = styles.indexOf("<w:spacing w:before=\"200\"", h2);
+        int ol2 = styles.indexOf("<w:outlineLvl w:val=\"1\"/>", h2);
+        QVERIFY2(h2 >= 0 && sp2 > h2 && ol2 > sp2, qPrintable(styles));
+        // 悬空样式引用清零：document.xml 引用的 TableGrid、Hyperlink 的 basedOn
+        // 目标 DefaultParagraphFont 都有定义
+        QVERIFY2(styles.contains("w:styleId=\"TableGrid\""), qPrintable(styles));
+        QVERIFY2(styles.contains("w:styleId=\"DefaultParagraphFont\""), qPrintable(styles));
     }
 
     void testExtractColorClampsOutOfRangeAndPercent() {
