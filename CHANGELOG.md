@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.16.1] — 2026-09-17
+
+### 修复 — macOS
+- **「打开方式」推荐列表灰色** — CFBundleDocumentTypes 此前只按扩展名声明（CFBundleTypeExtensions），现代 macOS 推荐列表按 UTI 匹配，md-editor 被灰掉、需切「全部应用」才能选。补 `LSItemContentTypes: net.daringfireball.markdown`（系统 UTI，Typora/MacDown 同款）；删除与系统争抢扩展名的自定义 UTI（`com.md-editor.markdown`）；CFBundleTypeExtensions 保留作老系统兜底；打包脚本注入后加 PlistBuddy 断言
+- **双击 .md 打开后窗口空白** — macOS 上文件路径经 Apple Event → QFileOpenEvent 到达而非 argv，此前无人处理。Application 捕获 FileOpen 发 `fileOpenRequested`，MainWindow 复用 `onFileDoubleClicked` 打开（冷启动与运行中再打开均覆盖）；新增 test_application 回归
+
 ## [0.16.0] — 2026-09-15
 
 全面代码审查修复批次（3 个并行审查覆盖往返保真核心 / Web 层 / C++ 外壳与安全面，约 50 项发现，本版完成 P0-P3 四个批次），叠加阶段 1-5 补充批次（往返保真 / 性能 / DOCX 脚注 / 块引用嵌套 / 收尾加固）与 DOCX/PDF 脚注导出的 Word 对齐。
