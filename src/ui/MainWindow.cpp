@@ -472,6 +472,12 @@ void MainWindow::connectSignals()
     connect(m_sideBar->fileTree(), &FileTree::fileDoubleClicked,
             this, &MainWindow::onFileDoubleClicked);
 
+    // === macOS：Finder 双击/「打开方式」的文件 ===
+    // QFileOpenEvent → Application::fileOpenRequested（该链路不经过 argv），
+    // 复用文件树双击的打开逻辑（存在性检查/开标签/大文件警告全部沿用）
+    connect(Application::instance(), &Application::fileOpenRequested,
+            this, &MainWindow::onFileDoubleClicked);
+
     // === 侧边栏「打开文件夹」按钮 ===
     connect(m_sideBar, &SideBar::openFolderClicked,
             this, &MainWindow::onOpenFolder);
