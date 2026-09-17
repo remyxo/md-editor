@@ -1,5 +1,7 @@
 #include "Application.h"
 
+#include <QFileOpenEvent>
+
 Application::Application(int &argc, char **argv)
     : QApplication(argc, argv)
 {
@@ -27,4 +29,16 @@ LanguageManager *Application::languageManager() const
 Application *Application::instance()
 {
     return qobject_cast<Application *>(QCoreApplication::instance());
+}
+
+bool Application::event(QEvent *e)
+{
+    if (e->type() == QEvent::FileOpen) {
+        // 空 FileOpen（Apple Event 不带文件的个别场景）静默吞掉，不向下传递
+        const QString path = static_cast<QFileOpenEvent *>(e)->file();
+        if (!path.isEmpty())
+            emit fileOpenRequested(path);
+        return true;
+    }
+    return QApplication::event(e);
 }
