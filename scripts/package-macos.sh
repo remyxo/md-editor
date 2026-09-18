@@ -44,8 +44,9 @@ PLBUDDY="/usr/libexec/PlistBuddy"
 "$PLBUDDY" -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:0 string md" "$PLIST"
 "$PLBUDDY" -c "Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:1 string markdown" "$PLIST"
 "$PLBUDDY" -c "Add :CFBundleDocumentTypes:0:CFBundleTypeIconFile string text-markdown" "$PLIST"
-# 断言注入成功（key 缺失时 PlistBuddy 非零退出，set -e 阻断打包）
-"$PLBUDDY" -c "Print :CFBundleDocumentTypes:0:LSItemContentTypes" "$PLIST" >/dev/null
+# 断言注入成功（验 UTI 值而非仅 key 存在——数组为空或拼错也应阻断；管道任一环
+# 非零退出时 pipefail + set -e 阻断打包）
+"$PLBUDDY" -c "Print :CFBundleDocumentTypes:0:LSItemContentTypes" "$PLIST" | grep -q 'net\.daringfireball\.markdown'
 
 # 2. 重新 ad-hoc 签名（未公证，用户首次需「右键→打开」）
 codesign --force --deep --sign - "$APP"
