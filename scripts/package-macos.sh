@@ -72,20 +72,33 @@ python3 "$SCRIPT_DIR/gen-dmg-background.py" "$STAGING/.background/background.png
 hdiutil create -volname "$VOLNAME" -srcfolder "$STAGING" -ov -format UDRW "$RW_DMG" >/dev/null
 MOUNT=$(hdiutil attach -readwrite -noverify -noautoopen "$RW_DMG" 2>/dev/null | sed -n 's/.*\(\/Volumes\/md-editor\).*/\1/p' | head -1)
 [ -n "$MOUNT" ] || { echo "错误: UDRW 挂载失败" >&2; exit 1; }
-# 窗口布置失败仅降级为默认视图（dmg 功能不受影响），不阻断打包
-osascript <<APPLESCRIPT || echo "警告: Finder 窗口布置失败，dmg 保持默认视图" >&2
+# 窗口布置失败仅降级为默认视图（dmg 功能不受影响），不阻断打包。
+# 视图选项须逐属性赋值——记录字面量 {icon size:…, arrangement: not arranged}
+# 中枚举值不是合法记录成员，osascript 报 -2740 语法错（首轮 CI 实测）
+style_window() {
+    osascript <<APPLESCRIPT
 tell application "Finder"
     tell disk "$VOLNAME"
         open
         delay 1
+        set current view of container window to icon view
         set toolbar visible of container window to false
         set statusbar visible of container window to false
-        set bounds of container window to {0, 0, 660, 400}
-        set view options of icon view of container window to {icon size: 128, text size: 12, arrangement: not arranged}
-        set background picture of container window to file "background.png" of folder ".background" of disk "$VOLNAME"
-        set position of (every item of container window whose name begins with "md-editor") to {175, 140}
-        set position of item "Applications" of container window to {485, 140}
-        set extension hidden of (every item of container window whose name begins with "md-editor") to true
+        set the bounds of container window to {0, 0, 660, 400}
+        set theViewOptions to the icon view options of container window
+        set arrangement of theViewOptions to not arranged
+        set icon size of theViewOptions to 128
+        set text size of theViewOptions to 12
+        set background picture of theViewOptions to file ".background:background.png"
+        repeat with f in (get every item of container window)
+            set itemName to name of f
+            if itemName begins with "md-editor" then
+                set position of f to {175, 140}
+                set extension hidden of f to true
+            else if itemName is "Applications" then
+                set position of f to {485, 140}
+            end if
+        end repeat
         close
         open
         update without registering applications
@@ -93,6 +106,9 @@ tell application "Finder"
     end tell
 end tell
 APPLESCRIPT
+}
+style_window || { sleep 2; style_window; } \
+    || echo "警告: Finder 窗口布置失败，dmg 保持默认视图" >&2
 hdiutil detach "$MOUNT" >/dev/null 2>&1 || hdiutil detach -force "$MOUNT" >/dev/null 2>&1
 hdiutil convert "$RW_DMG" -format UDZO -o "$DMG" >/dev/null
 rm -rf "$STAGING" "$RW_DMG"
