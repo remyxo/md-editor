@@ -207,6 +207,8 @@ bool FileManager::writeFile(const QString &path, const QString &content)
 
 void FileManager::watchFile(const QString &path)
 {
+    // 记录基线（size+mtime）：后续 fileChanged 事件先核实真实变更再报警
+    m_watchBaseline.insert(path, fileStat(path));
     // 去重：两个标签页打开同一文件时重复 addPath 触发 qWarning
     //（onFileChanged 内部已有同款守卫，此处对齐）
     if (QFile::exists(path) && !m_watcher->files().contains(path)) {
@@ -217,12 +219,22 @@ void FileManager::watchFile(const QString &path)
 void FileManager::unwatchFile(const QString &path)
 {
     m_watcher->removePath(path);
+    m_watchBaseline.remove(path);
     // 取消该路径待发出去的外部变更通知
     // （关闭标签页 / 自身 writeFile 前后不应再产生提示）
     if (QTimer *timer = m_changeTimers.take(path)) {
         timer->stop();
         timer->deleteLater();
     }
+}
+
+QPair<qint64, qint64> FileManager::fileStat(const QString &path) const
+{
+    QFileInfo fi(path);
+    if (!fi.exists())
+        return qMakePair<qint64, qint64>(-1, -1);
+    return qMakePair<qint64, qint64>(fi.size(),
+                                     fi.lastModified().toMSecsSinceEpoch());
 }
 
 void FileManager::onFileChanged(const QString &path)
@@ -251,6 +263,17 @@ void FileManager::onFileChanged(const QString &path)
         timer->setInterval(kExternalChangeDebounceMs);
         connect(timer, &QTimer::timeout, this, [this, path]() {
             QTimer *t = m_changeTimers.take(path);
+            // 核实真实变更：macOS 上 Gatekeeper/Spotlight 等的元数据触碰
+            //（xattr/atime）也会产生 fileChanged——事件突发结束时 size+mtime
+            // 仍与基线一致（内容未变）则吞掉，不弹「已被外部程序修改」
+            const QPair<qint64, qint64> cur = fileStat(path);
+            const auto baseIt = m_watchBaseline.constFind(path);
+            if (baseIt != m_watchBaseline.constEnd() && cur == baseIt.value()) {
+                if (t) t->deleteLater();
+                return;
+            }
+            if (cur.first >= 0)
+                m_watchBaseline.insert(path, cur);   // 确认变更，滚动基线
             emit fileExternallyModified(path);
             if (t) {
                 t->deleteLater();

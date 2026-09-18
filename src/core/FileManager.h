@@ -47,9 +47,16 @@ private:
     // 文件暂不存在时的有限次重试监控（删除后重建等场景）
     void retryWatch(const QString &path, int attemptsLeft);
 
+    // 当前文件的 (size, mtimeMs)；不存在时为 (-1, -1)
+    QPair<qint64, qint64> fileStat(const QString &path) const;
+
     QFileSystemWatcher *m_watcher;
     // 按路径的去抖定时器：一次外部保存产生的事件突发合并为一次信号
     QHash<QString, QTimer *> m_changeTimers;
+    // 监控基线（size + mtime）：fileChanged 事件先与之核实——macOS 上
+    // Gatekeeper/Spotlight 等的元数据触碰（xattr/atime）也会产生事件，
+    // 内容未变不得弹「已被外部程序修改」（与 VS Code 的 mtime+size 判定一致）
+    QHash<QString, QPair<qint64, qint64>> m_watchBaseline;
 };
 
 #endif // MD_EDITOR_FILEMANAGER_H

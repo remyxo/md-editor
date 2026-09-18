@@ -145,6 +145,47 @@ private slots:
         QCOMPARE(spy.count(), 0);
     }
 
+    void testMetadataOnlyEventSuppressed() {
+        // macOS 真机回归（v0.16.1）：Finder 再次双击已打开文件时，Gatekeeper/
+        // Spotlight 等的元数据触碰（xattr/atime）也产生 fileChanged 事件——
+        // size+mtime 未变（内容未变）不得弹「已被外部程序修改」。
+        // Linux 侧用「重写相同内容 + 回写原 mtime」模拟等价的「有事件、无真实变更」。
+        FileManager fm;
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString path = dir.path() + "/test.md";
+        QVERIFY(fm.writeFile(path, "# test"));
+
+        const QDateTime origMtime = QFileInfo(path).lastModified();
+
+        QSignalSpy spy(&fm, &FileManager::fileExternallyModified);
+        fm.watchFile(path);
+
+        // 重写相同内容（产生事件、mtime 变化）后立即回写原 mtime（再产生事件）：
+        // 事件突发落在 300ms 去抖窗口内，结束时 stat 与基线一致
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("# test");
+            f.close();
+            QVERIFY(f.open(QIODevice::ReadWrite));
+            QVERIFY(f.setFileTime(origMtime, QFileDevice::FileModificationTime));
+            f.close();
+        }
+
+        QTest::qWait(800);
+        QCOMPARE(spy.count(), 0);
+
+        // 对照：真实修改（内容变化）仍必须发信号
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("# really modified");
+            f.close();
+        }
+        QVERIFY2(spy.wait(3000), "真实外部修改仍应触发 fileExternallyModified");
+    }
+
     void testWatchSurvivesExternalReplace() {
         // 替换式外部保存（vim/sed -i/git checkout 等：写临时文件 + 原子 rename 覆盖）
         // 会导致被监控文件的 inode 被替换，QFileSystemWatcher 随之丢失监控。
@@ -159,12 +200,14 @@ private slots:
         QSignalSpy spy(&fm, &FileManager::fileExternallyModified);
         fm.watchFile(path);
 
-        // 模拟 vim 式保存：写临时文件后 std::rename 原子覆盖（inode 被替换）
+        // 模拟 vim 式保存：写临时文件后 std::rename 原子覆盖（inode 被替换）。
+        // 内容取不同长度：外部变更按 size+mtime 核实，同长同 mtime 的替换
+        // 与「无变更」不可区分（v0.16.1 起），测试须保证 stat 可区分
         QString tmpPath = path + ".swx";
         {
             QFile f(tmpPath);
             QVERIFY(f.open(QIODevice::WriteOnly));
-            f.write("# v2");
+            f.write("# v2 (replaced by rename)");
             f.close();
         }
         QCOMPARE(std::rename(tmpPath.toLocal8Bit().constData(),
@@ -177,7 +220,7 @@ private slots:
         {
             QFile f(path);
             QVERIFY(f.open(QIODevice::WriteOnly));
-            f.write("# v3");
+            f.write("# v3 (in-place modified)");
             f.close();
         }
         QVERIFY2(spy.wait(3000),

@@ -9,6 +9,7 @@
 - **双击 .md 打开后窗口空白** — macOS 上文件路径经 Apple Event → QFileOpenEvent 到达而非 argv，此前无人处理。Application 捕获 FileOpen 发 `fileOpenRequested`，MainWindow 复用 `onFileDoubleClicked` 打开（冷启动与运行中再打开均覆盖）；新增 test_application 回归
 - **启动期切标签页的 JS 未捕获异常** — `onTabChanged` 的三连推送（notifyHeadings/Format/History）无 `window.editorApi` 守卫，页面脚本未执行完的窗口期触发（macOS 冷启动尤甚），且因同段执行连带跳过后两条推送；补守卫与相邻代码一致
 - **同路径文件重开不再开重复标签** — 双击/Finder 打开已打开的文件改为聚焦既有标签页（与 VS Code/Typora 等主流编辑器一致）：重复标签各自保存是后写者静默覆盖，未保存修改会静默丢失；未保存修改与外部重载警示原样保留。canonical 路径判定（相对路径/符号链接/冗余分隔符归一），新增 test_editorpath 回归
+- **macOS 元数据触碰误报「已被外部程序修改」** — Finder 再次双击已打开文件时，Gatekeeper/Spotlight 的元数据触碰（xattr/atime）也触发 fileChanged，内容未变却弹重载警告。外部变更报警前先核实 size+mtime 与监控基线一致与否（与 VS Code 同款判定），未变则静默吞掉；新增 testMetadataOnlyEventSuppressed 回归
 - 升级提示：从 ≤0.16.0 覆盖安装后，Launch Services 可能残留旧的纯扩展名注册，「打开方式」推荐列表仍灰——运行 `lsregister -f /Applications/md-editor.app` 强制重注册即可（新装用户不受影响）
 
 ## [0.16.0] — 2026-09-15
