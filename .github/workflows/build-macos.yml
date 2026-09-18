@@ -89,8 +89,9 @@ jobs:
         files: md-editor-*-macos-universal.dmg
         generate_release_notes: true
 
+    # 制品上传不再限定 tag：master 手动 dispatch 也要拿 DMG 做真机验证（与打 tag 解耦）；
+    # Release 步骤保持 tag 门控，未打 tag 的构建只出制品不发 Release
     - name: 上传制品
-      if: startsWith(github.ref, 'refs/tags/v')
       uses: actions/upload-artifact@v7
       with:
         name: md-editor-macos
