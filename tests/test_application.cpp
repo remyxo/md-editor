@@ -24,7 +24,7 @@ void TestApplication::initTestCase()
     // argv 缓冲须比 Application 存续期长（QApplication 可能消费 argv 内容）
     static char argv0[] = "test_application";
     static char *argv[] = { argv0, nullptr };
-    int argc = 1;
+    static int argc = 1;
     m_app = new Application(argc, argv);
 }
 
