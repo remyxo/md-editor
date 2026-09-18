@@ -18,6 +18,7 @@ set(SOURCES
     core/MathMlConverter.cpp
     core/HtmlExporter.cpp
     ui/EditorTab.cpp
+    ui/FilePathMatch.cpp
     ui/TabWidget.cpp
     ui/ToolBar.cpp
     ui/MenuBar.cpp
@@ -63,6 +64,7 @@ set(HEADERS
     ui/SettingsDialog.h
     ui/TableGridPopup.h
     ui/AboutDialog.h
+    ui/FilePathMatch.h
     ui/MainWindow.h
 )
 

@@ -8,6 +8,7 @@
 - **「打开方式」推荐列表灰色** — CFBundleDocumentTypes 此前只按扩展名声明（CFBundleTypeExtensions），现代 macOS 推荐列表按 UTI 匹配，md-editor 被灰掉、需切「全部应用」才能选。补 `LSItemContentTypes: net.daringfireball.markdown`（系统 UTI，Typora/MacDown 同款）；删除与系统争抢扩展名的自定义 UTI（`com.md-editor.markdown`）；CFBundleTypeExtensions 保留作老系统兜底；打包脚本注入后加 PlistBuddy 断言
 - **双击 .md 打开后窗口空白** — macOS 上文件路径经 Apple Event → QFileOpenEvent 到达而非 argv，此前无人处理。Application 捕获 FileOpen 发 `fileOpenRequested`，MainWindow 复用 `onFileDoubleClicked` 打开（冷启动与运行中再打开均覆盖）；新增 test_application 回归
 - **启动期切标签页的 JS 未捕获异常** — `onTabChanged` 的三连推送（notifyHeadings/Format/History）无 `window.editorApi` 守卫，页面脚本未执行完的窗口期触发（macOS 冷启动尤甚），且因同段执行连带跳过后两条推送；补守卫与相邻代码一致
+- **同路径文件重开不再开重复标签** — 双击/Finder 打开已打开的文件改为聚焦既有标签页（与 VS Code/Typora 等主流编辑器一致）：重复标签各自保存是后写者静默覆盖，未保存修改会静默丢失；未保存修改与外部重载警示原样保留。canonical 路径判定（相对路径/符号链接/冗余分隔符归一），新增 test_editorpath 回归
 - 升级提示：从 ≤0.16.0 覆盖安装后，Launch Services 可能残留旧的纯扩展名注册，「打开方式」推荐列表仍灰——运行 `lsregister -f /Applications/md-editor.app` 强制重注册即可（新装用户不受影响）
 
 ## [0.16.0] — 2026-09-15

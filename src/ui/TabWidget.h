@@ -16,6 +16,10 @@ public:
     EditorTab *openNewTab();
     EditorTab *openFileTab(const QString &path, const QString &content, bool lazy = false);
     EditorTab *openHelpTab(const QString &title, const QString &mdContent);
+    // 同路径文件已打开时聚焦既有标签页并返回之；未打开返回 nullptr。
+    // 供「重开即聚焦」的两级使用：MainWindow 打开前的早退（跳过大文件确认
+    // 与重复读盘）与 openFileTab 入口去重（覆盖会话恢复等全部调用方）
+    EditorTab *focusFileTab(const QString &path);
     EditorTab *currentEditorTab() const;
     EditorTab *tabAt(int index) const;
 

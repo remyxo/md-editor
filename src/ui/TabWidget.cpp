@@ -1,5 +1,6 @@
 #include "TabWidget.h"
 #include "EditorTab.h"
+#include "FilePathMatch.h"
 #include "../core/EditorBridge.h"
 #include <QTabBar>
 #include <QStyle>
@@ -40,8 +41,28 @@ EditorTab *TabWidget::openNewTab()
     return tab;
 }
 
+EditorTab *TabWidget::focusFileTab(const QString &path)
+{
+    // tooltip 即文件 tab 的路径标识（openFileTab/markTabSaved 写入；
+    // 未命名与帮助页无 tooltip，天然排除）。canonical 比较见 FilePathMatch
+    for (int i = 0; i < count(); ++i) {
+        const QString tip = tabToolTip(i);
+        if (!tip.isEmpty() && FilePathMatch::sameFilePath(tip, path)) {
+            setCurrentIndex(i);
+            return tabAt(i);
+        }
+    }
+    return nullptr;
+}
+
 EditorTab *TabWidget::openFileTab(const QString &path, const QString &content, bool lazy)
 {
+    // 同路径文件已打开 → 聚焦既有标签页，不开重复标签（与 VS Code/Typora 等
+    // 主流编辑器一致）：重复标签各自保存是后写者静默覆盖，未保存修改会丢；
+    // 不重载内容——调用方对返回的既有 tab setFilePath/setEncoding 幂等无害
+    if (EditorTab *existing = focusFileTab(path))
+        return existing;
+
     int tabId = m_nextTabId++;
     EditorTab *tab = new EditorTab(tabId, this);
     m_tabs.insert(tabId, tab);

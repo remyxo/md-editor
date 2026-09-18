@@ -1104,6 +1104,16 @@ bool MainWindow::confirmLargeFile(const QString &path)
 
 void MainWindow::onFileDoubleClicked(const QString &path)
 {
+    // 已打开的文件：聚焦既有标签页即可（同一路径一标签，与主流编辑器一致）
+    // ——跳过大文件确认与重复读盘，未保存修改保留在原 tab。
+    // currentChanged 未触发（本就是当前 tab）时状态栏可能停留在他页，显式同步
+    if (m_tabWidget->focusFileTab(path)) {
+        m_menuBar->addRecentFile(path);
+        m_statusBar->updateFilePath(path);
+        refreshEncodingLabel();
+        return;
+    }
+
     // 软警告层：2MB~10MB 的大文件经确认后才打开（与会话恢复共用 confirmLargeFile）
     if (!confirmLargeFile(path))
         return;

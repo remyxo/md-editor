@@ -94,3 +94,11 @@ add_executable(test_application test_application.cpp
 target_include_directories(test_application PRIVATE ../src)
 target_link_libraries(test_application PRIVATE Qt6::Test Qt6::Widgets)
 add_test(NAME test_application COMMAND test_application)
+
+# FilePathMatch 谓词（TabWidget 同路径去重聚焦的核心）——零依赖小单元，
+# 只链自身，不牵 EditorTab/QWebEngine 链
+add_executable(test_editorpath test_editorpath.cpp
+    ../src/ui/FilePathMatch.cpp)
+target_include_directories(test_editorpath PRIVATE ../src)
+target_link_libraries(test_editorpath PRIVATE Qt6::Test Qt6::Gui)
+add_test(NAME test_editorpath COMMAND test_editorpath)
