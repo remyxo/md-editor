@@ -1,11 +1,11 @@
 name: Build DEB Package
 
+# 配额策略（2026-09-18）：Actions 制品存储 500MB 配额，日常 CI 只构建 macOS DMG；
+# DEB 走本地构建测试（./scripts/build-deb.sh），EXE 走本地 win11 VM
+# （./scripts/build-windows-local.sh）。本工作流转手动触发，仅发版前手动跑一次——
+# ubuntu-26.04/Qt 6.10.2 是兼容基准（CLAUDE.md 原则 8），这是它仅存的自动化把关点
 on:
-  push:
-    branches: [master, main]
-    tags: ['v*']
-  pull_request:
-    branches: [master, main]
+  workflow_dispatch:
 
 permissions:
   contents: write

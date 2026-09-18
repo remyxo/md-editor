@@ -96,4 +96,4 @@ jobs:
       with:
         name: md-editor-macos
         path: md-editor-*-macos-universal.dmg
-        retention-days: 14
+        retention-days: 2   # 配额策略：DMG 单制品 247MB，缩短保留期防 500MB 配额爆掉

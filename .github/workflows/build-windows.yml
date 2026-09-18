@@ -1,11 +1,10 @@
 name: Build Windows Package
 
+# 配额策略（2026-09-18）：Actions 制品存储 500MB 配额，日常 CI 只构建 macOS DMG；
+# EXE 走本地 win11 VM 构建（./scripts/build-windows-local.sh），DEB 走本地构建
+# （./scripts/build-deb.sh）。本工作流转手动触发，仅需要时手动跑
 on:
-  push:
-    branches: [master, main]
-    tags: ['v*']
-  pull_request:
-    branches: [master, main]
+  workflow_dispatch:
 
 permissions:
   contents: write
