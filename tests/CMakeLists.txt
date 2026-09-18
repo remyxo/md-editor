@@ -102,3 +102,9 @@ add_executable(test_editorpath test_editorpath.cpp
 target_include_directories(test_editorpath PRIVATE ../src)
 target_link_libraries(test_editorpath PRIVATE Qt6::Test Qt6::Gui)
 add_test(NAME test_editorpath COMMAND test_editorpath)
+
+# DMG 背景图生成器（拖拽安装布局）：QImage 解码验证 PNG 合法性 + 渐变/箭头像素断言
+add_executable(test_dmgbg test_dmgbg.cpp)
+target_include_directories(test_dmgbg PRIVATE ../src)
+target_link_libraries(test_dmgbg PRIVATE Qt6::Test Qt6::Gui)
+add_test(NAME test_dmgbg COMMAND test_dmgbg)

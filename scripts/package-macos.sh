@@ -55,9 +55,46 @@ codesign --force --deep --sign - "$APP"
 VERSION="$(sed -n 's/.*project(md-editor VERSION \([0-9.]*\).*/\1/p' "$PROJECT_DIR/CMakeLists.txt")"
 [ -n "$VERSION" ] || VERSION="0.0.0"
 
-# 4. 生成 dmg
+# 4. 生成「拖拽安装」式 dmg：staging（app + /Applications 符号链接 + 背景图）
+#    → UDRW 挂载 → Finder AppleScript 布置窗口（app 左、Applications 右、
+#    渐变背景带箭头）→ 转压缩 UDZO。拖拽布局从 UX 上杜绝用户直接在挂载卷内
+#    双击运行 app——那是 Launch Services 僵尸注册的标准来源（v0.16.1 真机
+#    排查实录：.Trash 与 /Volumes 残留的同 bundle ID 条目把推荐列表置灰）
 DMG="$PROJECT_DIR/md-editor-$VERSION-macos-universal.dmg"
-rm -f "$DMG"
-hdiutil create -volname "md-editor" -srcfolder "$APP" -ov -format UDZO "$DMG"
+VOLNAME="md-editor"
+STAGING="$PROJECT_DIR/dmg-staging"
+RW_DMG="$PROJECT_DIR/md-editor-rw.dmg"
+rm -rf "$STAGING" "$RW_DMG" "$DMG"
+mkdir -p "$STAGING/.background"
+cp -R "$APP" "$STAGING/md-editor.app"
+ln -s /Applications "$STAGING/Applications"
+python3 "$SCRIPT_DIR/gen-dmg-background.py" "$STAGING/.background/background.png" 660 400
+hdiutil create -volname "$VOLNAME" -srcfolder "$STAGING" -ov -format UDRW "$RW_DMG" >/dev/null
+MOUNT=$(hdiutil attach -readwrite -noverify -noautoopen "$RW_DMG" 2>/dev/null | sed -n 's/.*\(\/Volumes\/md-editor\).*/\1/p' | head -1)
+[ -n "$MOUNT" ] || { echo "错误: UDRW 挂载失败" >&2; exit 1; }
+# 窗口布置失败仅降级为默认视图（dmg 功能不受影响），不阻断打包
+osascript <<APPLESCRIPT || echo "警告: Finder 窗口布置失败，dmg 保持默认视图" >&2
+tell application "Finder"
+    tell disk "$VOLNAME"
+        open
+        delay 1
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set bounds of container window to {0, 0, 660, 400}
+        set view options of icon view of container window to {icon size: 128, text size: 12, arrangement: not arranged}
+        set background picture of container window to file "background.png" of folder ".background" of disk "$VOLNAME"
+        set position of (every item of container window whose name begins with "md-editor") to {175, 140}
+        set position of item "Applications" of container window to {485, 140}
+        set extension hidden of (every item of container window whose name begins with "md-editor") to true
+        close
+        open
+        update without registering applications
+        delay 1
+    end tell
+end tell
+APPLESCRIPT
+hdiutil detach "$MOUNT" >/dev/null 2>&1 || hdiutil detach -force "$MOUNT" >/dev/null 2>&1
+hdiutil convert "$RW_DMG" -format UDZO -o "$DMG" >/dev/null
+rm -rf "$STAGING" "$RW_DMG"
 
 echo "已生成: $DMG"
