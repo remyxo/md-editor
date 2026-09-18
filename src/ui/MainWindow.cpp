@@ -628,10 +628,14 @@ void MainWindow::onTabChanged(int tabId)
     // 重推新标签页的大纲/格式/撤销状态：这些信号带「当前标签页」守卫后，后台
     // 标签页的异步通知不再污染当前页 UI，切页时须主动请求重推
     if (tab) {
+        // 切换到仍在加载的标签页时 editorApi 可能尚未定义（页面脚本未执行完，
+        // macOS 冷启动窗口期尤甚）——无守卫会抛未捕获 TypeError 且因同段执行
+        // 连带跳过 format/history 推送（守卫与下方 syncFormatState 同款）
         tab->runJsCommand(
-            QStringLiteral("window.editorApi.notifyHeadings();"
+            QStringLiteral("if(window.editorApi){"
+                           "window.editorApi.notifyHeadings();"
                            "window.editorApi.notifyFormat();"
-                           "window.editorApi.notifyHistory();"));
+                           "window.editorApi.notifyHistory();}"));
     }
     if (tab) {
         tab->setInTable(false);
