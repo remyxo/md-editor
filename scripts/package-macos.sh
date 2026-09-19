@@ -49,7 +49,8 @@ PLBUDDY="/usr/libexec/PlistBuddy"
 "$PLBUDDY" -c "Print :CFBundleDocumentTypes:0:LSItemContentTypes" "$PLIST" | grep -q 'net\.daringfireball\.markdown'
 
 # 2. 重新 ad-hoc 签名（未公证，用户首次需「右键→打开」）
-codesign --force --deep --sign - "$APP"
+codesign --force --deep --sign - "$APP" || { echo "错误: 重新签名失败" >&2; exit 1; }
+echo "签名完成"
 
 # 3. 版本号从 CMakeLists.txt 读取
 VERSION="$(sed -n 's/.*project(md-editor VERSION \([0-9.]*\).*/\1/p' "$PROJECT_DIR/CMakeLists.txt")"
@@ -76,9 +77,16 @@ ln -s /Applications "$STAGING/Applications"
 BG_SRC="$SCRIPT_DIR/dmg-background.png"
 [ -f "$BG_SRC" ] || { echo "错误: 缺少背景图 $BG_SRC" >&2; exit 1; }
 cp "$BG_SRC" "$STAGING/.background/background.png"
-hdiutil create -volname "$VOLNAME" -srcfolder "$STAGING" -ov -format UDRW "$RW_DMG" >/dev/null
-MOUNT=$(hdiutil attach -readwrite -noverify -noautoopen "$RW_DMG" 2>/dev/null | sed -n 's/.*\(\/Volumes\/md-editor\).*/\1/p' | head -1)
+hdiutil create -volname "$VOLNAME" -srcfolder "$STAGING" -ov -format UDRW "$RW_DMG" >/dev/null \
+    || { echo "错误: UDRW 镜像创建失败" >&2; exit 1; }
+echo "UDRW 创建完成"
+# sed 带 -n 只输出匹配行（至多一行）——不接 head -1：head 提前关管道在
+# pipefail 下会让整条命令替换静默非零，set -e 直接吞掉脚本且无任何输出
+# （35419641017 首跑静默失败排查教训）
+MOUNT=$(hdiutil attach -readwrite -noverify -noautoopen "$RW_DMG" 2>/dev/null \
+    | sed -n 's/.*\(\/Volumes\/md-editor\).*/\1/p')
 [ -n "$MOUNT" ] || { echo "错误: UDRW 挂载失败" >&2; exit 1; }
+echo "已挂载: $MOUNT"
 # 窗口布置失败仅降级为默认视图（dmg 功能不受影响），不阻断打包。
 # 视图选项须逐属性赋值——记录字面量 {icon size:…, arrangement: not arranged}
 # 中枚举值不是合法记录成员，osascript 报 -2740 语法错（首轮 CI 实测）
@@ -117,7 +125,9 @@ APPLESCRIPT
 style_window || { sleep 2; style_window; } \
     || echo "警告: Finder 窗口布置失败，dmg 保持默认视图" >&2
 hdiutil detach "$MOUNT" >/dev/null 2>&1 || hdiutil detach -force "$MOUNT" >/dev/null 2>&1
-hdiutil convert "$RW_DMG" -format UDZO -o "$DMG" >/dev/null
+hdiutil convert "$RW_DMG" -format UDZO -o "$DMG" >/dev/null \
+    || { echo "错误: UDZO 压缩转换失败" >&2; exit 1; }
+echo "UDZO 压缩完成"
 rm -rf "$STAGING" "$RW_DMG"
 
 echo "已生成: $DMG"
