@@ -2,12 +2,13 @@
 #include "app/MacInstallCheck.h"
 #include "ui/MainWindow.h"
 #include "core/LocalImageSchemeHandler.h"
+#include "core/CdpPrinter.h"
 #include <QLocale>
 #include <QStringList>
-#include <QWebEngineProfile>
 #include <QAbstractButton>
 #include <QMessageBox>
 #include <QSysInfo>
+#include <QWebEngineProfile>
 #include <QWebEngineUrlScheme>
 
 // 注册 localimg:// 自定义协议。
@@ -36,6 +37,10 @@ int main(int argc, char *argv[])
 
     // 自定义协议注册：必须在 WebEngine 初始化（Application 内）之前
     registerLocalImageScheme();
+
+    // CDP 打印通道（PDF 原生分页+页眉页脚，性能取证详见 CdpPrinter.h）：
+    // inspector 端口是进程级 Chromium flags，同样必须先于 WebEngine 初始化
+    CdpPrinter::enable();
 
     Application app(argc, argv);
 

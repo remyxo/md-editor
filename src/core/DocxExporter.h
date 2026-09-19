@@ -29,6 +29,13 @@ private:
     bool writeDocx(const QString &html, const QString &docDir, const QString &outputPath);
     void maybeFinish();   // mermaid 与公式两个异步渲染均完成后写 DOCX
 
+    // 单例渲染器（进程级常驻）长于导出器生命周期：旧导出器若仍挂着连接，
+    // 新一轮导出的 finished 会唤醒它重写旧文件、重发 exportFinished——
+    // 完成即断连 + 防重入双保险
+    bool m_emitDone = false;
+    QMetaObject::Connection m_mermaidConn;
+    QMetaObject::Connection m_mathConn;
+
     QString m_docDir;
     QString m_outputPath;
     QString m_lastHtml;

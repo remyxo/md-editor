@@ -962,6 +962,13 @@ void MainWindow::onExportPdf()
                 m_statusBar->showMessage(
                     tr("页眉页脚引擎失败，正在按普通版式导出（无页眉页脚）"), 6000);
             });
+            // 分页进度：大文档分页以十秒计（2026-09-15 取证 ~0.8s/页），静默
+            // 等待体感差——页数增长即刷新提示，导出完成后被结果消息覆盖
+            connect(exporter, &PdfExporter::pagedProgress, this,
+                    [this](int pages) {
+                m_statusBar->showMessage(
+                    tr("正在分页：已生成 %1 页…").arg(pages), 3000);
+            });
             exporter->exportToPdf(html, docDir, path);
         });
 }

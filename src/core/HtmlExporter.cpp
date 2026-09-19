@@ -223,10 +223,31 @@ void HtmlExporter::exportToHtml(const QString &html, const QString &docDir,
 {
     QString body = inlineImages(html, docDir);
 
-    // KaTeX CSS + 字体 base64
-    QString katexCss = inlineCssFonts(readResource(":/web/katex.min.css"), ":/web/fonts");
-    // 高亮主题 CSS
-    QString hljsCss = readResource(theme == "dark" ? ":/web/hljs-dark.css" : ":/web/hljs-light.css");
+    // 内容按需注入重型库（与 PdfExporter::buildRenderHtml 同型，2026-09-15 性能
+    // 取证）：无公式不内联 katex.min.js + base64 字体 CSS、无代码块不内联
+    // highlight、无流程图不内联 3.5MB mermaid——纯文本文档产物从 ~4.5MB 瘦身
+    // 到数百 KB。渲染脚本自带守卫（if(window.katex)/if(window.hljs)/
+    // if(!window.mermaid)），库缺席即整段跳过。检测用原始 html（内联只改 img src）
+    const bool needKatex = html.contains(QLatin1String("data-latex"));
+    const bool needHljs = html.contains(QLatin1String("<code"));
+    const bool needMermaid = html.contains(QLatin1String("language-mermaid"));
+    QString katexCss = needKatex
+        ? inlineCssFonts(readResource(":/web/katex.min.css"), ":/web/fonts")
+        : QString();
+    QString hljsCss = needHljs
+        ? readResource(theme == "dark" ? ":/web/hljs-dark.css" : ":/web/hljs-light.css")
+        : QString();
+    QString libs;
+    if (needKatex)
+        libs += QStringLiteral("<script>%1</script>")
+                    .arg(readResource(":/web/katex.min.js"));
+    if (needHljs)
+        libs += QStringLiteral("<script>%1</script>")
+                    .arg(readResource(":/web/highlight.min.js"));
+    if (needMermaid)
+        libs += QStringLiteral("<script>%1</script>")
+                    .arg(readResource(":/web/mermaid.min.js"));
+
     // 自定义 CSS（覆盖默认）。剥 </style> 序列：本地设置携带它会把 <style> 块
     // 提前终结并向产物注入任意标记（自注入面）
     QSettings settings("md-editor", "md-editor");
@@ -244,12 +265,9 @@ void HtmlExporter::exportToHtml(const QString &html, const QString &docDir,
              customCss.isEmpty() ? QString() : QString("<style>%1</style>").arg(customCss),
              body);
 
-    // 渲染脚本（顺序：KaTeX → highlight → Mermaid → 渲染）
-    QString scripts = QStringLiteral("<script>%1</script><script>%2</script><script>%3</script><script>%4</script>")
-        .arg(readResource(":/web/katex.min.js"),
-             readResource(":/web/highlight.min.js"),
-             readResource(":/web/mermaid.min.js"),
-             renderScript(theme));
+    // 渲染脚本（库按需拼接 + 驱动脚本恒定，顺序：KaTeX → highlight → Mermaid）
+    QString scripts = libs + QStringLiteral("<script>%1</script>")
+                                         .arg(renderScript(theme));
     full.replace("</body>", scripts + "</body>");
 
     QFile out(outputPath);

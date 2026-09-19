@@ -12,6 +12,7 @@ set(SOURCES
     core/MarkdownHandler.cpp
     core/qt/QtMarkdownWriter.cpp
     core/PdfExporter.cpp
+    core/CdpPrinter.cpp
     core/DocxExporter.cpp
     core/miniz/miniz.c
     core/MermaidRenderer.cpp
@@ -48,6 +49,7 @@ set(HEADERS
     core/MarkdownHandler.h
     core/qt/QtMarkdownWriter.h
     core/PdfExporter.h
+    core/CdpPrinter.h
     core/DocxExporter.h
     core/MermaidRenderer.h
     core/MathMlRenderer.h
@@ -125,6 +127,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     Qt6::WebEngineWidgets
     Qt6::WebChannel
+    Qt6::WebSockets
 )
 
 # 编译翻译资源并打入 qrc：生成 :/i18n/md-editor_en_US.qm

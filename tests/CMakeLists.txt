@@ -45,11 +45,11 @@ target_include_directories(test_docxexporter PRIVATE ../src)
 target_link_libraries(test_docxexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets)
 add_test(NAME test_docxexporter COMMAND test_docxexporter)
 
-add_executable(test_pdfexporter test_pdfexporter.cpp ../src/core/PdfExporter.cpp ../src/core/HtmlExporter.cpp)
+add_executable(test_pdfexporter test_pdfexporter.cpp ../src/core/PdfExporter.cpp ../src/core/HtmlExporter.cpp ../src/core/CdpPrinter.cpp)
 target_include_directories(test_pdfexporter PRIVATE ../src)
 # PdfExporter.cpp 用到 QWebEngineView/Page/Settings，缺 WebEngineWidgets 会链接失败；
 # 测试只调用静态 buildRenderHtml，从不构造 PdfExporter，不会触发无头渲染
-target_link_libraries(test_pdfexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets Qt6::Qml)
+target_link_libraries(test_pdfexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets Qt6::Qml Qt6::WebSockets Qt6::Network)
 add_test(NAME test_pdfexporter COMMAND test_pdfexporter)
 
 add_executable(test_systemthemewatcher test_systemthemewatcher.cpp

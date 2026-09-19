@@ -8,6 +8,7 @@
 #include <QRegularExpression>
 #include "../src/core/PdfExporter.h"
 #include "../src/core/HtmlExporter.h"
+#include "../src/core/CdpPrinter.h"
 
 class TestPdfExporter : public QObject {
     Q_OBJECT
@@ -39,9 +40,30 @@ private slots:
     }
 
     void testBuildRenderHtmlInjectsMermaid() {
-        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
+        // 按需注入（2026-09-15 性能取证）：无流程图的文档白付 3.5MB mermaid.min.js
+        // 加载+解析 ~350ms、无公式白付 katex 272KB+CSS——库文件仅内容命中时注入；
+        // 渲染 helper 恒定义（自带 if(window.mermaid) 守卫，库缺席整段跳过）
+        const QString mmd = "<pre><code class=\"language-mermaid\">graph TD;A--&gt;B;"
+                            "</code></pre>";
+        QString out = PdfExporter::buildRenderHtml(mmd, "/tmp", "", "");
         QVERIFY(out.contains("mermaid.min.js"));
         QVERIFY(out.contains("__renderAllMermaid"));
+        // 纯文本：两库都不注入，helper 仍在
+        QString plain = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
+        QVERIFY(!plain.contains("mermaid.min.js"));
+        QVERIFY(!plain.contains("katex.min.js"));
+        QVERIFY(plain.contains("__renderAllMermaid"));
+        // 有公式：katex 库与传入的 KaTeX CSS 都注入，mermaid 不注入
+        QString math = PdfExporter::buildRenderHtml(
+            "<p><span data-type=\"inline-math\" data-latex=\"x\"></span></p>",
+            "/tmp", "KATEXCSSMARK", "");
+        QVERIFY(math.contains("katex.min.js"));
+        QVERIFY(math.contains("KATEXCSSMARK"));
+        QVERIFY(!math.contains("mermaid.min.js"));
+        // 无公式但调用方传了 KaTeX CSS：一并省略（base64 字体不内联）
+        QString plainCss = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp",
+                                                        "KATEXCSSMARK", "");
+        QVERIFY(!plainCss.contains("KATEXCSSMARK"));
     }
 
     void testBuildRenderHtmlStripsStyleCloseFromCustomCss() {
@@ -53,7 +75,9 @@ private slots:
             "<p>x</p>", "/tmp", "",
             "body{color:red}</style><script>alert(1)</script>");
         QVERIFY(out.contains("body{color:red"));
-        QVERIFY(!out.contains("</style><script>"));
+        // 攻击串锚定（非裸 "</style><script>"——按需注入后模板自身
+        // </style> 后可合法紧跟 <script>，裸串断言误报）
+        QVERIFY(!out.contains("</style><script>alert"));
         // 剥离后注入块内不再有第二个 </style>（只保留我们追加的收尾）
         QString out2 = PdfExporter::buildRenderHtml(
             "<p>x</p>", "/tmp", "", "a{b:c}</  STYLE  >");
@@ -119,6 +143,27 @@ private slots:
         QVERIFY(legacy.indexOf("__floatFootnotes();")
                 > legacy.indexOf("if(!window.PagedPolyfill)"));
         QVERIFY(legacy.contains(".footnote-marker{float:left"));
+    }
+
+    void testBuildRenderHtmlCdpMode() {
+        // CDP 快路径（Chromium 原生分页 + 原生页眉页脚模板）：不注 paged.js，
+        // 页眉/页脚/纸型参数由 CdpPrinter 走 Page.printToPdf；HTML 侧注入
+        // __cdpReady 就绪信号（KaTeX 模板内同步渲染，mermaid 异步渲染完置位）
+        PdfPageSpec s = specWithHeader();
+        s.cdpMode = true;
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
+        QVERIFY(!out.contains("paged.polyfill.js"));
+        QVERIFY(!out.contains("@page{size:"));          // @page 交给打印参数
+        QVERIFY(out.contains("window.__cdpReady=false;"));
+        QVERIFY(out.contains("__renderAllMermaid().then(d,d);"));
+        QVERIFY(out.contains("@media print{"));          // 打印内容 CSS 保留
+        // CdpPrinter 模板锁形（页眉标题转义、页脚页码类名）
+        QVERIFY(CdpPrinter::headerTemplate("a<b\"c")
+                .contains("a&lt;b&quot;c"));
+        QVERIFY(CdpPrinter::footerTemplate()
+                .contains("<span class=\"pageNumber\"></span>"));
+        QVERIFY(CdpPrinter::footerTemplate()
+                .contains("<span class=\"totalPages\"></span>"));
     }
 
     void testBuildRenderHtmlPrintCssSplittable() {

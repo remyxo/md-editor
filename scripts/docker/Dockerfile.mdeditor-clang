@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         qt6-base-dev \
         qt6-webchannel-dev \
         qt6-webengine-dev \
+        qt6-websockets-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 自检：clang 与 Qt 头文件就位（构建期失败即镜像不可用）

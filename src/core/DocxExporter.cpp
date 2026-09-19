@@ -48,21 +48,21 @@ void DocxExporter::exportToDocx(const QString &html, const QString &docDir, cons
         return;
     }
 
-    // 有 mermaid / 公式：分别离屏渲染，全部完成后替换占位再写 DOCX（异步）
+    // 有 mermaid / 公式：分别离屏渲染，全部完成后替换占位再写 DOCX（异步）。
+    // 渲染器为进程级单例（视图+库常驻，导出免 ~500ms 冷启动）；连接以本导出器
+    // 为 receiver，导出器 deleteLater 后自动断开
     m_mermaidPending = !m_mermaidSources.isEmpty();
     m_mathPending = !m_mathSources.isEmpty();
     if (m_mermaidPending) {
-        if (!m_renderer) {
-            m_renderer = new MermaidRenderer(this);
-            connect(m_renderer, &MermaidRenderer::finished, this, &DocxExporter::onMermaidRendered);
-        }
+        m_renderer = MermaidRenderer::instance();
+        m_mermaidConn = connect(m_renderer, &MermaidRenderer::finished,
+                                this, &DocxExporter::onMermaidRendered);
         m_renderer->renderAll(m_mermaidSources);
     }
     if (m_mathPending) {
-        if (!m_mathRenderer) {
-            m_mathRenderer = new MathMlRenderer(this);
-            connect(m_mathRenderer, &MathMlRenderer::finished, this, &DocxExporter::onMathRendered);
-        }
+        m_mathRenderer = MathMlRenderer::instance();
+        m_mathConn = connect(m_mathRenderer, &MathMlRenderer::finished,
+                             this, &DocxExporter::onMathRendered);
         m_mathRenderer->renderAll(m_mathSources);
     }
 }
@@ -90,6 +90,12 @@ void DocxExporter::onMathRendered(const QVector<QString> &mathmlList)
 void DocxExporter::maybeFinish()
 {
     if (m_mermaidPending || m_mathPending) return;
+    // 单例渲染器长于本导出器：防止被后续导出轮的 finished 重复唤醒
+    //（重写旧文件、重发 exportFinished、重复 deleteLater 崩溃）
+    if (m_emitDone) return;
+    m_emitDone = true;
+    disconnect(m_mermaidConn);
+    disconnect(m_mathConn);
     QString html = substituteMermaidPlaceholders(m_lastHtml);   // mermaid 块 → <p data-mermaid-idx>
     html = substituteMathPlaceholders(html);                    // 公式 → <span/p data-math-idx>
     if (writeDocx(html, m_docDir, m_outputPath)) {

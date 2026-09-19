@@ -1,6 +1,8 @@
 #include "MermaidRenderer.h"
 
 #include <QTimer>
+#include <QPointer>
+#include <QCoreApplication>
 #include <QWebEngineView>
 #include <QWebEnginePage>
 #include <QWebEngineSettings>
@@ -28,8 +30,28 @@ MermaidRenderer::MermaidRenderer(QObject *parent)
 
 MermaidRenderer::~MermaidRenderer() { delete m_view; }
 
+MermaidRenderer *MermaidRenderer::instance()
+{
+    static QPointer<MermaidRenderer> s_inst;
+    if (s_inst.isNull()) {
+        s_inst = new MermaidRenderer();
+        // aboutToQuit 主动销毁：QWebEngineView 须先于 WebEngine 全局回收删除
+        //（挂 qApp 对象树亦可，但 aboutToQuit 时点更早更明确）。
+        // static 局部变量免捕获（lambda 捕获 static 存储对象是 clang 硬错、
+        // GCC 宽容——GCC 宽容掩盖 clang/MSVC 差异的既训）
+        QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, []() {
+            delete s_inst;   // QPointer 随之置空
+        });
+    }
+    return s_inst;
+}
+
 void MermaidRenderer::renderAll(const QStringList &sources)
 {
+    // 单例并发防御：上一轮未结算（连续两次导出挤在同一渲染器）时本轮直接
+    // 降级——发空结果触发调用方回退源码文本，不互相踩 pending
+    if (m_busy) { emit finished({}); return; }
+    m_busy = true;
     m_pending = sources;
     if (m_loaded) onLoadFinished(true);
 }
@@ -43,6 +65,8 @@ QString MermaidRenderer::buildRenderScript(const QStringList &sources)
     // 被污染，toDataURL 抛 SecurityError，PNG 兜底为空。
     return QStringLiteral(
         "(function(){"
+        // 单例常驻页面：先清上一轮结果，防轮询读到旧值（视图复用后残留）
+        "window.__mermaidResults=null;"
         "mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'default',"
         "htmlLabels:false,flowchart:{htmlLabels:false},themeVariables:{fontSize:'16px'}});"
         "var sources=%1;"
@@ -71,7 +95,7 @@ QString MermaidRenderer::buildRenderScript(const QStringList &sources)
 
 void MermaidRenderer::onLoadFinished(bool ok)
 {
-    if (!ok) { emit finished({}); return; }
+    if (!ok) { m_busy = false; emit finished({}); return; }
     // 页面加载完成即标记已就绪；必须放在 m_pending 判空之前，否则初次
     // setHtml 的 loadFinished 因 pending 为空早退、m_loaded 永不置位，
     // 后续 renderAll 里的 if (m_loaded) onLoadFinished(true) 将永远不触发。
@@ -92,6 +116,7 @@ void MermaidRenderer::onLoadFinished(bool ok)
     QTimer::singleShot(30000, this, [this, n]() {
         if (m_finished) return;
         m_finished = true;
+        m_busy = false;
         QVector<Result> fallback;
         for (int i = 0; i < n; ++i) fallback.append(Result());
         emit finished(fallback);
@@ -139,6 +164,7 @@ void MermaidRenderer::pollResults(int n, int attempt)
             for (int i = 0; i < n; ++i) out.append(Result());
         }
         m_finished = true;   // 看门狗失效（正常结算先到）
+        m_busy = false;
         emit finished(out);
     });
 }

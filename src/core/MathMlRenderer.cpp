@@ -6,6 +6,8 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QTimer>
+#include <QPointer>
+#include <QCoreApplication>
 
 MathMlRenderer::MathMlRenderer(QObject *parent)
     : QObject(parent), m_view(new QWebEngineView())
@@ -23,8 +25,26 @@ MathMlRenderer::MathMlRenderer(QObject *parent)
 
 MathMlRenderer::~MathMlRenderer() { delete m_view; }
 
+MathMlRenderer *MathMlRenderer::instance()
+{
+    static QPointer<MathMlRenderer> s_inst;
+    if (s_inst.isNull()) {
+        s_inst = new MathMlRenderer();
+        // static 局部变量免捕获（lambda 捕获 static 存储对象是 clang 硬错、
+        // GCC 宽容——GCC 宽容掩盖 clang/MSVC 差异的既训）
+        QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, []() {
+            delete s_inst;
+        });
+    }
+    return s_inst;
+}
+
 void MathMlRenderer::renderAll(const QStringList &sources)
 {
+    // 单例并发防御（与 MermaidRenderer 同型）：上一轮未结算时本轮降级——
+    // 发空结果触发调用方回退 $...$ 源码文本，不互相踩 pending
+    if (m_busy) { emit finished({}); return; }
+    m_busy = true;
     m_pending = sources;
     if (m_loaded) onLoadFinished(true);
 }
@@ -46,7 +66,7 @@ QString MathMlRenderer::buildRenderScript(const QStringList &sources)
 
 void MathMlRenderer::onLoadFinished(bool ok)
 {
-    if (!ok) { emit finished({}); return; }
+    if (!ok) { m_busy = false; emit finished({}); return; }
     m_loaded = true;
     if (m_pending.isEmpty()) return;
 
@@ -60,6 +80,7 @@ void MathMlRenderer::onLoadFinished(bool ok)
     QTimer::singleShot(30000, this, [this, n]() {
         if (m_finished) return;
         m_finished = true;
+        m_busy = false;
         QVector<QString> fallback;
         for (int i = 0; i < n; ++i) fallback.append(QString());
         emit finished(fallback);
@@ -75,6 +96,7 @@ void MathMlRenderer::onLoadFinished(bool ok)
             for (int i = 0; i < n; ++i) out.append(QString());
         }
         m_finished = true;   // 看门狗失效（正常结算先到）
+        m_busy = false;
         emit finished(out);
     });
 }

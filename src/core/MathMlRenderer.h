@@ -18,6 +18,10 @@ public:
     explicit MathMlRenderer(QObject *parent = nullptr);
     ~MathMlRenderer() override;
 
+    // 进程级单例（与 MermaidRenderer 同型，2026-09-15）：视图与 katex 库
+    // 常驻，导出复用免冷启动
+    static MathMlRenderer *instance();
+
     void renderAll(const QStringList &sources);   // 异步
 
     // 生成渲染脚本：对每个 source 调 katex.renderToString(..., {output:'mathml'})，
@@ -36,6 +40,7 @@ private:
     QStringList m_pending;
     bool m_loaded = false;
     bool m_finished = false;   // 30s 看门狗与正常结算的互斥（防 finished 双发）
+    bool m_busy = false;       // 单例复用的并发防御（busy 时新请求降级）
 };
 
 #endif // MD_EDITOR_MATHMLRENDERER_H

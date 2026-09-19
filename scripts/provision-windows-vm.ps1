@@ -155,15 +155,17 @@ if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
     Ok "Python 已安装"
 } else { Ok "Python 已存在" }
 
-if (Test-Path 'D:\Qt\6.8.2\msvc2022_64\bin\windeployqt.exe') {
-    Ok "Qt 已安装，跳过"
+if ((Test-Path 'D:\Qt\6.8.2\msvc2022_64\bin\windeployqt.exe') -and
+    (Test-Path 'D:\Qt\6.8.2\msvc2022_64\lib\cmake\Qt6WebSockets')) {
+    Ok "Qt 已安装（含 websockets），跳过"
 } else {
     py -3 -m pip install --quiet --upgrade aqtinstall
     if ($LASTEXITCODE -ne 0) { throw "aqtinstall 安装失败 (exit $LASTEXITCODE)" }
+    # qtwebsockets：CdpPrinter（CDP PDF 快路径）依赖，2026-09-19 补
     py -3 -m aqt install-qt windows desktop 6.8.2 win64_msvc2022_64 `
-        -O D:\Qt -m qtwebengine qtwebchannel qtpositioning
+        -O D:\Qt -m qtwebengine qtwebchannel qtpositioning qtwebsockets
     if ($LASTEXITCODE -ne 0) { throw "Qt 安装失败 (exit $LASTEXITCODE)" }
-    Ok "Qt 6.8.2 安装完成"
+    Ok "Qt 6.8.2 安装完成（含 websockets）"
 }
 
 # ---------- 5. NSIS + ImageMagick ----------

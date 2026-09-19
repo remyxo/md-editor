@@ -1,5 +1,6 @@
 #include "PdfExporter.h"
 #include "HtmlExporter.h"
+#include "CdpPrinter.h"
 #include <QWebEnginePage>
 #include <QWebEngineSettings>
 #include <QUrl>
@@ -7,6 +8,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 PdfExporter::PdfExporter(QObject *parent)
     : QObject(parent)
@@ -47,7 +50,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     // 图片 base64 内联（相对路径相对 docDir 解析；绝对路径原样；读不到保留 src）
     QString body = HtmlExporter::inlineImages(html, docDir);
 
-    const bool paged = spec.pagedActive();
+    const bool paged = spec.pagedActive() && !spec.cdpMode;
     // 页面内容宽（CSS px，96dpi）：__fixTableColumns 列宽分配的可用宽基准。
     // 声明在 if(paged) 外——pagedScripts 拼接处也要用
     double pageContentWidthPx = 0;
@@ -535,6 +538,20 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
               .arg(pageContentWidthPx, 0, 'f', 1)
         : QString();
 
+    // 内容按需注入重型库（2026-09-15 性能取证：无流程图的文档白付 3.5MB
+    // mermaid.min.js 加载+解析 ~350ms，无公式的文档白付 katex 272KB+CSS）。
+    // 渲染链自带守卫（if(window.mermaid)/if(window.katex)），库缺席即整段跳过；
+    // 检测用内联后 body（图片内联不影响两类标记）
+    const bool needMermaid = body.contains(QLatin1String("language-mermaid"));
+    const bool needKatex = body.contains(QLatin1String("data-latex"));
+    QString libs;
+    if (needKatex)
+        libs += QStringLiteral("<script src=\"katex.min.js\"></script>");
+    if (needMermaid)
+        libs += QStringLiteral("<script src=\"mermaid.min.js\"></script>");
+    // KaTeX CSS（含 base64 字体）同理按需——无公式文档整段省略
+    const QString katexCssOnDemand = needKatex ? katexCss : QString();
+
     QString fullHtml = QString(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
         "%1"                                    // @page 分页规则（paged 激活时）
@@ -586,11 +603,10 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         ".footnote-marker{float:left;margin-right:.4em;font-weight:600;color:#1967d2;}"
         "div[data-type=\"footnoteDef\"] .footnote-content>*:first-child{margin-top:0;}"
         "}"
-        "%3"                                    // KaTeX CSS
+        "%3"                                    // KaTeX CSS（按需，无公式为空）
         "</style>"
         "%4"                                    // PagedConfig + polyfill（paged 时）
-        "<script src=\"katex.min.js\"></script>"
-        "<script src=\"mermaid.min.js\"></script>"
+        "%7"                                    // 重型库按需（katex/mermaid）
         "<script>"
         "%5"                                    // __preparePrint
         "window.addEventListener('DOMContentLoaded',function(){"
@@ -606,7 +622,8 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "});"
         "</script>"
         "</head><body>%6</body></html>"
-    ).arg(pageCss, legacyPageZero, katexCss, pagedScripts, preparePrint, body);
+    ).arg(pageCss, legacyPageZero, katexCssOnDemand, pagedScripts, preparePrint,
+          body, libs);
 
     // 注入 mermaid 渲染 helper（定义 window.__renderAllMermaid，返回 Promise，
     // 不自调用——__preparePrint 显式链式调用并等待）。PDF 固定亮色打印。
@@ -620,6 +637,23 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         safeCss.remove(QRegularExpression("</\\s*style\\s*>",
                                           QRegularExpression::CaseInsensitiveOption));
         fullHtml.replace("</head>", QString("<style>%1</style></head>").arg(safeCss));
+    }
+    // CDP 快路径的就绪信号：不走 __preparePrint（那是 paged/legacy 的 Qt 打印
+    // 前置链），KaTeX 由模板内 DOMContentLoaded 同步渲染（先注册先执行），此处
+    // 只等 mermaid 异步渲染完（有图时）置 __cdpReady——C++ 侧轮询到即发起
+    // Page.printToPdf。无 mermaid 时立即置位
+    if (spec.cdpMode) {
+        fullHtml.replace(
+            "</body>",
+            QStringLiteral(
+                "<script>"
+                "window.__cdpReady=false;"
+                "window.addEventListener('DOMContentLoaded',function(){"
+                "var d=function(){window.__cdpReady=true;};"
+                "if(window.__renderAllMermaid)window.__renderAllMermaid().then(d,d);"
+                "else d();"
+                "});"
+                "</script></body>"));
     }
     return fullHtml;
 }
@@ -701,7 +735,29 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     m_printPollCount = 0;
     m_printStarted = false;
     m_fallbackUsed = false;
+    m_lastPagedPages = 0;
+    m_pagedFullHtml = fullHtml;   // paged.js 版（CDP 回退时直接用，免重生成）
 
+    // 导出路径裁决（2026-09-15 性能取证：paged.js 逐页布局 ~0.8s/页，16 页 13s
+    // vs Chromium 原生分页 <2.2s）：CDP 快路径优先——Chromium 原生分页 + 原生
+    // 页眉页脚模板。含脚注引用的文档分流走 paged.js（随页浮动+分隔线+编号同行
+    // 是 paged 特性，原生打印无对应能力）；CDP 未启用/失败回退 paged 完整链路
+    const bool cdpEligible = CdpPrinter::debugPort() > 0
+        && CdpPrinter::pdfMethodAvailable()
+        && spec.pagedActive()
+        && !html.contains(QLatin1String("data-type=\"footnoteRef\""));
+    if (cdpEligible) {
+        m_cdpSpec = spec;
+        PdfPageSpec cdpHtmlSpec = spec;
+        cdpHtmlSpec.cdpMode = true;
+        startCdpExport(buildRenderHtml(html, docDir, katexCss, customCss, cdpHtmlSpec));
+        return;
+    }
+    startPagedExport();
+}
+
+void PdfExporter::startPagedExport()
+{
     disconnect(m_renderView, &QWebEngineView::loadFinished, this, nullptr);
     disconnect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
                this, nullptr);
@@ -711,7 +767,68 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     connect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
             this, &PdfExporter::onPdfPrintingFinished);
 
-    m_renderView->setHtml(fullHtml, QUrl("qrc:/web/"));
+    m_renderView->setHtml(m_pagedFullHtml, QUrl("qrc:/web/"));
+}
+
+void PdfExporter::startCdpExport(const QString &cdpFullHtml)
+{
+    disconnect(m_renderView, &QWebEngineView::loadFinished, this, nullptr);
+    connect(m_renderView, &QWebEngineView::loadFinished, this, [this](bool ok) {
+        if (!ok) { fallbackToPaged(QStringLiteral("CDP 页面加载失败")); return; }
+        m_cdpReadyPolls = 0;
+        pollCdpReady();
+    });
+    m_renderView->setHtml(cdpFullHtml, QUrl("qrc:/web/"));
+}
+
+void PdfExporter::pollCdpReady()
+{
+    if (++m_cdpReadyPolls > 200) {   // 50ms × 200 = 10s（mermaid 多图渲染上限）
+        fallbackToPaged(QStringLiteral("CDP 就绪超时"));
+        return;
+    }
+    m_renderView->page()->runJavaScript(
+        "window.__cdpReady===true", [this](const QVariant &v) {
+            if (v.toBool()) launchCdpPrint();
+            else QTimer::singleShot(50, this, [this]() { pollCdpReady(); });
+        });
+}
+
+void PdfExporter::launchCdpPrint()
+{
+    CdpPrinter::Options opt;
+    opt.landscape = (m_cdpSpec.orientation == QPageLayout::Landscape);
+    const QSizeF mm = QPageSize(m_cdpSpec.paper).size(QPageSize::Millimeter);
+    opt.paperWmm = mm.width();
+    opt.paperHmm = mm.height();
+    opt.marginsMm = m_cdpSpec.marginsMm;
+    opt.headerEnabled = m_cdpSpec.headerEnabled;
+    opt.footerEnabled = m_cdpSpec.footerEnabled;
+    opt.headerTitle = m_cdpSpec.headerTitle;
+    m_cdp = new CdpPrinter(this);
+    connect(m_cdp, &CdpPrinter::finished, this,
+            [this](bool ok, const QString &err) {
+        m_cdp->deleteLater();
+        m_cdp = nullptr;
+        if (ok) {
+            emit exportFinished(true, m_pendingOutputPath);
+            return;
+        }
+        fallbackToPaged(err);
+    });
+    // 导出渲染视图 baseUrl 固定 qrc:/web/，/json/list 按 url 匹配（编辑器页是
+    // qrc:/web/index.html，天然区分）
+    m_cdp->print(m_renderView->page(), QUrl("qrc:/web/"), opt, m_pendingOutputPath);
+}
+
+void PdfExporter::fallbackToPaged(const QString &reason)
+{
+    qWarning() << "[PdfExport] CDP 快路径失败，回退 paged.js 分页:" << reason;
+    if (m_cdp) {
+        m_cdp->deleteLater();
+        m_cdp = nullptr;
+    }
+    startPagedExport();
 }
 
 void PdfExporter::onLoadFinished(bool ok)
@@ -746,9 +863,24 @@ void PdfExporter::pollPrintState()
         m_renderView->page()->printToPdf(m_pendingOutputPath, m_legacyLayout);
         return;
     }
-    m_renderView->page()->runJavaScript("window.__printState",
+    // 状态 + 已生成页数一并读（复用同一轮询，零额外开销）：working 期间页数
+    // 增长即发 pagedProgress——paged.js 大文档分页以十秒计（2026-09-15 性能
+    // 取证 ~0.8s/页），全程静默等待体感差
+    m_renderView->page()->runJavaScript(
+        "(function(){return JSON.stringify({s:window.__printState||'',"
+        "n:document.querySelectorAll('.pagedjs_page').length});})()",
         [this](const QVariant &v) {
-            const QString state = v.toString();
+            QJsonParseError e;
+            const QJsonDocument d = QJsonDocument::fromJson(v.toString().toUtf8(), &e);
+            const QJsonObject o = d.object();
+            const QString state = e.error == QJsonParseError::NoError
+                                      ? o.value("s").toString() : QString();
+            const int pages = e.error == QJsonParseError::NoError
+                                      ? o.value("n").toInt() : 0;
+            if (state == QLatin1String("working") && pages > m_lastPagedPages) {
+                m_lastPagedPages = pages;
+                emit pagedProgress(pages);
+            }
             // 未到终态（idle/working/空）继续轮询；回调与停表存在竞态，须防重
             if (state != QLatin1String("paged") && state != QLatin1String("legacy")
                 && state != QLatin1String("fallback"))

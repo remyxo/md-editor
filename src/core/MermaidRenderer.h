@@ -24,6 +24,11 @@ public:
     explicit MermaidRenderer(QObject *parent = nullptr);
     ~MermaidRenderer() override;
 
+    // 进程级单例（2026-09-15 性能取证：每次导出新建视图 + 加载 3.5MB
+    // mermaid.min.js 冷启动 ~500ms，占 DOCX 全量导出九成耗时）。单例常驻
+    // 离屏视图，库加载一次；aboutToQuit 时销毁（先于 WebEngine 全局回收）
+    static MermaidRenderer *instance();
+
     void renderAll(const QStringList &sources);   // 异步
 
     // 生成渲染脚本（IIFE 必须 return Promise，runJavaScript 才会等待异步渲染完成）。
@@ -43,6 +48,7 @@ private:
     QStringList m_pending;
     bool m_loaded = false;
     bool m_finished = false;   // 30s 看门狗与正常结算的互斥（防 finished 双发）
+    bool m_busy = false;       // 单例复用的并发防御（busy 时新请求降级）
 };
 
 #endif // MD_EDITOR_MERMAIDRENDERER_H
