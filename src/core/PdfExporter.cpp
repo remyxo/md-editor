@@ -63,6 +63,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     // @page 规则（paged 激活时）：置于 @media print 之外——paged.js 在屏幕媒体
     // 上解析分页；margin 顺序 CSS = 上 右 下 左
     QString pageCss;
+    const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
     if (paged) {
         // 两向统一发显式 mm 尺寸（宽前高后），不用命名尺寸与 landscape 关键字：
         // vendored paged.js 的 pageSizes 表键为 A0-A10/B4/B5（大写）与
@@ -76,7 +77,6 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 纵向并入同路径——显式 mm 走 Dimension 解析直设 width/height，
         // 命名尺寸表不再被依赖。毫米值定点 1 位小数——与 Qt 点位换算的微差
         // （<0.1mm）对布局无影响
-        const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
         QString sizeStr;
         if (spec.orientation == QPageLayout::Landscape) {
             // 横向：宽=纵向高（换向），宽前高后、宽>高
@@ -104,6 +104,49 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            "@bottom-right{content:\"第 \" counter(page) \" 页 / 共 \" "
                            "counter(pages) \" 页\";font-size:9pt;color:#666;}");
         pageCss += QLatin1Char('}');
+        // 脚注随页浮动（Word 形态）：pdf-fn 类的 def 由 paged.js Footnotes 处理器
+        // 搬入所在页的页底脚注区（.pagedjs_footnote_area，flex 列贴内容区底）。
+        // 浮动前提：def 在文档流中位于引用点旁边——__floatFootnotes 已把文末
+        // 容器里的 def 移到首个 sup 引用之后，才能落在引用所在页
+        pageCss += QStringLiteral(
+                       "div[data-type=\"footnoteDef\"].pdf-fn{float:footnote;}");
+        // 分页流内临时形态：inline-block 参与行盒（块级会在引用处把段落拆成
+        // 匿名块断行）；搬入脚注区后恢复块级占满区宽
+        pageCss += QStringLiteral(
+                       ".pagedjs_page_content div[data-type=\"footnoteDef\"].pdf-fn"
+                       "{display:inline-block;}"
+                       ".pagedjs_footnote_area div[data-type=\"footnoteDef\"].pdf-fn"
+                       "{display:block;margin:.2em 0;}");
+        // 脚注区分隔线（Word 同款：横线之上正文、之下脚注）——仅当页确有脚注
+        // （空态 pagedjs_footnote_empty 由引擎 display:none）；字号缩小对齐 Word
+        pageCss += QStringLiteral(
+                       ".pagedjs_footnote_area>.pagedjs_footnote_content"
+                       ":not(.pagedjs_footnote_empty)"
+                       "{border-top:1px solid #999;padding-top:.25em;"
+                       "font-size:.8em;line-height:1.5;}");
+        // paged.js 会在引用位自动插 [data-footnote-call]::after{
+        // content:counter(footnote)} 自动编号——与源码 sup 编号重复，抑制之
+        pageCss += QStringLiteral(
+                       "[data-footnote-call]::after{content:none!important;}");
+        // 脚注碎片禁用 text-align-last:justify：上游 Footnotes.handleAlignment
+        // 对溢出拆分的碎片无条件打 justify（正文 Breaks 处理器的同款方法还要求
+        // text-align:justify，脚注版没有这一前置）——配合上游内置规则
+        // [data-align-last-split-element='justify']，拆分残留碎片的尾行被撑满
+        // 全宽、逐字拉开（多段脚注跨页拆分实测：一行短文逐字散布整行）。本
+        // 模板正文左对齐，碎片尾行恢复默认（auto=随 text-align）即可
+        pageCss += QStringLiteral(
+                       ".pagedjs_footnote_area [data-align-last-split-element='justify']"
+                       "{text-align-last:auto;}");
+        // 内容宽 = 纸宽 − 左右边距（横向换向取短边），mm→px 与 Chromium CSS px 一致
+        const double contentWmm = (spec.orientation == QPageLayout::Landscape ? paperMm.height() : paperMm.width())
+                                  - spec.marginsMm.left() - spec.marginsMm.right();
+        pageContentWidthPx = contentWmm / 25.4 * 96.0;
+    }
+    // min-content 防溢规则（paged 与 nativeHf 共用，2026-09-19 真文档取证）：
+    // nativeHf 缺这些帽子时，宽 mermaid SVG 的固有宽度撑爆文档 min-content
+    // → Qt printToPdf shrink-to-fit 全局缩印（实测 0.5×）→ 每页消耗 ~2×U
+    // → 页码覆盖层逐页早移、成品验码拦下回退。svg 补 max-width 钳住固有宽
+    if (paged || nativeHf) {
         // mermaid SVG 页高容纳上限：mermaid 渲染的 svg 带 width="100%" + 内联
         // max-width，宽度自适应容器、但高度无约束——高于内容区的图不可分页
         // 拆分 → 分页器 "Unable to layout item" → 内容重复铺排 → 指纹校验拦截
@@ -151,44 +194,9 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 同型；须在 @media print 之外——paged.js 屏幕分页测量与打印折行必须一致，
         // 否则测量行高失真（打印侧折行更高 → 行溢出页底）
         pageCss += QStringLiteral("th,td{overflow-wrap:anywhere;}");
-        // 脚注随页浮动（Word 形态）：pdf-fn 类的 def 由 paged.js Footnotes 处理器
-        // 搬入所在页的页底脚注区（.pagedjs_footnote_area，flex 列贴内容区底）。
-        // 浮动前提：def 在文档流中位于引用点旁边——__floatFootnotes 已把文末
-        // 容器里的 def 移到首个 sup 引用之后，才能落在引用所在页
-        pageCss += QStringLiteral(
-                       "div[data-type=\"footnoteDef\"].pdf-fn{float:footnote;}");
-        // 分页流内临时形态：inline-block 参与行盒（块级会在引用处把段落拆成
-        // 匿名块断行）；搬入脚注区后恢复块级占满区宽
-        pageCss += QStringLiteral(
-                       ".pagedjs_page_content div[data-type=\"footnoteDef\"].pdf-fn"
-                       "{display:inline-block;}"
-                       ".pagedjs_footnote_area div[data-type=\"footnoteDef\"].pdf-fn"
-                       "{display:block;margin:.2em 0;}");
-        // 脚注区分隔线（Word 同款：横线之上正文、之下脚注）——仅当页确有脚注
-        // （空态 pagedjs_footnote_empty 由引擎 display:none）；字号缩小对齐 Word
-        pageCss += QStringLiteral(
-                       ".pagedjs_footnote_area>.pagedjs_footnote_content"
-                       ":not(.pagedjs_footnote_empty)"
-                       "{border-top:1px solid #999;padding-top:.25em;"
-                       "font-size:.8em;line-height:1.5;}");
-        // paged.js 会在引用位自动插 [data-footnote-call]::after{
-        // content:counter(footnote)} 自动编号——与源码 sup 编号重复，抑制之
-        pageCss += QStringLiteral(
-                       "[data-footnote-call]::after{content:none!important;}");
-        // 脚注碎片禁用 text-align-last:justify：上游 Footnotes.handleAlignment
-        // 对溢出拆分的碎片无条件打 justify（正文 Breaks 处理器的同款方法还要求
-        // text-align:justify，脚注版没有这一前置）——配合上游内置规则
-        // [data-align-last-split-element='justify']，拆分残留碎片的尾行被撑满
-        // 全宽、逐字拉开（多段脚注跨页拆分实测：一行短文逐字散布整行）。本
-        // 模板正文左对齐，碎片尾行恢复默认（auto=随 text-align）即可
-        pageCss += QStringLiteral(
-                       ".pagedjs_footnote_area [data-align-last-split-element='justify']"
-                       "{text-align-last:auto;}");
-        // 内容宽 = 纸宽 − 左右边距（横向换向取短边），mm→px 与 Chromium CSS px 一致
-        const double contentWmm = (spec.orientation == QPageLayout::Landscape ? paperMm.height() : paperMm.width())
-                                  - spec.marginsMm.left() - spec.marginsMm.right();
-        pageContentWidthPx = contentWmm / 25.4 * 96.0;
+        pageCss += QStringLiteral("svg{max-width:100%!important;}");
     }
+
 
     if (nativeHf) {
         // 原生覆盖层样式。包装表必须复位内容 CSS 的表格规则——尤其
@@ -835,6 +843,10 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     connect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
             this, &PdfExporter::onPdfPrintingFinished);
 
+    if (qEnvironmentVariableIsSet("HF_DUMP_HTML")) {
+        QFile d("/tmp/hf-full.html");
+        if (d.open(QIODevice::WriteOnly)) { d.write(fullHtml.toUtf8()); d.close(); }
+    }
     m_renderView->setHtml(fullHtml, QUrl("qrc:/web/"));
 }
 
@@ -971,12 +983,24 @@ void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
             return;
         }
         const int n = doc.pageCount();
-        const QRegularExpression re(
-            QStringLiteral("第\\s*(\\d+)\\s*.\\s*/\\s*共\\s*(\\d+)"));
+        // 匹配前剥除全部空白：QPdf 提取可能把数字拆成独立 run（真文档实测
+        // 「共 12 页」拆成「共 1 2 页」，\s* 版正则只捕获到 1 → 假漂移回退）
+        const QRegularExpression re(QStringLiteral("第(\\d+)./共(\\d+)"));
+        QString dbg;
         for (int p = 0; p < n; ++p) {
-            const auto m = re.match(doc.getAllText(p).text());
-            if (!m.hasMatch() || m.captured(1).toInt() != p + 1
-                || m.captured(2).toInt() != n) {
+            QString t = doc.getAllText(p).text();
+            t.remove(QLatin1Char(' ')).remove(QLatin1Char('\n'));
+            auto it = re.globalMatch(t);
+            QStringList hits;
+            while (it.hasNext()) {
+                const auto m = it.next();
+                hits << QStringLiteral("%1/%2").arg(m.captured(1), m.captured(2));
+            }
+            dbg += QStringLiteral(" p%1→[%2]").arg(p + 1).arg(hits.join(","));
+            const auto m0 = re.match(t);
+            if (!m0.hasMatch() || m0.captured(1).toInt() != p + 1
+                || m0.captured(2).toInt() != n) {
+                qWarning() << "[PdfExport][hf-debug]" << dbg;
                 fallbackFromNativeHf(QStringLiteral("页码漂移（第%1页）").arg(p + 1));
                 return;
             }
