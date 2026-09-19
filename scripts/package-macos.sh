@@ -58,9 +58,10 @@ VERSION="$(sed -n 's/.*project(md-editor VERSION \([0-9.]*\).*/\1/p' "$PROJECT_D
 # 4. 生成「拖拽安装」式 dmg：staging（app + /Applications 符号链接 + 背景图）
 #    → UDRW 挂载 → Finder AppleScript 布置窗口（app 左、Applications 右、
 #    微渐变背景 + 小箭头 + 中文提示）→ 转压缩 UDZO。拖拽布局从 UX 上引导
-#    用户把 app 拖入应用程序；万一仍直接运行，app 内还有启动提示兜底
-#    （MacInstallCheck，v0.16.1）——挂载卷内直跑是 Launch Services 僵尸注册的
-#    标准来源（真机排查实录：.Trash 与 /Volumes 残留条目把推荐列表置灰）
+#    用户把 app 拖入 Applications；用户仍双击图标直跑时，main.cpp 的
+#    MacInstallCheck 硬阻断兜底（弹「请先拖曳…完成安装」后退出）——挂载卷
+#    内直跑是 Launch Services 僵尸注册的标准来源（真机排查实录：.Trash 与
+#    /Volumes 残留条目把推荐列表置灰）
 DMG="$PROJECT_DIR/md-editor-$VERSION-macos-universal.dmg"
 VOLNAME="md-editor"
 STAGING="$PROJECT_DIR/dmg-staging"
@@ -70,8 +71,8 @@ mkdir -p "$STAGING/.background"
 cp -R "$APP" "$STAGING/md-editor.app"
 ln -s /Applications "$STAGING/Applications"
 # 背景图（@2x 144dpi，Finder 按 660×400 逻辑显示，含中文提示「拖动图标到
-# 应用以完成安装」）：产物已提交 scripts/dmg-background.png——CI 无 PIL/
-# 中文字体，不现场生成；改设计本地跑 gen-dmg-background.py 重新生成并提交
+# Applications 以完成安装」）：产物已提交 scripts/dmg-background.png——CI 无
+# PIL/中文字体，不现场生成；改设计本地跑 gen-dmg-background.py 重新生成并提交
 BG_SRC="$SCRIPT_DIR/dmg-background.png"
 [ -f "$BG_SRC" ] || { echo "错误: 缺少背景图 $BG_SRC" >&2; exit 1; }
 cp "$BG_SRC" "$STAGING/.background/background.png"

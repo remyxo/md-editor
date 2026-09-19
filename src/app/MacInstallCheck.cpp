@@ -6,11 +6,24 @@ bool isTransientLocation(const QString &appDirPath)
 {
     if (appDirPath.isEmpty())
         return false;
-    // 挂载卷内运行 = DMG 未拖出（拖拽安装布局正是为杜绝此事）。
-    // 带 / 前缀整段匹配，/Volumesfoo 这类前缀撞名不算
-    if (appDirPath.startsWith(QStringLiteral("/Volumes/")))
-        return true;
-    // 转位目录固定名为 AppTranslocation，夹在路径段中，两侧 / 保证整段匹配
+    if (appDirPath.startsWith(QStringLiteral("/Volumes/"))) {
+        // 只拦「app 包位于挂载卷根」的 DMG 拖拽形态：
+        //   /Volumes/<卷名>/<bundle>.app/Contents/MacOS
+        // 装在二级卷子目录里的正经安装（/Volumes/<卷>/<目录>/…app/…，如外置盘
+        // 的 Applications 文件夹）不拦。带 / 前缀整段匹配，/Volumesfoo 不算
+        const QString rest = appDirPath.mid(QStringLiteral("/Volumes/").size());
+        const qsizetype volEnd = rest.indexOf(QLatin1Char('/'));
+        if (volEnd <= 0)
+            return false;   // 缺卷名或就是卷路径本身，不是 app
+        const QString tail = QStringLiteral("/Contents/MacOS");
+        const QString afterVol = rest.mid(volEnd + 1);
+        if (!afterVol.endsWith(tail))
+            return false;
+        return !afterVol.left(afterVol.size() - tail.size())
+                    .contains(QLatin1Char('/'));   // 卷名与 bundle 间无更深层级
+    }
+    // Gatekeeper 转位目录固定名为 AppTranslocation（从 Downloads 等处直跑时
+    // 系统把 app 复制到的随机只读路径），夹在路径段中，两侧 / 整段匹配
     return appDirPath.contains(QStringLiteral("/AppTranslocation/"));
 }
 

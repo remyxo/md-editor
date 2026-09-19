@@ -1,9 +1,13 @@
 #include "app/Application.h"
+#include "app/MacInstallCheck.h"
 #include "ui/MainWindow.h"
 #include "core/LocalImageSchemeHandler.h"
 #include <QLocale>
 #include <QStringList>
 #include <QWebEngineProfile>
+#include <QAbstractButton>
+#include <QMessageBox>
+#include <QSysInfo>
 #include <QWebEngineUrlScheme>
 
 // 注册 localimg:// 自定义协议。
@@ -40,6 +44,22 @@ int main(int argc, char *argv[])
     const QStringList args = app.arguments();
     for (int i = 1; i < args.size(); ++i) {
         if (!args[i].startsWith(QLatin1Char('-'))) {
+    // macOS：从 DMG 挂载卷/Gatekeeper 转位目录运行——硬阻断，弹提示后退出，
+    // 不进主界面。在镜像内直跑会让 Launch Services 登记多个应用路径（「打开
+    // 方式」推荐列表置灰的根因，见 CHANGELOG 0.16.1）；Finder 双击本身无法
+    // 拦截（系统行为），应用进程起来后立即自断是应用侧能做到的最强阻断。
+    // 运行时判 macOS 而非 #ifdef：三平台都编译此段，不留只被 macOS CI 编译的死角
+    if (QSysInfo::productType() == QStringLiteral("macos")
+        && MacInstallCheck::isTransientLocation(QCoreApplication::applicationDirPath())) {
+        QMessageBox box(QMessageBox::Warning, QStringLiteral("无法直接运行"),
+            QStringLiteral("请先拖曳 md-editor 图标到 Applications 图标以完成安装。\n\n"
+                           "在安装镜像内直接运行会导致系统「打开方式」列表异常。"),
+            QMessageBox::Ok);
+        box.button(QMessageBox::Ok)->setText(QStringLiteral("退出"));
+        box.exec();
+        return 0;   // 不创建主窗口，应用随对话框关闭退出
+    }
+
             initialFile = args[i];
             break;
         }

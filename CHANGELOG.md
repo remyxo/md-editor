@@ -10,8 +10,8 @@
 - **启动期切标签页的 JS 未捕获异常** — `onTabChanged` 的三连推送（notifyHeadings/Format/History）无 `window.editorApi` 守卫，页面脚本未执行完的窗口期触发（macOS 冷启动尤甚），且因同段执行连带跳过后两条推送；补守卫与相邻代码一致
 - **同路径文件重开不再开重复标签** — 双击/Finder 打开已打开的文件改为聚焦既有标签页（与 VS Code/Typora 等主流编辑器一致）：重复标签各自保存是后写者静默覆盖，未保存修改会静默丢失；未保存修改与外部重载警示原样保留。canonical 路径判定（相对路径/符号链接/冗余分隔符归一），新增 test_editorpath 回归
 - **macOS 元数据触碰误报「已被外部程序修改」** — Finder 再次双击已打开文件时，Gatekeeper/Spotlight 的元数据触碰（xattr/atime）也触发 fileChanged，内容未变却弹重载警告。外部变更报警前先核实 size+mtime 与监控基线一致与否（与 VS Code 同款判定），未变则静默吞掉；新增 testMetadataOnlyEventSuppressed 回归
-- **DMG 拖拽安装布局** — 安装窗口改为 app 图标（左）+ Applications 替身（右）+ 微渐变背景引导拖拽安装，杜绝用户直接在挂载卷内双击运行 app（Launch Services 僵尸注册的标准来源，见下方升级提示）；箭头收窄并与图标中心线对齐（首版 188px 且低于图标中心 60px，真机反馈「太大太丑」），箭头下方加中文提示「拖动图标到应用以完成安装」；背景改为 @2x 144dpi 静态资产（`scripts/dmg-background.png`，本地 PIL+苹方生成后提交——CI 无字体环境不现场生成），test_dmgbg 锁定资产设计要素
-- **从 DMG 挂载卷/转位目录运行时的启动提示** — 拖拽布局是引导，用户仍双击图标直跑时启动弹「请先完成安装」：提示拖入「应用程序」，并说明直跑会让 Launch Services 登记多个副本、致「打开方式」列表异常；提示后不阻断使用（硬拦截非 macOS 惯例）。路径判定 `MacInstallCheck::isTransientLocation`（/Volumes 挂载卷 + /AppTranslocation 转位目录），新增 test_macinstallcheck 回归
+- **DMG 拖拽安装布局** — 安装窗口改为 app 图标（左）+ Applications 替身（右）+ 微渐变背景引导拖拽安装；箭头收窄并与图标中心线对齐（首版 188px 且低于图标中心 60px，真机反馈「太大太丑」），箭头下方加中文提示「拖动图标到 Applications 以完成安装」（与替身图标名一致）；背景为 @2x 144dpi 静态资产（`scripts/dmg-background.png`，本地 PIL+苹方生成后提交——CI 无字体环境不现场生成），test_dmgbg 锁定资产设计要素
+- **挂载卷内直跑硬阻断** — 双击挂载卷里的 app 图标：弹「请先拖曳 md-editor 图标到 Applications 图标以完成安装」后直接退出，不进主界面（Finder 双击本身无法拦截，应用进程起来后立即自断是应用侧最强阻断）——在镜像内运行会让 Launch Services 登记多个应用路径（「打开方式」推荐列表置灰的根因，见下方升级提示）。路径判定 `MacInstallCheck::isTransientLocation`：app 位于挂载卷根（DMG 拖拽形态）或 Gatekeeper 转位目录（/AppTranslocation）才拦，二级卷子目录里的正经安装不误伤；新增 test_macinstallcheck 回归
 - 升级提示：从 ≤0.16.0 覆盖安装后，Launch Services 可能残留旧注册导致「打开方式」推荐列表仍灰——先清空废纸篓里的旧版本、推出旧 DMG 挂载卷（僵尸条目两大来源），再 `lsregister -f /Applications/md-editor.app`；仍不行用终极手段 `lsregister -kill -seed -lint -r -v && killall lsd` 重建 LS 库后重启（新装用户不受影响）
 
 ## [0.16.0] — 2026-09-15

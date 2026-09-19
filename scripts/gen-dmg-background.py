@@ -10,7 +10,8 @@
     position 对齐；Finder position = 图标视觉中心，真机截图校准）
   - 箭头与图标中心线对齐（旧版箭头画在 h/2 而图标在 y=140，错位 60px），
     总宽 96px（旧版 188px 过大）
-  - 箭头下方一行中文提示「拖动图标到应用以完成安装」（PingFang SC）
+  - 箭头下方一行中文提示「拖动图标到 Applications 以完成安装」（PingFang SC；
+    右侧替身图标的 Finder 显示名即 Applications，文案与之一致）
 
 依赖: Pillow + 中文字体（按序探测 PingFang SC / Noto Sans CJK SC）。
 改设计后本地重跑生成 scripts/dmg-background.png 并提交，同步更新
@@ -27,7 +28,7 @@ SHAFT_X0, SHAFT_X1 = 564, 704   # 箭杆（70 逻辑长）
 SHAFT_HALF = 6            # 箭杆半厚（杆高 6 逻辑）
 HEAD_X0, HEAD_X1 = 704, 756     # 箭头三角形（26 逻辑长）
 HEAD_HALF = 26            # 三角形半高（26 逻辑）
-TEXT = "拖动图标到应用以完成安装"
+TEXT = "拖动图标到 Applications 以完成安装"
 TEXT_CENTER = (660, 636)  # 提示文字中心（318 逻辑；图标标签下缘 ~280 逻辑）
 TEXT_SIZE = 30            # 15 逻辑 pt
 SS = 4                    # 超采样倍数（PIL 多边形无原生抗锯齿）

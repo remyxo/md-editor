@@ -19,7 +19,6 @@
 #include "../core/DocxExporter.h"
 #include "../core/HtmlExporter.h"
 #include "../app/Application.h"
-#include "../app/MacInstallCheck.h"
 #include "../app/ThemeManager.h"
 #include "../app/SystemThemeWatcher.h"
 
@@ -41,8 +40,6 @@
 #include <QDropEvent>
 #include <QMimeData>
 #include <QKeySequence>
-#include <QTimer>
-#include <QSysInfo>
 
 // JS 单引号字符串字面量转义（路径等嵌入 runJavaScript；反斜杠/引号/换行——
 // Windows 路径 C:\Users\.. 的 \ 与含 ' 的 Unix 路径都会破坏字面量）
@@ -96,25 +93,6 @@ MainWindow::MainWindow(const QString &initialFile, QWidget *parent)
         onFileDoubleClicked(initialFile);
     } else {
         restoreSession();
-    }
-
-    // macOS：从 DMG 挂载卷/Gatekeeper 转位目录运行（未安装状态）——启动提示
-    // 拖入「应用程序」。硬阻断非 macOS 惯例，提示后仍可继续使用；但直接在
-    // 挂载卷内运行会让 Launch Services 登记多个副本（「打开方式」推荐列表
-    // 置灰的根因，见 CHANGELOG 0.16.1 升级提示）。运行时判 macOS 而非
-    // #ifdef：三平台都编译此段，避免留下只被 macOS CI 编译的死角
-    if (QSysInfo::productType() == QStringLiteral("macos")
-        && MacInstallCheck::isTransientLocation(QCoreApplication::applicationDirPath())) {
-        // singleShot(0)：等主窗口 show() 后再弹，对话框以可见窗口为锚居中
-        QTimer::singleShot(0, this, [this] {
-            QMessageBox box(QMessageBox::Information, tr("请先完成安装"),
-                tr("md-editor 正在从安装镜像（DMG）或临时目录运行，尚未安装到系统中。\n\n"
-                   "请将 md-editor 图标拖到「应用程序」文件夹完成安装，之后从「应用程序」启动；\n"
-                   "直接在镜像中运行会使系统登记多个应用副本，导致「打开方式」列表异常。"),
-                QMessageBox::Ok, this);
-            box.button(QMessageBox::Ok)->setText(tr("好"));
-            box.exec();
-        });
     }
 }
 

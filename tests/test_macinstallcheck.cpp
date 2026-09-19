@@ -44,6 +44,11 @@ void TestMacInstallCheck::installedOrDevLocationsPass()
     QVERIFY(!isTransientLocation("C:\\Program Files\\md-editor\\md-editor.exe"));
     QVERIFY(!isTransientLocation("build/src"));   // 相对路径（开发构建）
     QVERIFY(!isTransientLocation(QString()));
+    // 挂载卷只拦「app 位于卷根」的 DMG 拖拽形态；装在二级卷子目录里的正经
+    // 安装（如外置盘的 Applications 文件夹）不拦
+    QVERIFY(!isTransientLocation(
+        "/Volumes/Data/Applications/md-editor.app/Contents/MacOS"));
+    QVERIFY(!isTransientLocation("/Volumes/Data"));   // 卷路径本身，不是 app
 }
 
 QTEST_APPLESS_MAIN(TestMacInstallCheck)
