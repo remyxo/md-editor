@@ -15,7 +15,12 @@ struct PdfPageSpec {
     bool headerEnabled = false;            // @top-center 文档标题
     bool footerEnabled = false;            // @bottom-right 第 X 页 / 共 Y 页
     QString headerTitle;
-    // 页眉/页脚任一启用即激活 paged.js 分页（全关走原 Chromium 分页管线）
+    // 原生分页+覆盖层页眉页脚（2026-09-19 提速方案，机制经 print-probe 实证）：
+    // 不注入 paged.js——页眉用 thead 重复带（Chromium 打印每页重复表头），
+    // 页码用 abs 覆盖层画进下边距（top=k*contentH+8，每页精确落位且不增页）。
+    // 仅内部使用：exportToPdf 判定文档无脚注引用时置位生成该形态 HTML
+    bool nativeHf = false;
+    // 页眉/页脚任一启用即需要页眉页脚（nativeHf 走原生覆盖层，否则 paged.js）
     bool pagedActive() const { return headerEnabled || footerEnabled; }
 };
 
@@ -63,9 +68,18 @@ private slots:
 
 private:
     void pollPrintState();
+    // paged 版渲染 HTML 装载（paged 主路径与 nativeHf 回退共用：重连信号+复位）
+    void startPagedExport(const QString &pagedFullHtml);
+    // 原生页眉页脚路径任一环节失败 → 重建 paged 版 HTML 走完整 paged.js 链路
+    void fallbackFromNativeHf(const QString &reason);
 
     QWebEngineView *m_renderView;
     QString m_pendingOutputPath;
+    // 本次导出的输入与规格（nativeHf 回退时重建 paged 版 HTML 用）
+    PdfPageSpec m_spec;
+    QString m_srcHtml, m_srcDocDir, m_srcKatexCss, m_srcCustomCss;
+    QString m_nativeHfTemp;   // nativeHf 第一遍 PDF（数页数用，完事即删）
+    int m_nativeHfPass = 0;   // 0=非该路径；1=数页数遍；2=成品遍
     QPageLayout m_pendingLayout;   // paged 版式（0.1mm 微量边距——@page 已承载页边距，见 pagedPrintMargins）
     QPageLayout m_legacyLayout;    // 原生版式（用户边距）——legacy/回退共用
     // runJavaScript 不等待 Promise（Qt 6.8 实测回调立即触发），完成态靠轮询

@@ -9,6 +9,10 @@
 #include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDir>
+#include <QCoreApplication>
+#include <QDateTime>
+#include <QPdfDocument>
 
 PdfExporter::PdfExporter(QObject *parent)
     : QObject(parent)
@@ -49,7 +53,10 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     // 图片 base64 内联（相对路径相对 docDir 解析；绝对路径原样；读不到保留 src）
     QString body = HtmlExporter::inlineImages(html, docDir);
 
-    const bool paged = spec.pagedActive();
+    // 原生覆盖层路径（nativeHf）：不注入 paged.js，页眉页脚由 thead 重复带 +
+    // abs 覆盖层实现（机制经 print-probe 实证，2026-09-19）
+    const bool nativeHf = spec.nativeHf;
+    const bool paged = spec.pagedActive() && !nativeHf;
     // 页面内容宽（CSS px，96dpi）：__fixTableColumns 列宽分配的可用宽基准。
     // 声明在 if(paged) 外——pagedScripts 拼接处也要用
     double pageContentWidthPx = 0;
@@ -181,6 +188,21 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         const double contentWmm = (spec.orientation == QPageLayout::Landscape ? paperMm.height() : paperMm.width())
                                   - spec.marginsMm.left() - spec.marginsMm.right();
         pageContentWidthPx = contentWmm / 25.4 * 96.0;
+    }
+
+    if (nativeHf) {
+        // 原生覆盖层样式。包装表必须复位内容 CSS 的表格规则——尤其
+        // tr,th,td{break-inside:avoid} 会禁止单元格跨页（正文塞在一个大 td
+        // 里，禁止分页=每页只剩一个巨块）；边框规则同理不得命中包装层
+        pageCss += QStringLiteral(
+            "html,body{margin:0;padding:0;}"
+            "table.hf{width:100%;border-collapse:collapse;margin:0;}"
+            "table.hf>thead>tr>td{border:none;padding:0 0 2.5mm 0;height:6mm;"
+            "font-size:9pt;color:#666;text-align:center;}"
+            "table.hf>tbody>tr>td{border:none;padding:0;break-inside:auto;}"
+            "#numhost{position:absolute;top:0;left:0;width:100%;}"
+            ".hf-pg{position:absolute;left:0;width:100%;text-align:right;"
+            "font-size:9pt;color:#666;}");
     }
     // 旧 @page{margin:0}（Qt QPageLayout 边距方案）仅 legacy 路保留；
     // paged 路径下若同存，@media print 内的后位规则会级联覆盖新 margin
@@ -475,7 +497,8 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "window.__printState='fallback';return 'fallback';};"
         "return window.__renderAllMermaid()"
         ".then(function(){"
-        "if(!window.PagedPolyfill){window.__printState='legacy';return 'legacy';}"
+        "if(!window.PagedPolyfill){window.__printState=window.__NATIVE_HF?'nativehf':'legacy';"
+        "return window.__printState;}"
         "try{window.__fixTableBreaks();}catch(e){console.warn('表格断点修正注册失败: '+(e&&e.message||e));}"
         "try{window.__fixTableColumns();}catch(e){console.warn('表格列宽归一化失败: '+(e&&e.message||e));}"
         "try{window.__splitPreLines();}catch(e){console.warn('代码块逐行重排失败: '+(e&&e.message||e));}"
@@ -551,6 +574,76 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     // KaTeX CSS（含 base64 字体）同理按需——无公式文档整段省略
     const QString katexCssOnDemand = needKatex ? katexCss : QString();
 
+    // nativeHf：正文包装（thead 页眉重复带）+ 页码宿主与注入器 + 状态标志。
+    // 页码注入器 __stampPageNumbers(n)（仅页脚启用）：n 由 C++ 第一遍打印数出
+    // 后经 runJavaScript 调入；每页一个 abs 覆盖层，top=k*__contentH+8 画进
+    // 第 k 页下边距（print-probe 实证每页精确落位且不增页）。__contentH/
+    // __cellTop 由本脚本预计算（mm 探针块亚像素实测，横向换向纸高取短边）
+    QString finalBody = body;
+    if (nativeHf) {
+        auto esc = [](QString s) {
+            s.replace('&', QStringLiteral("&amp;"));
+            s.replace('<', QStringLiteral("&lt;"));
+            s.replace('>', QStringLiteral("&gt;"));
+            s.replace('"', QStringLiteral("&quot;"));
+            return s;
+        };
+        QString hfScript;
+        if (spec.footerEnabled) {
+            const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
+            const qreal hMm = (spec.orientation == QPageLayout::Landscape)
+                                  ? paperMm.width() : paperMm.height();
+            hfScript = QStringLiteral(
+                           "<script>"
+                           "(function(){"
+                           "var mk=function(mm){var d=document.createElement('div');"
+                           "d.style.cssText='position:absolute;visibility:hidden;"
+                           "height:'+mm+'mm;';"
+                           "document.body.appendChild(d);"
+                           "var h=d.getBoundingClientRect().height;"
+                           "d.remove();return h;};"
+                           "window.__contentH=mk('%1')-mk('%2')-mk('%3');"
+                           "var cell=document.getElementById('hfcell');"
+                           "window.__cellTop=cell?cell.getBoundingClientRect().top"
+                           "+window.scrollY:0;"
+                           "})();"
+                           "window.__stampPageNumbers=function(n){"
+                           "var host=document.getElementById('numhost');"
+                           "if(!host||!isFinite(window.__contentH)"
+                           "||window.__contentH<=0)return false;"
+                           // 每页有效内容高 U = 内容区高 − 页眉带（thead 每页重复
+                           // 占位，页 k 的正文区间是 [cellTop+(k-1)U, cellTop+kU)；
+                           // E2E 实测按整内容区高算会逐页累积漂移 ~theadH，块多的
+                           // 文档错出一整页）。标记落在第 k 页底边距内（+8px）
+                           "var U=window.__contentH-window.__cellTop;"
+                           "if(U<=0)return false;"
+                           "for(var k=1;k<=n;k++){"
+                           "var d=document.createElement('div');d.className='hf-pg';"
+                           "d.textContent='第 '+k+' 页 / 共 '+n+' 页';"
+                           "d.style.top=(k*U+8)+'px';"
+                           "host.appendChild(d);}"
+                           "return true;};"
+                           "</script>")
+                           .arg(hMm, 0, 'f', 1)
+                           .arg(spec.marginsMm.top(), 0, 'f', 1)
+                           .arg(spec.marginsMm.bottom(), 0, 'f', 1);
+        }
+        const QString hostAndScript =
+            QStringLiteral("<div id=\"numhost\"></div>") + hfScript;
+        if (spec.headerEnabled) {
+            finalBody = QStringLiteral(
+                            "<table class=\"hf\"><thead><tr><td>%1</td></tr></thead>"
+                            "<tbody><tr><td id=\"hfcell\">%2%3</td></tr></tbody></table>")
+                            .arg(esc(spec.headerTitle), body, hostAndScript);
+        } else {
+            finalBody = body + hostAndScript;
+        }
+    }
+    // __NATIVE_HF 置位在 %5（__preparePrint）之前即可——它在 preparePrint 调用
+    // 时（页面加载后）才被读取
+    if (nativeHf)
+        libs.prepend(QStringLiteral("<script>window.__NATIVE_HF=true;</script>"));
+
     QString fullHtml = QString(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
         "%1"                                    // @page 分页规则（paged 激活时）
@@ -622,7 +715,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "</script>"
         "</head><body>%6</body></html>"
     ).arg(pageCss, legacyPageZero, katexCssOnDemand, pagedScripts, preparePrint,
-          body, libs);
+          finalBody, libs);
 
     // 注入 mermaid 渲染 helper（定义 window.__renderAllMermaid，返回 Promise，
     // 不自调用——__preparePrint 显式链式调用并等待）。PDF 固定亮色打印。
@@ -694,8 +787,22 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
         cssFile.close();
     }
 
-    // 构建 PDF 渲染页面：图片 base64 内联 + 内联 KaTeX CSS + JS + 渲染脚本
-    QString fullHtml = buildRenderHtml(html, docDir, katexCss, customCss, spec);
+    // 构建 PDF 渲染页面：图片 base64 内联 + 内联 KaTeX CSS + JS + 渲染脚本。
+    // 路径裁决（2026-09-19 提速）：页眉/页脚启用且无脚注引用 → 原生分页+
+    // 覆盖层（thead 重复带 + 边距页码，含页脚时两遍打印定总页数），绕开
+    // paged.js 逐页 DOM 手术（取证 ~0.8s/页，16 页 13s）；含脚注引用仍走
+    // paged.js（float:footnote 随页浮动是 paged 独有），nativeHf 任一环节
+    // 失败也回退 paged 完整链路
+    m_spec = spec;
+    m_srcHtml = html;
+    m_srcDocDir = docDir;
+    m_srcKatexCss = katexCss;
+    m_srcCustomCss = customCss;
+    m_nativeHfPass = 0;
+    PdfPageSpec htmlSpec = spec;
+    htmlSpec.nativeHf = spec.pagedActive()
+        && !html.contains(QLatin1String("data-type=\"footnoteRef\""));
+    QString fullHtml = buildRenderHtml(html, docDir, katexCss, customCss, htmlSpec);
 
     m_pendingOutputPath = outputPath;
     // paged 路径边距由 @page 承载（页面盒自带页边距），Qt 布局不能传 0——Qt 6.8
@@ -783,12 +890,30 @@ void PdfExporter::pollPrintState()
             }
             // 未到终态（idle/working/空）继续轮询；回调与停表存在竞态，须防重
             if (state != QLatin1String("paged") && state != QLatin1String("legacy")
-                && state != QLatin1String("fallback"))
+                && state != QLatin1String("fallback")
+                && state != QLatin1String("nativehf"))
                 return;
             m_printPoll.stop();
             if (m_printStarted)
                 return;
             m_printStarted = true;
+            if (state == QLatin1String("nativehf")) {
+                // 原生覆盖层路径：仅页眉免数页数单遍直出；含页脚先打临时文件
+                // 数页数，onPdfPrintingFinished 注入页码后打成品（两遍分页恒等
+                // ——覆盖层零布局影响，print-probe 实证不增页）
+                if (!m_spec.footerEnabled) {
+                    m_renderView->page()->printToPdf(m_pendingOutputPath,
+                                                     m_legacyLayout);
+                } else {
+                    m_nativeHfPass = 1;
+                    m_nativeHfTemp = QDir::tempPath()
+                        + QStringLiteral("/md-editor-hf-%1-%2.pdf")
+                              .arg(QCoreApplication::applicationPid())
+                              .arg(QDateTime::currentMSecsSinceEpoch() % 100000);
+                    m_renderView->page()->printToPdf(m_nativeHfTemp, m_legacyLayout);
+                }
+                return;
+            }
             const bool paged = (state == QLatin1String("paged"));
             if (state == QLatin1String("fallback")) {
                 m_fallbackUsed = true;
@@ -801,8 +926,92 @@ void PdfExporter::pollPrintState()
 
 void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
 {
+    // nativeHf 第一遍（数页数）：QPdfDocument 读页数 → 注入页码覆盖层 → 打成品
+    if (m_nativeHfPass == 1) {
+        m_nativeHfPass = 2;
+        if (!success) {
+            fallbackFromNativeHf(QStringLiteral("第一遍打印失败"));
+            return;
+        }
+        QPdfDocument doc;
+        if (doc.load(filePath) != QPdfDocument::Error::None) {
+            fallbackFromNativeHf(QStringLiteral("页数文件读取失败"));
+            return;
+        }
+        const int n = doc.pageCount();
+        QFile::remove(m_nativeHfTemp);
+        if (n <= 0) {
+            fallbackFromNativeHf(QStringLiteral("页数统计失败"));
+            return;
+        }
+        m_renderView->page()->runJavaScript(
+            QStringLiteral("window.__stampPageNumbers(%1)").arg(n),
+            [this](const QVariant &v) {
+                if (!v.toBool()) {
+                    fallbackFromNativeHf(QStringLiteral("页码注入失败"));
+                    return;
+                }
+                m_renderView->page()->printToPdf(m_pendingOutputPath, m_legacyLayout);
+            });
+        return;
+    }
+    // nativeHf 成品遍：逐页校验页码（公式标记对「页面提前收尾」型漂移无免疫——
+    // 大块不可分元素（整图/被挤推的表格行）使页提前结束，标记逐页后移）。
+    // 字体 cmap 可能把「页」映成部首码位（视觉同形），页数字符用通配。
+    // 任一页号码不符 → 回退 paged.js 重导（慢但正确），绝不出错页码成品
+    if (m_nativeHfPass == 2) {
+        m_nativeHfPass = 0;
+        if (!success) {
+            fallbackFromNativeHf(QStringLiteral("第二遍打印失败"));
+            return;
+        }
+        QPdfDocument doc;
+        if (doc.load(filePath) != QPdfDocument::Error::None) {
+            fallbackFromNativeHf(QStringLiteral("成品校验读取失败"));
+            return;
+        }
+        const int n = doc.pageCount();
+        const QRegularExpression re(
+            QStringLiteral("第\\s*(\\d+)\\s*.\\s*/\\s*共\\s*(\\d+)"));
+        for (int p = 0; p < n; ++p) {
+            const auto m = re.match(doc.getAllText(p).text());
+            if (!m.hasMatch() || m.captured(1).toInt() != p + 1
+                || m.captured(2).toInt() != n) {
+                fallbackFromNativeHf(QStringLiteral("页码漂移（第%1页）").arg(p + 1));
+                return;
+            }
+        }
+        emit exportFinished(true, filePath);
+        return;
+    }
     if (success)
         emit exportFinished(true, filePath);
     else
         emit exportError("PDF 生成失败");
+}
+
+void PdfExporter::fallbackFromNativeHf(const QString &reason)
+{
+    qWarning() << "[PdfExport] 原生页眉页脚路径失败，回退 paged.js:" << reason;
+    QFile::remove(m_nativeHfTemp);
+    m_nativeHfPass = 0;
+    PdfPageSpec pagedSpec = m_spec;
+    pagedSpec.nativeHf = false;
+    startPagedExport(buildRenderHtml(m_srcHtml, m_srcDocDir, m_srcKatexCss,
+                                     m_srcCustomCss, pagedSpec));
+}
+
+void PdfExporter::startPagedExport(const QString &pagedFullHtml)
+{
+    disconnect(m_renderView, &QWebEngineView::loadFinished, this, nullptr);
+    disconnect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
+               this, nullptr);
+    connect(m_renderView, &QWebEngineView::loadFinished,
+            this, &PdfExporter::onLoadFinished);
+    connect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
+            this, &PdfExporter::onPdfPrintingFinished);
+    // 回退重载：复位防重闸与进度基线（nativehf 遍已置位）
+    m_printStarted = false;
+    m_lastPagedPages = 0;
+    m_renderView->setHtml(pagedFullHtml, QUrl("qrc:/web/"));
 }

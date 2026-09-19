@@ -49,7 +49,7 @@ add_executable(test_pdfexporter test_pdfexporter.cpp ../src/core/PdfExporter.cpp
 target_include_directories(test_pdfexporter PRIVATE ../src)
 # PdfExporter.cpp 用到 QWebEngineView/Page/Settings，缺 WebEngineWidgets 会链接失败；
 # 测试只调用静态 buildRenderHtml，从不构造 PdfExporter，不会触发无头渲染
-target_link_libraries(test_pdfexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets Qt6::Qml)
+target_link_libraries(test_pdfexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets Qt6::Qml Qt6::Pdf)
 add_test(NAME test_pdfexporter COMMAND test_pdfexporter)
 
 add_executable(test_systemthemewatcher test_systemthemewatcher.cpp

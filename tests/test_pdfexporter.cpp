@@ -144,6 +144,48 @@ private slots:
         QVERIFY(legacy.contains(".footnote-marker{float:left"));
     }
 
+    void testBuildRenderHtmlNativeHf() {
+        // 原生分页+覆盖层页眉页脚（2026-09-19 提速方案，print-probe 实证）：
+        // thead 每页重复承载标题带，页码 __stampPageNumbers 以 abs 覆盖层画进
+        // 下边距（top=k*contentH+8 每页精确落位、不增页）；不注入 paged.js，
+        // __preparePrint 在无 PagedPolyfill 时按 __NATIVE_HF 置 nativehf 态
+        PdfPageSpec s = specWithHeader();
+        s.nativeHf = true;
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
+        QVERIFY(!out.contains("paged.polyfill.js"));
+        QVERIFY(out.contains("window.__NATIVE_HF=true;"));
+        QVERIFY(out.contains("<table class=\"hf\"><thead>"));        // 页眉重复带
+        QVERIFY(out.contains("我的文档"));                             // 标题
+        QVERIFY(out.contains("__stampPageNumbers=function(n)"));   // 页码注入器
+        QVERIFY(out.contains("第 '+k+' 页 / 共 '+n+' 页"));           // 页脚文案
+        QVERIFY(out.contains(
+            "window.__printState=window.__NATIVE_HF?'nativehf':'legacy';"));
+        QVERIFY(!out.contains("float:footnote"));                  // paged 专属不注入
+        QVERIFY(out.contains("html,body{margin:0;padding:0;}"));   // 覆盖层坐标系归零
+        QVERIFY(out.contains("window.__contentH="));              // 内容区高预计算
+        // 页码公式锁形：U=内容区高−页眉带（thead 每页重复占位，按整内容区高算
+        // 会逐页累积漂移 ~thead 高，E2E 实测错出一整页），标记落第 k 页底边距
+        QVERIFY(out.contains("var U=window.__contentH-window.__cellTop;"));
+        QVERIFY(out.contains("d.style.top=(k*U+8)+'px';"));
+        // 标题 HTML 转义（用户可命名任意字符）
+        PdfPageSpec t = specWithHeader();
+        t.nativeHf = true; t.headerTitle = QStringLiteral("a<b&\"c");
+        QString esc = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", t);
+        QVERIFY(esc.contains("a&lt;b&amp;&quot;c"));
+        // 仅页脚（无页眉）：无 table 包装仍有页码注入器
+        PdfPageSpec f = specWithHeader();
+        f.nativeHf = true; f.headerEnabled = false;
+        QString fo = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", f);
+        QVERIFY(!fo.contains("<table class=\"hf\">"));
+        QVERIFY(fo.contains("__stampPageNumbers=function(n)"));
+        // 仅页眉（无页脚）：table 在、无页码注入器（免数页数单遍直出）
+        PdfPageSpec h = specWithHeader();
+        h.nativeHf = true; h.footerEnabled = false;
+        QString ho = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", h);
+        QVERIFY(ho.contains("<table class=\"hf\"><thead>"));
+        QVERIFY(!ho.contains("__stampPageNumbers"));
+    }
+
     void testBuildRenderHtmlPrintCssSplittable() {
         // R2 内容丢失回归防线（两条路径共用 @media print 块）：
         // 1) pre 禁用 overflow-x:auto（滚动容器让分页器 breakToken 卡死→静默丢段），

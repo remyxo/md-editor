@@ -4,12 +4,18 @@
 # Qt dev 包与 CLAUDE.md「环境要求」一致，保证 src/ 全部 .cpp 的 #include 可解析
 FROM docker.m.daocloud.io/library/debian:trixie
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# apt 换 USTC 国内镜像源（deb.debian.org 直连时快时慢，qt6-webengine-dev
+# 数百 MB 的下载曾卡死整轮构建）——trixie 起源配置在 deb822 格式的
+# debian.sources；换源后与原源完全等价（同一套仓库）
+RUN sed -i 's|http://deb.debian.org/debian|http://mirrors.ustc.edu.cn/debian|g' \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
         clang \
         libstdc++-14-dev \
         qt6-base-dev \
         qt6-webchannel-dev \
         qt6-webengine-dev \
+        qt6-pdf-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 自检：clang 与 Qt 头文件就位（构建期失败即镜像不可用）

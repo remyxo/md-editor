@@ -161,7 +161,7 @@ if (Test-Path 'D:\Qt\6.8.2\msvc2022_64\bin\windeployqt.exe') {
     py -3 -m pip install --quiet --upgrade aqtinstall
     if ($LASTEXITCODE -ne 0) { throw "aqtinstall 安装失败 (exit $LASTEXITCODE)" }
     py -3 -m aqt install-qt windows desktop 6.8.2 win64_msvc2022_64 `
-        -O D:\Qt -m qtwebengine qtwebchannel qtpositioning
+        -O D:\Qt -m qtwebengine qtwebchannel qtpositioning qtpdf
     if ($LASTEXITCODE -ne 0) { throw "Qt 安装失败 (exit $LASTEXITCODE)" }
     Ok "Qt 6.8.2 安装完成"
 }
