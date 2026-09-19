@@ -1,6 +1,5 @@
 #include "PdfExporter.h"
 #include "HtmlExporter.h"
-#include "CdpPrinter.h"
 #include <QWebEnginePage>
 #include <QWebEngineSettings>
 #include <QUrl>
@@ -50,7 +49,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     // 图片 base64 内联（相对路径相对 docDir 解析；绝对路径原样；读不到保留 src）
     QString body = HtmlExporter::inlineImages(html, docDir);
 
-    const bool paged = spec.pagedActive() && !spec.cdpMode;
+    const bool paged = spec.pagedActive();
     // 页面内容宽（CSS px，96dpi）：__fixTableColumns 列宽分配的可用宽基准。
     // 声明在 if(paged) 外——pagedScripts 拼接处也要用
     double pageContentWidthPx = 0;
@@ -638,23 +637,6 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                                           QRegularExpression::CaseInsensitiveOption));
         fullHtml.replace("</head>", QString("<style>%1</style></head>").arg(safeCss));
     }
-    // CDP 快路径的就绪信号：不走 __preparePrint（那是 paged/legacy 的 Qt 打印
-    // 前置链），KaTeX 由模板内 DOMContentLoaded 同步渲染（先注册先执行），此处
-    // 只等 mermaid 异步渲染完（有图时）置 __cdpReady——C++ 侧轮询到即发起
-    // Page.printToPdf。无 mermaid 时立即置位
-    if (spec.cdpMode) {
-        fullHtml.replace(
-            "</body>",
-            QStringLiteral(
-                "<script>"
-                "window.__cdpReady=false;"
-                "window.addEventListener('DOMContentLoaded',function(){"
-                "var d=function(){window.__cdpReady=true;};"
-                "if(window.__renderAllMermaid)window.__renderAllMermaid().then(d,d);"
-                "else d();"
-                "});"
-                "</script></body>"));
-    }
     return fullHtml;
 }
 
@@ -736,28 +718,7 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     m_printStarted = false;
     m_fallbackUsed = false;
     m_lastPagedPages = 0;
-    m_pagedFullHtml = fullHtml;   // paged.js 版（CDP 回退时直接用，免重生成）
 
-    // 导出路径裁决（2026-09-15 性能取证：paged.js 逐页布局 ~0.8s/页，16 页 13s
-    // vs Chromium 原生分页 <2.2s）：CDP 快路径优先——Chromium 原生分页 + 原生
-    // 页眉页脚模板。含脚注引用的文档分流走 paged.js（随页浮动+分隔线+编号同行
-    // 是 paged 特性，原生打印无对应能力）；CDP 未启用/失败回退 paged 完整链路
-    const bool cdpEligible = CdpPrinter::debugPort() > 0
-        && CdpPrinter::pdfMethodAvailable()
-        && spec.pagedActive()
-        && !html.contains(QLatin1String("data-type=\"footnoteRef\""));
-    if (cdpEligible) {
-        m_cdpSpec = spec;
-        PdfPageSpec cdpHtmlSpec = spec;
-        cdpHtmlSpec.cdpMode = true;
-        startCdpExport(buildRenderHtml(html, docDir, katexCss, customCss, cdpHtmlSpec));
-        return;
-    }
-    startPagedExport();
-}
-
-void PdfExporter::startPagedExport()
-{
     disconnect(m_renderView, &QWebEngineView::loadFinished, this, nullptr);
     disconnect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
                this, nullptr);
@@ -767,68 +728,7 @@ void PdfExporter::startPagedExport()
     connect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
             this, &PdfExporter::onPdfPrintingFinished);
 
-    m_renderView->setHtml(m_pagedFullHtml, QUrl("qrc:/web/"));
-}
-
-void PdfExporter::startCdpExport(const QString &cdpFullHtml)
-{
-    disconnect(m_renderView, &QWebEngineView::loadFinished, this, nullptr);
-    connect(m_renderView, &QWebEngineView::loadFinished, this, [this](bool ok) {
-        if (!ok) { fallbackToPaged(QStringLiteral("CDP 页面加载失败")); return; }
-        m_cdpReadyPolls = 0;
-        pollCdpReady();
-    });
-    m_renderView->setHtml(cdpFullHtml, QUrl("qrc:/web/"));
-}
-
-void PdfExporter::pollCdpReady()
-{
-    if (++m_cdpReadyPolls > 200) {   // 50ms × 200 = 10s（mermaid 多图渲染上限）
-        fallbackToPaged(QStringLiteral("CDP 就绪超时"));
-        return;
-    }
-    m_renderView->page()->runJavaScript(
-        "window.__cdpReady===true", [this](const QVariant &v) {
-            if (v.toBool()) launchCdpPrint();
-            else QTimer::singleShot(50, this, [this]() { pollCdpReady(); });
-        });
-}
-
-void PdfExporter::launchCdpPrint()
-{
-    CdpPrinter::Options opt;
-    opt.landscape = (m_cdpSpec.orientation == QPageLayout::Landscape);
-    const QSizeF mm = QPageSize(m_cdpSpec.paper).size(QPageSize::Millimeter);
-    opt.paperWmm = mm.width();
-    opt.paperHmm = mm.height();
-    opt.marginsMm = m_cdpSpec.marginsMm;
-    opt.headerEnabled = m_cdpSpec.headerEnabled;
-    opt.footerEnabled = m_cdpSpec.footerEnabled;
-    opt.headerTitle = m_cdpSpec.headerTitle;
-    m_cdp = new CdpPrinter(this);
-    connect(m_cdp, &CdpPrinter::finished, this,
-            [this](bool ok, const QString &err) {
-        m_cdp->deleteLater();
-        m_cdp = nullptr;
-        if (ok) {
-            emit exportFinished(true, m_pendingOutputPath);
-            return;
-        }
-        fallbackToPaged(err);
-    });
-    // 导出渲染视图 baseUrl 固定 qrc:/web/，/json/list 按 url 匹配（编辑器页是
-    // qrc:/web/index.html，天然区分）
-    m_cdp->print(m_renderView->page(), QUrl("qrc:/web/"), opt, m_pendingOutputPath);
-}
-
-void PdfExporter::fallbackToPaged(const QString &reason)
-{
-    qWarning() << "[PdfExport] CDP 快路径失败，回退 paged.js 分页:" << reason;
-    if (m_cdp) {
-        m_cdp->deleteLater();
-        m_cdp = nullptr;
-    }
-    startPagedExport();
+    m_renderView->setHtml(fullHtml, QUrl("qrc:/web/"));
 }
 
 void PdfExporter::onLoadFinished(bool ok)

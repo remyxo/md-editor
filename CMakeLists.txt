@@ -15,7 +15,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets WebEngineWidgets WebChannel WebSockets LinguistTools)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets WebEngineWidgets WebChannel LinguistTools)
 
 add_subdirectory(src)
 
@@ -46,7 +46,7 @@ PDF/DOCX 导出和亮色/暗色主题。")
     set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
     # 运行时依赖 (去掉 -dev 后缀，只保留运行时库)
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
-        "libqt6widgets6 (>= 6.8), libqt6webenginewidgets6 (>= 6.8), libqt6webchannel6 (>= 6.8), libqt6websockets6 (>= 6.8), libqt6gui6 (>= 6.8), libqt6core6 (>= 6.8), qt6-qpa-plugins")
+        "libqt6widgets6 (>= 6.8), libqt6webenginewidgets6 (>= 6.8), libqt6webchannel6 (>= 6.8), libqt6gui6 (>= 6.8), libqt6core6 (>= 6.8), qt6-qpa-plugins")
     # 推荐安装
     set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "qt6-translations-l10n")
 

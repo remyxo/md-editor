@@ -8,7 +8,6 @@
 #include <QRegularExpression>
 #include "../src/core/PdfExporter.h"
 #include "../src/core/HtmlExporter.h"
-#include "../src/core/CdpPrinter.h"
 
 class TestPdfExporter : public QObject {
     Q_OBJECT
@@ -143,27 +142,6 @@ private slots:
         QVERIFY(legacy.indexOf("__floatFootnotes();")
                 > legacy.indexOf("if(!window.PagedPolyfill)"));
         QVERIFY(legacy.contains(".footnote-marker{float:left"));
-    }
-
-    void testBuildRenderHtmlCdpMode() {
-        // CDP 快路径（Chromium 原生分页 + 原生页眉页脚模板）：不注 paged.js，
-        // 页眉/页脚/纸型参数由 CdpPrinter 走 Page.printToPdf；HTML 侧注入
-        // __cdpReady 就绪信号（KaTeX 模板内同步渲染，mermaid 异步渲染完置位）
-        PdfPageSpec s = specWithHeader();
-        s.cdpMode = true;
-        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
-        QVERIFY(!out.contains("paged.polyfill.js"));
-        QVERIFY(!out.contains("@page{size:"));          // @page 交给打印参数
-        QVERIFY(out.contains("window.__cdpReady=false;"));
-        QVERIFY(out.contains("__renderAllMermaid().then(d,d);"));
-        QVERIFY(out.contains("@media print{"));          // 打印内容 CSS 保留
-        // CdpPrinter 模板锁形（页眉标题转义、页脚页码类名）
-        QVERIFY(CdpPrinter::headerTemplate("a<b\"c")
-                .contains("a&lt;b&quot;c"));
-        QVERIFY(CdpPrinter::footerTemplate()
-                .contains("<span class=\"pageNumber\"></span>"));
-        QVERIFY(CdpPrinter::footerTemplate()
-                .contains("<span class=\"totalPages\"></span>"));
     }
 
     void testBuildRenderHtmlPrintCssSplittable() {

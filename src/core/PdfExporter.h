@@ -15,11 +15,6 @@ struct PdfPageSpec {
     bool headerEnabled = false;            // @top-center 文档标题
     bool footerEnabled = false;            // @bottom-right 第 X 页 / 共 Y 页
     QString headerTitle;
-    // CDP 快路径（Chromium 原生分页 + 原生页眉页脚模板）：不注入 paged.js，
-    // 由 CdpPrinter 走 Page.printToPdf。页眉/页脚规格（标题/边距/纸型）仍由
-    // 本 spec 承载，页脚页码由打印模板注入（与 @bottom-right 等价形态）。
-    // 仅内部使用：exportToPdf 判定 CDP 可走时置位生成轻量 HTML
-    bool cdpMode = false;
     // 页眉/页脚任一启用即激活 paged.js 分页（全关走原 Chromium 分页管线）
     bool pagedActive() const { return headerEnabled || footerEnabled; }
 };
@@ -68,20 +63,8 @@ private slots:
 
 private:
     void pollPrintState();
-    // CDP 快路径（Chromium 原生分页+页眉页脚模板）：流程 = 轻量 HTML（cdpMode，
-    // 不注 paged.js）→ 轮询 __cdpReady（KaTeX/mermaid 渲染完）→ CdpPrinter 打印；
-    // 任一环节失败回退 paged.js 完整链路（m_pagedFullHtml 已备好）
-    void startCdpExport(const QString &cdpFullHtml);
-    void pollCdpReady();
-    void launchCdpPrint();
-    void fallbackToPaged(const QString &reason);
-    void startPagedExport();
 
     QWebEngineView *m_renderView;
-    class CdpPrinter *m_cdp = nullptr;
-    QString m_pagedFullHtml;     // paged.js 版渲染 HTML（CDP 回退时直接用）
-    int m_cdpReadyPolls = 0;     // __cdpReady 轮询计数（50ms × 200 = 10s 超时）
-    PdfPageSpec m_cdpSpec;       // CDP 打印参数源（纸型/边距/横纵向/页眉页脚）
     QString m_pendingOutputPath;
     QPageLayout m_pendingLayout;   // paged 版式（0.1mm 微量边距——@page 已承载页边距，见 pagedPrintMargins）
     QPageLayout m_legacyLayout;    // 原生版式（用户边距）——legacy/回退共用

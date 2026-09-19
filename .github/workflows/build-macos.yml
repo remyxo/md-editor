@@ -35,7 +35,7 @@ jobs:
     - name: 安装 Qt（universal，arm64 + x86_64）
       run: |
         python3 -m pip install --quiet --break-system-packages aqtinstall
-        python3 -m aqt install-qt mac desktop 6.8.2 clang_64 -O "$QT_ROOT" -m qtwebengine qtwebchannel qtpositioning qtwebsockets
+        python3 -m aqt install-qt mac desktop 6.8.2 clang_64 -O "$QT_ROOT" -m qtwebengine qtwebchannel qtpositioning
       env:
         QT_ROOT: ${{ runner.tool_cache }}/Qt
 

@@ -4,20 +4,15 @@
 
 ## [0.17.0] — 2026-09-19
 
-导出性能批次（接手并完成 2026-09-15 起的 CDP 打印实验）。
-
-### 新增 — PDF 导出 CDP 快路径（性能）
-- **Chromium 原生分页取代 paged.js** — `CdpPrinter` 经 CDP（Chrome DevTools Protocol）`Page.printToPdf` 走 Chromium 原生分页管线：2026-09-15 取证 paged.js 逐页 DOM 手术 ~0.8s/页（16 页 13s，纯 CPU），原生分页同文档 <2.2s。页眉页脚由打印模板注入（与 @page margin box 等价形态：9pt 灰 #666，居中标题 + 右对齐「第 X 页 / 共 Y 页」）
-- **三级回退链** — CDP 快路径 → paged.js 完整链路 → Qt 原生打印；含脚注引用的文档直接走 paged.js（随页浮动+分隔线+编号同行是 paged 特性，原生打印无对应能力）。CDP `printToPdf` 构建级缺失（Debian Qt 6.8.2 WebEngine 裁掉了此方法）进程内缓存，后续导出不再白付探测
-- **默认启用 + 关闭开关** — 调试端口绑定 127.0.0.1 随机口（进程启动期 Chromium flags 定死，无法按需开启）；安全敏感/多用户本机环境可置 `MD_EDITOR_NO_CDP_PDF=1` 完全不开端口（导出走回退链，仅损失性能）
-- **分页进度状态栏** — paged 路径大文档分页以十秒计，「正在分页：已生成 N 页」实时反馈
+导出性能批次（源自 2026-09-15 起的性能取证与实验）。
 
 ### 优化 — 导出按需注入（性能）
-- **重型库按内容命中注入** — 无流程图的文档不再白付 3.5MB mermaid.min.js（~350ms），无公式不付 katex 272KB+CSS、无代码块不付 highlight：PDF 与 HTML 导出同型改造；纯文本文档 HTML 产物从 ~4.5MB 瘦身到数百 KB
+- **重型库按内容命中注入** — 无流程图的文档不再白付 3.5MB mermaid.min.js（加载+解析 ~350ms），无公式不付 katex 272KB+CSS、无代码块不付 highlight：PDF 与 HTML 导出同型改造；纯文本文档 HTML 产物从 ~4.5MB 瘦身到数百 KB。渲染链自带守卫（if(window.mermaid) 等），库缺席即整段跳过
 - **MathMl/Mermaid 渲染器单例常驻** — 进程级复用（旧版每次导出新建 QWebEngineView），aboutToQuit 主动销毁先于 WebEngine 全局回收；并发防御（上一轮未结算时本轮降级回退源码文本）；DOCX 导出器完成即断连防重入（单例长于导出器生命周期，旧连接误唤醒曾致重写旧文件）
+- **分页进度状态栏** — paged.js 大文档分页以十秒计（取证 ~0.8s/页），「正在分页：已生成 N 页」实时反馈（复用既有轮询零额外开销）
 
-### 构建
-- 新增依赖 Qt6 WebSockets（CDP WebSocket 通道）：deb 依赖/CI（deb/macOS）、win11 VM provision（含存量机补装）、clang 容器镜像同步
+### 实验 — CDP 原生打印（已否决删除）
+- 曾实现 CDP（Chrome DevTools Protocol）`Page.printToPdf` 快路径（Chromium 原生分页 + 原生页眉页脚模板，取证 16 页 13s → <2.2s），真机验证 Debian 与 macOS 的 Qt WebEngine 均报 `'Page.printToPdf' wasn't found`——该方法是 Chromium 无头模式专用，嵌入式 Chromium（Qt WebEngine/CEF 同构）非无头运行不注册，无 flag 可开。代码已整块删除，此路不通的结论留档免重蹈
 
 ## [0.16.1] — 2026-09-19
 
