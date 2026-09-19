@@ -39,11 +39,6 @@ int main(int argc, char *argv[])
 
     Application app(argc, argv);
 
-    // 解析命令行传入的文件路径：文件管理器「打开方式」双击 .md 时经 .desktop 的 %f 传入。
-    QString initialFile;
-    const QStringList args = app.arguments();
-    for (int i = 1; i < args.size(); ++i) {
-        if (!args[i].startsWith(QLatin1Char('-'))) {
     // macOS：从 DMG 挂载卷/Gatekeeper 转位目录运行——硬阻断，弹提示后退出，
     // 不进主界面。在镜像内直跑会让 Launch Services 登记多个应用路径（「打开
     // 方式」推荐列表置灰的根因，见 CHANGELOG 0.16.1）；Finder 双击本身无法
@@ -60,6 +55,11 @@ int main(int argc, char *argv[])
         return 0;   // 不创建主窗口，应用随对话框关闭退出
     }
 
+    // 解析命令行传入的文件路径：文件管理器「打开方式」双击 .md 时经 .desktop 的 %f 传入。
+    QString initialFile;
+    const QStringList args = app.arguments();
+    for (int i = 1; i < args.size(); ++i) {
+        if (!args[i].startsWith(QLatin1Char('-'))) {
             initialFile = args[i];
             break;
         }
