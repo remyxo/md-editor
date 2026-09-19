@@ -9,6 +9,8 @@
 #include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QImage>
 #include <QDir>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -208,6 +210,10 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
             "table.hf>thead>tr>td{border:none;padding:0 0 2.5mm 0;height:6mm;"
             "font-size:9pt;color:#666;text-align:center;}"
             "table.hf>tbody>tr>td{border:none;padding:0;break-inside:auto;}"
+            // 行级断行放开（仅 nativeHf）：内容表格 tr 的 avoid 推挤留空是
+            // 标记间隙漂移的主力（86 行测试文档实测）；Chromium 打印支持
+            // 行内容跨页拆分（与 paged 的表格手术路径不同，无重建丢行风险）
+            "tr{break-inside:auto;}"
             "#numhost{position:absolute;top:0;left:0;width:100%;}"
             ".hf-pg{position:absolute;left:0;width:100%;text-align:right;"
             "font-size:9pt;color:#666;}");
@@ -989,7 +995,10 @@ void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
         QString dbg;
         for (int p = 0; p < n; ++p) {
             QString t = doc.getAllText(p).text();
-            t.remove(QLatin1Char(' ')).remove(QLatin1Char('\n'));
+            // 白名单剥离：提取流可能逐字形插 \r\n（实测「第\r\n2\r\n⻚…」），
+            // 且偶发不可见非字符（U+FFFE）——只留数字与页脚相关字符再匹配
+            t.remove(QRegularExpression(
+                QStringLiteral("[^0-9第共./⻚页]")));
             auto it = re.globalMatch(t);
             QStringList hits;
             while (it.hasNext()) {
