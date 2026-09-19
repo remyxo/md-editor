@@ -108,3 +108,11 @@ add_executable(test_dmgbg test_dmgbg.cpp)
 target_include_directories(test_dmgbg PRIVATE ../src)
 target_link_libraries(test_dmgbg PRIVATE Qt6::Test Qt6::Gui)
 add_test(NAME test_dmgbg COMMAND test_dmgbg)
+
+# MacInstallCheck 谓词（DMG 挂载卷/Gatekeeper 转位目录运行检测，启动提示用）
+# ——纯路径单元，只链自身
+add_executable(test_macinstallcheck test_macinstallcheck.cpp
+    ../src/app/MacInstallCheck.cpp)
+target_include_directories(test_macinstallcheck PRIVATE ../src)
+target_link_libraries(test_macinstallcheck PRIVATE Qt6::Test)
+add_test(NAME test_macinstallcheck COMMAND test_macinstallcheck)

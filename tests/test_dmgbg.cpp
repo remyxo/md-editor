@@ -1,65 +1,75 @@
 #include <QtTest>
-#include <QFile>
 #include <QImage>
 #include <QColor>
-#include <QTemporaryDir>
-#include <QProcess>
-#include <QDir>
 #include <QFileInfo>
 
-// gen-dmg-background.py——DMG「拖拽安装」布局的背景图生成器（纯 Python 标准库，
-// 运行器零依赖）。本测试驱动其核心契约：
-//   1. 输出是合法 PNG（QImage 能解码，尺寸正确）
-//   2. 渐变背景：顶行与底行颜色不同且都是浅色系（窗口观感）
-//   3. 箭头提示：左右图标连线中点区域存在明显非背景色像素（拖拽方向指引）
+// DMG 拖拽安装背景资产（scripts/dmg-background.png）——CI 打包时原样拷贝进
+// 挂载卷，本测试锁定其关键设计要素，防止资产被意外替换/重生成走样：
+//   1. @2x 1320×800 + 144dpi（pHYs 5669 px/m）——Finder 按 660×400 逻辑显示
+//   2. 上下微渐变（近白，顶浅底深）
+//   3. 箭头：图标中心连线中点处的中灰横带（与图标中心 y 对齐，@2x y=380）
+//   4. 箭头下方一行中文提示（暗像素存在且水平居中）
+// 设计改动须本地重跑 gen-dmg-background.py 重新生成资产并同步本断言；
+// 图标位置对应 package-macos.sh AppleScript 的 {185,190}/{475,190}
+// （Finder position = 图标视觉中心，真机截图校准）
 class TestDmgBackground : public QObject {
     Q_OBJECT
 private slots:
-    void generatesValidPngWithGradientAndArrow();
+    void committedAssetMatchesDesign();
 
 private:
     // QTEST_APPLESS_MAIN 无 QCoreApplication 实例，applicationDirPath() 返回空——
-    // 用编译期 __FILE__ 的绝对路径定位脚本（tests/ → ../scripts/）
-    QString scriptPath() const {
-        return QFileInfo(QStringLiteral(__FILE__)).dir().filePath("../scripts/gen-dmg-background.py");
+    // 用编译期 __FILE__ 的绝对路径定位资产（tests/ → ../scripts/）
+    QString assetPath() const {
+        return QFileInfo(QStringLiteral(__FILE__)).dir().filePath(
+            QStringLiteral("../scripts/dmg-background.png"));
     }
 };
 
-void TestDmgBackground::generatesValidPngWithGradientAndArrow()
+void TestDmgBackground::committedAssetMatchesDesign()
 {
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString out = dir.filePath("background.png");
+    QImage img(assetPath());
+    QVERIFY2(!img.isNull(), "scripts/dmg-background.png 不是合法 PNG");
+    img = img.convertToFormat(QImage::Format_RGB32);
 
-    QProcess py;
-    py.start("python3", {scriptPath(), out, "660", "400"});
-    QVERIFY2(py.waitForFinished(10000),
-             ("python3 运行失败: " + py.errorString()).toUtf8());
-    QCOMPARE(py.exitStatus(), QProcess::NormalExit);
-    QCOMPARE(py.exitCode(), 0);
+    // @2x 尺寸（Finder 按 660×400 逻辑显示）
+    QCOMPARE(img.size(), QSize(1320, 800));
+    // 144dpi = 5669 像素/米——Retina 标注，Finder 据此缩放背景
+    QCOMPARE(img.dotsPerMeterX(), 5669);
+    QCOMPARE(img.dotsPerMeterY(), 5669);
 
-    QImage img(out);
-    QVERIFY2(!img.isNull(), "输出的不是合法 PNG");
-    QCOMPARE(img.width(), 660);
-    QCOMPARE(img.height(), 400);
+    // 上下微渐变：顶部浅于底部，且都保持近白（不干扰图标可读性）
+    const QColor top = img.pixelColor(660, 40);
+    const QColor bottom = img.pixelColor(660, 760);
+    QVERIFY(top.lightness() > bottom.lightness());
+    QVERIFY(top.lightness() > 240);
+    QVERIFY(bottom.lightness() > 230);
 
-    // 渐变：顶/底行中点颜色可区分（垂直渐变）
-    const QColor top = img.pixelColor(330, 2);
-    const QColor bottom = img.pixelColor(330, 397);
-    QVERIFY(top != bottom);
-    // 浅色系（不干扰 Finder 图标文字可读性）
-    QVERIFY(top.lightness() > 200);
-    QVERIFY(bottom.lightness() > 180);
+    // 箭头：图标中心连线中点（x=660@2x）的箭杆色 ≈ (150,154,161)；
+    // 箭杆正上方 60px 处应为纯背景（箭头未越界、非通栏大箭头）
+    const QColor shaft = img.pixelColor(634, 380);
+    const QColor above = img.pixelColor(634, 320);
+    QVERIFY2(qAbs(shaft.red() - 150) < 20
+             && qAbs(shaft.green() - 154) < 20
+             && qAbs(shaft.blue() - 161) < 20,
+             "箭杆中心应为设计灰色 (150,154,161)");
+    QVERIFY(above.lightness() - shaft.lightness() > 40);
 
-    // 箭头：左图标(≈175,190)与右图标(≈485,190)之间应有一排非渐变背景色像素。
-    // 渐变是逐行均匀的——同列上下 ±40px 处的颜色应几乎一致；箭头所在行则明显偏离
-    const QColor above = img.pixelColor(330, 150);
-    const QColor below = img.pixelColor(330, 230);
-    const QColor mid = img.pixelColor(330, 190);
-    const int verticalDrift = qAbs(above.lightness() - below.lightness());
-    QVERIFY2(verticalDrift < 6, "对照区自身应近乎均匀（渐变验证前提）");
-    QVERIFY2(qAbs(mid.lightness() - above.lightness()) > verticalDrift + 20,
-             "中点应有明显深于背景的箭头像素");
+    // 中文提示：箭头下方 y∈[590,680] 存在明显深于箭头/背景的文字像素，
+    // 且水平重心居中（窗口中线 660±40）
+    int dark = 0, minX = 1 << 30, maxX = -1;
+    for (int y = 590; y < 680; ++y) {
+        for (int x = 300; x < 1020; ++x) {
+            if (img.pixelColor(x, y).lightness() < 120) {
+                ++dark;
+                minX = qMin(minX, x);
+                maxX = qMax(maxX, x);
+            }
+        }
+    }
+    QVERIFY2(dark > 800, "箭头下方应有一行中文提示文字");
+    QVERIFY2(qAbs((minX + maxX) / 2 - 660) <= 40,
+             "提示文字应水平居中");
 }
 
 QTEST_APPLESS_MAIN(TestDmgBackground)

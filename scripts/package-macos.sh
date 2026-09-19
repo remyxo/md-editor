@@ -57,9 +57,10 @@ VERSION="$(sed -n 's/.*project(md-editor VERSION \([0-9.]*\).*/\1/p' "$PROJECT_D
 
 # 4. 生成「拖拽安装」式 dmg：staging（app + /Applications 符号链接 + 背景图）
 #    → UDRW 挂载 → Finder AppleScript 布置窗口（app 左、Applications 右、
-#    渐变背景带箭头）→ 转压缩 UDZO。拖拽布局从 UX 上杜绝用户直接在挂载卷内
-#    双击运行 app——那是 Launch Services 僵尸注册的标准来源（v0.16.1 真机
-#    排查实录：.Trash 与 /Volumes 残留的同 bundle ID 条目把推荐列表置灰）
+#    微渐变背景 + 小箭头 + 中文提示）→ 转压缩 UDZO。拖拽布局从 UX 上引导
+#    用户把 app 拖入应用程序；万一仍直接运行，app 内还有启动提示兜底
+#    （MacInstallCheck，v0.16.1）——挂载卷内直跑是 Launch Services 僵尸注册的
+#    标准来源（真机排查实录：.Trash 与 /Volumes 残留条目把推荐列表置灰）
 DMG="$PROJECT_DIR/md-editor-$VERSION-macos-universal.dmg"
 VOLNAME="md-editor"
 STAGING="$PROJECT_DIR/dmg-staging"
@@ -68,7 +69,12 @@ rm -rf "$STAGING" "$RW_DMG" "$DMG"
 mkdir -p "$STAGING/.background"
 cp -R "$APP" "$STAGING/md-editor.app"
 ln -s /Applications "$STAGING/Applications"
-python3 "$SCRIPT_DIR/gen-dmg-background.py" "$STAGING/.background/background.png" 660 400
+# 背景图（@2x 144dpi，Finder 按 660×400 逻辑显示，含中文提示「拖动图标到
+# 应用以完成安装」）：产物已提交 scripts/dmg-background.png——CI 无 PIL/
+# 中文字体，不现场生成；改设计本地跑 gen-dmg-background.py 重新生成并提交
+BG_SRC="$SCRIPT_DIR/dmg-background.png"
+[ -f "$BG_SRC" ] || { echo "错误: 缺少背景图 $BG_SRC" >&2; exit 1; }
+cp "$BG_SRC" "$STAGING/.background/background.png"
 hdiutil create -volname "$VOLNAME" -srcfolder "$STAGING" -ov -format UDRW "$RW_DMG" >/dev/null
 MOUNT=$(hdiutil attach -readwrite -noverify -noautoopen "$RW_DMG" 2>/dev/null | sed -n 's/.*\(\/Volumes\/md-editor\).*/\1/p' | head -1)
 [ -n "$MOUNT" ] || { echo "错误: UDRW 挂载失败" >&2; exit 1; }
@@ -93,10 +99,10 @@ tell application "Finder"
         repeat with f in (get every item of container window)
             set itemName to name of f
             if itemName begins with "md-editor" then
-                set position of f to {175, 140}
+                set position of f to {185, 190}
                 set extension hidden of f to true
             else if itemName is "Applications" then
-                set position of f to {485, 140}
+                set position of f to {475, 190}
             end if
         end repeat
         close
