@@ -12,6 +12,7 @@ set(SOURCES
     core/MarkdownHandler.cpp
     core/qt/QtMarkdownWriter.cpp
     core/PdfExporter.cpp
+    core/PdfPageGeometry.cpp
     core/DocxExporter.cpp
     core/miniz/miniz.c
     core/MermaidRenderer.cpp
@@ -48,6 +49,7 @@ set(HEADERS
     core/MarkdownHandler.h
     core/qt/QtMarkdownWriter.h
     core/PdfExporter.h
+    core/PdfPageGeometry.h
     core/DocxExporter.h
     core/MermaidRenderer.h
     core/MathMlRenderer.h

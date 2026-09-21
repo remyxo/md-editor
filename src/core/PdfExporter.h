@@ -2,6 +2,7 @@
 #define MD_EDITOR_PDFEXPORTER_H
 
 #include <QObject>
+#include <QJsonArray>
 #include <QWebEngineView>
 #include <QPageLayout>
 #include <QPageSize>
@@ -61,6 +62,11 @@ signals:
     // 分页进行中的页数进度（paged 路径，页数增长时发；2026-09-15 性能取证
     // 大文档分页以十秒计，静默等待体感差）。调用方展示「正在分页：已生成 N 页」
     void pagedProgress(int pages);
+    // 进入最终写盘阶段（printToPdf 前）：total 为总页数（paged 终态页数 /
+    // nativeHf 第二遍的数出页数），0 表示页数不可知（legacy/回退/nativeHf
+    // 计数遍）。Chromium printToPdf 是一次性黑盒——写盘本身无逐页进度可发，
+    // 调用方只能展示「正在写出 PDF」
+    void writingPdf(int total);
 
 private slots:
     void onLoadFinished(bool ok);
@@ -80,6 +86,12 @@ private:
     QString m_srcHtml, m_srcDocDir, m_srcKatexCss, m_srcCustomCss;
     QString m_nativeHfTemp;   // nativeHf 第一遍 PDF（数页数用，完事即删）
     int m_nativeHfPass = 0;   // 0=非该路径；1=数页数遍；2=成品遍
+    QJsonArray m_hfTops;      // 覆盖层页码标记纵向（px，T/H_c 流模型累计）
+    int m_hfTotal = 0;        // 总页数
+    qreal m_hfH1Px = 0;       // 页码首片高（内容区高 − thead，页 1 占位）
+    qreal m_hfHcPx = 0;       // 页码后续片高（内容区高）
+    qreal m_hfTotalPx = 0;    // numhost 总高（n 片和 = n 页）
+    void stampAndPrintHf();   // 注入标记并打成品（首轮与校正轮共用）
     QPageLayout m_pendingLayout;   // paged 版式（0.1mm 微量边距——@page 已承载页边距，见 pagedPrintMargins）
     QPageLayout m_legacyLayout;    // 原生版式（用户边距）——legacy/回退共用
     // runJavaScript 不等待 Promise（Qt 6.8 实测回调立即触发），完成态靠轮询

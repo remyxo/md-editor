@@ -45,12 +45,20 @@ target_include_directories(test_docxexporter PRIVATE ../src)
 target_link_libraries(test_docxexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets)
 add_test(NAME test_docxexporter COMMAND test_docxexporter)
 
-add_executable(test_pdfexporter test_pdfexporter.cpp ../src/core/PdfExporter.cpp ../src/core/HtmlExporter.cpp)
+add_executable(test_pdfexporter test_pdfexporter.cpp ../src/core/PdfExporter.cpp ../src/core/PdfPageGeometry.cpp ../src/core/miniz/miniz.c ../src/core/HtmlExporter.cpp)
 target_include_directories(test_pdfexporter PRIVATE ../src)
 # PdfExporter.cpp 用到 QWebEngineView/Page/Settings，缺 WebEngineWidgets 会链接失败；
 # 测试只调用静态 buildRenderHtml，从不构造 PdfExporter，不会触发无头渲染
 target_link_libraries(test_pdfexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets Qt6::Qml Qt6::Pdf)
 add_test(NAME test_pdfexporter COMMAND test_pdfexporter)
+
+# PdfPageGeometry：PDF 内容流几何测量（nativeHf 页脚定位的 SVG 底沿缺口
+# 修复件）——纯字节解析，无 Qt Gui/WebEngine 依赖
+add_executable(test_pdfpagegeometry test_pdfpagegeometry.cpp
+    ../src/core/PdfPageGeometry.cpp ../src/core/miniz/miniz.c)
+target_include_directories(test_pdfpagegeometry PRIVATE ../src)
+target_link_libraries(test_pdfpagegeometry PRIVATE Qt6::Test Qt6::Gui)
+add_test(NAME test_pdfpagegeometry COMMAND test_pdfpagegeometry)
 
 add_executable(test_systemthemewatcher test_systemthemewatcher.cpp
     ../src/app/SystemThemeWatcher.cpp)

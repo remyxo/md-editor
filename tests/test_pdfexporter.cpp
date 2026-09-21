@@ -156,17 +156,30 @@ private slots:
         QVERIFY(out.contains("window.__NATIVE_HF=true;"));
         QVERIFY(out.contains("<table class=\"hf\"><thead>"));        // 页眉重复带
         QVERIFY(out.contains("我的文档"));                             // 标题
-        QVERIFY(out.contains("__stampPageNumbers=function(n)"));   // 页码注入器
-        QVERIFY(out.contains("第 '+k+' 页 / 共 '+n+' 页"));           // 页脚文案
+        QVERIFY(out.contains("__stampPageNumbers=function(n,h1,hc,totalPx){"));   // 页码注入器
+        // 页脚位形（2026-09-21 像素取证定案）：Chromium 打印把每页绘制硬裁
+        // 到内容盒内——越片段末的一切绘制（1px 微行盒 past-end、abs 溢出）
+        // 产出全是不可见幽灵文本（矩阵在、像素无、QPdf bounds 全零），页脚
+        // 必须整体画在片段内；逐页底部保留带无机制（tfoot 不重复/clone 不适
+        // 用/边距同进退）。最终形态：abs 行盒 +2px 越段末（基线 777.7，字形
+        // 771-780 全片段内可见、各页含末页均一），与最深内容墨迹残余同带
+        // ~9pt 由白底遮挡
+        QVERIFY(out.contains("sp.style.position='absolute';"));
+        QVERIFY(out.contains("sp.style.padding='0 0 0 6px';"));
+        QVERIFY(out.contains("sp.style.top='calc(100% - -2.0px)';"));
+        QVERIFY(out.contains("sp.style.background='#fff';"));
+        QVERIFY(out.contains("sp.textContent='第 '+k+' 页 / 共 '+n+' 页';"));
+        QVERIFY(out.contains("if(totalPx>0)host.style.height=totalPx+'px';"));   // 宿主总高
+        // 页高分段：每片恰一页、首片扣 thead——分页器几何分段零校正
+        QVERIFY(out.contains("d.style.height=(k===1?h1:hc)+'px';"));
         QVERIFY(out.contains(
             "window.__printState=window.__NATIVE_HF?'nativehf':'legacy';"));
         QVERIFY(!out.contains("float:footnote"));                  // paged 专属不注入
         QVERIFY(out.contains("html,body{margin:0;padding:0;}"));   // 覆盖层坐标系归零
         QVERIFY(out.contains("window.__contentH="));              // 内容区高预计算
-        // 页码公式锁形：U=内容区高−页眉带（thead 每页重复占位，按整内容区高算
-        // 会逐页累积漂移 ~thead 高，E2E 实测错出一整页），标记落第 k 页底边距
-        QVERIFY(out.contains("var U=window.__contentH-window.__cellTop;"));
-        QVERIFY(out.contains("d.style.top=(k*U+8)+'px';"));
+        // 页码公式锁形：每片恰一页高、首片扣 thead（重复表头覆盖绘制不耗
+        // 流预算——各片同高会逐页上移一个表头高）；页码贴片末画在片段内
+        QVERIFY(out.contains("d.style.height=(k===1?h1:hc)+'px';"));   // 页高分段
         // 标题 HTML 转义（用户可命名任意字符）
         PdfPageSpec t = specWithHeader();
         t.nativeHf = true; t.headerTitle = QStringLiteral("a<b&\"c");
@@ -177,7 +190,7 @@ private slots:
         f.nativeHf = true; f.headerEnabled = false;
         QString fo = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", f);
         QVERIFY(!fo.contains("<table class=\"hf\">"));
-        QVERIFY(fo.contains("__stampPageNumbers=function(n)"));
+        QVERIFY(fo.contains("__stampPageNumbers=function(n,h1,hc,totalPx){"));
         // 仅页眉（无页脚）：table 在、无页码注入器（免数页数单遍直出）
         PdfPageSpec h = specWithHeader();
         h.nativeHf = true; h.footerEnabled = false;
@@ -443,11 +456,11 @@ private slots:
         QVERIFY(i >= 0);
         const qsizetype j = out.indexOf(QLatin1Char('}'), i);
         QVERIFY(out.mid(i, j - i + 1)
-                == QStringLiteral(".mermaid-diagram svg{max-height:259.0mm!important;}"));
+                == QStringLiteral(".mermaid-diagram svg{display:block;max-height:259.0mm!important;}"));
         // 横向 A4：内容盒高 210-36-2=172mm
         s.orientation = QPageLayout::Landscape;
         out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
-        QVERIFY(out.contains(".mermaid-diagram svg{max-height:172.0mm!important;}"));
+        QVERIFY(out.contains(".mermaid-diagram svg{display:block;max-height:172.0mm!important;}"));
         // 上限规则须在 @media print 之外（paged.js 在屏幕媒体上分页测量）
         QVERIFY(out.indexOf(".mermaid-diagram svg{")
                 < out.indexOf("@media print{"));
