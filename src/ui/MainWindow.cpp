@@ -11,6 +11,7 @@
 #include "SettingsDialog.h"
 #include "TableGridPopup.h"
 #include "AboutDialog.h"
+#include "ExportProgressDialog.h"
 #include "../core/EditorBridge.h"
 #include "../core/FileManager.h"
 #include "../core/MarkdownHandler.h"
@@ -40,6 +41,7 @@
 #include <QDropEvent>
 #include <QMimeData>
 #include <QKeySequence>
+#include <QPointer>
 
 // JS 单引号字符串字面量转义（路径等嵌入 runJavaScript；反斜杠/引号/换行——
 // Windows 路径 C:\Users\.. 的 \ 与含 ' 的 Unix 路径都会破坏字面量）
@@ -936,16 +938,23 @@ void MainWindow::onExportPdf()
     // 异步获取编辑器 HTML 内容（源码模式下取 source-view 当前内容经 toHtml，
     // 否则导出的是进入源码前的旧快照）
     getEditorHtmlAsync(tab, [this, path, docDir](const QString &html) {
+            // 进度对话框（2026-09-21）：paged.js 大文档导出以十秒计，静默等待
+            // 会让用户误以为卡死而随手关程序——模态展示「正在导出」，导出完成
+            // 前不可关闭；成功自动关闭，失败转错误态等用户确认。QPointer 防
+            // 对话框自销毁后迟到信号触空（WA_DeleteOnClose）
+            QPointer<ExportProgressDialog> dlg(new ExportProgressDialog(this));
+            dlg->show();
             auto *exporter = new PdfExporter(this);
             // 失败路径（空内容/引擎故障）须有反馈且回收导出器（其持有隐藏
             // 渲染视图，滞留即整个渲染进程泄漏到窗口关闭）
             connect(exporter, &PdfExporter::exportError, this,
-                    [this, exporter](const QString &err) {
+                    [this, exporter, dlg](const QString &err) {
                 m_statusBar->showMessage(tr("导出失败: %1").arg(err), 5000);
+                if (dlg) dlg->showError(err);
                 exporter->deleteLater();
             });
             connect(exporter, &PdfExporter::exportFinished, this,
-                    [this, exporter](bool ok, const QString &out) {
+                    [this, exporter, dlg](bool ok, const QString &out) {
                 // 本条是状态栏最后一条消息：走回退时并入回退说明并延长展示——
                 // pagedFallbackUsed 的独立提示早于 printToPdf 触发，1-3s 后即被
                 // 本条覆盖，用户须从这里得知产物无页眉页脚
@@ -954,6 +963,12 @@ void MainWindow::onExportPdf()
                         tr("已导出: %1（分页引擎回退，本次无页眉页脚）").arg(out), 6000);
                 else
                     m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
+                if (dlg) {
+                    if (ok)
+                        dlg->showFinished();
+                    else
+                        dlg->showError(tr("PDF 生成失败"));
+                }
                 exporter->deleteLater();
             });
             // paged.js 失败/超时回退原生分页——打印进行中的过渡提示（最终说明
@@ -965,9 +980,15 @@ void MainWindow::onExportPdf()
             // 分页进度：大文档分页以十秒计（2026-09-15 取证 ~0.8s/页），静默
             // 等待体感差——页数增长即刷新提示，导出完成后被结果消息覆盖
             connect(exporter, &PdfExporter::pagedProgress, this,
-                    [this](int pages) {
+                    [this, dlg](int pages) {
                 m_statusBar->showMessage(
                     tr("正在分页：已生成 %1 页…").arg(pages), 3000);
+                if (dlg) dlg->showPagedProgress(pages);
+            });
+            // 写盘阶段（printToPdf 前）：total>0 展示总页数，0 表示页数未知
+            connect(exporter, &PdfExporter::writingPdf, this,
+                    [dlg](int total) {
+                if (dlg) dlg->showWriting(total);
             });
             exporter->exportToPdf(html, docDir, path);
         });

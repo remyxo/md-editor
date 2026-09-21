@@ -124,3 +124,11 @@ add_executable(test_macinstallcheck test_macinstallcheck.cpp
 target_include_directories(test_macinstallcheck PRIVATE ../src)
 target_link_libraries(test_macinstallcheck PRIVATE Qt6::Test)
 add_test(NAME test_macinstallcheck COMMAND test_macinstallcheck)
+
+# 导出进度对话框：GIF 资源形状锁（qrc 资源须挂 app.qrc）+ 状态机
+# （Esc 不可关/错误态留住用户/成功自动关）
+add_executable(test_exportprogress test_exportprogress.cpp
+    ../src/ui/ExportProgressDialog.cpp ../src/resources/app.qrc)
+target_include_directories(test_exportprogress PRIVATE ../src)
+target_link_libraries(test_exportprogress PRIVATE Qt6::Test Qt6::Widgets)
+add_test(NAME test_exportprogress COMMAND test_exportprogress)

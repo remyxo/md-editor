@@ -3,6 +3,7 @@
         <file>themes/light.qss</file>
         <file>themes/dark.qss</file>
         <file>icons/md-editor.svg</file>
+        <file>icons/export-progress.gif</file>
         <file>icons/light/bold.svg</file>
         <file>icons/light/italic.svg</file>
         <file>icons/light/strikethrough.svg</file>

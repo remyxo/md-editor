@@ -20,6 +20,22 @@
 ### 实验 — CDP 原生打印（已否决删除）
 - 曾实现 CDP（Chrome DevTools Protocol）`Page.printToPdf` 快路径（Chromium 原生分页 + 原生页眉页脚模板，取证 16 页 13s → <2.2s），真机验证 Debian 与 macOS 的 Qt WebEngine 均报 `'Page.printToPdf' wasn't found`——该方法是 Chromium 无头模式专用，嵌入式 Chromium（Qt WebEngine/CEF 同构）非无头运行不注册，无 flag 可开。代码已整块删除，此路不通的结论留档免重蹈
 
+### 修复 — nativeHf 页码与页脚稳定性（用户多轮截图实证收敛）
+- **页脚位形像素取证定案** — Chromium 打印把每页绘制**硬裁到内容盒（fragment）内**：越片段末的一切绘制（relative 平移、abs 溢出、1px 微行盒 past-end）产出全是**不可见幽灵文本**（内容流矩阵在、QPdf bounds 全零、像素无）；逐页底部保留带无机制可实现（tfoot 不逐页重复、`box-decoration-break:clone` 块级分片不适用、@page 边距整体同进退）。最终形态：abs 行盒 +2px 越段末（A4/18mm 基线 777.7pt，各页含末页均一可见）+ 白底 span 遮挡与最深内容墨迹（表格行底边框）的 ~9pt 残余同带
+- **幽灵文本验证防线** — 成品逐页页码校验的匹配文本只取 QPdf bounds 非退化字符：矩阵基的色锚定测量对幽灵文本全盲，曾致全档幽灵页码假通过
+- **页码分段堆叠重写** — 每片恰一页高（首片扣 thead：页 1 真实占位、页 2+ 重复表头覆盖绘制不耗流），几何分段与内容推挤/墨底解耦——取代 T/Hc 流模型累计与实测校正轮（21 页文档墨底累计漂移整页的旧方案）
+- **页码漂移双根源** — ① mermaid SVG 固有宽撑爆文档 min-content → shrink-to-fit 全局缩印（实测 0.5×）→ 每页流耗翻倍 → 覆盖层逐页早移：svg 补 `max-width:100%` 钳制；② QPdf 提取器把「第 12 页」数字拆 run 伪影：校验改正则全局扫描
+- **校验白名单剥离** — 提取流逐字形 `\r\n` 与不可见非字符混进页码字形序列是「标记消失」假象的唯一真凶：匹配前白名单剥离
+- **PdfPageGeometry 内容流几何测量模块** — CTM/GState/文本矩阵/Form XObject/图片 Do/路径绘制/裁剪纪律/miniz Flate 解压 + 页脚色锚定（`rgb(102,102,103)` 蓝通道 +1 为文档内唯一标识）：补齐 SVG/图片等无文本内容元素的底沿测量缺口（QPdf 文本接口量不到矢量图形）；8 项单测
+- **表格行/mermaid 与页脚同带相压** — 单元格底垫（`th,td` 行底 22px 净空，页脚带只剩边线穿过、页码白底跨线可读）+ 行原子性（Chromium 行分片绘制越过分页器末端直插下边距的实测）+ nativeHf 接入跨引擎列宽归一（`__fixTableColumns` 两趟 intrinsic 测量，与 paged 路径同源，短列塌缩/长列霸宽双症状）
+- **分页指纹对称修复** — `__preText`/`__verifyContent` 两侧对称剔除 script/style：MarkdownHandler 产物的内嵌文档 head 与 mermaid SVG 内嵌 `<style>`（每图 ~1KB）单侧计入即假阳性（实测 28913→28154 字差触发无谓回退）
+
+### 新增 — PDF 导出进度对话框
+- paged.js 大文档导出以十秒计、nativeHf 也有秒级两遍打印，全程静默会让用户误以为卡死而随手关闭程序（半成品文件 + 隐藏渲染视图随窗口销毁）。模态对话框：左侧 12 帧蓝色旋转弧 GIF（透明底、明暗主题通用），导出完成前不可关闭（无关闭按钮、Esc 无效、标题栏 X 拦截）
+- **两阶段进度**：分页「正在排版分页 · 已生成 k 页」（复用 pagedProgress 轮询）；写盘「共 N 页 · 正在写出 PDF…」（新 `writingPdf` 信号——Chromium printToPdf 是一次性黑盒，无逐页写出进度，页数未知路径降级为「正在写出 PDF…」）
+- **成功自动关闭；失败转错误态不自动关闭**——停动画、显示失败原因（可选中复制）、出现「关闭」按钮，用户确认后才消失（静默自动关闭会让用户不知道导出失败）
+- GIF 资源形状锁入测试（尺寸/帧数/透明底/每帧墨迹像素）：生成管线两教训——`putpalette` 必须打到每帧 P 图上（打在模板图不生效 → Pillow 逐帧重量化出本地调色板，QGifHandler 解码即毁）；GIF 无半透明，alpha 渐隐拖尾设计不成立（统一实心蓝开口弧）
+
 ### 构建
 - 新增依赖 Qt6 Pdf（页数统计与逐页页码校验）：deb 依赖/CI（deb/macOS）、win11 VM provision、clang 容器镜像同步
 
