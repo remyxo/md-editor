@@ -2,6 +2,9 @@
 #include <QTemporaryDir>
 #include <QDir>
 #include <QFile>
+#include <QJSEngine>
+#include <QJSValue>
+#include <QRegularExpression>
 #include "../src/core/HtmlExporter.h"
 
 class TestHtmlExporter : public QObject {
@@ -96,6 +99,38 @@ private slots:
         // > div > p 只命中任务项内容直接段落，嵌套列表段落不受影响
         QVERIFY(HtmlExporter::bodyCss("light").contains("ul[data-type=\"taskList\"] > li > div > p{margin:0;}"));
         QVERIFY(HtmlExporter::bodyCss("dark").contains("ul[data-type=\"taskList\"] > li > div > p{margin:0;}"));
+    }
+
+    void testBodyCssFootnoteMarkerInlineLayout() {
+        // 脚注编号与内容需同行（镜像 editor.css）：marker 浮动 + 首子元素去顶距。
+        // footnote-content 是块级 div，无此规则时行内 marker 后跟块级元素被拆成
+        // 匿名块、编号独占一行（用户实测：导出 HTML 里脚注名与脚注内容换行）。
+        // PDF 模板早有同款复刻，HTML 导出此前两套主题都缺
+        for (const char *theme : {"light", "dark"}) {
+            const QString css = HtmlExporter::bodyCss(theme);
+            QVERIFY(css.contains("div[data-type=\"footnoteDef\"]{margin:.25em 0;overflow:hidden;}"));
+            QVERIFY(css.contains(".footnote-marker{float:left;margin-right:.35em;font-weight:600;"));
+            QVERIFY(css.contains("div[data-type=\"footnoteDef\"] .footnote-content>*:first-child{margin-top:0;}"));
+            QVERIFY(css.contains("div[data-type=\"footnoteContainer\"]{margin-top:2em;padding-top:.75em;"));
+        }
+        QVERIFY(HtmlExporter::bodyCss("light").contains("color:#1967d2;"));
+        QVERIFY(HtmlExporter::bodyCss("dark").contains("color:#8ab4f8;"));
+    }
+
+    void testBodyCssDocumentLevelOverflowWrap() {
+        // 连续无空格长串（2.3 节色块串）必须在文档级断行：无此规则时 li 内长串
+        // 横向溢出正文盒（实测 scrollWidth>clientWidth、内容被裁），而编辑器与
+        // 两条 PDF 路径均折行——同一文档四处呈现分叉。须挂在 body 上而非
+        // 局部元素：anywhere 同时收敛 min-content，避免长串撑爆文档最小宽度
+        for (const char *theme : {"light", "dark"}) {
+            const QString css = HtmlExporter::bodyCss(theme);
+            const int bodyPos = css.indexOf("body{font-family:");
+            QVERIFY(bodyPos >= 0);
+            const int bodyEnd = css.indexOf('}', bodyPos);
+            QVERIFY(bodyEnd > bodyPos);
+            QVERIFY2(css.mid(bodyPos, bodyEnd - bodyPos).contains("overflow-wrap:anywhere;"),
+                     theme);
+        }
     }
 
     void testRenderScriptUsesTheme() {
@@ -206,6 +241,80 @@ private slots:
         QVERIFY(html.contains("%99"));
         // 脚本块插在 </body> 前，只断言 body 开头连续段
         QVERIFY(html.contains("<body>" + body));
+    }
+
+    void testTableColumnNormalizeScriptShape() {
+        // 表格列宽归一（短列保真、长列吸收）：浏览器 auto 布局下 CJK 列的
+        // min-content 塌缩为单字宽，富余宽按 max-content 比例尽归长列——「编号」
+        // 列放不下「001」（折两行）、「状态」列把「已完成」压成一字一行。与 PDF
+        // 导出共用这一份实现（PdfExporter 侧经 __fixTableColumns 兼容层调用）
+        const QString js = HtmlExporter::tableColumnNormalizeScript();
+        QVERIFY(js.contains("window.__normalizeTableColumns=function(cfg){"));
+        // 两趟 intrinsic 测量：min-content 作保底、max-content 作期望
+        QVERIFY(js.contains("table.style.width='min-content'"));
+        QVERIFY(js.contains("table.style.width='max-content'"));
+        // 测量期关断行（拉丁整词/CJK 逐字才是自然断行单元）；字号/边距/字族按
+        // cfg 可选——HTML 导出不传（按产物实际渲染样式测），PDF 传打印基准
+        QVERIFY(js.contains("all[i].style.overflowWrap='normal';"));
+        QVERIFY(js.contains("all[i].style.wordBreak='keep-all';"));
+        QVERIFY(js.contains("if(cfg.fontSize)all[i].style.fontSize=cfg.fontSize;"));
+        QVERIFY(js.contains("if(cfg.padding)all[i].style.padding=cfg.padding;"));
+        QVERIFY(js.contains("if(cfg.fontFamily)table.style.fontFamily=cfg.fontFamily;"));
+        // 百分比固定列：colgroup + 每行单元格内联宽都写（paged.js 跨页碎片是
+        // cloneNode(false) 浅克隆、丢 colgroup 子元素，只写 colgroup 会换页错列）
+        QVERIFY(js.contains("col.style.width=(w[c2]/total*100).toFixed(3)+'%';"));
+        QVERIFY(js.contains("rows[r].children[c].style.width=(wp/total*100).toFixed(3)+'%';"));
+        QVERIFY(js.contains("table.style.tableLayout='fixed';"));
+        // 包装表（PDF nativeHf 的 table.hf）跳过：污染全文档单元格的测量
+        QVERIFY(js.contains("if(table.classList.contains('hf'))return;"));
+        // 每表可用宽：HTML 导出取表自身盒宽再切 display:table（body.clientWidth
+        // 含内边距会用宽 64px ⇒ 分配整体缩水、状态列仍差 5px 折行，实测）；
+        // PDF 侧不传 toTable，沿用页宽基准（其表格宽度随内容，量自身盒宽会拿到溢出宽）
+        // slack 余量：HTML 导出传 2px（百分比折算+边框折叠吃掉零点几像素，
+        // 短列卡在 max-content 边界即折行）；PDF 不传 ⇒ 既有产物逐页不变
+        QVERIFY(js.contains("maxW[j]+=(cfg.slack||0)"));
+        QVERIFY(js.contains("if(cfg.toTable){"));
+        QVERIFY(js.contains("if(table.clientWidth>0)myAvail=table.clientWidth;"));
+        QVERIFY(js.contains("table.style.display='table';"));
+    }
+
+    void testExportHtmlNormalizesTableColumns() {
+        // 导出产物必须自带归一脚本与 load 后自调用：无这一步，CJK 短列被压成
+        // 一字一行（用户实测 1.1 节 60 行表：编号列「001」折两行、状态列
+        // 「已完成」一字一行）。display 由 CSS 的 block（宽表横向滚动兜底）
+        // 切回 table，归一的固定布局才有意义
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString out = dir.path() + "/t.html";
+        HtmlExporter exporter;
+        exporter.exportToHtml("<table><tr><th>编号</th><th>状态</th></tr>"
+                              "<tr><td>001</td><td>已完成</td></tr></table>",
+                              dir.path(), out, "light");
+        QFile f(out);
+        QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QString html = QString::fromUtf8(f.readAll());
+        f.close();
+        QVERIFY(html.contains("window.__normalizeTableColumns=function(cfg){"));
+        QVERIFY(html.contains("window.__normalizeTableColumns({toTable:true,slack:2});"));
+        // 全部内联 <script> 语法有效：语法错即整块解析失败，归一静默失效，
+        // 而子串断言测不出来（同 PDF 侧 testBuildRenderHtmlInlineScriptsSyntaxValid）
+        QRegularExpression re("<script>(.*?)</script>",
+                              QRegularExpression::DotMatchesEverythingOption);
+        auto it = re.globalMatch(html);
+        int n = 0;
+        while (it.hasNext()) {
+            const QString js = it.next().captured(1);
+            // QJSEngine 要求先有 QCoreApplication（本测试族是 QTEST_APPLESS_MAIN）
+            static int argc = 1;
+            static char arg0[] = "test";
+            static char *argv[] = {arg0, nullptr};
+            static QCoreApplication app(argc, argv);
+            QJSEngine engine;
+            QJSValue r = engine.evaluate("(function(){\n" + js + "\n})");
+            QVERIFY2(!r.isError(),
+                     qPrintable(QStringLiteral("内联脚本%1语法错误: %2").arg(n).arg(r.toString())));
+            ++n;
+        }
+        QVERIFY(n >= 2);   // 渲染驱动脚本 + 列宽归一脚本
     }
 };
 

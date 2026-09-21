@@ -48,6 +48,12 @@ public:
     // 提为静态函数供单测锁形（每边 > 0 且 <= 1.0mm）
     static QMarginsF pagedPrintMargins();
 
+    // nativeHf 路径的 Qt 打印边距：同样取 0.1mm 微量值，但语义不同——
+    // 打印区须覆盖整张纸（页眉带占纸顶、页脚覆盖层落纸底带），用户页边距
+    // 由流内结构模拟（thead 带 = 上边距、强制分页 = 下边距、内容格 padding
+    // = 左右边距）。见 nativeHfPrintMargins 实现处注释
+    static QMarginsF nativeHfPrintMargins();
+
     // 本次导出是否走了回退（paged.js 失败/超时/内容校验不过 → 原生分页，产物
     // 无页眉页脚）。pagedFallbackUsed 信号先于 printToPdf 触发，其状态栏提示
     // 会被随后的导出成功消息覆盖——调用方须在 exportFinished 时据此把回退
@@ -88,12 +94,13 @@ private:
     int m_nativeHfPass = 0;   // 0=非该路径；1=数页数遍；2=成品遍
     QJsonArray m_hfTops;      // 覆盖层页码标记纵向（px，T/H_c 流模型累计）
     int m_hfTotal = 0;        // 总页数
-    qreal m_hfH1Px = 0;       // 页码首片高（内容区高 − thead，页 1 占位）
-    qreal m_hfHcPx = 0;       // 页码后续片高（内容区高）
+    qreal m_hfH1Px = 0;       // 页码首片高（= 打印片段高；新版式不再扣 thead）
+    qreal m_hfHcPx = 0;       // 页码后续片高（同上）
     qreal m_hfTotalPx = 0;    // numhost 总高（n 片和 = n 页）
     void stampAndPrintHf();   // 注入标记并打成品（首轮与校正轮共用）
     QPageLayout m_pendingLayout;   // paged 版式（0.1mm 微量边距——@page 已承载页边距，见 pagedPrintMargins）
     QPageLayout m_legacyLayout;    // 原生版式（用户边距）——legacy/回退共用
+    QPageLayout m_nativeHfLayout;  // nativeHf 版式（整纸打印区——页边距由流内结构模拟）
     // runJavaScript 不等待 Promise（Qt 6.8 实测回调立即触发），完成态靠轮询
     // window.__printState（paged/legacy/fallback）获取
     QTimer m_printPoll;

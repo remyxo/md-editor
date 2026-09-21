@@ -145,51 +145,82 @@ private slots:
     }
 
     void testBuildRenderHtmlNativeHf() {
-        // 原生分页+覆盖层页眉页脚（2026-09-19 提速方案，print-probe 实证）：
-        // thead 每页重复承载标题带，页码 __stampPageNumbers 以 abs 覆盖层画进
-        // 下边距（top=k*contentH+8 每页精确落位、不增页）；不注入 paged.js，
-        // __preparePrint 在无 PagedPolyfill 时按 __NATIVE_HF 置 nativehf 态
+        // 原生分页+覆盖层页眉页脚（2026-09-19 提速；2026-09-21 版式重做对齐
+        // paged.js）：打印区覆盖整张纸，页边距改由流内结构模拟——thead 带高
+        // = 用户上边距（带内标题墨迹垫到纸顶 ~7.4mm，与 @top-center 同落点）、
+        // 逐页强制分页（__paginateNativeHf）模拟下边距、内容格 padding 模拟
+        // 左右边距；页脚覆盖层落在纸底带（字形底距纸底 ~8mm，与 @bottom-right
+        // 同带）。不注入 paged.js，__preparePrint 在无 PagedPolyfill 时按
+        // __NATIVE_HF 置 nativehf 态
         PdfPageSpec s = specWithHeader();
         s.nativeHf = true;
+        s.marginsMm = QMarginsF(18, 18, 18, 18);
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
         QVERIFY(!out.contains("paged.polyfill.js"));
         QVERIFY(out.contains("window.__NATIVE_HF=true;"));
         QVERIFY(out.contains("<table class=\"hf\"><thead>"));        // 页眉重复带
         QVERIFY(out.contains("我的文档"));                             // 标题
         QVERIFY(out.contains("__stampPageNumbers=function(n,h1,hc,totalPx){"));   // 页码注入器
-        // 页脚位形（2026-09-21 像素取证定案）：Chromium 打印把每页绘制硬裁
-        // 到内容盒内——越片段末的一切绘制（1px 微行盒 past-end、abs 溢出）
-        // 产出全是不可见幽灵文本（矩阵在、像素无、QPdf bounds 全零），页脚
-        // 必须整体画在片段内；逐页底部保留带无机制（tfoot 不重复/clone 不适
-        // 用/边距同进退）。最终形态：abs 行盒 +2px 越段末（基线 777.7，字形
-        // 771-780 全片段内可见、各页含末页均一），与最深内容墨迹残余同带
-        // ~9pt 由白底遮挡
+        // 页眉带：高 = 用户上边距（此处 18mm = 12mm 带高 + 3mm 底部净空），
+        // 文字底对齐压向正文顶线（Word 式贴页边距；居中悬在页边距带中央的
+        // 旧式让墨迹离纸边仅 ~8mm，打印机不可打印边距 4-6mm 时太薄）
+        QVERIFY(out.contains("padding:0 0 3.00mm 0;height:15.00mm"));
+        QVERIFY(out.contains("vertical-align:bottom"));
+        // 内容格：左右 padding 模拟页边距，宽度由渲染视图尺寸决定（不再钉宽）
+        QVERIFY(out.contains("#hfcell{padding:0 18.00mm 0 18.00mm;}"));
+        QVERIFY(!out.contains("width:65"));               // 无钉宽（auto 布局里也钉不住）
+        // 包装表 fixed 布局：列宽不受内容影响，截住 min-content 撑爆
+        QVERIFY(out.contains("table.hf{table-layout:fixed;}"));
+        // 页脚位形：打印区覆盖整纸，页码盒整体落在片段内的纸底带（不再越段
+        // 末）。**位置由下边距推导**：行盒顶 = 正文底线（纸底 − 下边距）+ 净空
+        // 3mm（kHfHugGapMm，与 paged 路径 @bottom-right 的
+        // vertical-align:top + padding-top 同式同值）——不再写死"距纸底 8mm"；
+        // 18mm 下边距 ⇒ 偏移 15mm，墨迹落在距纸底 ~10.9mm（可打印余量充足）。
+        // 右缘退右页边距与正文右边界对齐
         QVERIFY(out.contains("sp.style.position='absolute';"));
         QVERIFY(out.contains("sp.style.padding='0 0 0 6px';"));
-        QVERIFY(out.contains("sp.style.top='calc(100% - -2.0px)';"));
-        QVERIFY(out.contains("sp.style.background='#fff';"));
+        QVERIFY(out.contains("sp.style.top='calc(100% - 15.00mm)';"));
+        QVERIFY(out.contains("sp.style.right='18.00mm';"));
         QVERIFY(out.contains("sp.textContent='第 '+k+' 页 / 共 '+n+' 页';"));
         QVERIFY(out.contains("if(totalPx>0)host.style.height=totalPx+'px';"));   // 宿主总高
-        // 页高分段：每片恰一页、首片扣 thead——分页器几何分段零校正
+        // 页高分段：每片恰一页高（新版式页眉带已移出片段内位移，首片不再扣 thead）
         QVERIFY(out.contains("d.style.height=(k===1?h1:hc)+'px';"));
+        // 轻量分页：切页器 + 页内容高预算 + 单块超页高计数（C++ 据此提前回退）
+        QVERIFY(out.contains("window.__paginateNativeHf=function(Hpx,MbPx){"));
+        QVERIFY(out.contains("window.__hfPageContentPx="));
+        QVERIFY(out.contains("window.__hfPageMarginBottomPx="));
+        // 安全断点：li 上任意层级可断（探针实测），li 内部的非 li 元素不可断
+        // （同探针实测会失效、内容错位）；不可断单元按自然页格同步 pageTop
+        QVERIFY(out.contains("if(t==='LI'){desc(el,el,true);return;}"));
+        QVERIFY(out.contains("var natCap=Hpx+MbPx;"));
+        QVERIFY(out.contains("window.__hfPagTall=tall;"));
+        // 断点经 breakAt 落位：li 上直接打，li 内部走就地拆 li（拆分手术当前
+        // 暂缓 → 判为不可断，故 li 内部单元不会进断点分支）
+        QVERIFY(out.contains("breakAt(u[0]);"));
+        // 包装表必须被列宽归一跳过：它的 querySelectorAll 覆盖全文档，会给
+        // 每个单元格写下"本表格列宽"（100%）污染内层测量
+        QVERIFY(out.contains("if(table.classList.contains('hf'))return;"));
+        // 屏幕视口禁滚动条（测量期临时压制）：屏幕布局必须 = 打印布局
+        QVERIFY(out.contains("document.documentElement.style.overflow='hidden';"));
+        QVERIFY(out.contains("document.documentElement.style.overflow='';"));
+        // 基础 CSS 媒体包装：nativeHf 不包（屏幕布局 = 打印布局的前提）
+        QVERIFY(!out.contains("@media print{"));
         QVERIFY(out.contains(
             "window.__printState=window.__NATIVE_HF?'nativehf':'legacy';"));
         QVERIFY(!out.contains("float:footnote"));                  // paged 专属不注入
         QVERIFY(out.contains("html,body{margin:0;padding:0;}"));   // 覆盖层坐标系归零
-        QVERIFY(out.contains("window.__contentH="));              // 内容区高预计算
-        // 页码公式锁形：每片恰一页高、首片扣 thead（重复表头覆盖绘制不耗
-        // 流预算——各片同高会逐页上移一个表头高）；页码贴片末画在片段内
-        QVERIFY(out.contains("d.style.height=(k===1?h1:hc)+'px';"));   // 页高分段
+        QVERIFY(!out.contains("padding-bottom:22px"));             // 旧底垫 hack 已撤
         // 标题 HTML 转义（用户可命名任意字符）
         PdfPageSpec t = specWithHeader();
         t.nativeHf = true; t.headerTitle = QStringLiteral("a<b&\"c");
         QString esc = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", t);
         QVERIFY(esc.contains("a&lt;b&amp;&quot;c"));
-        // 仅页脚（无页眉）：无 table 包装仍有页码注入器
+        // 仅页脚（无页眉）：包装表仍在（新版式下正文顶 = 带高，页眉开关不得
+        // 改变正文版式），thead 留空带；页码注入器照旧
         PdfPageSpec f = specWithHeader();
         f.nativeHf = true; f.headerEnabled = false;
         QString fo = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", f);
-        QVERIFY(!fo.contains("<table class=\"hf\">"));
+        QVERIFY(fo.contains("<table class=\"hf\"><thead><tr><td></td>"));
         QVERIFY(fo.contains("__stampPageNumbers=function(n,h1,hc,totalPx){"));
         // 仅页眉（无页脚）：table 在、无页码注入器（免数页数单遍直出）
         PdfPageSpec h = specWithHeader();
@@ -210,11 +241,28 @@ private slots:
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
         QVERIFY(out.contains("white-space:pre-wrap;overflow-wrap:anywhere;"));
         QVERIFY(!out.contains("overflow-x:auto"));
+        // 4) 连续无空格长串（长 URL/色块串）Must 能断行：只给 th,td 加的话，
+        //    nativeHf 因正文包在包装表单元格里而全篇继承、paged 路径不继承
+        //    ——同一文档两路折行行为分叉（实测 2.3 节超长列表项在 paged 路径
+        //    墨迹直达纸边被页盒裁掉，nativeHf 正常折行）。提到文档级后两路
+        //    一致；anywhere 而非 break-word：前者同时收敛 min-content
+        QVERIFY(out.contains("overflow-wrap:anywhere;}"));
         // tr/th/td 三级齐上：paged.js 元素分支只对 td/th 的 avoid 走「整行带走」
         // 工作区（上游注释：take the whole row, not just the cell），tr 单加时
         // 行内断点仍穿透——R3 实测第 17/46 行整行静默丢失
         QVERIFY(out.contains("tr,th,td{break-inside:avoid;}"));
         QVERIFY(out.contains("pre .pl{display:block;break-inside:avoid;}"));
+        // 5) 跨页代码块的底色落在**行块**上（逐行重排后 JS 清掉 pre 自身底色）：
+        //    pre 跨页时其背景会被 Chromium 画到片段容器末端——快路径可打印区覆盖
+        //    整张纸，那片底色一直画到纸底压过页脚（实测灰底 242→296.6mm，用户
+        //    截图）。行块 break-inside:avoid 永不跨页 ⇒ 背景不越界
+        QVERIFY(out.contains("pre .pl{background:#f4f5f7;padding:0 14px;}"));
+        QVERIFY(out.contains("pre .pl:first-child{padding-top:10px;border-radius:4px 4px 0 0;}"));
+        QVERIFY(out.contains("pre .pl:last-child{padding-bottom:10px;border-radius:0 0 4px 4px;}"));
+        QVERIFY(out.contains("pre.style.background='transparent';pre.style.padding='0';"));
+        // <code> 的底色/内边距同样清掉：逐行重排后它的块级子元素会切开行内盒，
+        // 首尾空碎片各带一份底色内边距，在代码块上下画出细灰条
+        QVERIFY(out.contains("pre code{background:none;padding:0;border-radius:0;}"));
         QVERIFY(out.contains("__splitPreLines"));
         // 逐行重排仅 paged 路径调用（legacy 走原生分页，pre 由引擎处理）
         QVERIFY(out.indexOf("window.__splitPreLines();")
@@ -339,6 +387,11 @@ private slots:
         QVERIFY(out.contains("我的文档"));
         QVERIFY(out.contains("@bottom-right"));
         QVERIFY(out.contains("counter(page)"));
+        // 页眉页脚贴页边距（与 nativeHf 同式）：paged.js 把页边距盒里的
+        // vertical-align 翻译成 align-items（bottom→flex-end / top→flex-start），
+        // 即"贴向正文一侧"；padding 留与正文的净空（kHfHugGapMm = 3mm）
+        QVERIFY(out.contains("vertical-align:bottom;padding-bottom:3.00mm;"));
+        QVERIFY(out.contains("vertical-align:top;padding-top:3.00mm;"));
         QVERIFY(out.contains("counter(pages)"));
         QVERIFY(out.contains("paged.polyfill.js"));
         QVERIFY(out.contains("PagedConfig={auto:false}"));
@@ -456,11 +509,11 @@ private slots:
         QVERIFY(i >= 0);
         const qsizetype j = out.indexOf(QLatin1Char('}'), i);
         QVERIFY(out.mid(i, j - i + 1)
-                == QStringLiteral(".mermaid-diagram svg{display:block;max-height:259.0mm!important;}"));
+                == QStringLiteral(".mermaid-diagram svg{display:block;max-height:255.0mm!important;}"));
         // 横向 A4：内容盒高 210-36-2=172mm
         s.orientation = QPageLayout::Landscape;
         out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
-        QVERIFY(out.contains(".mermaid-diagram svg{display:block;max-height:172.0mm!important;}"));
+        QVERIFY(out.contains(".mermaid-diagram svg{display:block;max-height:168.0mm!important;}"));
         // 上限规则须在 @media print 之外（paged.js 在屏幕媒体上分页测量）
         QVERIFY(out.indexOf(".mermaid-diagram svg{")
                 < out.indexOf("@media print{"));
@@ -490,13 +543,13 @@ private slots:
         // 恰成一对——max-height 收缩高度时只有 width:auto 才按纵横比等比缩宽
         // （CSS 替换元素约束），字符串层测不了渲染尺寸，锁规则形状是唯一护栏
         QVERIFY(out.contains(QStringLiteral(
-            "img:not([width]):not([style]){max-height:259.0mm!important;"
+            "img:not([width]):not([style]){max-height:255.0mm!important;"
             "width:auto!important;}")));
         // 横向 A4：内容盒高 210-36-2=172mm
         s.orientation = QPageLayout::Landscape;
         out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
         QVERIFY(out.contains(QStringLiteral(
-            "img:not([width]):not([style]){max-height:172.0mm!important;"
+            "img:not([width]):not([style]){max-height:168.0mm!important;"
             "width:auto!important;}")));
         // 两条规则均须在 @media print 之外——paged.js 在屏幕媒体上分页测量：
         // max-width 只在打印媒体生效时，超宽图屏幕布局无宽度约束 → 横向溢出
@@ -560,6 +613,13 @@ private slots:
         QVERIFY(m.top() > 0.0 && m.top() <= 1.0);
         QVERIFY(m.right() > 0.0 && m.right() <= 1.0);
         QVERIFY(m.bottom() > 0.0 && m.bottom() <= 1.0);
+        // nativeHf 版式同理取微量值：打印区须覆盖整张纸（页眉带占纸顶、
+        // 页脚覆盖层落纸底带），页边距由流内结构模拟
+        const QMarginsF n = PdfExporter::nativeHfPrintMargins();
+        QVERIFY(n.left() > 0.0 && n.left() <= 1.0);
+        QVERIFY(n.top() > 0.0 && n.top() <= 1.0);
+        QVERIFY(n.right() > 0.0 && n.right() <= 1.0);
+        QVERIFY(n.bottom() > 0.0 && n.bottom() <= 1.0);
     }
 
     void testBuildRenderHtmlTitleEscaped() {

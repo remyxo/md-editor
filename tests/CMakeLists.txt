@@ -33,7 +33,8 @@ add_test(NAME test_imagemanager COMMAND test_imagemanager)
 
 add_executable(test_htmlexporter test_htmlexporter.cpp ../src/core/HtmlExporter.cpp)
 target_include_directories(test_htmlexporter PRIVATE ../src)
-target_link_libraries(test_htmlexporter PRIVATE Qt6::Test)
+# Qt6::Qml 供 QJSEngine 做内联脚本语法检查（列宽归一脚本一处语法错即静默失效）
+target_link_libraries(test_htmlexporter PRIVATE Qt6::Test Qt6::Qml)
 add_test(NAME test_htmlexporter COMMAND test_htmlexporter)
 
 add_executable(test_docxexporter test_docxexporter.cpp ../src/core/DocxExporter.cpp ../src/core/miniz/miniz.c ../src/core/MermaidRenderer.cpp ../src/core/MathMlRenderer.cpp ../src/core/MathMlConverter.cpp)

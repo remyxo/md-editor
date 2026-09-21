@@ -114,8 +114,14 @@ QString HtmlExporter::bodyCss(const QString &theme)
     const bool dark = (theme == "dark");
     if (dark) {
         return QStringLiteral(
+            // 文档级折行：连续无空格长串（2.3 节色块串）必须能断行，否则横向
+            // 撑爆正文盒（实测 li 内 scrollWidth>clientWidth、内容右溢被裁），
+            // 而编辑器与两条 PDF 路径均折行——同一份文档四处呈现分叉。PDF 模板
+            // 同款规则（见 PdfExporter 基础 CSS）：取 anywhere 而非 break-word，
+            // 前者同时收敛 min-content，避免长串撑爆文档最小宽度
             "body{font-family:\"Noto Sans SC\",\"DejaVu Sans\",sans-serif;font-size:16px;"
-            "line-height:1.7;color:#c9d1d9;background:#0d1117;max-width:860px;margin:0 auto;padding:40px 32px;}"
+            "line-height:1.7;color:#c9d1d9;background:#0d1117;max-width:860px;margin:0 auto;"
+            "padding:40px 32px;overflow-wrap:anywhere;}"
             "h1,h2,h3,h4,h5,h6{line-height:1.3;margin:1.2em 0 .5em;font-weight:600;}"
             "h1{font-size:2em;border-bottom:1px solid #30363d;padding-bottom:.3em;}"
             "h2{font-size:1.5em;border-bottom:1px solid #30363d;padding-bottom:.3em;}"
@@ -136,12 +142,21 @@ QString HtmlExporter::bodyCss(const QString &theme)
         "ul[data-type=\"taskList\"] > li{display:flex;align-items:flex-start;gap:8px;}"
         "ul[data-type=\"taskList\"] > li label{margin-top:3px;}"
         "ul[data-type=\"taskList\"] > li > div > p{margin:0;}"
+            // 脚注基础版式（编号与内容同行的关键，自 editor.css 暗色版复刻）
+            "[data-type=\"footnoteRef\"]{color:#8ab4f8;}"
+            "div[data-type=\"footnoteContainer\"]{margin-top:2em;padding-top:.75em;"
+            "border-top:1px solid #3c4043;font-size:.9em;}"
+            "div[data-type=\"footnoteDef\"]{margin:.25em 0;overflow:hidden;}"
+            ".footnote-marker{float:left;margin-right:.35em;font-weight:600;color:#8ab4f8;}"
+            "div[data-type=\"footnoteDef\"] .footnote-content>*:first-child{margin-top:0;}"
             "[data-type=\"block-math\"]{display:block;text-align:center;margin:1em 0;overflow-x:auto;}"
             "[data-mermaid]{text-align:center;margin:1em 0;}");
     }
     return QStringLiteral(
+        // 文档级折行：同暗色版（缘由见上），连续无空格长串溢出正文盒
         "body{font-family:\"Noto Sans SC\",\"DejaVu Sans\",sans-serif;font-size:16px;"
-        "line-height:1.7;color:#24292f;background:#ffffff;max-width:860px;margin:0 auto;padding:40px 32px;}"
+        "line-height:1.7;color:#24292f;background:#ffffff;max-width:860px;margin:0 auto;"
+        "padding:40px 32px;overflow-wrap:anywhere;}"
         "h1,h2,h3,h4,h5,h6{line-height:1.3;margin:1.2em 0 .5em;font-weight:600;}"
         "h1{font-size:2em;border-bottom:1px solid #eaecef;padding-bottom:.3em;}"
         "h2{font-size:1.5em;border-bottom:1px solid #eaecef;padding-bottom:.3em;}"
@@ -162,6 +177,16 @@ QString HtmlExporter::bodyCss(const QString &theme)
         "ul[data-type=\"taskList\"] > li{display:flex;align-items:flex-start;gap:8px;}"
         "ul[data-type=\"taskList\"] > li label{margin-top:3px;}"
         "ul[data-type=\"taskList\"] > li > div > p{margin:0;}"
+        // 脚注基础版式（编号与内容同行的关键，自 editor.css 复刻）：marker 浮动 +
+        // 首子元素去顶距。footnote-content 是块级 div，无此规则时行内 marker 后跟
+        // 块级元素被拆成匿名块、编号独占一行（用户实测：导出 HTML 里脚注名与脚注
+        // 内容换行）。PDF 模板早有同款复刻，HTML 导出此前两套主题都缺
+        "[data-type=\"footnoteRef\"]{color:#1967d2;}"
+        "div[data-type=\"footnoteContainer\"]{margin-top:2em;padding-top:.75em;"
+        "border-top:1px solid #e0e0e0;font-size:.9em;}"
+        "div[data-type=\"footnoteDef\"]{margin:.25em 0;overflow:hidden;}"
+        ".footnote-marker{float:left;margin-right:.35em;font-weight:600;color:#1967d2;}"
+        "div[data-type=\"footnoteDef\"] .footnote-content>*:first-child{margin-top:0;}"
         "[data-type=\"block-math\"]{display:block;text-align:center;margin:1em 0;overflow-x:auto;}"
         "[data-mermaid]{text-align:center;margin:1em 0;}");
 }
@@ -196,6 +221,134 @@ QString HtmlExporter::mermaidRenderScript(const QString &theme)
         "})(pres[j]);}"
         "Promise.all(jobs).then(function(){resolve();});"
         "});};").arg(mermaidTheme);
+}
+
+QString HtmlExporter::tableColumnNormalizeScript()
+{
+    // 表格列宽归一：短列保真、长列吸收。HTML 导出与 PDF 导出共用同一实现
+    //（PDF 侧经 __fixTableColumns 兼容层调用，见 PdfExporter 的 preparePrint）。
+    //
+    // 为何要显式分配：浏览器 auto 布局下 CJK 列可任意字间断行 ⇒ 其 min-content
+    // 塌缩为单字宽，富余宽度按 max-content 比例尽归长列——「编号」列放不下三位
+    // 数字（001 折两行）、「状态」列把「已完成」压成一字一行（用户实测 HTML 导出
+    // 1.1 节 60 行表；PDF 侧同因，见 PdfExporter 该函数原注释）。方案：两趟
+    // intrinsic 测量（min-content 作保底、max-content 作期望；测量期临时关掉
+    // anywhere 并把字族/字号/边距固定到目标渲染基准——拉丁整词与 CJK 逐字才是
+    // 自然断行单元）→ floor=min(max, 3×min, 等份额) 三分支分配 → 写 <colgroup>
+    // 百分比 + 每行单元格内联百分比 + table-layout:fixed。用百分比而非固定 px：
+    // HTML 产物在任意窗口宽度下按同一比例分配；PDF 页面宽固定，效果等同。
+    // 列几何自描述在行单元格上（不只靠 colgroup）：paged.js 跨页碎片是
+    // cloneNode(false) 浅克隆、丢 colgroup 子元素，只写 colgroup 会换页错列。
+    //
+    // cfg（可省）：avail 可用宽 px，缺省取 window.__pageContentWidthPx →
+    // body.clientWidth；fontSize/padding/fontFamily 为测量期临时样式，PDF 传
+    // 打印基准（10pt / 4px 8px / Noto Sans SC），HTML 导出不传 ⇒ 按产物实际
+    // 渲染样式测量。
+    return QStringLiteral(
+        "window.__normalizeTableColumns=function(cfg){"
+        "cfg=cfg||{};"
+        "var avail=(cfg.avail>0)?cfg.avail:((window.__pageContentWidthPx>0)?"
+        "window.__pageContentWidthPx:(document.body?document.body.clientWidth:0));"
+        "if(!(avail>0))return;"
+        "document.querySelectorAll('table').forEach(function(table){"
+        // 包装表（PDF nativeHf 的 table.hf）必须跳过：它包住整篇文档，其
+        // querySelectorAll('td,th')/('tr') 覆盖全文档——本函数会给这些单元格写下
+        // 「本表格的列宽百分比」（对包装表即每格 100%），污染随后所有内层表格的
+        // intrinsic 测量（实测：短列被压成逐字竖排）
+        "if(table.classList.contains('hf'))return;"
+        // 每表可用宽：优先取表自身盒宽（HTML 导出下表格是 display:block，盒宽即
+        // 容器内容宽；body.clientWidth 含内边距，会用宽 64px ⇒ 分配整体缩水、
+        // 「已完成」仍差 5px 折行——实测）。PDF 侧不传 toTable：表格已是
+        // display:table 且宽度随内容，量自身盒宽会拿到溢出宽，沿用页宽基准
+        "var myAvail=avail;"
+        "if(cfg.toTable){"
+        "if(table.clientWidth>0)myAvail=table.clientWidth;"
+        "table.style.display='table';"
+        "table.style.overflowX='visible';"
+        "}"
+        "var firstRow=table.querySelector('tr');"
+        "if(!firstRow||!firstRow.children.length)return;"
+        "var saved=[],all=table.querySelectorAll('td,th');"
+        "for(var i=0;i<all.length;i++){"
+        "saved.push([all[i],all[i].getAttribute('style')]);"
+        "if(cfg.fontSize)all[i].style.fontSize=cfg.fontSize;"
+        "if(cfg.padding)all[i].style.padding=cfg.padding;"
+        "all[i].style.overflowWrap='normal';"
+        "all[i].style.wordBreak='keep-all';"
+        "}"
+        "var savedTable=table.getAttribute('style');"
+        "table.style.borderCollapse='collapse';"
+        "if(cfg.fontFamily)table.style.fontFamily=cfg.fontFamily;"
+        "table.style.tableLayout='auto';"
+        "var expand=function(){"
+        "var out=[],ci=0;"
+        "for(var i=0;i<firstRow.children.length;i++){"
+        "var span=Math.max(1,parseInt(firstRow.children[i].getAttribute('colspan')||'1',10));"
+        "var w=firstRow.children[i].getBoundingClientRect().width/span;"
+        "for(var s=0;s<span;s++)out[ci++]=w;"
+        "}"
+        "return out;"
+        "};"
+        "table.style.width='min-content';"
+        "var minW=expand();"
+        "table.style.width='max-content';"
+        "var maxW=expand();"
+        "var n=minW.length,floor=[],sumMax=0,sumFloor=0;"
+        "for(var j=0;j<n;j++){"
+        "if(!(maxW[j]>0))maxW[j]=(minW[j]>0)?minW[j]:1;"
+        "if(!(minW[j]>0))minW[j]=maxW[j];"
+        "if(minW[j]>0)maxW[j]=Math.min(maxW[j],minW[j]*3);"
+        // slack 余量（每列，px，cfg 传入）：列宽走百分比再乘回表宽，小数布局
+        // 与边框折叠会吃掉零点几像素——正好卡在 max-content 边界的短列仍折行
+        //（HTML 导出实测：状态列 74.69px vs 「已完成」48px + 左右内边距 26px
+        // = 74px，差 0.3px 即一字一行；编号列 58.70 vs 32+26 = 58，差 0.1px
+        // 折两行）。余量并入 maxW，floor 与百分比分母同步放大，各列占比不变。
+        // HTML 导出传 2px；PDF 不传（其 10pt 基准余量较宽，此文档实测无边界
+        // 折行，且保持既有已验证产物不变——传 2px 会让该文档 11→10 页）
+        "if(maxW[j]>0)maxW[j]+=(cfg.slack||0);"
+        "floor[j]=Math.min(maxW[j],Math.min(minW[j]*3,myAvail/n));"
+        "sumMax+=maxW[j];sumFloor+=floor[j];"
+        "}"
+        "var w=[];"
+        "if(sumMax<=myAvail){"
+        "for(j=0;j<n;j++)w.push(maxW[j]*myAvail/sumMax);"
+        "}else if(sumFloor<=myAvail){"
+        "var k=(myAvail-sumFloor)/(sumMax-sumFloor);"
+        "for(j=0;j<n;j++)w.push(floor[j]+(maxW[j]-floor[j])*k);"
+        "}else{"
+        "for(j=0;j<n;j++)w.push(floor[j]*myAvail/sumFloor);"
+        "}"
+        "var total=0;for(j=0;j<n;j++)total+=w[j];"
+        "if(!(total>0))return;"
+        "for(i=0;i<all.length;i++){"
+        "if(saved[i][1]===null)all[i].removeAttribute('style');"
+        "else all[i].setAttribute('style',saved[i][1]);"
+        "}"
+        "if(savedTable===null)table.removeAttribute('style');"
+        "else table.setAttribute('style',savedTable);"
+        "var old=table.querySelector('colgroup');if(old)old.remove();"
+        "var cg=document.createElement('colgroup');"
+        "for(var c2=0;c2<n;c2++){"
+        "var col=document.createElement('col');"
+        "col.style.width=(w[c2]/total*100).toFixed(3)+'%';"
+        "cg.appendChild(col);"
+        "}"
+        "table.insertBefore(cg,table.firstChild);"
+        "var rows=table.querySelectorAll('tr');"
+        "for(var r=0;r<rows.length;r++){"
+        "var idx=0;"
+        "for(var c=0;c<rows[r].children.length;c++){"
+        "var sp=Math.max(1,parseInt(rows[r].children[c].getAttribute('colspan')||'1',10));"
+        "var wp=0;for(var q=0;q<sp&&idx+q<n;q++)wp+=w[idx+q];"
+        "rows[r].children[c].style.width=(wp/total*100).toFixed(3)+'%';"
+        "idx+=sp;"
+        "}"
+        "}"
+        "table.style.width='100%';"
+        "table.style.minWidth='0';"
+        "table.style.tableLayout='fixed';"
+        "});"
+        "};");
 }
 
 QString HtmlExporter::renderScript(const QString &theme)
@@ -268,6 +421,16 @@ void HtmlExporter::exportToHtml(const QString &html, const QString &docDir,
     // 渲染脚本（库按需拼接 + 驱动脚本恒定，顺序：KaTeX → highlight → Mermaid）
     QString scripts = libs + QStringLiteral("<script>%1</script>")
                                          .arg(renderScript(theme));
+    // 表格列宽归一（与 PDF 导出共用实现）：等 load（字体/内联图片就位，测量才
+    // 准）后调用。toTable 交派函数内做——须先量下表格盒宽（display:block 时即
+    // 容器内容宽）再切 display:table，顺序反了会拿到收缩后的宽度。不做这步，
+    // CJK 短列被压成一字一行（编号「001」折两行、状态「已完成」一字一行）
+    scripts += QStringLiteral("<script>") + tableColumnNormalizeScript()
+             + QStringLiteral(
+                   "window.addEventListener('load',function(){try{"
+                   "window.__normalizeTableColumns({toTable:true,slack:2});"
+                   "}catch(e){console.warn('表格列宽归一失败: '+(e&&e.message||e));}});")
+             + QStringLiteral("</script>");
     full.replace("</body>", scripts + "</body>");
 
     QFile out(outputPath);

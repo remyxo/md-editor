@@ -23,6 +23,11 @@ public:
     //（返回 Promise，全部渲染完才 resolve）。HTML 与 PDF 导出共用。
     static QString mermaidRenderScript(const QString &theme);
 
+    // 表格列宽归一 JS 片段（不含 <script> 标签），定义
+    // window.__normalizeTableColumns(cfg)。HTML 与 PDF 导出共用同一实现：
+    // 短列保真、长列吸收（详见实现处注释）。
+    static QString tableColumnNormalizeScript();
+
 signals:
     void exportFinished(bool success, const QString &outputPath);
     void exportError(const QString &error);

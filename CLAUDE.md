@@ -102,7 +102,8 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 | `src/core/qt/QtMarkdownWriter.{h,cpp}` | vendored Qt 序列化器（去 80 列折行 + 版本固定，见 docs/vendor-qt-markdown-writer.md） |
 | `src/core/FileManager.cpp` | 文件 I/O + 文件监控 |
 | `src/core/DocxExporter.cpp` | DOCX 导出（基于 QTextDocument + zip） |
-| `src/core/HtmlExporter.cpp` | 自包含 HTML 导出（资源 base64 内联） |
+| `src/core/HtmlExporter.cpp` | 自包含 HTML 导出（资源 base64 内联）；表格列宽归一脚本（`tableColumnNormalizeScript`）与 PDF 导出共用 |
+| `src/core/PdfExporter.cpp` | PDF 导出：nativeHf 快路径（thead 页眉带 + 轻量分页 + 页脚覆盖层）与 paged.js 路径的版式对齐，见 docs/pdf-header-footer-layout.md |
 | `src/resources/web/paged.polyfill.js` | vendored paged.js 分页引擎（PDF 页眉页脚/页码，见 docs/vendor-pagedjs.md） |
 
 ## 环境要求
@@ -139,6 +140,7 @@ ctest --output-on-failure
 
 关键问题的深度分析与解决方案，修改相关代码前**务必先阅读**：
 
+- **[PDF 页眉页脚版式（Chromium 打印约束与两路对齐）](docs/pdf-header-footer-layout.md)** — 可打印区=纸−Qt边距 / 越界即幽灵文本 / 无逐页底部保留机制 ⇒ 轻量分页 + 版心模拟；改 `PdfExporter` 版式常量或 `__paginateNativeHf` 前必读
 - **[Mermaid SVG 渲染问题](docs/mermaid-svg-rendering.md)** — 负宽度 rect 报错 / 字体缩放 / 甘特图缩块 / `_sanitizeMermaidSvg` 设计规范
 - **[模态对话框 ESC 关闭机制](docs/modal-dialog-esc-handling.md)** — Qt QShortcut 拦截 Esc → Bridge 通知 → 分流处理
 - **[\<br\> 与软换行往返机制](docs/br-and-softbreak-roundtrip.md)** — BRMARKER/data-brk 标记 / 双 TipTap 节点 / toHtml/fromHtml 三层分离架构
