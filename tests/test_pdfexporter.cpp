@@ -8,6 +8,7 @@
 #include <QRegularExpression>
 #include "../src/core/PdfExporter.h"
 #include "../src/core/HtmlExporter.h"
+#include "../src/core/ExportCommon.h"
 
 class TestPdfExporter : public QObject {
     Q_OBJECT
@@ -167,7 +168,10 @@ private slots:
         QVERIFY(out.contains("padding:0 0 3.00mm 0;height:15.00mm"));
         QVERIFY(out.contains("vertical-align:bottom"));
         // 内容格：左右 padding 模拟页边距，宽度由渲染视图尺寸决定（不再钉宽）
-        QVERIFY(out.contains("#hfcell{padding:0 18.00mm 0 18.00mm;}"));
+        QVERIFY(out.contains("#hfcell{font-size:11pt;padding:0 18.00mm 0 18.00mm;}"));
+        // 字号基准：包装单元格是 <td>，不钉回 11pt 就会被 th,td{font-size:10pt}
+        // 带偏 ⇒ 单元格内所有 em 相对值（标题、行内 code）整体小 10%（实测：
+        // 有无脚注两份 PDF 的标题差一整档）。见 docs/export-visual-spec.md
         QVERIFY(!out.contains("width:65"));               // 无钉宽（auto 布局里也钉不住）
         // 包装表 fixed 布局：列宽不受内容影响，截住 min-content 撑爆
         QVERIFY(out.contains("table.hf{table-layout:fixed;}"));
@@ -301,13 +305,69 @@ private slots:
         //    （与 __splitPreLines 同一前置区，重排不改 textContent）
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", specWithHeader());
         QVERIFY2(out.contains("th,td{overflow-wrap:anywhere;}"), qPrintable(out));
-        QVERIFY(out.indexOf("th,td{overflow-wrap:anywhere;}")
-                < out.indexOf("@media print{"));
+        // paged 路径**不包 @media print**：分页前的列宽归一/预分页切块都在屏幕
+        // 媒体做，包着（等 paged.js preview() 里才解包）就量在「无基础 CSS」的
+        // 裸布局上（实测行高 30px vs 成品 52px，切块塞进 1.7 倍行数）。与
+        // nativeHf 同款：屏幕布局 = 打印布局。legacy 路径另测（仍包着）
+        QVERIFY2(!out.contains("@media print{"), qPrintable(out));
         QVERIFY2(out.contains("window.__fixTableColumns=function()"), qPrintable(out));
         QVERIFY2(out.contains("table.style.tableLayout='fixed'"), qPrintable(out));
         // 列宽分配基准：页面内容宽（px）注入为 JS 全局（@page 宽−左右边距，
         // 横向换向取短边），不能拿屏幕视口宽度当可用宽
         QVERIFY2(out.contains("window.__pageContentWidthPx="), qPrintable(out));
+        // 表格预分页（paged 路径）：跨页长表在分页前按行切块，避免 paged.js 的
+        // 续表碎片在部分几何下把行留在页内、撑成整页高而不显示（实测：含脚注
+        // 文档 1.1 表第 11 行、1.2 表首数据行丢失）。续块从页顶开始
+        // （break-before:page），故**只需保证单块装得下一页**，与全文档页格无关
+        // （旧实现按 y/Hpx 累加页格，而真实页高随脚注有无变化，步长差逐页累积，
+        // 长表所在页越切越短——用户实测第 5/7 页下方空出好几行）
+        QVERIFY2(out.contains("window.__prepaginateTables=function(A){"), qPrintable(out));
+        QVERIFY(out.contains("table.pdf-tbl-split{break-before:page;}"));
+        QVERIFY(out.contains("table.pdf-tbl-cont{break-before:page;margin-top:0;}"));
+        QVERIFY(out.contains("window.__pagedContentPx="));
+        // 单页可用高 = 版心高；**该页含脚注引用**再扣**实测**脚注区高 __pagedFnH
+        // （测量遍量得，C++ 注回；不硬编码、不按脚注定义体高估；按页判定，不给
+        // 整篇一刀切预留——无脚注的页白留一个脚注区高＝每页少一行）
+        QVERIFY(out.contains("var F=window.__pagedFnH||0;"));
+        QVERIFY(out.contains("var capAt=function(top,shift){"));
+        QVERIFY(out.contains("if(ry>=top&&ry<top+A)return A-F;"));
+        // 页游标：首块的起始页余量 / 续块各自页顶
+        QVERIFY(out.contains("var pageInfo=function(y,shift){"));
+        // 切块前先缓存各表顶与行高（切块会改 DOM：续表 margin-top:0、删行、插表）
+        QVERIFY(out.contains("var list=[];"));
+        QVERIFY(out.contains("list.push({t:t,all:all,y0:"));
+        // 位移累加：切块把内容推到新页，后续内容整体下移——未切块的表尾在页格
+        // 坐标下是 y+总高（y 已含前序位移），用 y0 会重复计入前序位移
+        QVERIFY(out.contains("push+=Math.max(0,(pageTop+used)-(y+totalH));"));
+        // 溢出是亚像素级的（实测 1.1 表首块 710px + 真实起点 248 超内容盒 956
+        // 仅 2px 即触发 paged.js 切表→错位碎片丢行）⇒ 余量 ≥20px，且本页余量
+        // 连首行都放不下时整表挪页（pdf-tbl-head）
+        QVERIFY(out.contains("var slack=Math.max(A*0.005,20);"));
+        QVERIFY(out.contains("table.pdf-tbl-head{break-before:page;}"));
+        QVERIFY(out.contains("t.classList.add('pdf-tbl-head')"));
+        QVERIFY(out.contains("sup[data-type=\\\"footnoteRef\\\"]"));
+        // 脚注浮动必须**先于**预分页切块：def 变引用旁 inline-block 会把其后内容
+        // 整体下推（实测 1.1 表顶 222 → 248），而首块余量依赖表顶位置
+        QVERIFY(out.indexOf("window.__floatFootnotes();")
+                < out.indexOf("window.__prepaginateTables(window.__pagedContentPx>0"));
+        // 调用时机：列宽归一之后（行高才是终值）、paged.js 分页之前
+        QVERIFY(out.contains("window.__prepaginateTables(window.__pagedContentPx>0?window.__pagedContentPx:window.__pagedBoxH)"));
+        QVERIFY(out.indexOf("window.__prepaginateTables(window.__pagedContentPx>0")
+                > out.indexOf("window.__fixTableColumns();"));
+        QVERIFY(out.indexOf("window.__prepaginateTables(window.__pagedContentPx>0")
+                < out.indexOf("PagedPolyfill.preview()"));
+        // 滚动条压制罩住**全部分页前测量**（列宽归一 + 预分页切块），进分页前
+        // 才清除：滚动条吃掉视口宽，屏幕布局会比 paged 页内容盒窄
+        QVERIFY(out.indexOf("document.documentElement.style.overflow='hidden'")
+                < out.indexOf("window.__prepaginateTables(window.__pagedContentPx>0"));
+        QVERIFY(out.indexOf("window.__prepaginateTables(window.__pagedContentPx>0")
+                < out.indexOf("document.documentElement.style.overflow=''"));
+        // 测量遍：排两页（脚注区内容到第 2 页才定型）即中断（MEASURE_DONE），
+        // 页数/注入由 C++ 侧两次加载完成
+        QVERIFY(out.contains("if(window.__pagedPageN<2)return;"));
+        QVERIFY(out.contains("throw new Error('MEASURE_DONE');"));
+        QVERIFY(out.contains("window.__printState='measured';"));
+        QVERIFY(out.contains("if(window.__printState==='measured')return 'measured';"));
         // 两趟 intrinsic 测量（min-content 作保底宽、max-content 作期望宽）：
         // 直接量取屏幕 auto 布局会把短列（编号/状态）压到单字宽——anywhere 使
         // min-content 塌缩为单字符，富余宽度按 max-content 比例尽归长列
@@ -514,9 +574,10 @@ private slots:
         s.orientation = QPageLayout::Landscape;
         out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
         QVERIFY(out.contains(".mermaid-diagram svg{display:block;max-height:168.0mm!important;}"));
-        // 上限规则须在 @media print 之外（paged.js 在屏幕媒体上分页测量）
-        QVERIFY(out.indexOf(".mermaid-diagram svg{")
-                < out.indexOf("@media print{"));
+        // 上限规则须在屏幕媒体生效（paged.js 在屏幕媒体上分页测量）：paged 路径
+        // 整份基础 CSS 都不包 @media print（否则分页前测量在裸布局上做）
+        QVERIFY(out.contains(".mermaid-diagram svg{"));
+        QVERIFY(!out.contains("@media print{"));
         // legacy 路径（页眉页脚全关）无 paged 分页，不注入容纳上限
         QString legacy = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
         QVERIFY(!legacy.contains(".mermaid-diagram svg{"));
@@ -551,17 +612,14 @@ private slots:
         QVERIFY(out.contains(QStringLiteral(
             "img:not([width]):not([style]){max-height:168.0mm!important;"
             "width:auto!important;}")));
-        // 两条规则均须在 @media print 之外——paged.js 在屏幕媒体上分页测量：
+        // 两条规则均须在屏幕媒体生效——paged.js 在屏幕媒体上分页测量：
         // max-width 只在打印媒体生效时，超宽图屏幕布局无宽度约束 → 横向溢出
         // .pagedjs_sheet（overflow:hidden）→ 静默右裁（指纹通过不回退，比回退
-        // 更隐蔽）；max-height 同理须在分页测量前生效
-        // 先锁存在再锁位置——indexOf 删规则返回 -1 会空过比较（-1 < N 恒真）
-        const qsizetype m = out.indexOf("img{max-width:100%;}");
-        QVERIFY(m >= 0);
-        QVERIFY(m < out.indexOf("@media print{"));
-        const qsizetype n = out.indexOf("img:not([width])");
-        QVERIFY(n >= 0);
-        QVERIFY(n < out.indexOf("@media print{"));
+        // 更隐蔽）；max-height 同理须在分页测量前生效。paged 路径整份基础 CSS
+        // 不包 @media print ⇒ 两条规则无条件生效
+        QVERIFY(out.contains("img{max-width:100%;}"));
+        QVERIFY(!out.contains("@media print{"));
+        QVERIFY(out.contains("img:not([width])"));
         // legacy 路径（页眉页脚全关）无 paged 分页，不注入两条容纳规则：img 宽度
         // 规则仅剩 @media print 内的一处（前缀计数区分屏幕副本与打印副本；打印
         // 副本的 %% 死值已在 #32 修正为有效单 %，形态由
@@ -578,8 +636,9 @@ private slots:
         // 保留进最终 HTML（无效 CSS 值），table 的 width:100%% 与 img 的
         // max-width:100%% 两条规则从未生效过（死 CSS）。历史缺陷已修，此处双向
         // 锁定：全文无 %% 残留 + 两条规则复活后的完整形态
-        // paged 态：img{max-width:100%;} 出现两处——@media print 之外的屏幕媒体
-        // 分页测量副本（pageCss 注入）+ @media print 内的打印副本（模板）
+        // paged 态：img{max-width:100%;} 出现两处——屏幕媒体分页测量副本
+        // （pageCss 注入）+ 模板基础 CSS 副本（paged 路径不包 @media print，
+        // 无条件生效；两处同值，重复无害）
         PdfPageSpec s = specWithHeader();
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
         QVERIFY(!out.contains("%%"));
@@ -630,6 +689,20 @@ private slots:
     }
 
 private:
+    void testPageNumberTextMatchesVerifyPattern() {
+        // 页码文案单一来源的漂移锁：文案（ExportCommon::kPageText*）与成品校验
+        // 正则必须同源——只改文案不改正则，nativeHf 每份产物都会判「页码漂移」
+        // → 静默回退 paged.js（慢但正确，且无报错指向真因）
+        const QString text = ExportCommon::pageNumberText(3, 11);
+        QCOMPARE(text, QStringLiteral("第 3 页 / 共 11 页"));
+        QString normalized = text;
+        normalized.remove(' ');
+        const auto m = ExportCommon::pageNumberVerifyPattern().match(normalized);
+        QVERIFY2(m.hasMatch(), qPrintable(normalized));
+        QCOMPARE(m.captured(1), QStringLiteral("3"));
+        QCOMPARE(m.captured(2), QStringLiteral("11"));
+    }
+
     PdfPageSpec specWithHeader() {
         PdfPageSpec s;
         s.headerEnabled = true; s.footerEnabled = true;

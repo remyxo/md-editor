@@ -15,7 +15,6 @@ class MermaidRenderer : public QObject {
     Q_OBJECT
 public:
     struct Result {
-        QString svg;        // 完整 SVG 字符串
         QByteArray png;     // PNG 字节
         int cxEmu = 0;      // 宽（EMU）
         int cyEmu = 0;      // 高（EMU）

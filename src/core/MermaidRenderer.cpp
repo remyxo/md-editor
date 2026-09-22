@@ -1,4 +1,5 @@
 #include "MermaidRenderer.h"
+#include "ExportCommon.h"
 
 #include <QTimer>
 #include <QPointer>
@@ -86,7 +87,7 @@ QString MermaidRenderer::buildRenderScript(const QStringList &sources)
         "return Promise.all(sources.map(function(src,i){"
         "return mermaid.render('mmd'+i,src).then(function(r){"
         "var dim=svgDims(r.svg);return toPng(r.svg,dim.w,dim.h).then(function(png){"
-        "return {svg:r.svg,png:png,w:Math.round(dim.w),h:Math.round(dim.h)};});"
+        "return {png:png,w:Math.round(dim.w),h:Math.round(dim.h)};});"
         "}).catch(function(e){return null;});"
         "})).then(function(arr){window.__mermaidResults=JSON.stringify(arr);});"
         "})()").arg(QString::fromUtf8(QJsonDocument(
@@ -152,12 +153,11 @@ void MermaidRenderer::pollResults(int n, int attempt)
                 if (!v.isObject()) { out.append(Result()); continue; }
                 QJsonObject o = v.toObject();
                 Result r;
-                r.svg = o.value("svg").toString();
                 QString png = o.value("png").toString();
                 if (png.startsWith("data:image/png;base64,"))
                     r.png = QByteArray::fromBase64(png.mid(22).toLatin1());
-                r.cxEmu = o.value("w").toInt() * 9525;
-                r.cyEmu = o.value("h").toInt() * 9525;
+                r.cxEmu = qRound(o.value("w").toInt() * ExportCommon::kEmuPerPx);
+                r.cyEmu = qRound(o.value("h").toInt() * ExportCommon::kEmuPerPx);
                 out.append(r);
             }
         } else {

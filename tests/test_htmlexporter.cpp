@@ -6,18 +6,19 @@
 #include <QJSValue>
 #include <QRegularExpression>
 #include "../src/core/HtmlExporter.h"
+#include "../src/core/ExportCommon.h"
 
 class TestHtmlExporter : public QObject {
     Q_OBJECT
 private slots:
-    void testMimeForExt() {
-        QCOMPARE(HtmlExporter::mimeForExt("woff2"), QStringLiteral("font/woff2"));
-        QCOMPARE(HtmlExporter::mimeForExt("woff"), QStringLiteral("font/woff"));
-        QCOMPARE(HtmlExporter::mimeForExt("ttf"), QStringLiteral("font/ttf"));
-        QCOMPARE(HtmlExporter::mimeForExt("png"), QStringLiteral("image/png"));
-        QCOMPARE(HtmlExporter::mimeForExt("jpg"), QStringLiteral("image/jpeg"));
-        QCOMPARE(HtmlExporter::mimeForExt("jpeg"), QStringLiteral("image/jpeg"));
-        QCOMPARE(HtmlExporter::mimeForExt("svg"), QStringLiteral("image/svg+xml"));
+    void testMimeForExt() {   // mimeForExt 已迁 ExportCommon（三导出器共用）
+        QCOMPARE(ExportCommon::mimeForExt("woff2"), QStringLiteral("font/woff2"));
+        QCOMPARE(ExportCommon::mimeForExt("woff"), QStringLiteral("font/woff"));
+        QCOMPARE(ExportCommon::mimeForExt("ttf"), QStringLiteral("font/ttf"));
+        QCOMPARE(ExportCommon::mimeForExt("png"), QStringLiteral("image/png"));
+        QCOMPARE(ExportCommon::mimeForExt("jpg"), QStringLiteral("image/jpeg"));
+        QCOMPARE(ExportCommon::mimeForExt("jpeg"), QStringLiteral("image/jpeg"));
+        QCOMPARE(ExportCommon::mimeForExt("svg"), QStringLiteral("image/svg+xml"));
     }
 
     void testBlockquoteLeftBorderIsBlueInBothThemes() {

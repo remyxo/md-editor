@@ -19,6 +19,7 @@ set(SOURCES
     core/MathMlRenderer.cpp
     core/MathMlConverter.cpp
     core/HtmlExporter.cpp
+    core/ExportCommon.cpp
     ui/EditorTab.cpp
     ui/ExportProgressDialog.cpp
     ui/FilePathMatch.cpp
@@ -56,6 +57,7 @@ set(HEADERS
     core/MathMlRenderer.h
     core/MathMlConverter.h
     core/HtmlExporter.h
+    core/ExportCommon.h
     ui/EditorTab.h
     ui/ExportProgressDialog.h
     ui/TabWidget.h

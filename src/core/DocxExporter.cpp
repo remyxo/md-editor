@@ -1,4 +1,5 @@
 #include "DocxExporter.h"
+#include "ExportCommon.h"
 #include "MathMlConverter.h"
 #include "miniz/miniz.h"
 
@@ -255,52 +256,35 @@ static QString substituteMathPlaceholders(const QString &html)
 static bool readImageFile(const QString &src, const QString &docDir,
                           QByteArray *bytes, QString *mime, int *cxEmu, int *cyEmu)
 {
+    // 白名单窄于 HTML 导出：Word 只认这三种，svg/webp/bmp/tiff 一律回退
+    // [图片] 占位（避免嵌入声明 image/jpeg 的损坏 jpg）。围栏、内容级 MIME
+    // 判定与体积上限走 ExportCommon（与 HtmlExporter::inlineImages 同源）
+    ExportCommon::ImagePolicy policy;
+    policy.mimeWhitelist = {QStringLiteral("image/png"), QStringLiteral("image/jpeg"),
+                            QStringLiteral("image/gif")};
     if (src.startsWith("data:")) {
-        // data URI：解析 base64 字节（mime 不信任 data: 前缀，交由内容判定）
-        int comma = src.indexOf(',');
+        // data URI：解析 base64 字节（MIME 不信任 data: 前缀，交由内容判定）
+        const int comma = src.indexOf(',');
         if (comma < 0) return false;
-        QString header = src.left(comma);
-        QRegularExpression mre("data:([^;]+);base64");
-        auto mm = mre.match(header);
-        if (!mm.hasMatch()) return false;
+        const QRegularExpression mre(QStringLiteral("data:([^;]+);base64"));
+        if (!mre.match(src.left(comma)).hasMatch()) return false;
         *bytes = QByteArray::fromBase64(src.mid(comma + 1).toLatin1());
-    } else {
-        QString path = QDir::isAbsolutePath(src) ? src : QDir(docDir).filePath(src);
-        // 目录围栏（与 HtmlExporter::inlineImages 同型）：canonical 化（解 ../ 与
-        // 符号链接）后必须仍在文档目录内。曾无校验——![](../../x) 经导出可把
-        // 目录外文件字节读入（虽被内容级 MIME 拒绝嵌入，读字节本身应受约束）；
-        // 未保存文档（docDir 空/不存在）不读本地文件，相对路径等于无围栏
-        const QString canonDocDir = QFileInfo(docDir).canonicalFilePath();
-        const QString canon = QFileInfo(path).canonicalFilePath();
-        if (canonDocDir.isEmpty() || canon.isEmpty()
-            || !canon.startsWith(canonDocDir + QLatin1Char('/')))
-            return false;
-        QFile f(path);
-        if (!f.open(QIODevice::ReadOnly)) return false;
-        *bytes = f.readAll();
-        f.close();
-    }
-    // 非空校验：零字节文件 / 空 base64 不得嵌入为损坏图片
-    if (bytes->isEmpty()) return false;
-    // 基于内容判定真实 MIME（不信任扩展名 / data: 前缀），仅接受三种 Word 可直接嵌入的格式；
-    // svg/webp/bmp/tiff 等其他 image/* 一律回退 [图片] 占位，避免嵌入声明 image/jpeg 的损坏 jpg
-    QMimeDatabase db;
-    const QString realMime = db.mimeTypeForData(*bytes).name();
-    if (realMime != "image/png" && realMime != "image/jpeg" && realMime != "image/gif")
+        if (!ExportCommon::sniffImage(*bytes, policy, mime)) return false;
+    } else if (!ExportCommon::loadLocalImage(src, docDir, policy, bytes, mime)) {
         return false;
-    *mime = realMime;
-    // 尺寸：PNG/JPEG 用 QImageReader；SVG 不读尺寸用默认
+    }
+    // 尺寸：PNG/JPEG/GIF 用 QImageReader；读不出尺寸回默认 300×200 px
     QImageReader ir;
     QBuffer buf(bytes);
     buf.open(QIODevice::ReadOnly);
     ir.setDevice(&buf);
-    QSize sz = ir.size();
+    const QSize sz = ir.size();
     if (sz.isValid() && sz.width() > 0 && sz.height() > 0) {
-        *cxEmu = sz.width() * 9525;
-        *cyEmu = sz.height() * 9525;
+        *cxEmu = qRound(sz.width() * ExportCommon::kEmuPerPx);
+        *cyEmu = qRound(sz.height() * ExportCommon::kEmuPerPx);
     } else {
-        *cxEmu = 300 * 9525;   // 默认 300×200 px
-        *cyEmu = 200 * 9525;
+        *cxEmu = qRound(300 * ExportCommon::kEmuPerPx);
+        *cyEmu = qRound(200 * ExportCommon::kEmuPerPx);
     }
     return true;
 }
@@ -781,10 +765,8 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
                     out += "<w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r>";
                 }
             }
-            // 空元素直接跳过
-            else if (tag == "input" || tag == "col") {
-                // 无操作
-            }
+            // input/col 等空元素无需输出（未被上面分支命中即跳过，与
+            // `<span data-type=footnoteRef>` 的编号由 list label 承载同理）
             // 脚注容器内的定义 div（块级元素穿过内联上下文，footnoteContainer
             // 分支走 parseInline 时到达这里）：收集到 footnotes.xml，正文不输出
             else if (tag == "div"
@@ -1405,17 +1387,21 @@ static QString makeFooterXml()
     const QString rpr = "<w:rPr><w:color w:val=\"808080\"/><w:sz w:val=\"18\"/></w:rPr>";
     const QString pPr = "<w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>"
                         "<w:jc w:val=\"right\"/></w:pPr>";
+    // 页码文案三段取自 ExportCommon::kPageText*（与 PDF 两路、校验正则同源）
     return QStringLiteral(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
         "<w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n"
         "  <w:p>%1"
-        "<w:r>%2<w:t xml:space=\"preserve\">第 </w:t></w:r>"
+        "<w:r>%2<w:t xml:space=\"preserve\">%3</w:t></w:r>"
         "<w:fldSimple w:instr=\" PAGE   \\* MERGEFORMAT \"><w:r>%2<w:t>1</w:t></w:r></w:fldSimple>"
-        "<w:r>%2<w:t xml:space=\"preserve\"> 页 / 共 </w:t></w:r>"
+        "<w:r>%2<w:t xml:space=\"preserve\">%4</w:t></w:r>"
         "<w:fldSimple w:instr=\" NUMPAGES   \\* MERGEFORMAT \"><w:r>%2<w:t>1</w:t></w:r></w:fldSimple>"
-        "<w:r>%2<w:t xml:space=\"preserve\"> 页</w:t></w:r>"
+        "<w:r>%2<w:t xml:space=\"preserve\">%5</w:t></w:r>"
         "</w:p>\n"
-        "</w:ftr>\n").arg(pPr, rpr);
+        "</w:ftr>\n").arg(pPr, rpr)
+        .arg(QString::fromUtf8(ExportCommon::kPageTextPrefix),
+             QString::fromUtf8(ExportCommon::kPageTextMid),
+             QString::fromUtf8(ExportCommon::kPageTextSuffix));
 }
 
 static QString makeStylesXml()
@@ -1713,8 +1699,10 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
         for (const auto &mp : state.media)
             exts.insert(QFileInfo(mp.fileName).suffix());
         for (const QString &e : exts) {
+            // 上游 mime→ext 只产 png/gif/jpg（readImageFile 拒 svg/webp、
+            // mermaid 恒 png）——无 svg 分支
             QString ct = (e == "png") ? "image/png" : (e == "gif") ? "image/gif"
-                       : (e == "svg") ? "image/svg+xml" : "image/jpeg";
+                       : "image/jpeg";
             contentTypes += (QString("  <Default Extension=\"%1\" ContentType=\"%2\"/>\n")
                              .arg(e, ct)).toUtf8();
         }

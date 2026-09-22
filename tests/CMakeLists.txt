@@ -31,13 +31,13 @@ target_include_directories(test_imagemanager PRIVATE ../src)
 target_link_libraries(test_imagemanager PRIVATE Qt6::Test)
 add_test(NAME test_imagemanager COMMAND test_imagemanager)
 
-add_executable(test_htmlexporter test_htmlexporter.cpp ../src/core/HtmlExporter.cpp)
+add_executable(test_htmlexporter test_htmlexporter.cpp ../src/core/HtmlExporter.cpp ../src/core/ExportCommon.cpp)
 target_include_directories(test_htmlexporter PRIVATE ../src)
 # Qt6::Qml 供 QJSEngine 做内联脚本语法检查（列宽归一脚本一处语法错即静默失效）
 target_link_libraries(test_htmlexporter PRIVATE Qt6::Test Qt6::Qml)
 add_test(NAME test_htmlexporter COMMAND test_htmlexporter)
 
-add_executable(test_docxexporter test_docxexporter.cpp ../src/core/DocxExporter.cpp ../src/core/miniz/miniz.c ../src/core/MermaidRenderer.cpp ../src/core/MathMlRenderer.cpp ../src/core/MathMlConverter.cpp)
+add_executable(test_docxexporter test_docxexporter.cpp ../src/core/DocxExporter.cpp ../src/core/miniz/miniz.c ../src/core/MermaidRenderer.cpp ../src/core/MathMlRenderer.cpp ../src/core/MathMlConverter.cpp ../src/core/ExportCommon.cpp)
 target_include_directories(test_docxexporter PRIVATE ../src)
 # DocxExporter.cpp 用到 QImageReader（QtGui），必须链接 Qt6::Gui；
 # MermaidRenderer.cpp/MathMlRenderer.cpp 用 QWebEngine，须链接 WebEngineWidgets。
@@ -46,7 +46,7 @@ target_include_directories(test_docxexporter PRIVATE ../src)
 target_link_libraries(test_docxexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets)
 add_test(NAME test_docxexporter COMMAND test_docxexporter)
 
-add_executable(test_pdfexporter test_pdfexporter.cpp ../src/core/PdfExporter.cpp ../src/core/PdfPageGeometry.cpp ../src/core/miniz/miniz.c ../src/core/HtmlExporter.cpp)
+add_executable(test_pdfexporter test_pdfexporter.cpp ../src/core/PdfExporter.cpp ../src/core/PdfPageGeometry.cpp ../src/core/miniz/miniz.c ../src/core/HtmlExporter.cpp ../src/core/ExportCommon.cpp)
 target_include_directories(test_pdfexporter PRIVATE ../src)
 # PdfExporter.cpp 用到 QWebEngineView/Page/Settings，缺 WebEngineWidgets 会链接失败；
 # 测试只调用静态 buildRenderHtml，从不构造 PdfExporter，不会触发无头渲染

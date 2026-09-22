@@ -1,4 +1,5 @@
 #include "HtmlExporter.h"
+#include "ExportCommon.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -7,29 +8,6 @@
 #include <QSettings>
 
 HtmlExporter::HtmlExporter(QObject *parent) : QObject(parent) {}
-
-QString HtmlExporter::readResource(const QString &path) const
-{
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return QString();
-    QString s = QString::fromUtf8(f.readAll());
-    f.close();
-    return s;
-}
-
-QString HtmlExporter::mimeForExt(const QString &ext)
-{
-    const QString e = ext.toLower();
-    if (e == "woff2") return "font/woff2";
-    if (e == "woff")  return "font/woff";
-    if (e == "ttf")   return "font/ttf";
-    if (e == "png")   return "image/png";
-    if (e == "jpg" || e == "jpeg") return "image/jpeg";
-    if (e == "gif")   return "image/gif";
-    if (e == "svg")   return "image/svg+xml";
-    if (e == "webp")  return "image/webp";
-    return "application/octet-stream";
-}
 
 QString HtmlExporter::inlineCssFonts(const QString &css, const QString &fontDir)
 {
@@ -44,7 +22,7 @@ QString HtmlExporter::inlineCssFonts(const QString &css, const QString &fontDir)
         if (!f.open(QIODevice::ReadOnly)) continue;
         QByteArray bytes = f.readAll();
         f.close();
-        QString mime = mimeForExt(QFileInfo(name).suffix());
+        const QString mime = ExportCommon::mimeForExt(QFileInfo(name).suffix());
         QString data = "url(data:" + mime + ";base64," + QString::fromLatin1(bytes.toBase64()) + ")";
         int start = m.capturedStart(0) + offset;
         int len = m.capturedLength(0);
@@ -57,52 +35,29 @@ QString HtmlExporter::inlineCssFonts(const QString &css, const QString &fontDir)
 QString HtmlExporter::inlineImages(const QString &html, const QString &docDir)
 {
     QRegularExpression re("<img\\b[^>]*src\\s*=\\s*[\"']([^\"']+)[\"']");
+    // 内联策略：HTML 产物可嵌 svg/webp（浏览器都认），与 DOCX 白名单不同
+    //（Word 只认 png/jpeg/gif）——围栏/内容校验用同一实现，策略各自给
+    ExportCommon::ImagePolicy policy;
+    policy.mimeWhitelist = {QStringLiteral("image/png"), QStringLiteral("image/jpeg"),
+                            QStringLiteral("image/gif"), QStringLiteral("image/webp")};
+    policy.svgByTextPrefix = true;
     QString out = html;
     int offset = 0;
-    // docDir 围栏基准：未保存文档（docDir 空/不存在）不做本地内联——相对路径
-    // 将落到 CWD，等于无围栏
-    const QString canonDocDir = QFileInfo(docDir).canonicalFilePath();
     QRegularExpressionMatchIterator it = re.globalMatch(html);
     while (it.hasNext()) {
         auto m = it.next();
-        QString src = m.captured(1);
+        const QString src = m.captured(1);
+        // data:/远程 URL 原样保留（远程资源由阅读端自行取，不读本地字节）
         if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://"))
             continue;
-        if (canonDocDir.isEmpty())
-            continue;
-        QString path = QDir::isAbsolutePath(src) ? src : QDir(docDir).filePath(src);
-        // 围栏：解析后（canonical 化解 ../ 与符号链接）必须仍在文档目录内。
-        // 曾无任何校验：![](../../.ssh/id_rsa) 经导出把任意本地文件 base64
-        // 嵌进产物（HTML 源码可直接提取字节）
-        const QString canon = QFileInfo(path).canonicalFilePath();
-        if (canon.isEmpty()
-            || !canon.startsWith(canonDocDir + QLatin1Char('/')))
-            continue;
-        QFile f(path);
-        if (!f.open(QIODevice::ReadOnly)) continue;
-        QByteArray bytes = f.readAll();
-        f.close();
-        // 内容级 MIME 校验（不信任扩展名）+ 大小上限：伪装成图片的任意文件
-        // 不得内联（与 DocxExporter::readImageFile 同型防线）。svg 无可靠内容
-        // magic，按文本前缀判定（<img> 上下文的 svg 不执行脚本，可安全内联）
-        if (bytes.isEmpty() || bytes.size() > 50 * 1024 * 1024)
-            continue;
+        QByteArray bytes;
         QString mime;
-        const QByteArray head = bytes.left(512);
-        if (head.trimmed().startsWith("<svg")
-            || head.contains("<svg")) {
-            mime = QStringLiteral("image/svg+xml");
-        } else {
-            QMimeDatabase db;
-            const QString realMime = db.mimeTypeForData(bytes).name();
-            if (realMime != "image/png" && realMime != "image/jpeg"
-                && realMime != "image/gif" && realMime != "image/webp")
-                continue;
-            mime = realMime;
-        }
-        QString dataUri = "data:" + mime + ";base64," + QString::fromLatin1(bytes.toBase64());
-        int start = m.capturedStart(1) + offset;
-        int len = m.capturedLength(1);
+        if (!ExportCommon::loadLocalImage(src, docDir, policy, &bytes, &mime))
+            continue;
+        const QString dataUri = "data:" + mime + ";base64,"
+                                + QString::fromLatin1(bytes.toBase64());
+        const int start = m.capturedStart(1) + offset;
+        const int len = m.capturedLength(1);
         out.replace(start, len, dataUri);
         offset += dataUri.length() - len;
     }
@@ -351,18 +306,28 @@ QString HtmlExporter::tableColumnNormalizeScript()
         "};");
 }
 
-QString HtmlExporter::renderScript(const QString &theme)
+QString HtmlExporter::katexRenderScript()
 {
-    // 组合式：KaTeX 段 + mermaid helper（只定义 __renderAllMermaid，HTML 路径
-    // 在 DOMContentLoaded 内显式自调用，浏览器常驻无需等 Promise）+ hljs 段。
-    // 保持与旧版一致的执行时序（KaTeX → Mermaid → highlight）。
+    // KaTeX 公式渲染段（HTML 与 PDF 导出共用）：DOMContentLoaded 后把每个
+    // [data-latex] 元素按内联/块级（data-type="block-math"）渲染；带
+    // window.katex 守卫——库按需内联，缺失即整段跳过（产物退化为 LaTeX 原文，
+    // 不报错）。原先 PDF 侧是同一段的无守卫副本、且用 dataset.type 取块级标记
+    //（与 getAttribute('data-type') 等价）——两处写法分叉，合并回这一份
     return QStringLiteral(
         "window.addEventListener('DOMContentLoaded',function(){"
         "if(window.katex){var es=document.querySelectorAll('[data-latex]');"
         "for(var i=0;i<es.length;i++){var e=es[i],l=e.getAttribute('data-latex');if(!l)continue;"
         "try{katex.render(l,e,{throwOnError:false,displayMode:e.getAttribute('data-type')==='block-math'});}"
         "catch(err){e.textContent=l;}}}"
-        "});")
+        "});");
+}
+
+QString HtmlExporter::renderScript(const QString &theme)
+{
+    // 组合式：KaTeX 段 + mermaid helper（只定义 __renderAllMermaid，HTML 路径
+    // 在 DOMContentLoaded 内显式自调用，浏览器常驻无需等 Promise）+ hljs 段。
+    // 保持与旧版一致的执行时序（KaTeX → Mermaid → highlight）。
+    return katexRenderScript()
         + mermaidRenderScript(theme)
         + QStringLiteral(
             "window.addEventListener('DOMContentLoaded',function(){"
@@ -385,28 +350,27 @@ void HtmlExporter::exportToHtml(const QString &html, const QString &docDir,
     const bool needHljs = html.contains(QLatin1String("<code"));
     const bool needMermaid = html.contains(QLatin1String("language-mermaid"));
     QString katexCss = needKatex
-        ? inlineCssFonts(readResource(":/web/katex.min.css"), ":/web/fonts")
+        ? inlineCssFonts(ExportCommon::readResource(":/web/katex.min.css"), ":/web/fonts")
         : QString();
     QString hljsCss = needHljs
-        ? readResource(theme == "dark" ? ":/web/hljs-dark.css" : ":/web/hljs-light.css")
+        ? ExportCommon::readResource(theme == "dark" ? ":/web/hljs-dark.css" : ":/web/hljs-light.css")
         : QString();
     QString libs;
     if (needKatex)
         libs += QStringLiteral("<script>%1</script>")
-                    .arg(readResource(":/web/katex.min.js"));
+                    .arg(ExportCommon::readResource(":/web/katex.min.js"));
     if (needHljs)
         libs += QStringLiteral("<script>%1</script>")
-                    .arg(readResource(":/web/highlight.min.js"));
+                    .arg(ExportCommon::readResource(":/web/highlight.min.js"));
     if (needMermaid)
         libs += QStringLiteral("<script>%1</script>")
-                    .arg(readResource(":/web/mermaid.min.js"));
+                    .arg(ExportCommon::readResource(":/web/mermaid.min.js"));
 
     // 自定义 CSS（覆盖默认）。剥 </style> 序列：本地设置携带它会把 <style> 块
     // 提前终结并向产物注入任意标记（自注入面）
     QSettings settings("md-editor", "md-editor");
     QString customCss = settings.value("editor/customCss").toString();
-    customCss.remove(QRegularExpression("</\\s*style\\s*>",
-                                        QRegularExpression::CaseInsensitiveOption));
+    customCss = ExportCommon::stripStyleClose(customCss);
 
     QString full = QStringLiteral(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">"

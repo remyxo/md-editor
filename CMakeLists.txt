@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(md-editor VERSION 0.18.0 LANGUAGES CXX C)
+project(md-editor VERSION 0.19.0 LANGUAGES CXX C)
 add_compile_definitions(MD_EDITOR_VERSION="${PROJECT_VERSION}")
 
 # macOS 最低系统版本：Qt 6.8 官方最低支持 macOS 12。

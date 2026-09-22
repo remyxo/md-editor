@@ -5,8 +5,6 @@
 #include <QtNumeric>
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>
-#include <cstring>
 
 // ─────────────────────────────────────────────────────────────────────────
 // 结构假设（2026-09-20 实证）：Chromium printToPdf 产物无对象流（ObjStm），

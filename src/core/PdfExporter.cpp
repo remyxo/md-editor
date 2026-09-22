@@ -1,5 +1,6 @@
 #include "PdfExporter.h"
 #include "HtmlExporter.h"
+#include "ExportCommon.h"
 #include "PdfPageGeometry.h"
 #include <QWebEnginePage>
 #include <QWebEngineSettings>
@@ -11,7 +12,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QImage>
 #include <QDir>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -118,10 +118,14 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            .arg(cssContentString(spec.headerTitle))
                            .arg(kHfHugGapMm, 0, 'f', 2);
         if (spec.footerEnabled)
+            // 页码文案三段取自 ExportCommon::kPageText*（单一来源，见该处注释）
             pageCss += QStringLiteral(
-                           "@bottom-right{content:\"第 \" counter(page) \" 页 / 共 \" "
-                           "counter(pages) \" 页\";font-size:9pt;color:#666;"
-                           "vertical-align:top;padding-top:%1mm;}")
+                           "@bottom-right{content:\"%1\" counter(page) \"%2\" "
+                           "counter(pages) \"%3\";font-size:9pt;color:#666;"
+                           "vertical-align:top;padding-top:%4mm;}")
+                           .arg(QString::fromUtf8(ExportCommon::kPageTextPrefix),
+                                QString::fromUtf8(ExportCommon::kPageTextMid),
+                                QString::fromUtf8(ExportCommon::kPageTextSuffix))
                            .arg(kHfHugGapMm, 0, 'f', 2);
         pageCss += QLatin1Char('}');
         // 脚注随页浮动（Word 形态）：pdf-fn 类的 def 由 paged.js Footnotes 处理器
@@ -256,7 +260,13 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
             "vertical-align:bottom;font-size:9pt;color:#666;text-align:center;}"
             "table.hf>tbody>tr>td{border:none;padding:0;break-inside:auto;}"
             "table.hf{table-layout:fixed;}"
-            "#hfcell{padding:0 %3mm 0 %4mm;}")
+            // 字号基准必须显式钉回 11pt：包装单元格是 <td>，会吃到基础 CSS 的
+            // th,td{font-size:10pt}，于是单元格内一切 em 相对值都按 10pt 解析
+            // ——标题 h1/h2/h3 各小 10%（实测 h1 22.67px vs paged 侧 24.93px，
+            // 即有无脚注两份 PDF 的标题差一档），行内 code 同理（9pt vs 9.9pt）。
+            // 绝对值字号（表格单元格 10pt、页脚 9pt）不受影响，故只有标题看起来
+            // 分叉。id 选择器特异性高于 th,td，可直接覆盖
+            "#hfcell{font-size:11pt;padding:0 %3mm 0 %4mm;}")
             .arg(padBotMmHf, 0, 'f', 2)
             .arg(bandHmmHf, 0, 'f', 2)
             .arg(spec.marginsMm.right(), 0, 'f', 2)
@@ -267,7 +277,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
             // 行原子性（模板 @media print 的 tr,th,td{break-inside:avoid} 生
             // 效）：tr{break-inside:auto} 下 Chromium 行分片绘制越过分页器末
             // 端直插下边距（实测墨底 875pt，越页底 34pt）；avoid 推挤留空的
-            // 旧顾虑已被实测校正轮吸收
+            // avoid 推挤留空的旧顾虑已随分段堆叠（每片高恰一页）不复存在
             "#numhost{position:absolute;top:0;left:0;width:100%;}"
             // 页码片（每片恰一页高 = 打印片段高）：position:relative 作片内
             // abs 页码的 containing block——页码盒整体落在片段内（纸底带），
@@ -443,6 +453,15 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 正文指纹：页面内容盒文本（剔除 def——随页浮动后 def 进各页脚注盒，
         // 无引用的 def 留在内容盒，两种去向都不属正文流）；def 文本单独走
         // 字符多重集（见下方脚注指纹）
+        // 连字符规范化：paged.js 的 hyphenateAtBreak 会在断词处插入不换行连字符
+        // （\u2011）或软连字符——那是排版产物、不是内容，两侧对称剔除后比对，
+        // 否则断点位置一变（如表格预分页后）指纹即误报、整篇回退
+        // 连字符规范化（全局 + 局部各一份）：paged.js 的 hyphenateAtBreak 在断词处
+        // 插入不换行连字符 ‑（或软连字符）——那是排版产物、不是内容，指纹
+        // 两侧对称剔除后才不会误报（断点位置一变，如表格预分页后，就会触发）。
+        // __preFns 在函数外调用，故须有全局副本
+        "window.__dehyph=function(x){return String(x).replace(/\\u2011|\\u00AD/g,'');};"
+        "var dehyph=window.__dehyph;"
         "var post='',fnText='';"
         "for(var i=0;i<pages.length;i++){"
         "var c=pages[i].cloneNode(true);"
@@ -457,8 +476,8 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 浮动进脚注盒的 def（.pagedjs_area 内独立盒，内容盒之外）
         "var fd=document.querySelectorAll('.pagedjs_footnote_area div[data-type=\"footnoteDef\"]');"
         "for(var q=0;q<fd.length;q++)fnText+=fd[q].textContent;"
-        "var a=(window.__preText||'').replace(/\\s+/g,'');"
-        "var b=post.replace(/\\s+/g,'');"
+        "var a=dehyph((window.__preText||'').replace(/\\s+/g,''));"
+        "var b=dehyph(post.replace(/\\s+/g,''));"
         "if(a!==b){"
         "var j=0;while(j<Math.min(a.length,b.length)&&a.charAt(j)===b.charAt(j))j++;"
         "return '内容指纹不一致 '+a.length+'→'+b.length+' 首异位@'+j;"
@@ -466,7 +485,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 脚注指纹（字符多重集）：def 随引用重排（顺序变）、长脚注跨页拆分
         // （分块变），字符集合不变——纯重排/拆分不误伤，真丢失/重复仍拦截
         "var fa=window.__preFns||'';"
-        "var fb=fnText.replace(/\\s+/g,'').split('').sort().join('');"
+        "var fb=dehyph(fnText.replace(/\\s+/g,'')).split('').sort().join('');"
         "if(fa!==fb)return '脚注指纹不一致 '+fa.length+'→'+fb.length;"
         // img 维度指纹（文本比对之后）：图片无文本，文本指纹对图片丢失/裁切/
         // 重复铺排全无感知，须独立比对。签名取 src 多重集（收集后排序 join('|')）
@@ -494,20 +513,49 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "window.__preparePrint=function(){"
         "if(window.__printState==='working')return window.__printState;"
         "window.__printState='working';"
+        // 脚注区的真实高度无法从纸张/边距推导（字号 0.8em、行高 1.5、边框
+        // 1px、内垫 .25em 都是 CSS 值，但 paged.js 还会按内容算行盒），故不
+        // 硬编码：第一遍只加载并排一到两页，量到即中断（MEASURE_DONE），C++
+        // 取值后**重新加载**并注回 window.__pagedFnH——第二次加载是干净状态
+        // （同一次加载里二次 preview 不可行：__restoreBody 后 paged.js 内部
+        // 状态指向已移除节点，实测抛 Cannot read properties of null）
+        "if(!(window.__pagedBoxH>0)){"
+        "try{window.Paged.registerHandlers(class extends window.Paged.Handler{"
+        "afterPageLayout(pageElement){"
+        "var c=pageElement.querySelector('.pagedjs_page_content');"
+        "var a=pageElement.querySelector('.pagedjs_area');"
+        // 逐页取**最小值**：带脚注的页比不带脚注的页少一个脚注区高（页内容盒
+        // = 面积 − 脚注区），最小值即"最挤的一页"的可用高
+        "if(c){var ch=Math.round(c.getBoundingClientRect().height);"
+        "if(!window.__measureH||ch<window.__measureH)window.__measureH=ch;}"
+        "if(a)window.__measureA=Math.round(a.getBoundingClientRect().height);"
+        // 脚注区内容在第 1 页布局时尚未搬入（读到的是空态高），第 2 页再读
+        // 文档级第一个脚注区即得第 1 页的定型高
+        "window.__pagedPageN=(window.__pagedPageN||0)+1;"
+        "var fa0=document.querySelector('.pagedjs_footnote_area');"
+        "if(fa0)window.__measureFnH=Math.round(fa0.getBoundingClientRect().height);"
+        "window.__measureDbg='高='+window.__measureH+' 面积='+window.__measureA"
+        "+' 脚注区='+window.__measureFnH+' 页='+window.__pagedPageN;"
+        "if(window.__pagedPageN<2)return;"
+        "window.__printState='measured';"
+        "throw new Error('MEASURE_DONE');}});}catch(e){window.__measureDbg='注册失败 '+e;}"
+        "}"
         "var fallback=function(e){"
+        // 测量遍靠抛错中断（只排第一页即止），不是失败：原样返回让 C++ 取高重载
+        "if(window.__printState==='measured')return 'measured';"
         "console.warn('paged.js 分页失败，回退原生分页: '+(e&&e.message||e));"
         "try{window.__restoreBody();}catch(x){}"
         "window.__printState='fallback';return 'fallback';};"
         "return window.__renderAllMermaid()"
         ".then(function(){"
-        // 测量前置：屏幕媒体禁滚动条。滚动条会吃掉视口宽（实测 ~30px），
-        // 屏幕布局随之窄于打印布局——表格列宽归一的 intrinsic 测量与
-        // nativeHf 的分页块高测量全部失真（paged 路径短列被压成逐字竖排、
-        // nativeHf 表格行高偏大 30% 都是此因）。用 documentElement 内联样式
-        // 临时压制：内联样式不经样式表，paged.js 的样式改写够不着它；测量
-        // 一结束立即清除——绝不带进打印媒体（html{overflow:hidden} 在打印
-        // 下会裁掉整份文档）。测量函数内的 getBoundingClientRect 强制回流，
-        // 保证在压制生效的布局上取值
+        // 测量前置：屏幕媒体禁滚动条。滚动条会吃掉视口宽（实测 ~15px），
+        // 屏幕布局随之窄于打印布局——表格列宽归一的 intrinsic 测量、预分页
+        // 切块的行高测量与 nativeHf 的分页块高测量全部失真（paged 路径短列被
+        // 压成逐字竖排、nativeHf 表格行高偏大 30% 都是此因）。用
+        // documentElement 内联样式临时压制：内联样式不经样式表，paged.js 的
+        // 样式改写够不着它；压制罩住全部分页前测量，进分页前清除——绝不能
+        // 带进打印媒体（html{overflow:hidden} 在打印下会裁掉整份文档）。测量
+        // 函数内的 getBoundingClientRect 强制回流，保证在压制生效的布局上取值
         "try{document.documentElement.style.overflow='hidden';}catch(e){}"
         "if(!window.PagedPolyfill){"
         // nativeHf 三条前置（顺序即依赖）：① 代码块逐行重排成行块（与 paged
@@ -526,14 +574,17 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "try{window.__fixTableBreaks();}catch(e){console.warn('表格断点修正注册失败: '+(e&&e.message||e));}"
         "try{window.__fixTableColumns();}catch(e){console.warn('表格列宽归一化失败: '+(e&&e.message||e));}"
         "try{window.__splitPreLines();}catch(e){console.warn('代码块逐行重排失败: '+(e&&e.message||e));}"
-        "try{document.documentElement.style.overflow='';}catch(e){}"
         // 指纹快照在 splitPreLines 后（同基线）、脚注浮动前：正文指纹取
         // 「剔除 def 的 body 克隆」文本——def 即将被移进各页脚注盒（文本顺序
         // 必然改变），其文本单独走字符多重集指纹（__preFns）
+        // 连字符规范化（本 <script> 块内可用；__verifyContent 在另一块里有同语义
+        // 的局部副本）：paged.js 的 hyphenateAtBreak 在断词处插入不换行连字符，
+        // 那是排版产物、不是内容——指纹两侧对称剔除后才不会误报回退
+        "window.__dehyph=function(x){return String(x).replace(/\\u2011|\\u00AD/g,'');};"
         "window.__preFns=(function(){"
         "var t='',ds=document.querySelectorAll('div[data-type=\"footnoteDef\"]');"
         "for(var i=0;i<ds.length;i++)t+=ds[i].textContent;"
-        "return t.replace(/\\s+/g,'').split('').sort().join('');})();"
+        "return window.__dehyph(t.replace(/\\s+/g,'')).split('').sort().join('');})();"
         "window.__preText=(function(){"
         "var c=document.body.cloneNode(true);"
         "var ds=c.querySelectorAll('div[data-type=\"footnoteDef\"]');"
@@ -553,7 +604,130 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "s.sort();return s.join('|');})();"
         // 脚注浮动重排最后跑（快照之后）：把 def 移到首个引用旁并打 pdf-fn，
         // 分页引擎随即将其搬入引用所在页的页底脚注区
+        // 表格预分页（2026-09-22）：paged.js 对跨页表格做"行碎片"时会把装不下的
+        // 行建成续表碎片并（在部分几何下）留在当前页且撑成整页高，打印时整行不
+        // 显示（实测 1.1 表第 11 行、1.2 表首数据行丢失）。根治办法是不让它需要
+        // 切表：分页前把**超过一页的外层表**按行切成多张装得下一页的块，paged.js
+        // 只需在块之间做正常的块级分页。
+        //
+        // 切块容量模型（2026-09-22 二次重做；应用路径复现出丢行后逐项实测）：
+        // - **续块从页顶开始**（pdf-tbl-cont 带 break-before:page）⇒ 只需保证
+        //   单块高 ≤ 单页可用高，与全文档页格无关。
+        // - 单页可用高 = 面积高 __pagedContentPx（纸高 − 上下边距）；**该页含脚注
+        //   引用**再扣脚注区高（实测值 __pagedFnH，由测量遍量得）——按页判定，
+        //   不给整篇一刀切预留（无脚注的页白留一个脚注区高，每页少一行）。
+        // - 首块用起始页的剩余高：从流首逐页前推算到本表顶；续块从各自页顶起算，
+        //   逐块推进页游标。
+        // - **位移累加 push**：切块把内容推到新页 ⇒ 后续内容整体下移，而各表顶的
+        //   测量值取自**未切块**的连续流。实测应用路径：1.2 表模型 3730 / 真实
+        //   3810，1.3 表模型 4350 / 真实 5337（差近一整页）——后续表按"表顶还有
+        //   多少余量"切块时全按错的页算 ⇒ 块溢出 ⇒ paged.js 只能切表 ⇒ 错位碎片。
+        // - **余量 ≥20px 且首行放不下就整表挪页**：溢出是亚像素级的（实测 1.1 表
+        //   首块 710px + 真实起点 248 = 958，超内容盒 956 **2px** ⇒ 切表 ⇒ 第 11 行
+        //   变错位碎片）；挪页只损失 ≤一行 的页尾，换"永不切表"。
+        "window.__prepaginateTables=function(A){"
+        "try{"
+        "if(!(A>0))return 'no-H';"
+        "var F=window.__pagedFnH||0;"
+        // 通用安全余量：块盒高之外的墨迹（底边框/末行下探）+ 测量到分页的舍入
+        // 抖动；20px ≈ 1/3 行高，肉眼不可见
+        "var slack=Math.max(A*0.005,20);"
+        "var flowTop=document.body.getBoundingClientRect().top;"
+        "var refYs=[];"
+        "var supRefs=document.querySelectorAll('sup[data-type=\\\"footnoteRef\\\"]');"
+        "for(var si=0;si<supRefs.length;si++)refYs.push(supRefs[si].getBoundingClientRect().top-flowTop);"
+        "refYs.sort(function(a,b){return a-b;});"
+        // 页游标：本页容量 = 面积高；页内含脚注引用（引用点落在本页范围）则扣
+        // 脚注区高，与 paged.js 的分配一致——**按页判定**，不给整篇一刀切预留
+        // （无脚注的页白留一个脚注区高 = 每页少一行，实测页尾多空 29mm）
+        "var capAt=function(top,shift){"
+        "for(var q=0;q<refYs.length;q++){var ry=refYs[q]+shift;"
+        "if(ry>=top&&ry<top+A)return A-F;}"
+        "return A;};"
+        "var pageInfo=function(y,shift){"
+        "var top=0,guard=0;"
+        "while(guard++<600){"
+        "var cap=capAt(top,shift);"
+        "if(top+cap>y)return {top:top,cap:cap};"
+        "top+=cap;}"
+        "return {top:0,cap:A};};"
+        // 预扫：切块会改 DOM（续表 margin-top:0、删行、插表），屏幕流几何须统一取
+        // **切块前**的值——先把各表顶与各行高缓存下来（expando 不参与序列化/打印）
+        "var list=[];"
+        "var tables=document.querySelectorAll('table');"
+        "for(var i=0;i<tables.length;i++){"
+        "var t=tables[i];"
+        "if(t.classList.contains('hf'))continue;"
+        "if(t.parentElement&&t.parentElement.closest('table'))continue;"
+        "var all=[].slice.call(t.querySelectorAll('tr'));"
+        "if(all.length<3)continue;"
+        "var totalH=0;"
+        "for(var r0=0;r0<all.length;r0++){all[r0].__pph=all[r0].getBoundingClientRect().height;totalH+=all[r0].__pph;}"
+        "list.push({t:t,all:all,y0:t.getBoundingClientRect().top-flowTop,total:totalH,idx:i});}"
+        "var push=0;"
+        "for(var k2=0;k2<list.length;k2++){"
+        "var t=list[k2].t,all=list[k2].all,y0=list[k2].y0,totalH=list[k2].total;"
+        "var y=y0+push;"
+        "var pi=pageInfo(y,push);"
+        // 首块：本页余量连**首行**都放不下 ⇒ 整表挪到下一页（pdf-tbl-head 带
+        // break-before:page）。表若落在"塞不进一行"的页尾，paged.js 必然切表，
+        // 而切表会触发错位碎片丢行；挪页只损失 ≤一行 的页尾
+        "var pageTop=pi.top,headBreak=false;"
+        "var lim=pageTop+capAt(pageTop,push)-y-slack;"
+        "if(lim<all[0].__pph){headBreak=true;pageTop=pi.top+pi.cap;lim=capAt(pageTop,push)-slack;}"
+        "var groups=[],cur=[],used=0,firstLim=lim;"
+        "for(var r=0;r<all.length;r++){"
+        "if(cur.length&&used+all[r].__pph>lim){groups.push(cur);cur=[];used=0;"
+        "var nx=pageInfo(pageTop,push);pageTop=nx.top+nx.cap;"
+        "lim=capAt(pageTop,push)-slack;}"
+        "cur.push(all[r]);used+=all[r].__pph;}"
+        "if(cur.length)groups.push(cur);"
+        // 位移推进：末块之后内容落在「末块页顶 + 末块高」；未切块时表尾 = 表顶 +
+        // 表高，两者之差即本表切块把后续内容下推的量
+        "push+=Math.max(0,(pageTop+used)-(y+totalH));"
+        // 诊断（HF_DEBUG）：切块自述——容量模型与实际块规模
+        "if(window.__ppDbg){window.__ppInfo=window.__ppInfo||[];(function(){"
+        "var s=[];for(var g2=0;g2<groups.length;g2++){var hh=0;"
+        "for(var q3=0;q3<groups[g2].length;q3++)hh+=groups[g2][q3].__pph;"
+        "s.push(groups[g2].length+'行/'+Math.round(hh)+'px');}"
+        "window.__ppInfo.push('表'+list[k2].idx+' y0='+Math.round(y0)+'(带位移'+Math.round(y)+') A='+Math.round(A)"
+        "+' F='+Math.round(F)+(headBreak?' 挪页':'')+' 首块容量='+Math.round(firstLim)"
+        "+' 块['+s.join(' ')+']');"
+        "})();}"
+        "if(groups.length<2&&!headBreak)continue;"
+        "if(headBreak)t.classList.add('pdf-tbl-head');"
+        "var cg=t.querySelector(':scope > colgroup');"
+        "for(var k=groups[0].length;k<all.length;k++)all[k].remove();"
+        "var prev=t;"
+        "for(var g=1;g<groups.length;g++){"
+        "var nt=t.cloneNode(false);"
+        "nt.classList.add('pdf-tbl-cont');"
+        "if(cg)nt.appendChild(cg.cloneNode(true));"
+        "var tb=document.createElement('tbody');"
+        "for(var q=0;q<groups[g].length;q++)tb.appendChild(groups[g][q]);"
+        "nt.appendChild(tb);"
+        "prev.parentNode.insertBefore(nt,prev.nextSibling);prev=nt;}"
+        "}"
+        "return 'ok';"
+        "}catch(e){return 'err '+(e&&e.message||e);}"
+        "};"
+        // 脚注浮动重排**必须在预分页切块之前**：def 变成引用旁的 inline-block 后
+        // 会把其后的内容整体下推（实测 1.1 表顶 222 → 真实 248，差 26px），而切块
+        // 的"起始页余量"依赖表顶位置——先切块就按未浮动的位置算，首块因此多切一行
+        // 而溢出（2px 的溢出即触发 paged.js 切表→错位碎片）。指纹快照在本段之前
+        // （__preText 剔除 def、__preFns 是字符多重集），浮动不影响两者
         "try{window.__floatFootnotes();}catch(e){console.warn('脚注随页浮动重排失败: '+(e&&e.message||e));}"
+        // 预算基准 = 版心（面积）高 __pagedContentPx（纸高 − 上下边距，由 C++ 按
+        // 纸张与用户边距下发）；脚注区高 __pagedFnH 由测量遍量得后注入（第二遍
+        // 加载）——测量遍只排一两页即中断，C++ 取高重载（同一次加载里二次 preview
+        // 不可行：__restoreBody 后 paged.js 内部状态指向已移除节点，实测抛
+        // "Cannot read properties of null"）
+        "try{var ppt=window.__prepaginateTables(window.__pagedContentPx>0?window.__pagedContentPx:window.__pagedBoxH);if(ppt!=='ok')console.warn('表格预分页: '+ppt);}catch(e){console.warn('表格预分页失败: '+(e&&e.message||e));}"
+        // 滚动条压制（上方 overflow:hidden）要罩住**全部分页前测量**（列宽归一
+        // + 预分页切块）：滚动条吃掉 ~15px 视口宽，屏幕布局会比 paged 页内容盒
+        // 窄，行高/块高因此偏大。测量到此结束，**清除后**才进分页——绝不能带进
+        // 打印媒体（html{overflow:hidden} 在打印下会裁掉整份文档）
+        "try{document.documentElement.style.overflow='';}catch(e){}"
         "return PagedPolyfill.preview()"
         ".then(function(){"
         // 页脚 counter(pages) 修正：脚注溢出产生的续页走 chunker.clonePage——
@@ -611,13 +785,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     // 同脚本另定义 __paginateNativeHf（轻量分页切页器，见函数内注释）
     QString finalBody = body;
     if (nativeHf) {
-        auto esc = [](QString s) {
-            s.replace('&', QStringLiteral("&amp;"));
-            s.replace('<', QStringLiteral("&lt;"));
-            s.replace('>', QStringLiteral("&gt;"));
-            s.replace('"', QStringLiteral("&quot;"));
-            return s;
-        };
+        // 标题等拼进属性的文本统一走 ExportCommon::htmlEscapeAttr（三导出器共用）
         QString hfScript;
         {
             const QSizeF paperMm = QPageSize(spec.paper).size(QPageSize::Millimeter);
@@ -720,7 +888,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            "var cell=document.getElementById('hfcell');"
                            "if(!cell||!(Hpx>0))return 'no-cell';"
                            "pinOl(cell);"
-                           "if(false)preSplit(cell);"  /* 拆分手术暂缓：待做成布局中性后再启用 */  /* 拆分手术暂缓：模拟与成品尚有 ~6mm 系统偏差 */
+                           "if(false)preSplit(cell);"  /* 就地拆 li 手术暂缓（屏幕模拟与打印成品尚有 ~6mm 系统偏差，做成布局中性后再启用——见 CHANGELOG 0.18.0「已知边界」） */
                            "var units=[],base=null;"
                            // 单元 = [断点节点, 顶, 高, 重复表头高, 可断否]。探针实测
                            // break-before:page 只在块边界被可靠执行：顶层块、表格行、
@@ -747,15 +915,14 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            "for(var j=0;j<rows.length;j++){"
                            "if(rows[j].tagName!=='TR')continue;"
                            "var rr=rows[j].getBoundingClientRect();"
-                           "add(rows[j],rr.top+window.scrollY,rr.height,seen===0?0:thH,"
-                           "mark(rows[j],safe));seen++;}"
+                           "add(rows[j],rr.top+window.scrollY,rr.height,seen===0?0:thH,safe);seen++;}"
                            "if(seen===0)add(el,top,h,0,safe);return;}"
                            "if(t==='PRE'){"
                            "var ls=el.querySelectorAll('.pl');"
                            "if(ls.length){"
                            "for(var j=0;j<ls.length;j++){var rr=ls[j].getBoundingClientRect();"
-                           "add(ls[j],rr.top+window.scrollY,rr.height,0,mark(ls[j],safe));}return;}"
-                           "add(el,top,h,0,mark(el,safe));return;}"
+                           "add(ls[j],rr.top+window.scrollY,rr.height,0,safe);}return;}"
+                           "add(el,top,h,0,safe);return;}"
                            "if(t==='UL'||t==='OL'){desc(el,el,safe);return;}"
                            // li 本身：**任意层级**都可断（探针实测：break-before 在 li
                            // 上被可靠执行），以其为首叶块的断点节点；li 内部再往下
@@ -765,22 +932,16 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            // 其它容器（引文/块级 div/列表项）：子元素不算直接安全，
                            // 但若在普通 li 内部则靠拆分获得可断性（下方 desc 里判定）
                            "if(hasBlk(el)&&el.children.length){desc(el,el,false);return;}"
-                           "add(el,top,h,0,mark(el,safe));};"
+                           "add(el,top,h,0,safe);};"
                            // 下钻：keepNode 非空时，本容器（或其后代）的**首个叶块**
                            // 以 keepNode 作断点——列表序号/引用条等前置标记随块走，
                            // 断点落回容器上；且容器要一路穿透到叶块，否则「首个 li
                            // 里装整棵嵌套子树」会被记成一个巨块，整块推走留大片空白
-                           // 可断性：direct 为真（靠 break-before 直接断）或该节点在
-                           // 普通 li 内部（靠就地拆 li 断）。**拆分手术暂缓**——就地
-                           // 拆 li 会让屏幕模拟与打印成品出现 ~6mm 系统偏差（拆分后
-                           // 的 li 间距不再与原始嵌套一致），故当前 li 内部一律判为
-                           // 不可断：深嵌套文档回退 paged 保正确，其余文档走快路径
-                           "var canSplit=function(node){"
-                           "var li=node&&node.closest?node.closest('li'):null;"
-                           "if(!li||node.tagName==='LI')return false;"
-                           "return false;};"
-                           "var mark=function(node,safe){"
-                           "return (safe||canSplit(node))?1:0;};"
+                           // 可断性 = safe（父容器传下的"该断点 Chromium 是否可靠
+                           // 执行"判定）：顶层块与 li 自身为真；li 内部的非 li 元素在
+                           // Chromium 上 break-before 会被忽略（探针实证），内容一路流
+                           // 到自然上限、与贴边距的页脚行盒相压 → 成品校验拦截、整篇
+                           // 回退 paged。根治手段是"就地拆 li"（见 preSplit，暂缓启用）
                            "var desc=function(el,keepNode,safe){"
                            "var first=!!keepNode;"
                            "for(var i=0;i<el.children.length;i++){"
@@ -788,7 +949,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            "if(k.id==='numhost'||t==='SCRIPT'||t==='STYLE')continue;"
                            "if(first){first=false;"
                            "if(!hasBlk(k)){var rr=k.getBoundingClientRect();"
-                           "add(keepNode,rr.top+window.scrollY,rr.height,0,mark(keepNode,safe));continue;}"
+                           "add(keepNode,rr.top+window.scrollY,rr.height,0,safe);continue;}"
                            "desc(k,keepNode,safe);continue;}"
                            "leaf(k,safe);}};"
                            // 入口：正文格的直接子块均为直接安全断点（keepNode=null）
@@ -849,7 +1010,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            "sp.style.background='#fff';"
                            "sp.style.padding='0 0 0 6px';"
                            "sp.style.top='calc(100% - %1mm)';"
-                           "sp.textContent='第 '+k+' 页 / 共 '+n+' 页';"
+                           "sp.textContent='%3'+k+'%4'+n+'%5';"
                            "d.appendChild(sp);"
                            "d.style.height=(k===1?h1:hc)+'px';"
                            "d.style.position='relative';"
@@ -857,6 +1018,10 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                            "return true;};"                           "</script>")
                            .arg(footTopOffMm, 0, 'f', 2)
                            .arg(spec.marginsMm.right(), 0, 'f', 2)
+                           // 页码文案三段（同 paged 侧与校验正则的单一来源）
+                           .arg(QString::fromUtf8(ExportCommon::kPageTextPrefix))
+                           .arg(QString::fromUtf8(ExportCommon::kPageTextMid))
+                           .arg(QString::fromUtf8(ExportCommon::kPageTextSuffix))
                        : QString());
         }
         const QString hostAndScript =
@@ -866,7 +1031,7 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         finalBody = QStringLiteral(
                         "<table class=\"hf\"><thead><tr><td>%1</td></tr></thead>"
                         "<tbody><tr><td id=\"hfcell\">%2%3</td></tr></tbody></table>")
-                        .arg(spec.headerEnabled ? esc(spec.headerTitle) : QString(),
+                        .arg(spec.headerEnabled ? ExportCommon::htmlEscapeAttr(spec.headerTitle) : QString(),
                              body, hostAndScript);
     }
     // __NATIVE_HF 置位在 %5（__preparePrint）之前即可——它在 preparePrint 调用
@@ -897,16 +1062,25 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
                          .arg(contentWmm / 25.4 * 96.0, 0, 'f', 1)
                          .arg(contentHmm / 25.4 * 96.0, 0, 'f', 1)
                          .arg(spec.marginsMm.bottom() / 25.4 * 96.0, 0, 'f', 1));
+    } else if (paged) {
+        // 表格预分页的预算基准：版心高 = 纸高 − 上下边距（与 nativeHf 的
+        // __hfPageContentPx 同源，但不扣 4mm 墨迹余量——切块另有 20% 余量）
+        const double pageContentHmm = (spec.orientation == QPageLayout::Landscape
+                                           ? paperMm.width() : paperMm.height())
+            - spec.marginsMm.top() - spec.marginsMm.bottom();
+        libs.prepend(QStringLiteral("<script>window.__pagedContentPx=%1;</script>")
+                         .arg(pageContentHmm / 25.4 * 96.0, 0, 'f', 1));
     }
 
-    // 基础文档 CSS 的媒体包装：paged 路径由 paged.js 的 PrintMedia 处理器
-    // 解包（@media print 规则并入主规则表，供其屏幕媒体分页测量用）；legacy
-    // 路径包着即可（只打印）。nativeHf 路径**不包**——它的分页测量（屏幕媒体
-    // 里量块高定断页点）与表格列宽归一都需要屏幕布局 = 打印布局，包着就只有
-    // 打印媒体生效、屏幕测量全失真（列宽归一在快路径产出与 paged 不同的
-    // 分配即此因）
-    const QString mediaOpen = nativeHf ? QString() : QStringLiteral("@media print{");
-    const QString mediaClose = nativeHf ? QString() : QStringLiteral("}");
+    // 基础文档 CSS 的媒体包装：**nativeHf 与 paged 两条分页路径都不包**，只有
+    // legacy（无 paged.js、只打印一次）包着。paged 路径原先靠 paged.js 的
+    // PrintMedia 处理器解包——但那是 preview() 里才发生的，而分页前的表格列宽
+    // 归一（两趟 intrinsic 测量）与预分页切块**都在屏幕媒体里做**，包着就量在
+    // 「无基础 CSS」的裸布局上（实测表格行高 30px，成品 52px ⇒ 切块按 30px/行
+    // 算，每块塞进 ~1.7 倍行数 ⇒ paged.js 只能再切碎、页尾大片留白）。不包即
+    // 屏幕布局 = 打印布局，与 nativeHf 同款
+    const QString mediaOpen = (nativeHf || paged) ? QString() : QStringLiteral("@media print{");
+    const QString mediaClose = (nativeHf || paged) ? QString() : QStringLiteral("}");
 
     QString fullHtml = QString(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"
@@ -961,6 +1135,11 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "tr,th,td{break-inside:avoid;}"
         // % 无需转义——QString::arg 只识别 %1..%99 占位符，%% 会原样保留成无效 CSS（历史缺陷已修）
         "table{border-collapse:collapse;width:100%;margin:0.5em 0;}"
+        "table.pdf-tbl-split{break-before:page;}"
+        "table.pdf-tbl-cont{break-before:page;margin-top:0;}"
+        // 预分页：整表挪页（本页余量连首行都放不下——表落在"塞不进一行"的页尾时
+        // paged.js 必然切表，而切表会触发错位碎片丢行）
+        "table.pdf-tbl-head{break-before:page;}"
         "th,td{border:1px solid #ccc;padding:4px 8px;font-size:10pt;}"
         "th{background:#f5f5f5;}"
         "img{max-width:100%;}"
@@ -989,21 +1168,14 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "%7"                                    // 重型库按需（katex/mermaid）
         "<script>"
         "%5"                                    // __preparePrint
-        "window.addEventListener('DOMContentLoaded',function(){"
-        "var els=document.querySelectorAll('[data-latex]');"
-        "for(var i=0;i<els.length;i++){"
-        "var el=els[i];"
-        "var latex=el.getAttribute('data-latex');"
-        "if(!latex)continue;"
-        "try{"
-        "katex.render(latex,el,{throwOnError:false,displayMode:el.dataset.type==='block-math'});"
-        "}catch(e){el.textContent=latex;}"
-        "}"
-        "});"
+    ) + HtmlExporter::katexRenderScript() + QString(
+        // KaTeX 段与 HTML 导出共用同一份（HtmlExporter::katexRenderScript，
+        // 带 window.katex 守卫）——原先这里是无守卫的副本
         "</script>"
         "</head><body>%6</body></html>"
-    ).arg(pageCss, legacyPageZero, katexCssOnDemand, pagedScripts, preparePrint,
-          finalBody, libs, mediaOpen, mediaClose);
+    );
+    fullHtml = fullHtml.arg(pageCss, legacyPageZero, katexCssOnDemand, pagedScripts,
+                            preparePrint, finalBody, libs, mediaOpen, mediaClose);
 
     // 注入 mermaid 渲染 helper（定义 window.__renderAllMermaid，返回 Promise，
     // 不自调用——__preparePrint 显式链式调用并等待）。PDF 固定亮色打印。
@@ -1011,11 +1183,8 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         QString("<script>%1</script></head>").arg(HtmlExporter::mermaidRenderScript("default")));
 
     if (!customCss.isEmpty()) {
-        // 剥 </style> 序列（与 HtmlExporter 对称）：本地设置携带它会把 <style>
-        // 块提前终结并向产物注入任意标记（自注入面）
-        QString safeCss = customCss;
-        safeCss.remove(QRegularExpression("</\\s*style\\s*>",
-                                          QRegularExpression::CaseInsensitiveOption));
+        // 剥 </style> 序列（与 HtmlExporter 共用同一实现，避免安全规则分叉）
+        const QString safeCss = ExportCommon::stripStyleClose(customCss);
         fullHtml.replace("</head>", QString("<style>%1</style></head>").arg(safeCss));
     }
     return fullHtml;
@@ -1084,12 +1253,7 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     spec.headerTitle = QFileInfo(outputPath).completeBaseName();
 
     // 读取 KaTeX CSS 并内联（字体 url() 通过 qrc: baseUrl 解析）
-    QString katexCss;
-    QFile cssFile(":/web/katex.min.css");
-    if (cssFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        katexCss = QString::fromUtf8(cssFile.readAll());
-        cssFile.close();
-    }
+    const QString katexCss = ExportCommon::readResource(QStringLiteral(":/web/katex.min.css"));
 
     // 构建 PDF 渲染页面：图片 base64 内联 + 内联 KaTeX CSS + JS + 渲染脚本。
     // 路径裁决（2026-09-19 提速）：页眉/页脚启用且无脚注引用 → 原生分页+
@@ -1155,10 +1319,20 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     // __hfPageContentPx 同源）。宽度只在屏幕媒体生效（打印布局由 Qt 页版式
     // 决定），nativeHf 另注入 html{overflow:hidden} 防滚动条吃宽
     if (spec.pagedActive()) {
+        // **屏幕布局宽 = paged 页盒内容宽**（纸宽 − 用户左右边距 = 分页后
+        // .pagedjs_page_content 的宽），不能取纸宽：页边距在 paged 路径由
+        // paged.js 的 @page 承载，分页后正文被搬进只有内容宽（A4/18mm 边距下
+        // 658px）的页内容盒重新排版。若屏幕按纸宽（791px）排版，表格不折行
+        // （实测行高 30px），而分页后同一行折成两行（52px）——预分页按 30px/行
+        // 切块 ⇒ 每块塞进 ~1.7 倍行数 ⇒ paged.js 只能再切碎（丢行路径）且页尾
+        // 大片留白；列宽归一的 intrinsic 测量同样失真。
+        // nativeHf 例外：其正文横跨整张纸（页边距由 #hfcell 内垫承载），取纸宽
         const QSizeF pm = QPageSize(spec.paper).size(QPageSize::Millimeter);
-        const qreal wmm = (spec.orientation == QPageLayout::Landscape
-                               ? pm.height() : pm.width())
-            - pagedPrintMargins().left() - pagedPrintMargins().right();
+        const qreal wmm = htmlSpec.nativeHf
+            ? (spec.orientation == QPageLayout::Landscape ? pm.height() : pm.width())
+                  - pagedPrintMargins().left() - pagedPrintMargins().right()
+            : (spec.orientation == QPageLayout::Landscape ? pm.height() : pm.width())
+                  - spec.marginsMm.left() - spec.marginsMm.right();
         // 视口再收 2px：打印可打印区实测比公称值小 ~0.5-1.5px（Qt/Chromium
         // 亚像素舍入），屏幕若略宽，边界处的单元格会在成品里多折一行，逐页
         // 累积成数毫米溢出。收紧后屏幕折行只会比打印更保守（模拟略微高估
@@ -1170,6 +1344,9 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
         QFile d("/tmp/hf-full.html");
         if (d.open(QIODevice::WriteOnly)) { d.write(fullHtml.toUtf8()); d.close(); }
     }
+    // 记下本次渲染 HTML：若 paged 路径先跑了"测量遍"（只排第一页量页内容盒
+    // 真实高），C++ 会用它重新加载并注入实测值再走生产遍
+    m_pagedHtml = fullHtml;
     m_renderView->setHtml(fullHtml, QUrl("qrc:/web/"));
 }
 
@@ -1184,6 +1361,14 @@ void PdfExporter::onLoadFinished(bool ok)
     // 不能在其回调里直接 printToPdf——否则打印瞬间 body 可能已被 paged.js
     // wrapContent 掏成空 <template>（产出 1 页空白 PDF）。改为触发前置链后
     // 轮询 window.__printState，拿到终态再按对应版式打印
+    // 第二遍（生产遍）：注入测量遍量得的页内容盒真实高（切块按实测高切，
+    // 页尾不留白、也不用任何魔法数）
+    if (m_measuredBoxH > 0) {
+        const bool ppDbg = qEnvironmentVariableIsSet("HF_DEBUG");
+        m_renderView->page()->runJavaScript(
+            QStringLiteral("window.__pagedBoxH=%1;window.__pagedFnH=%2;window.__ppDbg=%3;")
+                .arg(m_measuredBoxH).arg(m_measuredFnH).arg(ppDbg ? 1 : 0));
+    }
     m_renderView->page()->runJavaScript("window.__preparePrint()");
     m_printPollCount = 0;
     m_printPoll.start();
@@ -1212,7 +1397,9 @@ void PdfExporter::pollPrintState()
     m_renderView->page()->runJavaScript(
         "(function(){return JSON.stringify({s:window.__printState||'',"
         "n:document.querySelectorAll('.pagedjs_page').length,"
-        "t:window.__hfPagTall||0});})()",
+        "t:window.__hfPagTall||0,"
+        "m:window.__measureH||0,"
+        "g:window.__measureDbg||''});})()",
         [this](const QVariant &v) {
             QJsonParseError e;
             const QJsonDocument d = QJsonDocument::fromJson(v.toString().toUtf8(), &e);
@@ -1226,6 +1413,46 @@ void PdfExporter::pollPrintState()
             if (state == QLatin1String("working") && pages > m_lastPagedPages) {
                 m_lastPagedPages = pages;
                 emit pagedProgress(pages);
+            }
+            // 测量遍完成（只排了第一页）：取实测页内容盒高 → 重新加载页面并
+            // 注入该值，第二次加载走生产路径（切块用实测高，页尾不留白）。
+            // 只测量一次（m_measuredBoxH 非 0 即不再进）
+            if (state == QLatin1String("measured") && m_measuredBoxH == 0) {
+                int h = e.error == QJsonParseError::NoError
+                            ? o.value("m").toInt() : 0;
+                // 兜底解析：钩子里同一处写下的自述串稳定可读（实测 __measureH
+                // 在该上下文里读回 0，原因未明），从中取高度保证功能可用
+                if (h <= 0) {
+                    const QString dbg = o.value("g").toString();
+                    const QRegularExpression re(QStringLiteral("高=(\\d+)"));
+                    const auto m2 = re.match(dbg);
+                    if (m2.hasMatch())
+                        h = m2.captured(1).toInt();
+                }
+                // 脚注区实测高（同一次测量遍带回）：切块按它预留。两条来源取大者
+                // ——① 文档级首个脚注区高（第 2 页读到的是第 1 页的定型高）② 面积
+                // 高 − 最挤页的内容盒高（页内容盒 = 面积 − 脚注区，两值相减即得，
+                // 不依赖脚注区元素是否已被 paged.js 定型）
+                {
+                    const QString dbg = o.value("g").toString();
+                    const auto mFn = QRegularExpression(QStringLiteral("脚注区=(\\d+)"))
+                                         .match(dbg);
+                    if (mFn.hasMatch())
+                        m_measuredFnH = mFn.captured(1).toInt();
+                    const auto mArea = QRegularExpression(QStringLiteral("面积=(\\d+)"))
+                                           .match(dbg);
+                    if (mArea.hasMatch() && h > 0)
+                        m_measuredFnH = qMax(m_measuredFnH,
+                                             mArea.captured(1).toInt() - h);
+                }
+                qWarning("[PdfExport] 测量遍回报 h=%d dbg=%s", h,
+                         qPrintable(o.value("g").toString()));
+                if (h > 0) {
+                    m_measuredBoxH = h;
+                    m_printPoll.stop();
+                    startPagedExport(m_pagedHtml);
+                }
+                return;
             }
             // 未到终态（idle/working/空）继续轮询；回调与停表存在竞态，须防重
             if (state != QLatin1String("paged") && state != QLatin1String("legacy")
@@ -1289,83 +1516,63 @@ void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
             return;
         }
         const int n = doc.pageCount();
-        // 原始字节先读再删临时文件：内容流几何测量（SVG 等无文本内容的
-        // 底沿）需要裸 PDF 字节，QPdfDocument 的文本接口量不到矢量图形
+        // 墨底诊断要用的裸 PDF 字节（仅 HF_DEBUG，见下方测量块）：内容流几何
+        // 测量需要原始字节（SVG/图片等无文本内容的底沿，QPdfDocument 的文本
+        // 接口量不到）——先读再删临时文件
         QByteArray pdfBytes;
-        {
+        if (qEnvironmentVariableIsSet("HF_DEBUG")) {
             QFile f(filePath);
             if (f.open(QIODevice::ReadOnly))
                 pdfBytes = f.readAll();
         }
-        const QVector<PdfPageGeometry::PageBottom> geo
-            = PdfPageGeometry::measure(pdfBytes);
         QFile::remove(m_nativeHfTemp);
         if (n <= 0) {
             fallbackFromNativeHf(QStringLiteral("页数统计失败"));
             return;
         }
-        // 逐页定位（T/H_c 流模型，2026-09-20 双文档实证）：
-        // 每页流耗 R_j ——满页 = 内容区全高 H_c（Chromium 行量化使最深墨底
-        // 恒差 ~1 行，按墨底累计逐页低估 ~50px，21 页实测漂移整页）；页 1
-        // 再减 thead 盒（首画真实占位；页 2+ 重复表头覆盖绘制不耗流）；
-        // 推挤页（大块不可分元素整体后移）与尾页 = 墨底 + 行高——推挤在
-        // 页内留下的「洞」不占流，墨底对这类页天然正确。墨底取 getAllText
-        // bounds 最深文本底与内容流几何底沿（PdfPageGeometry：SVG/图片等
-        // 无文本内容）的较深者。标记纵向 = T_k + 页尾越界 20px（落进下边距
-        // 绘制窗，探针实证 ~68px 内不增页）
+        // 页码分段堆叠（2026-09-20 定稿）：每片高恰一页，分页器把每片文字钳在
+        // 该片所在页的片段末——几何分段与内容推挤/墨底无关，零 T 模型、零校正
+        // 轮；abs 容器自身按页格分段（其流与 cell 内容推挤解耦）
         {
-            const qreal topPt = m_spec.marginsMm.top() / 25.4 * 72.0;
-            const qreal mBotPt = m_spec.marginsMm.bottom() / 25.4 * 72.0;
             const qreal pxPerPt = 96.0 / 72.0;
-            // 新版式（打印区 = 整纸）：页眉带高 = 用户上边距（不再是固定
-            // 8.5mm 带）——内容顶自纸顶 = Qt 上边距(0.1mm) + 页眉带
-            const qreal qtTopPt = nativeHfPrintMargins().top() / 25.4 * 72.0;
-            const qreal headPt = qtTopPt + (m_spec.headerEnabled ? topPt : 0.0);
-            const bool dbg = qEnvironmentVariableIsSet("HF_DEBUG");
-            // 墨底（px，自内容区顶）：文本与几何取深，带内钳制
-            QVector<qreal> inkFill(n);
-            qreal fullLevel = 0;
-            for (int p = 0; p < n; ++p) {
-                const qreal pageHpt = doc.pagePointSize(p).height();
-                const qreal bandBottomPt = pageHpt - mBotPt - 2.0;
-                qreal maxBottomPt = 0;
-                const auto polys = doc.getAllText(p).bounds();
-                for (const auto &poly : polys) {
-                    const qreal b = poly.boundingRect().bottom();
-                    if (b < bandBottomPt && b > maxBottomPt) maxBottomPt = b;
-                }
-                const qreal textBottomPt = maxBottomPt;
-                if (p < geo.size() && geo[p].valid
-                    && geo[p].bottomPt < bandBottomPt
-                    && geo[p].bottomPt > maxBottomPt)
-                    maxBottomPt = geo[p].bottomPt;
-                if (maxBottomPt <= 0) maxBottomPt = bandBottomPt - 10;
-                inkFill[p] = (maxBottomPt - headPt) * pxPerPt;
-                if (p < n - 1) fullLevel = qMax(fullLevel, inkFill[p]);
-                if (dbg)
+            // 墨底诊断（仅 HF_DEBUG）：文本底与内容流几何底沿（SVG/图片等无文本
+            // 内容）取深，排查页码落位用。整段含一次全 PDF 内容流解析 + 逐页文本
+            // 提取，产物不依赖其输出（分段堆叠已无 T 模型）——默认不跑
+            if (qEnvironmentVariableIsSet("HF_DEBUG")) {
+                const qreal topPt = m_spec.marginsMm.top() / 25.4 * 72.0;
+                const qreal mBotPt = m_spec.marginsMm.bottom() / 25.4 * 72.0;
+                // 新版式（打印区 = 整纸）：页眉带高 = 用户上边距——内容顶自纸顶
+                // = Qt 上边距(0.1mm) + 页眉带
+                const qreal qtTopPt = nativeHfPrintMargins().top() / 25.4 * 72.0;
+                const qreal headPt = qtTopPt + (m_spec.headerEnabled ? topPt : 0.0);
+                const QVector<PdfPageGeometry::PageBottom> geo
+                    = PdfPageGeometry::measure(pdfBytes);
+                for (int p = 0; p < n; ++p) {
+                    const qreal bandBottomPt = doc.pagePointSize(p).height() - mBotPt - 2.0;
+                    qreal maxBottomPt = 0;
+                    const auto polys = doc.getAllText(p).bounds();
+                    for (const auto &poly : polys) {
+                        const qreal b = poly.boundingRect().bottom();
+                        if (b < bandBottomPt && b > maxBottomPt) maxBottomPt = b;
+                    }
+                    const qreal textBottomPt = maxBottomPt;
+                    if (p < geo.size() && geo[p].valid
+                        && geo[p].bottomPt < bandBottomPt
+                        && geo[p].bottomPt > maxBottomPt)
+                        maxBottomPt = geo[p].bottomPt;
+                    if (maxBottomPt <= 0) maxBottomPt = bandBottomPt - 10;
                     qWarning("[PdfExport][hf-geo] p%d 文本底=%.1f 几何底=%.1f 墨底px=%.0f",
                              p + 1, textBottomPt,
                              p < geo.size() && geo[p].valid ? geo[p].bottomPt : -1.0,
-                             inkFill[p]);
+                             (maxBottomPt - headPt) * pxPerPt);
+                }
             }
-            // R_j 判定与累计：满页判据 = 墨底不低于全文档最深墨底 − 3 行
-            // （行量化差 ≤ ~2 行；推挤页缺口通常远大于此；误判由成品实测
-            // 校正轮兜底）。标记纵向 = 页流尾 − 18px（分页器末端内——越界
-            // 的 abs 子元素实证直接落下一页顶，不画边距）
-            // Chromium 打印以整数 px 计页高/边距（实测每页 ~1px 舍入差，
-            // 分段堆叠下逐页上爬 0.75pt）——同径取整消除。新版式下每片高 =
-            // 打印片段高（纸高扣 Qt 微量边距），不再扣 thead——页眉带已移到
-            // 片段顶部占位，不再消耗片段内位移
+            // Chromium 打印以整数 px 计页高/边距（实测每页 ~1px 舍入差，分段堆叠
+            // 下逐页上爬 0.75pt）——同径取整消除。每片高 = 打印片段高（纸高扣 Qt
+            // 微量边距），不扣 thead：页眉带已移到片段顶部占位，不消耗片段内位移
             const qreal Hc = qRound(doc.pagePointSize(0).height() * pxPerPt)
                 - qRound(nativeHfPrintMargins().top() / 25.4 * 72.0 * pxPerPt)
                 - qRound(nativeHfPrintMargins().bottom() / 25.4 * 72.0 * pxPerPt);
-            // 页码分段堆叠（2026-09-20 定稿）：每片高恰一页，分页器把每片文字
-            // 钳在该片所在页的片段末——几何分段与内容推挤/墨底无关，零
-            // T 模型、零校正轮；abs 容器自身按页格分段（其流与 cell 内容
-            // 推挤解耦）
-            m_hfTops = QJsonArray();
-            for (int p = 0; p < n; ++p)
-                m_hfTops.append(QJsonValue(0));   // 占位：验证以 m_hfTotal 为准
             m_hfTotal = n;
             m_hfH1Px = Hc + 1.04;   // 漂移校准（旧版式实测 1.036px/页，同值起步）
             m_hfHcPx = Hc + 1.04;
@@ -1374,10 +1581,9 @@ void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
         }
         return;
     }
-    // nativeHf 成品遍：逐页校验页码（第 k 页恰为 k/n），不符时先走实测校正
-    // 轮（≤2）：按成品里每个标记的落页 π(k) 与底带墨底 y 逐标记修偏——
-    // abs 覆盖层对分页零影响（实证两遍分页恒等），逐轮打印重验必收敛。
-    // 校正轮耗尽仍不符 → 回退 paged.js 重导（慢但正确），绝不出错页码成品。
+    // nativeHf 成品遍：逐页校验页码（第 k 页恰为 k/n），不符即回退 paged.js
+    // 重导（慢但正确），绝不出错页码成品——校正轮机制已随分段堆叠撤销（每片
+    // 高恰一页，无 T 模型可修），保留的只有校验与回退
     // 字体 cmap 可能把「页」映成部首码位（视觉同形），页数字符用通配；
     // 匹配前白名单剥离：提取流可能逐字形插 \r\n、偶发不可见非字符
     if (m_nativeHfPass == 2) {
@@ -1393,9 +1599,10 @@ void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
             fallbackFromNativeHf(QStringLiteral("成品校验读取失败"));
             return;
         }
-        const int stamped = m_hfTotal > 0 ? m_hfTotal : m_hfTops.size();
+        const int stamped = m_hfTotal;
         const int n2 = doc.pageCount();
-        const QRegularExpression re(QStringLiteral("第(\\d+)./共(\\d+)"));
+        // 页码文案的校验侧（与 kPageText* 同源，见 ExportCommon）
+        const QRegularExpression re = ExportCommon::pageNumberVerifyPattern();
         // y 反馈优先取内容流几何的色锚定基线（#666 下半页文本 = 页码标记
         // 本尊；表头同色恒在页顶不干扰）——纯底带墨底会被深处内容/SVG 标
         // 签冒名顶替（实测 s-11 页码高 118px 而校验假通过），仅作几何缺位
@@ -1521,7 +1728,7 @@ void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
                 const qreal level = lv[lv.size() / 2];
                 // 只判可测页：色锚定偶发漏检（实测 p12 页脚像素在位而锚
                 // 未命中——变换上下文），不可测且有文本命中的页跳过判定，
-                // 否则无 y 反馈的页死锁耗尽校正轮回退
+                // 否则无 y 反馈的页会被误判（现无校正轮，误判即整篇回退 paged）
                 for (int p = 0; p < stamped - 1 && p < n2; ++p) {
                     const qreal y = pageY(p);
                     if (y >= 0 && qAbs(y - level) > 6.0)
@@ -1553,7 +1760,7 @@ void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
         emit exportError("PDF 生成失败");
 }
 
-// nativeHf：按 m_hfTops 注入页码标记后打成品（校正轮复用——JS 侧先清旧标记）
+// nativeHf：注入页码覆盖层标记后打成品（片高/总页数由分段堆叠给定）
 void PdfExporter::stampAndPrintHf()
 {
     // 第一遍已数出页数：成品写盘阶段进度带上总页数
@@ -1585,8 +1792,9 @@ void PdfExporter::fallbackFromNativeHf(const QString &reason)
     m_nativeHfPass = 0;
     PdfPageSpec pagedSpec = m_spec;
     pagedSpec.nativeHf = false;
-    startPagedExport(buildRenderHtml(m_srcHtml, m_srcDocDir, m_srcKatexCss,
-                                     m_srcCustomCss, pagedSpec));
+    m_pagedHtml = buildRenderHtml(m_srcHtml, m_srcDocDir, m_srcKatexCss,
+                                  m_srcCustomCss, pagedSpec);
+    startPagedExport(m_pagedHtml);
 }
 
 void PdfExporter::startPagedExport(const QString &pagedFullHtml)

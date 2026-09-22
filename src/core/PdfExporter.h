@@ -2,7 +2,6 @@
 #define MD_EDITOR_PDFEXPORTER_H
 
 #include <QObject>
-#include <QJsonArray>
 #include <QWebEngineView>
 #include <QPageLayout>
 #include <QPageSize>
@@ -91,13 +90,16 @@ private:
     PdfPageSpec m_spec;
     QString m_srcHtml, m_srcDocDir, m_srcKatexCss, m_srcCustomCss;
     QString m_nativeHfTemp;   // nativeHf 第一遍 PDF（数页数用，完事即删）
+    // paged 版渲染 HTML（测量遍之后重载用：第二遍注入实测页内容盒高）
+    QString m_pagedHtml;
+    int m_measuredBoxH = 0;   // 实测页内容盒高（px），0=尚未测量
+    int m_measuredFnH = 0;    // 实测脚注区高（px，测量遍带回；切块按它预留）
     int m_nativeHfPass = 0;   // 0=非该路径；1=数页数遍；2=成品遍
-    QJsonArray m_hfTops;      // 覆盖层页码标记纵向（px，T/H_c 流模型累计）
     int m_hfTotal = 0;        // 总页数
-    qreal m_hfH1Px = 0;       // 页码首片高（= 打印片段高；新版式不再扣 thead）
-    qreal m_hfHcPx = 0;       // 页码后续片高（同上）
+    qreal m_hfH1Px = 0;       // 页码首片高（= 打印片段高）
+    qreal m_hfHcPx = 0;       // 页码后续片高（分段堆叠后与首片恒等，分列保留）
     qreal m_hfTotalPx = 0;    // numhost 总高（n 片和 = n 页）
-    void stampAndPrintHf();   // 注入标记并打成品（首轮与校正轮共用）
+    void stampAndPrintHf();   // 注入页码覆盖层标记并打成品
     QPageLayout m_pendingLayout;   // paged 版式（0.1mm 微量边距——@page 已承载页边距，见 pagedPrintMargins）
     QPageLayout m_legacyLayout;    // 原生版式（用户边距）——legacy/回退共用
     QPageLayout m_nativeHfLayout;  // nativeHf 版式（整纸打印区——页边距由流内结构模拟）
