@@ -186,20 +186,22 @@ QString HtmlExporter::tableColumnNormalizeScript()
     // 为何要显式分配：浏览器 auto 布局下 CJK 列可任意字间断行 ⇒ 其 min-content
     // 塌缩为单字宽，富余宽度按 max-content 比例尽归长列——「编号」列放不下三位
     // 数字（001 折两行）、「状态」列把「已完成」压成一字一行（用户实测 HTML 导出
-    // 1.1 节 60 行表；PDF 侧同因，见 PdfExporter 该函数原注释）。方案：两趟
-    // intrinsic 测量（min-content 作保底、max-content 作期望；测量期临时关掉
-    // anywhere 并把字族/字号/边距固定到目标渲染基准——拉丁整词与 CJK 逐字才是
-    // 自然断行单元）→ floor=min(max, 3×min, 等份额) 三分支分配 → 写 <colgroup>
-    // 百分比 + 每行单元格内联百分比 + table-layout:fixed。用百分比而非固定 px：
-    // HTML 产物在任意窗口宽度下按同一比例分配；PDF 页面宽固定，效果等同。
-    // 列几何自描述在行单元格上（不只靠 colgroup）：paged.js 跨页碎片是
-    // cloneNode(false) 浅克隆、丢 colgroup 子元素，只写 colgroup 会换页错列。
+    // 1.1 节 60 行表；PDF 侧同因，见 PdfExporter 该函数原注释）。
+    //
+    // 测量与分配算法抽至 web/table-column-layout.js（单一来源，编辑器 editor.js
+    // 共用）：本函数运行时读 qrc 内联该文件，再定义写回壳 __normalizeTableColumns
+    //（两趟测量 → floor/cap 三分支分配 → 写 <colgroup> 百分比 + 每行单元格内联
+    // 百分比 + table-layout:fixed）。用百分比而非固定 px：HTML 产物在任意窗口
+    // 宽度下按同一比例分配；PDF 页面宽固定，效果等同。列几何自描述在行单元格上
+    //（不只靠 colgroup）：paged.js 跨页碎片是 cloneNode(false) 浅克隆、丢 colgroup
+    // 子元素，只写 colgroup 会换页错列。
     //
     // cfg（可省）：avail 可用宽 px，缺省取 window.__pageContentWidthPx →
     // body.clientWidth；fontSize/padding/fontFamily 为测量期临时样式，PDF 传
     // 打印基准（10pt / 4px 8px / Noto Sans SC），HTML 导出不传 ⇒ 按产物实际
-    // 渲染样式测量。
-    return QStringLiteral(
+    // 渲染样式测量；slack 每列余量 px；toTable 量表自身盒宽再切 display:table。
+    const QString shared = ExportCommon::readResource(QStringLiteral(":/web/table-column-layout.js"));
+    return shared + QStringLiteral(
         "window.__normalizeTableColumns=function(cfg){"
         "cfg=cfg||{};"
         "var avail=(cfg.avail>0)?cfg.avail:((window.__pageContentWidthPx>0)?"
@@ -221,66 +223,12 @@ QString HtmlExporter::tableColumnNormalizeScript()
         "table.style.display='table';"
         "table.style.overflowX='visible';"
         "}"
-        "var firstRow=table.querySelector('tr');"
-        "if(!firstRow||!firstRow.children.length)return;"
-        "var saved=[],all=table.querySelectorAll('td,th');"
-        "for(var i=0;i<all.length;i++){"
-        "saved.push([all[i],all[i].getAttribute('style')]);"
-        "if(cfg.fontSize)all[i].style.fontSize=cfg.fontSize;"
-        "if(cfg.padding)all[i].style.padding=cfg.padding;"
-        "all[i].style.overflowWrap='normal';"
-        "all[i].style.wordBreak='keep-all';"
-        "}"
-        "var savedTable=table.getAttribute('style');"
-        "table.style.borderCollapse='collapse';"
-        "if(cfg.fontFamily)table.style.fontFamily=cfg.fontFamily;"
-        "table.style.tableLayout='auto';"
-        "var expand=function(){"
-        "var out=[],ci=0;"
-        "for(var i=0;i<firstRow.children.length;i++){"
-        "var span=Math.max(1,parseInt(firstRow.children[i].getAttribute('colspan')||'1',10));"
-        "var w=firstRow.children[i].getBoundingClientRect().width/span;"
-        "for(var s=0;s<span;s++)out[ci++]=w;"
-        "}"
-        "return out;"
-        "};"
-        "table.style.width='min-content';"
-        "var minW=expand();"
-        "table.style.width='max-content';"
-        "var maxW=expand();"
-        "var n=minW.length,floor=[],sumMax=0,sumFloor=0;"
-        "for(var j=0;j<n;j++){"
-        "if(!(maxW[j]>0))maxW[j]=(minW[j]>0)?minW[j]:1;"
-        "if(!(minW[j]>0))minW[j]=maxW[j];"
-        "if(minW[j]>0)maxW[j]=Math.min(maxW[j],minW[j]*3);"
-        // slack 余量（每列，px，cfg 传入）：列宽走百分比再乘回表宽，小数布局
-        // 与边框折叠会吃掉零点几像素——正好卡在 max-content 边界的短列仍折行
-        //（HTML 导出实测：状态列 74.69px vs 「已完成」48px + 左右内边距 26px
-        // = 74px，差 0.3px 即一字一行；编号列 58.70 vs 32+26 = 58，差 0.1px
-        // 折两行）。余量并入 maxW，floor 与百分比分母同步放大，各列占比不变。
-        // HTML 导出传 2px；PDF 不传（其 10pt 基准余量较宽，此文档实测无边界
-        // 折行，且保持既有已验证产物不变——传 2px 会让该文档 11→10 页）
-        "if(maxW[j]>0)maxW[j]+=(cfg.slack||0);"
-        "floor[j]=Math.min(maxW[j],Math.min(minW[j]*3,myAvail/n));"
-        "sumMax+=maxW[j];sumFloor+=floor[j];"
-        "}"
-        "var w=[];"
-        "if(sumMax<=myAvail){"
-        "for(j=0;j<n;j++)w.push(maxW[j]*myAvail/sumMax);"
-        "}else if(sumFloor<=myAvail){"
-        "var k=(myAvail-sumFloor)/(sumMax-sumFloor);"
-        "for(j=0;j<n;j++)w.push(floor[j]+(maxW[j]-floor[j])*k);"
-        "}else{"
-        "for(j=0;j<n;j++)w.push(floor[j]*myAvail/sumFloor);"
-        "}"
-        "var total=0;for(j=0;j<n;j++)total+=w[j];"
+        "var m=window.__measureTableColumns(table,cfg);"
+        "if(!m)return;"
+        "var n=m.minW.length;"
+        "var w=window.__allocateTableColumns(m.minW,m.maxW,myAvail,cfg.slack);"
+        "var total=0;for(var j=0;j<n;j++)total+=w[j];"
         "if(!(total>0))return;"
-        "for(i=0;i<all.length;i++){"
-        "if(saved[i][1]===null)all[i].removeAttribute('style');"
-        "else all[i].setAttribute('style',saved[i][1]);"
-        "}"
-        "if(savedTable===null)table.removeAttribute('style');"
-        "else table.setAttribute('style',savedTable);"
         "var old=table.querySelector('colgroup');if(old)old.remove();"
         "var cg=document.createElement('colgroup');"
         "for(var c2=0;c2<n;c2++){"

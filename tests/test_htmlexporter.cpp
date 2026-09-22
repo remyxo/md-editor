@@ -273,10 +273,17 @@ private slots:
         // PDF 侧不传 toTable，沿用页宽基准（其表格宽度随内容，量自身盒宽会拿到溢出宽）
         // slack 余量：HTML 导出传 2px（百分比折算+边框折叠吃掉零点几像素，
         // 短列卡在 max-content 边界即折行）；PDF 不传 ⇒ 既有产物逐页不变
-        QVERIFY(js.contains("maxW[j]+=(cfg.slack||0)"));
+        QVERIFY(js.contains("maxW[j]+=(slack||0)"));
         QVERIFY(js.contains("if(cfg.toTable){"));
         QVERIFY(js.contains("if(table.clientWidth>0)myAvail=table.clientWidth;"));
         QVERIFY(js.contains("table.style.display='table';"));
+        // 单一来源：测量/分配抽至 web/table-column-layout.js，本函数运行时读
+        // qrc 内联 + 写回壳调用（编辑器 editor.js 共用同一份算法）
+        QVERIFY(js.contains("__measureTableColumns"));
+        QVERIFY(js.contains("__allocateTableColumns"));
+        // 测量前剥掉既有 colgroup：编辑器二次测量时克隆表带着上轮百分比 col
+        // 会污染 auto 测量；导出侧旧 colgroup 本来就在写回前移除，行为不变
+        QVERIFY(js.contains("oldCg.remove()"));
     }
 
     void testExportHtmlNormalizesTableColumns() {
