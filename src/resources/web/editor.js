@@ -1822,6 +1822,7 @@ window.editorApi = {
                     self._markDirty();
                 }
                 self._scheduleLineGutter();
+                self._scheduleTableLayout();
                 // 大纲/字数为全文档扫描 + IPC：防抖上报（曾每击键一次，
                 // 大文档下打字卡顿来源之一）；历史状态轻量，保持逐事务
                 self._scheduleHeadings();
@@ -1882,6 +1883,7 @@ window.editorApi = {
         // 抑制构造期 onUpdate（Focus 等插件会在加载后异步派发事务）
         this._loading = true;
         this.editor = this._createEditor(el);
+        this._layoutTables();
         this._loading = false;
         _syncHighlightTheme();  // 初始化时同步代码块高亮主题
         if (this.editor) {
@@ -2000,6 +2002,96 @@ window.editorApi = {
         this.bridge.wordCountChanged(chars, words);
     },
 
+    // === 表格列宽自动布局 ===
+    // 与导出侧共用 web/table-column-layout.js 的测量/分配（单一来源）。编辑器
+    // 侧差异：① 克隆到 body 下离屏容器测量（套 .ProseMirror 类复用编辑器单元
+    // 格样式；body.dark 由真实 body 带动暗色规则生效；不进 PM 根节点，避开
+    // DOMObserver）；② 写百分比（窗口缩放/侧栏开合免重算）；③ 首行 cell 带
+    // colwidth 属性 = 用户手动拖过列宽（columnResizing 写入），尊重用户不接管。
+    _scheduleTableLayout: function() {
+        var self = this;
+        if (this._tableLayoutTimer) return;
+        this._tableLayoutTimer = setTimeout(function() {
+            self._tableLayoutTimer = null;
+            self._layoutTables();
+        }, 300);
+    },
+
+    _layoutTables: function() {
+        if (!this.editor || !window.__measureTableColumns || !window.__allocateTableColumns) return;
+        var tables = this.editor.view.dom.querySelectorAll('table');
+        for (var t = 0; t < tables.length; t++) {
+            var table = tables[t];
+            var firstRow = table.querySelector('tr');
+            if (!firstRow || !firstRow.children.length) continue;
+            var hasUserWidth = false;
+            for (var c = 0; c < firstRow.children.length; c++) {
+                if (firstRow.children[c].getAttribute('colwidth')) { hasUserWidth = true; break; }
+            }
+            if (hasUserWidth) continue;
+            var wrap = table.closest('.tableWrapper') || table.parentNode;
+            var avail = wrap.clientWidth;
+            if (!(avail > 0)) continue;
+            var holder = document.createElement('div');
+            holder.className = 'ProseMirror';
+            holder.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:hidden;width:' + avail + 'px';
+            var clone = table.cloneNode(true);
+            holder.appendChild(clone);
+            document.body.appendChild(holder);
+            try {
+                var m = window.__measureTableColumns(clone, {});
+                if (!m || !m.minW.length) continue;
+                var w = window.__allocateTableColumns(m.minW, m.maxW, avail, 2);
+                var total = 0;
+                for (var j = 0; j < w.length; j++) total += w[j];
+                if (!(total > 0)) continue;
+                var cg = table.querySelector('colgroup');
+                if (!cg) {
+                    cg = document.createElement('colgroup');
+                    table.insertBefore(cg, table.firstChild);
+                }
+                while (cg.children.length < w.length) cg.appendChild(document.createElement('col'));
+                while (cg.children.length > w.length) cg.removeChild(cg.lastChild);
+                for (var k = 0; k < w.length; k++)
+                    cg.children[k].style.width = (w[k] / total * 100).toFixed(3) + '%';
+                // TableView 的 ignoreMutation 已忽略 table/colgroup 变更
+                //（vendored tiptap-extension-table.js:66-67），此写回不惊动 PM
+                table.style.tableLayout = 'fixed';
+                table.style.width = '100%';
+                table.style.minWidth = '0';
+            } finally {
+                document.body.removeChild(holder);
+            }
+        }
+    },
+
+    // 导出 DOCX 专用 HTML：getHTML() 序列化的空 colgroup 按文档序替换为
+    // live colgroup 的 px 宽版本（列几何换算为整数 px；DocxExporter 解析
+    // width:Npx 生成 tblGrid）。保存路径 getContent() 不受影响。
+    getExportHtml: function() {
+        if (!this.editor) return '';
+        var html = this.editor.getHTML();
+        var live = this.editor.view.dom.querySelectorAll('table');
+        if (!live.length || html.indexOf('<colgroup') < 0) return html;
+        var cgs = [];
+        for (var i = 0; i < live.length; i++) {
+            var cg = live[i].querySelector('colgroup');
+            if (!cg) { cgs.push(''); continue; }
+            var colsHtml = '';
+            for (var c = 0; c < cg.children.length; c++) {
+                var colEl = cg.children[c];
+                // col 元素在 fixed 布局下有解析后盒宽；退化路径：按样式串
+                //（百分比/px）换算。NaN 一路 || 0 兜底
+                var px = colEl.getBoundingClientRect().width
+                    || (parseFloat(colEl.style.width) || 0) * live[i].clientWidth / 100
+                    || 0;
+                colsHtml += '<col style="width:' + Math.max(1, Math.round(px)) + 'px">';
+            }
+            cgs.push('<colgroup>' + colsHtml + '</colgroup>');
+        }
+        return window.__replaceColgroupsWith(html, cgs);
+    },
+
     // C++ 侧调用的命令
     getContent: function() { return this.editor ? this.editor.getHTML() : ''; },
 
@@ -2037,6 +2129,7 @@ window.editorApi = {
             this.notifyHeadings();
         }
         this._attachMathClickHandler(this.editor.view.dom);
+        this._layoutTables();
         this._syncLinkHandlers();
         // #editor 已整体替换：行号开着则重挂 gutter 与尺寸观察器（见 setLineNumbers）
         if (this._lineGutterOn) this.setLineNumbers(true);

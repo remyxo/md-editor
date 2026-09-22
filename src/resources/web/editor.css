@@ -141,6 +141,14 @@ body.dark .ProseMirror blockquote {
     border: 1px solid #ddd;
     padding: 8px 12px;
     text-align: left;
+    /* 超长无断点串（URL/JWT）在封顶列宽内断行：不设则 auto/fixed 布局下
+       该列 min-content=整串宽，列异常宽（实测 1.2 表列07） */
+    overflow-wrap: anywhere;
+}
+
+/* 手动拖宽（colwidth px）超出视口的表格横向滚动，不溢出裁切 */
+.ProseMirror .tableWrapper {
+    overflow-x: auto;
 }
 
 body.dark .ProseMirror th, body.dark .ProseMirror td {
