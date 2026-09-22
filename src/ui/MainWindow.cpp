@@ -906,14 +906,19 @@ static QString exportDefaultName(const QString &filePath, const QString &ext)
 // source-view textarea），取 getSourceContent() 经 toHtml 转换，用户保持源码
 // 模式不动；WYSIWYG 模式直接 getContent()
 static void getEditorHtmlAsync(EditorTab *tab,
-                               std::function<void(const QString &)> cb)
+                               std::function<void(const QString &)> cb,
+                               bool forDocx = false)
 {
     if (!tab || !tab->webView())
         return;
     const bool src = tab->isSourceMode();
-    tab->webView()->page()->runJavaScript(
-        src ? QStringLiteral("window.editorApi.getSourceContent();")
-            : QStringLiteral("window.editorApi.getContent();"),
+    // DOCX 导出取 getExportHtml()：live colgroup 的 px 列宽注入序列化 HTML，
+    // 供 DocxExporter 生成 tblGrid；源码模式 getSourceContent 经 toHtml 无
+    // colgroup，退回等宽网格（现状行为）
+    const QString call = src ? QStringLiteral("window.editorApi.getSourceContent();")
+                             : (forDocx ? QStringLiteral("window.editorApi.getExportHtml();")
+                                        : QStringLiteral("window.editorApi.getContent();"));
+    tab->webView()->page()->runJavaScript(call,
         [src, cb](const QVariant &result) {
             QString s = result.toString();
             cb(src ? MarkdownHandler::toHtml(s) : s);
@@ -1024,7 +1029,8 @@ void MainWindow::onExportDocx()
                 exporter->deleteLater();
             });
             exporter->exportToDocx(html, docDir, path);
-        });
+        },
+        /*forDocx=*/true);
 }
 
 void MainWindow::onExportHtml()

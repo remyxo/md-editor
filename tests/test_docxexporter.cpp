@@ -560,6 +560,33 @@ private slots:
         QVERIFY2(xml.contains("<w:pPr><w:jc w:val=\"right\"/></w:pPr>"), qPrintable(xml));
     }
 
+    void testTableColgroupWidthsScaleToPage() {
+        // 带列宽 colgroup 的表格（编辑器 getExportHtml 注入）：按页内容宽
+        // 等比缩放（A4 纵向 1.8cm 边距 ⇒ 内容 174mm = 9865 twips），
+        // 比例 100:300 ⇒ 2466 / 7399（末列吸收取整余量）；tblLayout fixed；
+        // 逐格 tcW 与所跨列缩放宽一致
+        QSettings s("md-editor", "md-editor");
+        s.setValue("export/paperSize", static_cast<int>(QPageSize::A4));
+        s.setValue("export/orientation", static_cast<int>(QPageLayout::Portrait));
+        s.setValue("export/marginTop", 1.8);
+        s.setValue("export/marginBottom", 1.8);
+        s.setValue("export/marginLeft", 1.8);
+        s.setValue("export/marginRight", 1.8);
+        const QString xml = exportDocumentXml(
+            "<table><colgroup><col style=\"width:100px\"><col style=\"width:300px\">"
+            "</colgroup><tbody><tr><th>A</th><th>B</th></tr>"
+            "<tr><td>x</td><td>y</td></tr></tbody></table>");
+        // 100px/300px → dxa 1500/4500，sum 6000；f = 9865/6000 ⇒ 2466.25→2466，
+        // 末列 9865-2466=7399
+        QVERIFY(xml.contains("<w:tblLayout w:type=\"fixed\"/>"));
+        QVERIFY(xml.contains("<w:gridCol w:w=\"2466\"/>"));
+        QVERIFY(xml.contains("<w:gridCol w:w=\"7399\"/>"));
+        QVERIFY(xml.contains("<w:tcW w:w=\"2466\" w:type=\"dxa\"/>"));
+        QVERIFY(xml.contains("<w:tcW w:w=\"7399\" w:type=\"dxa\"/>"));
+        // 表宽钳到页内容宽
+        QVERIFY(xml.contains("<w:tblW w:w=\"9865\" w:type=\"dxa\"/>"));
+    }
+
     void testSeparateOrderedListsRestartNumbering() {
         // 回归：两个不相邻的有序列表曾共享同一 numId，Word 把它们当作同一编号序列，
         // 第二个列表会从上一个列表的序号续编（如 1,2 后接 3,4 而非 1,2）。

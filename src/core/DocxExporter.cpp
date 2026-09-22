@@ -498,6 +498,7 @@ struct ParseState {
     int maxImageWidthEmu = 0;                             // 图片最大宽（EMU），0=不限制；超宽按比例缩小
     int maxImageHeightEmu = 0;                            // 图片最大高（EMU），0=不限制；超高按比例缩小（mermaid 长图）
     QString sectPrXml;                                    // 节属性（纸张尺寸+页边距），使 DOCX 页与导出设置一致
+    int contentWidthTwips = 0;                            // 页内容宽（twips）：表格列宽等比缩放基准
     QVector<MermaidRenderer::Result> mermaidResults;      // 渲染结果（按 idx）
     QStringList mermaidSources;                           // 源码（渲染失败回退用）
     QStringList mathSources;                              // 公式 LaTeX 源码（按 idx，失败回退用）
@@ -1145,25 +1146,16 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int i
 
 static QString parseTable(QXmlStreamReader &r, ParseState &s)
 {
-    QString result = "<w:tbl>";
-    result += "<w:tblPr>"
-              "<w:tblStyle w:val=\"TableGrid\"/>"
-              "<w:tblW w:w=\"0\" w:type=\"auto\"/>"
-              "<w:tblBorders>"
-              "<w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
-              "<w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
-              "<w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
-              "<w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
-              "<w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
-              "<w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
-              "</w:tblBorders>"
-              "</w:tblPr>";
-
-    // 收集 colgroup 信息用于 tblGrid
+    int colCursor = 0;      // 当前行已消费列进度（colspan 推进；带 colgroup 时 tcW 取列用）
+    // 行内容先累积，tblPr/tblGrid 在收尾拼装：带 colgroup（编辑器 getExportHtml
+    // 注入）的表格按页内容宽等比缩放列宽并写 tblLayout fixed + 逐格 tcW；
+    // 无 colgroup 的表格（toHtml 产物）保持原有 tblW auto + 默认 4680 等宽网格
+    QString rowsXml;
     QString tblGrid;
+    QList<int> colDxa;      // 缩放后各列宽（twips）；空 = 无 colgroup
     int colCount = 0;
     bool firstRow = true;
-    int headerCols = 0;   // 表头行列数（无 colgroup 时默认 tblGrid 用，含 colspan 求和）
+    int headerCols = 0;     // 表头行列数（无 colgroup 时默认 tblGrid 用，含 colspan 求和）
 
     while (!r.atEnd()) {
         auto tt = r.readNext();
@@ -1174,7 +1166,10 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
         QString tag = r.name().toString().toLower();
 
         if (tag == "colgroup") {
-            // 解析 colgroup 生成 tblGrid
+            // 解析 colgroup：px → dxa（1px ≈ 15 dxa at 96dpi），随后按页内容宽
+            // 等比缩放（编辑器视口宽 ≠ Word 页宽，直接用会溢出/缩水）。
+            // 属性名锚定（(?:^|;)）：TipTap 序列化表格无 colwidth 时每列只有
+            // min-width:25px，裸 width 子串匹配会把 25 当列宽
             while (!r.atEnd()) {
                 auto ctt = r.readNext();
                 if (ctt == QXmlStreamReader::EndElement
@@ -1183,24 +1178,37 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
                 if (ctt == QXmlStreamReader::StartElement
                     && r.name().toString().compare(QLatin1String("col"), Qt::CaseInsensitive) == 0) {
                     QString w = r.attributes().value("style").toString();
-                    // 属性名锚定（(?:^|;)）：TipTap 序列化表格无 colwidth 时每列
-                    // 只有 min-width:25px，裸 width 子串匹配会把 25 当列宽
                     QRegularExpression re("(?:^|;)\\s*width\\s*:\\s*(\\d+)px");
                     auto m = re.match(w);
                     int dxa = 2340; // 默认宽
-                    if (m.hasMatch()) {
-                        // px → dxa (1px ≈ 15 dxa at 96dpi)
-                        dxa = m.captured(1).toInt() * 15;
-                    }
-                    tblGrid += "<w:gridCol w:w=\"" + QString::number(dxa) + "\"/>";
+                    if (m.hasMatch()) dxa = m.captured(1).toInt() * 15;
+                    colDxa.append(dxa);
                     colCount++;
                 }
             }
+            // 等比缩放到页内容宽：f = content/sum，前 n-1 列 qRound，末列吸收
+            // 取整余量（gridCol 总和与 tblW 严格一致）；双向缩放（编辑器窄表
+            // 放大铺满页宽，比例不变）
+            if (!colDxa.isEmpty() && s.contentWidthTwips > 0) {
+                double sum = 0;
+                for (int d : colDxa) sum += d;
+                if (sum > 0) {
+                    const double f = s.contentWidthTwips / sum;
+                    int acc = 0;
+                    for (int i = 0; i + 1 < colDxa.size(); ++i) {
+                        colDxa[i] = qRound(colDxa[i] * f);
+                        acc += colDxa[i];
+                    }
+                    colDxa.last() = s.contentWidthTwips - acc;
+                    if (colDxa.last() < 1) colDxa.last() = 1;
+                }
+            }
+            for (int d : colDxa)
+                tblGrid += QStringLiteral("<w:gridCol w:w=\"%1\"/>").arg(d);
         } else if (tag == "tbody") {
             continue; // 穿透 tbody
         } else if (tag == "tr") {
-            bool isHeader = false;
-            result += "<w:tr>";
+            rowsXml += QStringLiteral("<w:tr>");
             while (!r.atEnd()) {
                 auto rtt = r.readNext();
                 if (rtt == QXmlStreamReader::EndElement
@@ -1218,42 +1226,77 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
                     const int span = cellSpan.toInt();
                     if (firstRow)
                         headerCols += (span > 1 ? span : 1);
-                    result += "<w:tc>";
+                    // 单元格宽：带 colgroup 用缩放后列宽（跨列求和，与 gridCol
+                    // 严格一致）；无 colgroup 保持原 2340
+                    int cellW = 2340;
+                    if (!colDxa.isEmpty()) {
+                        // 当前行之前的单元格累计列进度：行内流式解析，直接边写边推
+                        // （见下方 colCursor 维护）；无 colspan 属性 span=0，须按
+                        // 占 1 列归一（q<0 的循环零迭代会把宽退化成 2340 回退值）
+                        const int spanCols = qMax(1, span);
+                        cellW = 0;
+                        for (int q = 0; q < spanCols && colCursor + q < colDxa.size(); ++q)
+                            cellW += colDxa[colCursor + q];
+                        if (cellW < 1) cellW = 2340;
+                        colCursor += spanCols;
+                    }
+                    rowsXml += QStringLiteral("<w:tc>");
                     // 单元格属性：tcPr 无 w:jc 子元素（CT_TcPr 只认 tcW/shd/vAlign 等），
                     // 水平对齐是段落属性，写入下方单元格段落的 <w:pPr>
-                    result += "<w:tcPr>";
-                    result += "<w:tcW w:w=\"2340\" w:type=\"dxa\"/>";
-                    if (span > 1) result += "<w:gridSpan w:val=\"" + cellSpan + "\"/>";
-                    if (isTh) result += "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"D9E2F3\"/>";
-                    result += "</w:tcPr>";
+                    rowsXml += QStringLiteral("<w:tcPr>");
+                    rowsXml += QStringLiteral("<w:tcW w:w=\"%1\" w:type=\"dxa\"/>").arg(cellW);
+                    if (span > 1) rowsXml += QStringLiteral("<w:gridSpan w:val=\"%1\"/>").arg(cellSpan);
+                    if (isTh) rowsXml += QStringLiteral("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"D9E2F3\"/>");
+                    rowsXml += QStringLiteral("</w:tcPr>");
 
                     // 单元格内容（内联解析）
                     QString cellInner = parseInline(r, cellTag, s);
                     QString pPr = cellAlign.isEmpty() ? QString()
-                        : "<w:pPr><w:jc w:val=\"" + cellAlign + "\"/></w:pPr>";
-                    result += "<w:p>" + pPr + cellInner + "</w:p>";
-                    result += "</w:tc>";
+                        : QStringLiteral("<w:pPr><w:jc w:val=\"%1\"/></w:pPr>").arg(cellAlign);
+                    rowsXml += QStringLiteral("<w:p>") + pPr + cellInner + QStringLiteral("</w:p>");
+                    rowsXml += QStringLiteral("</w:tc>");
                 }
             }
-            result += "</w:tr>";
+            rowsXml += QStringLiteral("</w:tr>");
             firstRow = false;
+            colCursor = 0;   // 行结束复位（colspan 错位的表格按行独立计）
         }
     }
 
-    // 插入 tblGrid（如果有 colgroup，用之；否则用表头列数生成默认列宽）
+    // 无 colgroup：按表头列数生成默认等宽网格（现状行为）
     if (tblGrid.isEmpty()) {
         QString cols;
         for (int i = 0; i < (headerCols > 0 ? headerCols : 2); ++i)
-            cols += "<w:gridCol w:w=\"4680\"/>";
+            cols += QStringLiteral("<w:gridCol w:w=\"4680\"/>");
         tblGrid = cols;
     }
-    int trPos = result.indexOf("<w:tr>");
-    if (trPos >= 0) {
-        result = result.left(trPos) + "<w:tblGrid>" + tblGrid + "</w:tblGrid>" + result.mid(trPos);
+
+    // tblPr：带 colgroup ⇒ fixed + 表宽=页内容宽（CT_TblPr 顺序：tblStyle→tblW
+    // →tblBorders→tblLayout）；无 colgroup ⇒ 原样（tblW auto，Word 自动布局）
+    QString tblPr = QStringLiteral(
+        "<w:tblPr>"
+        "<w:tblStyle w:val=\"TableGrid\"/>"
+        "<w:tblW w:w=\"%1\" w:type=\"%2\"/>"
+        "<w:tblBorders>"
+        "<w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
+        "<w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
+        "<w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
+        "<w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
+        "<w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
+        "<w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
+        "</w:tblBorders>%3"
+        "</w:tblPr>");
+    if (colDxa.isEmpty()) {
+        tblPr = tblPr.arg(0).arg(QStringLiteral("auto"), QString());
     } else {
-        result += "<w:tblGrid>" + tblGrid + "</w:tblGrid>";
+        tblPr = tblPr.arg(s.contentWidthTwips).arg(QStringLiteral("dxa"),
+                      QStringLiteral("<w:tblLayout w:type=\"fixed\"/>"));
     }
-    return result + "</w:tbl>";
+
+    // OOXML schema：tblGrid 必须先于行
+    return QStringLiteral("<w:tbl>") + tblPr
+         + QStringLiteral("<w:tblGrid>") + tblGrid + QStringLiteral("</w:tblGrid>")
+         + rowsXml + QStringLiteral("</w:tbl>");
 }
 
 // ============ 主解析入口 ============
@@ -1614,6 +1657,7 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
         const double capHMm = pageH - (mt + mb) * 10.0 - 2.0;
         state.maxImageHeightEmu = capHMm > 0 ? static_cast<int>(capHMm * 36000.0) : 0;
         const auto mm2twips = [](double mm) { return static_cast<int>(qRound(mm * 56.6929134)); };
+        state.contentWidthTwips = contentMm > 0 ? mm2twips(contentMm) : 0;
         headerEnabled = settings.value("export/docxHeaderEnabled", true).toBool();
         footerEnabled = settings.value("export/docxFooterEnabled", true).toBool();
         headerTitle = QFileInfo(outputPath).completeBaseName();
