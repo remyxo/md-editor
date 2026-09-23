@@ -1884,6 +1884,7 @@ window.editorApi = {
         this._loading = true;
         this.editor = this._createEditor(el);
         this._layoutTables();
+        this._attachTableLayoutObserver();
         this._loading = false;
         _syncHighlightTheme();  // 初始化时同步代码块高亮主题
         if (this.editor) {
@@ -2065,6 +2066,25 @@ window.editorApi = {
         }
     },
 
+    // 编辑区宽度变化（窗口缩放/侧栏开合/滚动条出现）时重算列宽。百分比分布
+    // 本身随可用宽变化（窄窗偏保底、宽窗偏多列极值），此前仅 init/setContent/
+    // 内容编辑触发，布局被载入时的宽度「冻结」——同内容在不同宽度窗口呈现
+    // 不同布局。只关心宽度：高度变化（编辑/图片加载/异步高亮）不变即跳过。
+    // setContent 整体替换 #editor 后旧观察目标失效，需重挂（同 _lineGutterRO）。
+    _attachTableLayoutObserver: function() {
+        if (this._tableLayoutRO) { this._tableLayoutRO.disconnect(); this._tableLayoutRO = null; }
+        if (!this.editor || typeof ResizeObserver === 'undefined') return;
+        var self = this;
+        this._tableLayoutLastW = this.editor.view.dom.clientWidth;
+        this._tableLayoutRO = new ResizeObserver(function() {
+            var w = self.editor ? self.editor.view.dom.clientWidth : 0;
+            if (Math.abs(w - self._tableLayoutLastW) < 1) return;
+            self._tableLayoutLastW = w;
+            self._scheduleTableLayout();
+        });
+        this._tableLayoutRO.observe(this.editor.view.dom);
+    },
+
     // 导出 DOCX 专用 HTML：getHTML() 序列化的空 colgroup 按文档序替换为
     // live colgroup 的 px 宽版本（列几何换算为整数 px；DocxExporter 解析
     // width:Npx 生成 tblGrid）。保存路径 getContent() 不受影响。
@@ -2130,6 +2150,7 @@ window.editorApi = {
         }
         this._attachMathClickHandler(this.editor.view.dom);
         this._layoutTables();
+        this._attachTableLayoutObserver();
         this._syncLinkHandlers();
         // #editor 已整体替换：行号开着则重挂 gutter 与尺寸观察器（见 setLineNumbers）
         if (this._lineGutterOn) this.setLineNumbers(true);
