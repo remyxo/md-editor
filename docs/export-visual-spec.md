@@ -79,6 +79,7 @@ PDF 的紧凑阶梯可解释为打印密度取舍，但**编辑器与 HTML 一�
 | 单元格内边距 | — | 6px 13px | 4px 8px | tblCellMar | 媒介差异（打印更紧） |
 | 表头底 | — | `#f6f8fa`（暗 `#21262d`） | `#f5f5f5` | **`D9E2F3`（浅蓝）** | **待裁决**：蓝色表头是 Word 观感取舍还是漂移 |
 | 斑马纹 | — | 有（`tr:nth-child(2n)`） | 无 | 无 | 媒介差异（打印省墨） |
+| 长无断点串折行 | `overflow-wrap:anywhere`（th/td，editor.css） | `overflow-wrap:anywhere`（2026-09-23 补齐，bodyCss 明暗两套） | `overflow-wrap:anywhere`（PdfExporter 既有，须在 @media print 外） | Word 自行按格宽折行 | **已对齐**（三面同款；配合分配器 lift 让宽，见 `table-column-layout.js`） |
 
 ### 页眉页脚与页码
 

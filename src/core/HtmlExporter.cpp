@@ -87,7 +87,9 @@ QString HtmlExporter::bodyCss(const QString &theme)
             "pre code{background:transparent;padding:0;}"
             "blockquote{border-left:4px solid #0078d4;color:#8b949e;padding:4px 16px;margin:.8em 0;}"
             "table{border-collapse:collapse;margin:.8em 0;display:block;overflow-x:auto;}"
-            "th,td{border:1px solid #30363d;padding:6px 13px;}th{background:#21262d;font-weight:600;}"
+            // 长无断点串（URL/JWT）在固定列宽内折行：与 PDF 导出/PdfExporter 的
+            // th,td{overflow-wrap:anywhere} 及 editor.css 对齐（三面已定调，HTML 补齐）
+            "th,td{border:1px solid #30363d;padding:6px 13px;overflow-wrap:anywhere;}th{background:#21262d;font-weight:600;}"
             "tr:nth-child(2n){background:#161b22;}img{max-width:100%;}"
             "hr{border:0;border-top:1px solid #30363d;margin:1.5em 0;}"
             "ul,ol{padding-left:1.5em;}li{margin:.3em 0;}"
@@ -122,7 +124,9 @@ QString HtmlExporter::bodyCss(const QString &theme)
         "pre code{background:transparent;padding:0;}"
         "blockquote{border-left:4px solid #0078d4;color:#57606a;padding:4px 16px;margin:.8em 0;}"
         "table{border-collapse:collapse;margin:.8em 0;display:block;overflow-x:auto;}"
-        "th,td{border:1px solid #d0d7de;padding:6px 13px;}th{background:#f6f8fa;font-weight:600;}"
+        // 长无断点串（URL/JWT）在固定列宽内折行：与 PDF 导出及 editor.css 的
+        // overflow-wrap:anywhere 对齐（暗色主题同）
+        "th,td{border:1px solid #d0d7de;padding:6px 13px;overflow-wrap:anywhere;}th{background:#f6f8fa;font-weight:600;}"
         "tr:nth-child(2n){background:#f6f8fa;}img{max-width:100%;}"
         "hr{border:0;border-top:1px solid #d0d7de;margin:1.5em 0;}"
         "ul,ol{padding-left:1.5em;}li{margin:.3em 0;}"

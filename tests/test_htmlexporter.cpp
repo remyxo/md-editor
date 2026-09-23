@@ -274,6 +274,9 @@ private slots:
         // slack 余量：HTML 导出传 2px（百分比折算+边框折叠吃掉零点几像素，
         // 短列卡在 max-content 边界即折行）；PDF 不传 ⇒ 既有产物逐页不变
         QVERIFY(js.contains("maxW[j]+=(slack||0)"));
+        // lift 抬升：minW 超均份额的列 floor 认领超均份额（至多 lift×avail），
+        // 过约束压缩分支按占比给超长不可断列让宽（数值行为见 LiftsOverweightColumn）
+        QVERIFY(js.contains("Math.min(minW[j],(lift||0.5)*avail)"));
         QVERIFY(js.contains("if(cfg.toTable){"));
         QVERIFY(js.contains("if(table.clientWidth>0)myAvail=table.clientWidth;"));
         QVERIFY(js.contains("table.style.display='table';"));
@@ -284,6 +287,67 @@ private slots:
         // 测量前剥掉既有 colgroup：编辑器二次测量时克隆表带着上轮百分比 col
         // 会污染 auto 测量；导出侧旧 colgroup 本来就在写回前移除，行为不变
         QVERIFY(js.contains("oldCg.remove()"));
+    }
+
+    void testAllocateTableColumnsLiftsOverweightColumn() {
+        // 行为单测（QJSEngine 直跑共享模块纯函数，夹具取 1.2 表实测值）：
+        // 过约束区间（avail ≤ n×最窄列 maxW）原 floor=avail/n 封顶把内容差异
+        // 抹成均分——12 列表 @624px：含 1350px 不可断 URL 的列也只拿 8.3%。
+        // lift 偏好（第 5 参缺省 0.5）：minW 超均份额的列 floor 抬到
+        // min(minW, lift×avail)，压缩分支按占比让宽；未超均份额的列不变。
+        const QString shared = ExportCommon::readResource(QStringLiteral(":/web/table-column-layout.js"));
+        static int argc = 1;
+        static char arg0[] = "test";
+        static char *argv[] = {arg0, nullptr};
+        static QCoreApplication app(argc, argv);
+        QJSEngine engine;
+        // QJSEngine（V4）无 globalThis/window（Chromium 有）：模块 IIFE 末尾回退
+        // 到 globalThis，测试侧预定义为全局对象即可，不改生产模块
+        engine.evaluate(QStringLiteral("var globalThis=this;var window=this;"));
+        QJSValue v = engine.evaluate(shared);
+        QVERIFY2(!v.isError(), qPrintable(v.toString()));
+
+        // QVERIFY 宏展开为 return;，不能放进返回值的 lambda——出参式带回错误
+        auto allocate = [&engine](const QString &minW, const QString &maxW, double avail,
+                                  double slack, QVector<double> *out) -> bool {
+            QJSValue r = engine.evaluate(QStringLiteral(
+                                              "window.__allocateTableColumns(%1,%2,%3,%4)")
+                                              .arg(minW, maxW)
+                                              .arg(avail)
+                                              .arg(slack));
+            if (r.isError()) return false;
+            const int n = r.property("length").toInt();
+            for (int i = 0; i < n; ++i)
+                out->push_back(r.property(static_cast<quint32>(i)).toNumber());
+            return true;
+        };
+
+        // 夹具＝1.2 表实测：11 短列（min=max=67）+ 列07 含 1350px 不可断串
+        //（max=1815）。lift 后列07 份额 ≈29.8%（旧行为 8.3% 均分），短列 ≈6.4%
+        QVector<double> w;
+        QVERIFY2(allocate("[67,67,67,67,67,67,1350,67,67,67,67,67]",
+                          "[67,67,67,67,67,67,1815,67,67,67,67,67]", 624, 2, &w),
+                 "evaluate 失败");
+        QCOMPARE(w.size(), 12);
+        double total = 0;
+        for (double x : w) total += x;
+        QVERIFY2(total > 0, "总宽必须为正");
+        QVERIFY2(w[6] / total > 0.25 && w[6] / total < 0.35,
+                 qPrintable(QStringLiteral("列07 份额 %1（期望 0.25~0.35）").arg(w[6] / total)));
+        for (int i = 0; i < 12; ++i) {
+            if (i == 6) continue;
+            QVERIFY2(w[i] / total > 0.04,
+                     qPrintable(QStringLiteral("短列 %1 份额 %2 过小").arg(i).arg(w[i] / total)));
+        }
+
+        // 回归锚：无超长列（minW 全部 ≤ 均份额）行为与旧公式逐值一致。
+        // 旧公式推导：maxW 封顶+slack=[62,182]，sumMax=244≤400 → 等比放大
+        // [62×400/244, 182×400/244]
+        QVector<double> w2;
+        QVERIFY2(allocate("[60,60]", "[60,200]", 400, 2, &w2), "evaluate 失败");
+        QCOMPARE(w2.size(), 2);
+        QVERIFY(qAbs(w2[0] - 62 * 400 / 244.0) < 0.01);
+        QVERIFY(qAbs(w2[1] - 182 * 400 / 244.0) < 0.01);
     }
 
     void testExportHtmlNormalizesTableColumns() {

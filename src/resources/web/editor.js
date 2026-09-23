@@ -3358,6 +3358,8 @@ window.editorApi = {
         } else if (style) {
             style.parentNode.removeChild(style);
         }
+        // 自定义 CSS 可能改字体/内边距等测量基准，列宽随之重算
+        this._scheduleTableLayout();
     },
     setFont: function(family, size) {
         if (family) document.body.style.fontFamily = family;
@@ -3366,6 +3368,9 @@ window.editorApi = {
             var sv = document.getElementById('source-view');
             if (sv) sv.style.fontSize = size + 'px';
         }
+        // 字体/字号改变 min/max-content 测量值，列宽随之重算（宽度观察器
+        // 兜不住：字号变化只改文本高度，根宽度不变被守卫跳过）
+        this._scheduleTableLayout();
     },
     syncFormatState: function() {
         if (!this.editor || !this.bridge) return;
@@ -3545,6 +3550,9 @@ window.editorApi = {
         }
         if (settings.wordWrap !== undefined) {
             document.body.classList.toggle('nowrap', !settings.wordWrap);
+            // 折行模式改变单元格 white-space（body.nowrap .ProseMirror 为 pre），
+            // 测量基准随之变化——列宽须重算，否则保持旧模式分布直到下次编辑
+            this._scheduleTableLayout();
         }
         if (settings.tabSize !== undefined) {
             var ts = settings.tabSize;

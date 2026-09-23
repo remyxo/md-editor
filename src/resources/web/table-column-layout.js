@@ -3,8 +3,9 @@
 // ② HTML/PDF 导出（HtmlExporter::tableColumnNormalizeScript 运行时读 qrc
 //    内联本文件后调用）。改本文件必须同时验证两条链路（导出：ctest
 //    test_htmlexporter/test_pdfexporter；编辑器：真机目检，见计划 Task 5）。
-// 注意：测量/分配主体与原 tableColumnNormalizeScript 逐字一致（紧凑风格），
-// 子串断言锚定原文，勿重排版。
+// 注意：测量主体与原 tableColumnNormalizeScript 逐字一致（紧凑风格），子串
+// 断言锚定原文，勿重排版。分配主体 2026-09-23 起携 lift 偏好（超长不可断列
+// 让宽，见 __allocateTableColumns 注释与 testAllocateTableColumnsLiftsOverweightColumn）。
 (function (global) {
 'use strict';
 
@@ -56,17 +57,21 @@ return {minW:minW,maxW:maxW};
 // 分配各列宽（px）。maxW=min(maxW,3×minW) 封顶（长列吸收富余但不独吞）、
 // +(slack||0) 余量（百分比折算与边框折叠吃掉零点几像素，短列卡在
 // max-content 边界即折行——HTML 导出实测 0.3px 一字一行）、
-// floor=min(max,3×min,avail/n)。三分支：sumMax≤avail 按 max 比例放大填满 /
-// sumFloor≤avail 保底与期望间线性插值 / 兜底按保底比例压缩（防御分支：
-// floor≤等份额 ⇒ sumFloor≤avail 恒成立，理论不可达，保留防参数异常）。
-global.__allocateTableColumns=function(minW,maxW,avail,slack){
+// floor=min(max, max(常规保底, lift 抬升))：minW≤均份额的列沿用
+// min(3×min, avail/n)（行为与旧版一致）；minW 超均份额的列（内容含超长
+// 不可断串，如 12 列表 @624px 的 1350px JWT URL）抬到 min(minW, lift×avail)
+//（lift 第 5 参缺省 0.5：单列保底至多认领半宽）——否则全列 floor=avail/n
+// 被抹成均分（实测 8.3%），长列拿不到宽度。三分支：sumMax≤avail 按 max
+// 比例放大填满 / sumFloor≤avail 保底与期望间线性插值 / 压缩分支按保底比例
+// 分配（lift 抬升后可达：超长列表过约束时的主路径，不再是防御分支）。
+global.__allocateTableColumns=function(minW,maxW,avail,slack,lift){
 var n=minW.length,floor=[],sumMax=0,sumFloor=0;
 for(var j=0;j<n;j++){
 if(!(maxW[j]>0))maxW[j]=(minW[j]>0)?minW[j]:1;
 if(!(minW[j]>0))minW[j]=maxW[j];
 if(minW[j]>0)maxW[j]=Math.min(maxW[j],minW[j]*3);
 if(maxW[j]>0)maxW[j]+=(slack||0);
-floor[j]=Math.min(maxW[j],Math.min(minW[j]*3,avail/n));
+floor[j]=Math.min(maxW[j],Math.max(Math.min(minW[j]*3,avail/n),Math.min(minW[j],(lift||0.5)*avail)));
 sumMax+=maxW[j];sumFloor+=floor[j];
 }
 var w=[];
