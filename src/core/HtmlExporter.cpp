@@ -159,6 +159,14 @@ QString HtmlExporter::mermaidRenderScript(const QString &theme)
     //（与 editor.js NodeView 的成熟模式一致）。IIFE 捕获每次迭代的 code/holder，
     // 避免 var 提升导致多个 .then 共享同一 holder。返回值是 Promise，
     // 全部渲染完成才 resolve，供 PDF 导出等异步路径等待。
+    //
+    // 第三参显式传在流 holder（2026-09-23）：甘特图布局宽取容器宽——无容器时
+    // mermaid 用 body 宽布局。PDF 两分页路径的渲染视图宽不同（nativeHf 整纸
+    // 宽 ~789px、paged 页内容宽 ~656px），且甘特图 viewBox 高恒定（行数驱动）、
+    // 宽随容器，最终都以内容宽显示（width="100%"）⇒ 同一甘特图有脚注版（paged）
+    // 比无脚注版（nativeHf）高 ~21%（实测 24.2px vs 19.7px 行高）。传在流
+    // holder 令布局宽=显示宽，两路径均 1:1（隔离实验：body 789 + holder 653
+    // → viewBox 653）。流程图/时序图等内容驱动图型不受容器宽影响。
     return QStringLiteral(
         "window.__renderAllMermaid=function(){"
         "return new Promise(function(resolve){"
@@ -175,7 +183,7 @@ QString HtmlExporter::mermaidRenderScript(const QString &theme)
         // 自包含 HTML 导出路径无对应 CSS，纯标记无副作用
         "holder.className='mermaid-diagram';"
         "pre.parentNode.replaceChild(holder,pre);"
-        "jobs.push(mermaid.render('mermaid-export-'+(++seq),src).then(function(res){holder.innerHTML=res.svg;})"
+        "jobs.push(mermaid.render('mermaid-export-'+(++seq),src,holder).then(function(res){holder.innerHTML=res.svg;})"
         ".catch(function(err){holder.textContent=src;}));"
         "})(pres[j]);}"
         "Promise.all(jobs).then(function(){resolve();});"

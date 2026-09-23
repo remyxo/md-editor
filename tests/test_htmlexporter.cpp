@@ -202,7 +202,10 @@ private slots:
         QString s = HtmlExporter::renderScript("light");
         QVERIFY(!s.contains("holder.id='mermaid"));
         QVERIFY(!s.contains("mermaid.render(holder.id"));
-        QVERIFY(s.contains("mermaid.render('mermaid-export-'+(++seq),src)"));
+        // 第三参传在流 holder：甘特图布局宽取容器宽，无容器时用 body 宽——
+        // PDF 两路径视图宽不同（nativeHf 整纸 / paged 内容宽）导致同源甘特图
+        // 高度差 ~21%；传 holder 令布局宽=显示宽（viewBox 宽=holder 宽）
+        QVERIFY(s.contains("mermaid.render('mermaid-export-'+(++seq),src,holder)"));
     }
 
     void testRenderScriptMermaidLoopCapturesHolderPerIteration() {
@@ -218,7 +221,7 @@ private slots:
         QVERIFY(s.contains("'dark'"));
         QVERIFY(s.contains("pre code.language-mermaid"));
         QVERIFY(s.contains("__renderAllMermaid"));
-        QVERIFY(s.contains("mermaid.render('mermaid-export-'+(++seq),src)"));
+        QVERIFY(s.contains("mermaid.render('mermaid-export-'+(++seq),src,holder)"));
         QVERIFY(!s.contains("<script"));   // 片段不含 script 标签，调用方自行包裹
     }
 
