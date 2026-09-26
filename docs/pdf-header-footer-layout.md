@@ -174,6 +174,8 @@ vs 计算高 55px）⇒ 溢出判定 `hasOverflow`（比 `max(渲染高, 父scro
 7. 只处理外层表（嵌套表行序受外层行盒约束，切了会乱）；`cloneNode(false)` 复制属性
    但**不带子节点**，`colgroup` 必须显式再克隆。
 
+2026-09-26 修复：paged 基础 CSS 漏清 body 默认 8px 边距——屏幕流窄 16px，临界折行多折一行致切块虚胖、断页留白；基础模板已补 html,body{margin:0;padding:0}（与 nativeHf 覆盖层同款）。
+
 **效果**：paged.js 只需在块之间做正常块级分页，**不再需要表碎片**，整类缺陷消失。
 实测（含脚注夹具走**应用路径**——编辑器 `getContent()` 的 HTML，A4/18mm 边距，版心
 986px、脚注区 30px、数据行 56px）：1.1 表 61 行切成 11/17/17/16 四块，页 1 = 表头 +
@@ -199,7 +201,7 @@ vs 计算高 55px）⇒ 溢出判定 `hasOverflow`（比 `max(渲染高, 父scro
 
 **2026-09-21 起提为三处共用**：实现落在 `HtmlExporter::tableColumnNormalizeScript()`
 （定义 `window.__normalizeTableColumns(cfg)`），PDF 侧经 `__fixTableColumns` 兼容层
-调用（函数名与调用点不变，测量样式传打印基准 10pt / 4px 8px / 固定字族），HTML
+调用（函数名与调用点不变，测量样式传打印基准 11pt（2026-09-24 起，随单元格字号四面统一；此前 10pt）/ 4px 8px / 固定字族），HTML
 导出在 `load` 后调用 `{toTable:true,slack:2}`。HTML 侧三处专属差异：
 
 - **可用宽取每表自身盒宽**（`display:block` 时即容器内容宽）：`body.clientWidth`
@@ -209,10 +211,12 @@ vs 计算高 55px）⇒ 溢出判定 `hasOverflow`（比 `max(渲染高, 父scro
   之后 `table-layout:fixed` 才有意义；须先量盒宽再切，顺序反了拿到的是收缩宽；
 - **`slack=2px`**：列宽走百分比再乘回表宽，小数布局与边框折叠会吃掉零点几像素，
   卡在 max-content 边界的短列仍折行（实测状态列 74.69px vs 48+26=74px 差 0.3px、
-  编号列 58.70 vs 32+26=58 差 0.1px）。PDF **不传** slack：2026-09-22 在修正后的
-  分页几何上复测仍然更差——`slack:2` 令其 11→10 页，且第 5 页正文只到 187.8mm
-  （页尾空出三行多；不传 slack 时逐页 261~276mm）。**已知边界**：不传 slack 时
-  PDF 的窄短列（如「状态」）会因零点几像素的边界差折成两行——两者取其轻。
+  编号列 58.70 vs 32+26=58 差 0.1px）。PDF **同样传 slack:2**（2026-09-26 起，与
+  HTML/DOCX 归一三面同款）：边界列（floor 恰=min-content，如「已完成」60px）经
+  百分比回算少 0.02px 即折行——Word 整数缇恰好放下，两侧折行行为因此分叉。
+  旧「不传更差」结论（2026-09-22：slack:2 令 11→10 页、页尾空三行）出自 body
+  默认 8px 边距 bug 时期的分页几何——该 bug 修复（基础 CSS 补
+  `html,body{margin:0;padding:0}`）后切块量高虚胖消失，页数差异不复现。
 
 **坑**：遍历 `querySelectorAll('table')` 时必须跳过 nativeHf 的包装表 `table.hf`——
 它的 `querySelectorAll('td,th')/('tr')` 覆盖全文档，会给每个单元格写下「本表格列宽」
