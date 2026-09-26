@@ -90,6 +90,8 @@ QString HtmlExporter::bodyCss(const QString &theme)
             // 长无断点串（URL/JWT）在固定列宽内折行：与 PDF 导出/PdfExporter 的
             // th,td{overflow-wrap:anywhere} 及 editor.css 对齐（三面已定调，HTML 补齐）
             "th,td{border:1px solid #30363d;padding:6px 13px;overflow-wrap:anywhere;}th{background:#21262d;font-weight:600;}"
+            // TipTap 格内 <p> 段边距清零，与 PDF/DOCX 行高对齐，2026-09-26
+            "th,td p{margin:0;}"
             "tr:nth-child(2n){background:#161b22;}img{max-width:100%;}"
             "hr{border:0;border-top:1px solid #30363d;margin:1.5em 0;}"
             "ul,ol{padding-left:1.5em;}li{margin:.3em 0;}"
@@ -127,6 +129,8 @@ QString HtmlExporter::bodyCss(const QString &theme)
         // 长无断点串（URL/JWT）在固定列宽内折行：与 PDF 导出及 editor.css 的
         // overflow-wrap:anywhere 对齐（暗色主题同）
         "th,td{border:1px solid #d0d7de;padding:6px 13px;overflow-wrap:anywhere;}th{background:#f6f8fa;font-weight:600;}"
+        // TipTap 格内 <p> 段边距清零，与 PDF/DOCX 行高对齐，2026-09-26
+        "th,td p{margin:0;}"
         "tr:nth-child(2n){background:#f6f8fa;}img{max-width:100%;}"
         "hr{border:0;border-top:1px solid #d0d7de;margin:1.5em 0;}"
         "ul,ol{padding-left:1.5em;}li{margin:.3em 0;}"
@@ -211,7 +215,11 @@ QString HtmlExporter::tableColumnNormalizeScript()
     // cfg（可省）：avail 可用宽 px，缺省取 window.__pageContentWidthPx →
     // body.clientWidth；fontSize/padding/fontFamily 为测量期临时样式，PDF 传
     // 打印基准（10pt / 4px 8px / Noto Sans SC），HTML 导出不传 ⇒ 按产物实际
-    // 渲染样式测量；slack 每列余量 px；toTable 量表自身盒宽再切 display:table。
+    // 渲染样式测量；slack 每列余量 px——HTML 导出与 PDF/DOCX 归一均传 2px
+    //（2026-09-26 起三面同款；边界列百分比回算差亚像素即折行）；toTable
+    // 量表自身盒宽再切 display:table。
+    // px 模式（DOCX 经 TableColumnNormalizer 传）：colgroup 写 px 而非百分比、
+    // 跳过单元格内联百分比写回——DocxExporter 解析 width:Npx 生成 tblGrid
     const QString shared = ExportCommon::readResource(QStringLiteral(":/web/table-column-layout.js"));
     return shared + QStringLiteral(
         "window.__normalizeTableColumns=function(cfg){"
@@ -245,11 +253,12 @@ QString HtmlExporter::tableColumnNormalizeScript()
         "var cg=document.createElement('colgroup');"
         "for(var c2=0;c2<n;c2++){"
         "var col=document.createElement('col');"
-        "col.style.width=(w[c2]/total*100).toFixed(3)+'%';"
+        "if(cfg.px){col.style.width=Math.round(w[c2])+'px';}"
+        "else col.style.width=(w[c2]/total*100).toFixed(3)+'%';"
         "cg.appendChild(col);"
         "}"
         "table.insertBefore(cg,table.firstChild);"
-        "var rows=table.querySelectorAll('tr');"
+        "if(!cfg.px){var rows=table.querySelectorAll('tr');"
         "for(var r=0;r<rows.length;r++){"
         "var idx=0;"
         "for(var c=0;c<rows[r].children.length;c++){"
@@ -257,6 +266,7 @@ QString HtmlExporter::tableColumnNormalizeScript()
         "var wp=0;for(var q=0;q<sp&&idx+q<n;q++)wp+=w[idx+q];"
         "rows[r].children[c].style.width=(wp/total*100).toFixed(3)+'%';"
         "idx+=sp;"
+        "}"
         "}"
         "}"
         "table.style.width='100%';"

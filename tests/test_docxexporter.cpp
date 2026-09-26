@@ -12,9 +12,11 @@
 #include <QMap>
 #include <QXmlStreamReader>
 #include "../src/core/DocxExporter.h"
+#include "../src/core/ExportCommon.h"
 #include "../src/core/MermaidRenderer.h"
 #include "../src/core/MathMlRenderer.h"
 #include "../src/core/MathMlConverter.h"
+#include "../src/core/TableColumnNormalizer.h"
 
 // DocxExporter 测试：导出 HTML → DOCX，解包 word/document.xml 断言 OOXML 结构。
 // 依赖系统 zip/unzip（CI 与开发机均已安装）。
@@ -441,9 +443,10 @@ private slots:
         int rFonts = styles.indexOf("<w:rFonts w:ascii=\"Arial\"");
         int sz = styles.indexOf("<w:sz w:val=\"22\"/>");
         QVERIFY2(rFonts >= 0 && sz > rFonts, qPrintable(styles));
-        // Heading2 样式：spacing 早于 outlineLvl
+        // Heading2 样式：spacing 早于 outlineLvl（2026-09-24 起模式不带具体值：
+        // 标题阶梯数值随 PDF 收敛调整，顺序锁不耦合数值）
         int h2 = styles.indexOf("w:styleId=\"Heading2\"");
-        int sp2 = styles.indexOf("<w:spacing w:before=\"200\"", h2);
+        int sp2 = styles.indexOf("<w:spacing ", h2);
         int ol2 = styles.indexOf("<w:outlineLvl w:val=\"1\"/>", h2);
         QVERIFY2(h2 >= 0 && sp2 > h2 && ol2 > sp2, qPrintable(styles));
         // 悬空样式引用清零：document.xml 引用的 TableGrid、Hyperlink 的 basedOn
@@ -555,9 +558,12 @@ private slots:
             ++n;
         }
         QVERIFY2(n == 2, qPrintable(xml));
-        // 对齐落在单元格段落的 pPr 里
-        QVERIFY2(xml.contains("<w:pPr><w:jc w:val=\"center\"/></w:pPr>"), qPrintable(xml));
-        QVERIFY2(xml.contains("<w:pPr><w:jc w:val=\"right\"/></w:pPr>"), qPrintable(xml));
+        // 对齐落在单元格段落的 pPr 里（CT_PPrBase 序列：pStyle 最前、jc 其后；
+        // 2026-09-24 校准起单元格节律/字号由 TableCell 样式承载，段落只挂 pStyle）
+        QVERIFY2(xml.contains("<w:pPr><w:pStyle w:val=\"TableCell\"/>"
+                              "<w:jc w:val=\"center\"/></w:pPr>"), qPrintable(xml));
+        QVERIFY2(xml.contains("<w:pPr><w:pStyle w:val=\"TableCell\"/>"
+                              "<w:jc w:val=\"right\"/></w:pPr>"), qPrintable(xml));
     }
 
     void testTableColgroupWidthsScaleToPage() {
@@ -585,6 +591,111 @@ private slots:
         QVERIFY(xml.contains("<w:tcW w:w=\"7399\" w:type=\"dxa\"/>"));
         // 表宽钳到页内容宽
         QVERIFY(xml.contains("<w:tblW w:w=\"9865\" w:type=\"dxa\"/>"));
+    }
+
+    void testPageContentWidthTwipsMatchesSectPr() {
+        // 列宽归一 avail 与 writeDocx 的 tblW/tblGrid 基准同源：A4 竖版 1.8cm
+        // 边距 = (210−36)mm×56.6929 = 9865 缇；横版取纸高作宽 = (297−36)mm = 14797。
+        // QSettings 已重定向临时目录（initTestCase）；用毕清理防污染后续用例
+        QSettings settings("md-editor", "md-editor");
+        settings.setValue("export/paperSize", static_cast<int>(QPageSize::A4));
+        settings.setValue("export/orientation", static_cast<int>(QPageLayout::Portrait));
+        settings.setValue("export/marginLeft", 1.8);
+        settings.setValue("export/marginRight", 1.8);
+        QCOMPARE(ExportCommon::pageContentWidthTwips(), 9865);
+        settings.setValue("export/orientation", static_cast<int>(QPageLayout::Landscape));
+        QCOMPARE(ExportCommon::pageContentWidthTwips(), 14797);
+        settings.remove("export/paperSize");
+        settings.remove("export/orientation");
+        settings.remove("export/marginLeft");
+        settings.remove("export/marginRight");
+    }
+
+    void testTableFixedLayoutWritesExplicitCellMargins() {
+        // 带 colgroup（fixed 分支）：显式 tblCellMar 左右 120 缇 = 8px（= PDF
+        // th,td 横向 padding，2026-09-24 收敛；不再锚 Word 默认 108），与归一器
+        // 测量 padding 8px 自洽
+        QMap<QString, QString> parts = exportParts(
+            "<table><colgroup><col style=\"width:300px\"><col style=\"width:358px\">"
+            "</colgroup><tbody><tr><th>A</th><th>B</th></tr></tbody></table>",
+            {"word/document.xml", "word/styles.xml"});
+        const QString xml = parts.value("word/document.xml");
+        const QString st = parts.value("word/styles.xml");
+        QVERIFY(xml.contains("<w:tblLayout w:type=\"fixed\"/>"));
+        QVERIFY(xml.contains("<w:tblCellMar><w:top w:w=\"60\" w:type=\"dxa\"/>"
+                             "<w:left w:w=\"120\" w:type=\"dxa\"/>"
+                             "<w:bottom w:w=\"60\" w:type=\"dxa\"/>"
+                             "<w:right w:w=\"120\" w:type=\"dxa\"/></w:tblCellMar>"));
+        // 单元格节律/字号收敛进 TableCell 段落样式（2026-09-24）：字号 22 半磅
+        //（= 正文字号 11pt，四面统一，2026-09-24 定案：单元格不设特例）+
+        // 行高 352 缇 atLeast（17.6pt = 11pt×1.6）⇒ 行高 23.6pt 与 PDF 逐值一致
+        QVERIFY(st.contains("<w:style w:type=\"paragraph\" w:styleId=\"TableCell\">"
+                            "<w:name w:val=\"Table Cell\"/><w:basedOn w:val=\"Normal\"/>"
+                            "<w:next w:val=\"Normal\"/>"
+                            "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"352\" "
+                            "w:lineRule=\"atLeast\"/></w:pPr>"
+                            "<w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>"));
+        QVERIFY(xml.contains("<w:pPr><w:pStyle w:val=\"TableCell\"/></w:pPr>"));
+        // 长串断行：用户裁决（2026-09-26）DOCX 整词不折为正确行为（Word 单行），
+        // PDF 受页宽物理约束必须 anywhere 折行——媒介差异，不强行统一
+        // 无 colgroup（降级路径）：保持现状，不写 fixed/tblCellMar
+        QString xml2 = exportDocumentXml(
+            "<table><tbody><tr><th>A</th><th>B</th></tr></tbody></table>");
+        QVERIFY(!xml2.contains("<w:tblCellMar>"));
+        QVERIFY(!xml2.contains("<w:tblLayout w:type=\"fixed\"/>"));
+    }
+
+    void testDocDefaultsLineSpacingMatchesOtherSurfaces() {
+        // 行高逐值对齐（2026-09-24 校准）：Word 的 auto 乘数乘的是字体自然行高
+        //（≈1.3×字号），CSS 乘的是字号——乘数对齐（384=1.6）实际松 ~30%（验收
+        // 实测 9 行 vs PDF 11 行）。改 atLeast 逐值：docDefaults 352 缇 = 17.6pt
+        //（= PDF 正文 11pt×1.6）；页眉页脚/脚注/代码块的显式 240 不动。
+        // 漂移锁：防回退 276（旧 1.15）或 384（乘数对齐误校准）
+        // + 段后 66 缇 = 0.3em = 3.3pt（PDF p{margin-bottom:.3em} 逐值对齐）
+        QMap<QString, QString> parts = exportParts(
+            "<p>hello</p>", {"word/styles.xml"});
+        QVERIFY(parts.contains("word/styles.xml"));
+        QVERIFY2(parts["word/styles.xml"].contains(
+                     "<w:pPrDefault><w:pPr><w:spacing w:after=\"66\" w:line=\"352\" w:lineRule=\"atLeast\"/></w:pPr></w:pPrDefault>"),
+                 "docDefaults 行距须为 352 atLeast（17.6pt = 11pt×1.6）");
+        QVERIFY(!parts["word/styles.xml"].contains("w:line=\"276\""));
+        QVERIFY(!parts["word/styles.xml"].contains("w:line=\"384\""));
+    }
+
+    void testHeadingStylesMatchPdfLadder() {
+        // 标题阶梯收敛（2026-09-24）：h1–h3 与 PDF 逐值对齐（字号半磅近似 +
+        // 行高/边距全缇值），h4–h6 保留（PDF 无规则，媒介差异）。漂移锁
+        QMap<QString, QString> parts = exportParts(
+            "<p>x</p>", {"word/styles.xml"});
+        QString st = parts.value("word/styles.xml");
+        QVERIFY(!st.isEmpty());
+        QVERIFY2(st.contains("<w:spacing w:before=\"374\" w:after=\"112\" w:line=\"598\" w:lineRule=\"atLeast\"/><w:outlineLvl w:val=\"0\"/>")
+                 && st.contains("<w:sz w:val=\"37\"/>"), "H1 须为 37 半磅/598/374/112");
+        QVERIFY2(st.contains("<w:spacing w:before=\"229\" w:after=\"57\" w:line=\"458\" w:lineRule=\"atLeast\"/><w:outlineLvl w:val=\"1\"/>")
+                 && st.contains("<w:sz w:val=\"29\"/>"), "H2 须为 29 半磅/458/229/57");
+        QVERIFY2(st.contains("<w:spacing w:before=\"145\" w:after=\"48\" w:line=\"387\" w:lineRule=\"atLeast\"/><w:outlineLvl w:val=\"2\"/>")
+                 && st.contains("<w:sz w:val=\"24\"/>"), "H3 须为 24 半磅/387/145/48");
+    }
+
+    void testBuildNormalizeScriptShape() {
+        // DOCX 基准（单一来源脚本在前，壳调用携 px:true）：
+        // avail = 9865 缇 ÷ 15 = 657.7px；11pt = 单元格与正文统一字号
+        //（2026-09-24 定案：四面统一，单元格不设特例），测量与渲染同基准；
+        // '0 8px' = tblCellMar 120 缇；字族与 PDF 同栈（CJK 等宽 1em 主导，
+        // ASCII 的 DejaVu 略宽于 Arial——测量偏保守方向）；
+        // IIFE 同步返回 body.innerHTML（非 Promise，runJavaScript 可直接取回字符串）
+        const QString js = TableColumnNormalizer::buildNormalizeScript(9865);
+        QVERIFY(js.contains("__measureTableColumns"));
+        QVERIFY(js.contains("__allocateTableColumns"));
+        QVERIFY(js.contains("window.__normalizeTableColumns({px:true,avail:657.7,"));
+        // slack:2 边界余量（2026-09-26）：floor 恰=min-content 的边界列（已完成
+        // =60px）经百分比回算少 0.02px 即折行——PDF/DOCX 与 HTML 导出同补 2px
+        QVERIFY(js.contains("avail:657.7,slack:2,fontSize:'11pt'"));
+        QVERIFY(js.contains("fontSize:'11pt'"));
+        QVERIFY(js.contains("padding:'0 8px'"));
+        QVERIFY(js.contains("fontFamily:'Noto Sans SC,DejaVu Sans,sans-serif'});"));
+        QVERIFY(js.endsWith("return document.body?document.body.innerHTML:'';"
+                            "})()"));
     }
 
     void testSeparateOrderedListsRestartNumbering() {

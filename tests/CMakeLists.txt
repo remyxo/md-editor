@@ -36,13 +36,16 @@ add_test(NAME test_imagemanager COMMAND test_imagemanager)
 add_executable(test_htmlexporter test_htmlexporter.cpp ../src/core/HtmlExporter.cpp ../src/core/ExportCommon.cpp ../src/resources/app.qrc)
 target_include_directories(test_htmlexporter PRIVATE ../src)
 # Qt6::Qml 供 QJSEngine 做内联脚本语法检查（列宽归一脚本一处语法错即静默失效）
-target_link_libraries(test_htmlexporter PRIVATE Qt6::Test Qt6::Qml)
+# Qt6::Gui：ExportCommon::pageContentWidthTwips 用 QPageSize/QPageLayout（QtGui 类），
+# 本目标编译 ExportCommon.cpp，缺 Gui 头文件路径会编译失败
+target_link_libraries(test_htmlexporter PRIVATE Qt6::Test Qt6::Gui Qt6::Qml)
 add_test(NAME test_htmlexporter COMMAND test_htmlexporter)
 
-add_executable(test_docxexporter test_docxexporter.cpp ../src/core/DocxExporter.cpp ../src/core/miniz/miniz.c ../src/core/MermaidRenderer.cpp ../src/core/MathMlRenderer.cpp ../src/core/MathMlConverter.cpp ../src/core/ExportCommon.cpp)
+add_executable(test_docxexporter test_docxexporter.cpp ../src/core/DocxExporter.cpp ../src/core/miniz/miniz.c ../src/core/MermaidRenderer.cpp ../src/core/MathMlRenderer.cpp ../src/core/MathMlConverter.cpp ../src/core/ExportCommon.cpp ../src/core/TableColumnNormalizer.cpp ../src/core/HtmlExporter.cpp ../src/resources/app.qrc)
 target_include_directories(test_docxexporter PRIVATE ../src)
 # DocxExporter.cpp 用到 QImageReader（QtGui），必须链接 Qt6::Gui；
 # MermaidRenderer.cpp/MathMlRenderer.cpp 用 QWebEngine，须链接 WebEngineWidgets。
+# TableColumnNormalizer/HtmlExporter：前者链 WebEngine（仅静态函数入测），后者 readResource 需 app.qrc
 # 测试只用非 mermaid/非公式 HTML（extractMermaidSources/extractMathSources 返回空 → 不构造
 # 渲染器），链接 WebEngine 不触发无头渲染；MathMlConverter 为纯函数，可直接单测。
 target_link_libraries(test_docxexporter PRIVATE Qt6::Test Qt6::Gui Qt6::WebEngineWidgets)
