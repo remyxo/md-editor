@@ -227,6 +227,15 @@ private slots:
         QVERIFY(s.contains("__renderAllMermaid"));
         QVERIFY(s.contains("mermaid.render('mermaid-export-'+(++seq),src,holder)"));
         QVERIFY(!s.contains("<script"));   // 片段不含 script 标签，调用方自行包裹
+        // 定宽修复（放大病理）：mermaid 根 svg 带 width="100%"，在 PDF 渲染页
+        // 容器里拉满宽 + preserveAspectRatio=meet 等比放大到 max-height 帽，
+        // 窄高图字号放大 4~6 倍（编辑区 _sanitizeMermaidSvg 早已修同病理，导出
+        // 路径漏）。innerHTML 注入后必须按根元素 viewBox 显式定宽 ⇒ 1:1 自然
+        // 尺寸；且 viewBox 必须 DOM 级从根 svg 属性取（holder.querySelector），
+        // 不得对 SVG 字符串做正则——甘特 defs 内 pattern viewBox 会误取宽度
+        QVERIFY(s.contains("holder.querySelector('svg')"));
+        QVERIFY(s.contains("setAttribute('width',"));
+        QVERIFY(s.contains("svg.style.maxWidth='100%'"));
     }
 
     void testExportBodyPercentPlaceholdersSurvive() {
