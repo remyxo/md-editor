@@ -63,6 +63,14 @@
     }
 
     // ---- 级联合成 ----
+    // 规则特异性键：点展开后的类数（'hljs-title.function_' = 2）
+    function classCount(r) {
+        var n = 0;
+        for (var i = 0; i < r.classes.length; i++)
+            n += r.classes[i].split('.').length;
+        return n;
+    }
+
     // run 的累积类名（外→内，flattenHast 产出）→ 有效样式。
     // 候选 = 类集合为 run 类名子集的规则；按（类数升序, 源序升序）依次应用、
     // 后应用者逐属性覆盖 == CSS 特异性 + 源序级联的近似（扁平类列表恰编码
@@ -82,8 +90,10 @@
             }
             if (hit) cands.push(r);
         }
+        // 排序键：点展开后的类数计特异性（复合 token 'hljs-title.function_'
+        // 实为两类，直接数 token 个数会低估），平局再按源序
         cands.sort(function (a, b) {
-            return a.classes.length - b.classes.length || a.order - b.order;
+            return classCount(a) - classCount(b) || a.order - b.order;
         });
         var st = { color: null, weight: null, fstyle: null, bg: null };
         for (var k = 0; k < cands.length; k++) {
@@ -127,6 +137,106 @@
         return p.join(';');
     }
 
-    // ---- 全局暴露（主入口 __exportHighlight 由下方补充）----
+    // ---- 规则装载（页面环境）----
+    // 首选读页面已加载的 #hljs-light 样式表（editor.html 的 link 初始为启用态，
+    // 加载后即使被切到暗色禁用，CSSOM 仍可读）；读不到再异步 fetch 主题文本
+    // 补缓存（fetch 失败保持冷缓存，高亮整体降级为原文，导出不中断）
+    var _rulesCache = null;
+
+    function loadRules() {
+        if (_rulesCache) return _rulesCache;
+        try {
+            var sheets = document.styleSheets;
+            for (var i = 0; i < sheets.length; i++) {
+                var ss = sheets[i];
+                if (ss.ownerNode && ss.ownerNode.id === 'hljs-light') {
+                    var parts = [], rs = ss.cssRules;
+                    for (var j = 0; j < rs.length; j++) parts.push(rs[j].cssText);
+                    var parsed = parseThemeRules(parts.join('\n'));
+                    if (parsed.length) { _rulesCache = parsed; return _rulesCache; }
+                }
+            }
+        } catch (e) { /* 落到 fetch */ }
+        return null;
+    }
+
+    // init 时预热：同步读样式表；冷缓存则异步 fetch 补（导出时大概率已就绪）
+    function warmup() {
+        try { loadRules(); } catch (e) { /* 忽略 */ }
+        if (_rulesCache && _rulesCache.length) return;
+        try {
+            fetch('hljs-light.css')
+                .then(function (r) { return r.text(); })
+                .then(function (t) {
+                    var parsed = parseThemeRules(t);
+                    if (parsed.length && (!_rulesCache || !_rulesCache.length))
+                        _rulesCache = parsed;
+                })
+                .catch(function () { /* 保持冷缓存，导出时降级 */ });
+        } catch (e) { /* fetch 不可用同上 */ }
+    }
+
+    // ---- 单块高亮 ----
+    // 返回替换后的 code innerHTML；不适用（无语言/mermaid/未注册）或失败返回
+    // null（调用方保原样）。相邻同样式 run 合并成一个 span
+    function highlightCodeEl(codeEl, ruleTable, ll) {
+        var m = /(?:^|\s)language-([A-Za-z0-9_+#.-]+)/.exec(codeEl.className || '');
+        var lang = m ? m[1] : '';
+        if (!lang || lang === 'mermaid') return null;
+        var langs = ll.listLanguages();
+        if (langs.indexOf(lang) < 0
+            && !(ll.registered && ll.registered(lang))) return null;
+        var text = codeEl.textContent;
+        if (!text) return null;
+        var result = ll.highlight(lang, text);
+        var nodes = result.value || result.children || [];
+        var runs = flattenHast(nodes, []);
+        if (!runs.length) return null;
+        var html = '', lastStyle = '';
+        for (var i = 0; i < runs.length; i++) {
+            var attr = runs[i].classes.length
+                ? styleAttr(resolveStyle(ruleTable, runs[i].classes)) : '';
+            if (attr !== lastStyle) {
+                if (lastStyle) html += '</span>';
+                if (attr) html += '<span style="' + attr + '">';
+                lastStyle = attr;
+            }
+            html += escapeHtml(runs[i].text);
+        }
+        if (lastStyle) html += '</span>';
+        return html;
+    }
+
+    // ---- 主入口 ----
+    // themeRules / lowlight 可注入（测试用）；缺省读页面规则表与 window.lowlight。
+    // 任何异常返回原文（降级原则：导出不因高亮失败中断）
+    function exportHighlight(html, themeRules, ll) {
+        try {
+            if (!html || html.indexOf('language-') < 0) return html;
+            var ruleTable = themeRules || loadRules();
+            if (!ruleTable || !ruleTable.length) return html;
+            var low = ll
+                || (typeof window !== 'undefined' ? window.lowlight : null);
+            if (!low || !low.highlight) return html;
+            var doc = new DOMParser().parseFromString(
+                '<div id="__exproot">' + html + '</div>', 'text/html');
+            var root = doc.getElementById('__exproot');
+            var codes = root.querySelectorAll('pre > code');
+            var changed = false;
+            for (var i = 0; i < codes.length; i++) {
+                try {
+                    var out = highlightCodeEl(codes[i], ruleTable, low);
+                    if (out !== null) { codes[i].innerHTML = out; changed = true; }
+                } catch (e) { /* 单块失败保原样 */ }
+            }
+            return changed ? root.innerHTML : html;
+        } catch (e) {
+            return html;
+        }
+    }
+
+    // ---- 全局暴露 ----
     globalThis.__exportHighlightParseRules = parseThemeRules;
+    globalThis.__exportHighlight = exportHighlight;
+    globalThis.__exportHighlightWarmup = warmup;
 })();

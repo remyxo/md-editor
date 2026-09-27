@@ -146,6 +146,7 @@
         <file>web/tiptap-all.js</file>
         <file>web/vendored-lowlight-plugin.js</file>
         <file>web/table-column-layout.js</file>
+        <file>web/export-highlight.js</file>
         <file>web/hljs-light.css</file>
         <file>web/hljs-dark.css</file>
         <file>web/highlight.min.js</file>

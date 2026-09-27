@@ -1892,6 +1892,8 @@ window.editorApi = {
             this._attachMathClickHandler(this.editor.view.dom);
             this._syncLinkHandlers();
         }
+        // 导出高亮规则表预热：同步读样式表，冷则异步补（见 export-highlight.js）
+        if (window.__exportHighlightWarmup) window.__exportHighlightWarmup();
     },
 
     // === 通知方法 ===
@@ -2110,6 +2112,12 @@ window.editorApi = {
             cgs.push('<colgroup>' + colsHtml + '</colgroup>');
         }
         return window.__replaceColgroupsWith(html, cgs);
+    },
+
+    // 导出前代码块语法高亮（PDF/DOCX；实现见 export-highlight.js，与编辑器
+    // 同一 lowlight 实例 + hljs-light 色板）。任何失败返回原文，导出不中断
+    highlightExportHtml: function(html) {
+        return window.__exportHighlight ? window.__exportHighlight(html) : html;
     },
 
     // C++ 侧调用的命令
