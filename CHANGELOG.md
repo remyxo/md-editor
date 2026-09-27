@@ -2,6 +2,41 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.20.0] — 2026-09-27
+
+导出代码块语法高亮批次：PDF/DOCX 导出的代码块从纯色升级为与编辑器亮色主题
+一致的语法高亮；连带发现并修复导出路径 mermaid 图放大（master 既有缺陷，
+与本特性无关但同批验证中暴露）。
+
+### 新增 — 导出 PDF/DOCX 代码块语法高亮
+- 架构：编辑器页面内**单一来源预着色**——同一 lowlight 实例（语言集与编辑器
+  一致）+ 运行时解析 hljs-light.css 色板（无硬编码色值），产出扁平
+  inline-style span；PDF 拆行器（迁出为 web/pdf-split-prelines.js）多行
+  token 拆行逐行保色，DOCX parseCodeBlock 解析为彩色 run
+  （w:color/w:b/w:i/w:shd，严格 CT_RPr schema 序）
+- 样式与编辑器完全一致：颜色 + 粗体（hljs-strong/section）+ 斜体
+  （hljs-emphasis）+ diff 增删背景（hljs-addition/deletion）；mermaid 块
+  跳过（导出链路另有 SVG 渲染）
+- 覆盖源码模式导出（MarkdownHandler::toHtml 自绘 language- 保留语言信息）；
+  暗色编辑器主题下导出恒为亮色色板（PDF 固定亮色打印、DOCX 白底）
+- 降级：高亮链路任何失败两侧均返回原文，导出不中断（代码块退化为纯色）
+- 验证：vitest 新增 19 用例 + ctest 新增高亮 run/schema 序/回归用例；无头
+  CDP 全链路取证（真实页面 55+ 着色 span、DOCX 色值/底纹/粗体落产物、PDF
+  长块跨页不丢行）
+
+### 修复 — 导出 PDF 中 mermaid 图被放大（master 既有缺陷）
+- 症状：PDF 导出窄高图（流程图等）字号放大 4~6 倍（16px→52~77pt）；DOCX 正常
+- 根因：`mermaidRenderScript` 直注根元素 `width="100%"` 的 SVG——PDF 渲染页
+  容器拉满宽 + `preserveAspectRatio=meet` 等比放大到 max-height 帽；DOCX 走
+  viewBox 1:1 嵌图故正常。编辑器侧 `_sanitizeMermaidSvg` 早修过同病理，但
+  从未复用到导出路径（见 docs/mermaid-svg-rendering.md 问题 2）
+- 修复：导出脚本按根 svg 的 viewBox 像素宽定宽（1:1 自然尺寸）+
+  `max-width:100%` 只缩不放；甘特图 viewBox=布局宽，定宽后仍 1:1（两分页
+  路径一致性不倒退）；HTML 导出同脚本同生效
+- 验证：2×2 对照（worktree/master × 高亮/原始）三份 PDF 逐像素一致，证实
+  为既有缺陷而非本特性回归；修复后图宽 3/4→1/4 页宽、节点字 77→14pt、
+  等比无失真，甘特 -2.67% 为旧版打印阶段伪放大基线的修正
+
 ## [0.19.1] — 2026-09-23
 
 表格列宽一致性批次：三处「布局被首算时刻的状态固化」类根因 + 分配器过约束
