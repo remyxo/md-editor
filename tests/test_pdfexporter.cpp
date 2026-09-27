@@ -263,7 +263,9 @@ private slots:
         QVERIFY(out.contains("pre .pl{background:#f4f5f7;padding:0 14px;}"));
         QVERIFY(out.contains("pre .pl:first-child{padding-top:10px;border-radius:4px 4px 0 0;}"));
         QVERIFY(out.contains("pre .pl:last-child{padding-bottom:10px;border-radius:0 0 4px 4px;}"));
-        QVERIFY(out.contains("pre.style.background='transparent';pre.style.padding='0';"));
+        //    拆行器实现已迁至共享 web 资源 pdf-split-prelines.js（vitest 覆盖其
+        //    行为，含底色清零），渲染页只承载 script 标签接线
+        QVERIFY(out.contains("<script src=\"pdf-split-prelines.js\"></script>"));
         // <code> 的底色/内边距同样清掉：逐行重排后它的块级子元素会切开行内盒，
         // 首尾空碎片各带一份底色内边距，在代码块上下画出细灰条
         QVERIFY(out.contains("pre code{background:none;padding:0;border-radius:0;}"));

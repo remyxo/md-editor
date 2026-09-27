@@ -326,59 +326,6 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "var c=document.querySelector('div[data-type=\"footnoteContainer\"]');"
         "if(c&&!c.querySelector('div[data-type=\"footnoteDef\"]')&&!c.textContent.trim())c.remove();"
         "};"
-        // 代码块逐行重排（仅 paged 路径调用）：把 pre 内容按源码行拆成块级 span。
-        // paged.js 对 pre 文本节点的字符偏移断点在行间空白区几何不可靠（pre-wrap 下
-        // 空白无字形），断点落进 \"。\\n ␣␣␣\" 这类区域时会把前段尾行整行丢掉
-        // （R2 实测断页处丢 1 行，断点位置随 mermaid 尺寸微差漂移，抽奖式复现）。
-        // 逐行 span 让分页只发生在元素边界——与段落同路径，历轮零丢失
-        "window.__splitPreLines=function(){"
-        "document.querySelectorAll('pre').forEach(function(pre){"
-        "var host=pre.querySelector('code')||pre;"
-        "if(host.textContent.indexOf('\\n')<0)return;"
-        "var units=[];"
-        "(function collect(n){"
-        "for(var i=0;i<n.childNodes.length;i++){"
-        "var c=n.childNodes[i];"
-        "if(c.nodeType===3)units.push(c);"
-        "else if(c.nodeType===1){"
-        "if(c.textContent.indexOf('\\n')<0)units.push(c);"
-        "else collect(c);"
-        "}"
-        "}"
-        "})(host);"
-        "var lines=[[]];"
-        "units.forEach(function(u){"
-        "if(u.nodeType===3){"
-        "var s=u.textContent,parts=s.split('\\n'),pos=0;"
-        "parts.forEach(function(seg,i){"
-        "if(i>0)lines.push([]);"
-        "if(seg)lines[lines.length-1].push({text:seg});"
-        "pos+=seg.length+1;"
-        "});"
-        "}else{lines[lines.length-1].push({node:u});}"
-        "});"
-        // 尾随换行按 HTML 解析语义丢弃（不补空行）；行内空行用 nbsp 占位保行高
-        "if(lines.length>1&&!lines[lines.length-1].length)lines.pop();"
-        "var frag=document.createDocumentFragment();"
-        "lines.forEach(function(ln){"
-        "var sp=document.createElement('span');"
-        "sp.className='pl';"
-        "if(!ln.length)sp.appendChild(document.createTextNode('\\u00A0'));"
-        "else{ln.forEach(function(seg){"
-        "if(seg.text!==undefined)sp.appendChild(document.createTextNode(seg.text));"
-        "else sp.appendChild(seg.node);"
-        "});}"
-        "frag.appendChild(sp);"
-        "});"
-        "while(host.firstChild)host.removeChild(host.firstChild);"
-        "host.appendChild(frag);"
-        // 底色与内边距改由逐行 .pl 块承载（CSS 见模板 pre .pl 规则）：行块
-        // break-inside:avoid 永不跨页，其背景不会被 Chromium 画到片段容器
-        // 末端——快路径可打印区覆盖整纸，那片越界底色会一直画到纸底压过页脚
-        // （实测灰底 242→296.6mm，用户截图）。pre 自身的底色在这里清掉
-        "pre.style.background='transparent';pre.style.padding='0';"
-        "});"
-        "};"
         // 表格断点修正（仅 paged 路径注册）：paged.js 的 findOverflow 元素分支只在
         // 节点 top ≥ 页内容区底时才选它做断点——溢出时选中的永远是「下一行」，
         // 而行底与区底压线贴合（实测差 2px）的骑跨行留在本页碎片里，其行盒被
@@ -770,7 +717,9 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
     // 检测用内联后 body（图片内联不影响两类标记）
     const bool needMermaid = body.contains(QLatin1String("language-mermaid"));
     const bool needKatex = body.contains(QLatin1String("data-latex"));
-    QString libs;
+    // 拆行器无条件引入（nativeHf 与 paged 两路径都调用 __splitPreLines；
+    // 行为实现迁至 web/pdf-split-prelines.js，vitest 可测）
+    QString libs = QStringLiteral("<script src=\"pdf-split-prelines.js\"></script>");
     if (needKatex)
         libs += QStringLiteral("<script src=\"katex.min.js\"></script>");
     if (needMermaid)
