@@ -404,6 +404,31 @@ static QString extractAlign(const QString &style)
     return m.captured(1).trimmed();
 }
 
+// style 属性中提取 font-weight / font-style 布尔标记（导出高亮 span 的
+// 粗斜体；主题值为 700/bold、italic，兼容 >=600 数值权重）
+static bool extractFontFlag(const QString &style, const QString &prop)
+{
+    QRegularExpression re("(?:^|;\\s*)" + prop + "\\s*:\\s*([^;]+)",
+                          QRegularExpression::CaseInsensitiveOption);
+    auto m = re.match(style);
+    if (!m.hasMatch()) return false;
+    const QString v = m.captured(1).trimmed();
+    if (v.compare(QLatin1String("bold"), Qt::CaseInsensitive) == 0) return true;
+    bool ok = false;
+    const int n = v.toInt(&ok);
+    return ok && n >= 600;
+}
+
+static bool extractItalicFlag(const QString &style)
+{
+    QRegularExpression re("(?:^|;\\s*)font-style\\s*:\\s*([^;]+)",
+                          QRegularExpression::CaseInsensitiveOption);
+    auto m = re.match(style);
+    return m.hasMatch()
+           && m.captured(1).trimmed().compare(QLatin1String("italic"),
+                                              Qt::CaseInsensitive) == 0;
+}
+
 // ============ 数据模型 ============
 
 struct RunFormat {
@@ -884,20 +909,61 @@ static QString parseHeading(QXmlStreamReader &r, int level, ParseState &s)
 static QString parseCodeBlock(QXmlStreamReader &r, ParseState &s)
 {
     Q_UNUSED(s);
-    // 收集 <pre> 内全部文本（逐行生成段落以保留换行）
-    QString allText;
+    // 收集 <pre> 内片段流：导出高亮链路（getEditorHtmlAsync →
+    // highlightExportHtml）把代码块内容替换为扁平 inline-style span（嵌套
+    // 已在 JS 侧按 CSS 级联合成有效样式，此处无需样式栈——仍留一层防御性
+    // 栈以容忍意外嵌套：内层非空值就近覆盖）。无高亮时（降级/旧链路）只有
+    // 纯文本，行为与改造前一致
+    struct Seg { QString text; QString color; QString bg; bool bold; bool italic; };
+    struct Frame { QString color; QString bg; bool bold; bool italic; };
+    QVector<Frame> stack;
+    QList<Seg> segs;
+    auto pushText = [&segs, &stack](const QString &text) {
+        if (text.isEmpty()) return;
+        QString color, bg;
+        bool bold = false, italic = false;
+        for (int i = stack.size() - 1; i >= 0; --i) {   // 内层非空值就近覆盖
+            if (color.isEmpty()) color = stack[i].color;
+            if (bg.isEmpty()) bg = stack[i].bg;
+            bold = bold || stack[i].bold;
+            italic = italic || stack[i].italic;
+        }
+        segs.append({text, color, bg, bold, italic});
+    };
+    QString textAcc;
     while (!r.atEnd()) {
         auto tt = r.readNext();
         if (tt == QXmlStreamReader::EndElement
             && r.name().toString().compare(QLatin1String("pre"), Qt::CaseInsensitive) == 0)
             break;
-        if (tt == QXmlStreamReader::Characters) {
-            allText += r.text();
+        if (tt == QXmlStreamReader::StartElement) {
+            pushText(textAcc);
+            textAcc.clear();
+            const QString tag = r.name().toString().toLower();
+            if (tag == "span") {
+                const QString sty = r.attributes().value("style").toString();
+                stack.append({extractColor(sty, "color"),
+                              extractColor(sty, "background-color"),
+                              extractFontFlag(sty, "font-weight"),
+                              extractItalicFlag(sty)});
+            }
+            // 其他行内标签（b/i 等）不处理：扁平链路全部语义已在 span style 中
+            continue;
         }
-        // 跳过 <code> 起止标签和其他内联标签
+        if (tt == QXmlStreamReader::EndElement) {
+            if (r.name().toString().compare(QLatin1String("span"), Qt::CaseInsensitive) != 0)
+                continue;
+            pushText(textAcc);
+            textAcc.clear();
+            if (!stack.isEmpty()) stack.removeLast();
+            continue;
+        }
+        if (tt == QXmlStreamReader::Characters)
+            textAcc += r.text();
     }
+    pushText(textAcc);
 
-    // 逐行生成 <w:p>，等宽字体 + 灰底。
+    // 逐行生成 <w:p>，等宽字体 + 灰底；行内按片段生成多个 <w:r>。
     // CT_PPrBase 子元素须按 schema 序列（… → shd → … → spacing → ind → …），
     // ind 不得早于 spacing——顺序违规触发 Word「无法读取的内容」修复框
     QString pPr = "<w:pPr>"
@@ -905,20 +971,44 @@ static QString parseCodeBlock(QXmlStreamReader &r, ParseState &s)
                   "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>"
                   "<w:ind w:left=\"360\" w:right=\"360\"/>"
                   "</w:pPr>";
-    QString rPr = "<w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/><w:sz w:val=\"22\"/></w:rPr>";
+
+    // run 的 rPr 子元素按 CT_RPr schema 序：rFonts → b → i → color → sz → shd
+    auto runXml = [](const Seg &seg) {
+        QString rpr = "<w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/>";
+        if (seg.bold) rpr += "<w:b/>";
+        if (seg.italic) rpr += "<w:i/>";
+        if (!seg.color.isEmpty()) rpr += "<w:color w:val=\"" + seg.color + "\"/>";
+        rpr += "<w:sz w:val=\"22\"/>";
+        if (!seg.bg.isEmpty())
+            rpr += "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"" + seg.bg + "\"/>";
+        rpr += "</w:rPr>";
+        return "<w:r>" + rpr + "<w:t xml:space=\"preserve\">"
+               + xmlEscape(seg.text) + "</w:t></w:r>";
+    };
 
     QString result;
-    const QStringList lines = allText.split('\n');
-    for (const QString &line : lines) {
-        QString t = xmlSanitize(line);
-        if (t.isEmpty()) {
-            // 空行仍需显式段落，否则 Word 会折叠
-            result += "<w:p>" + pPr + "</w:p>\n";
-        } else {
-            result += "<w:p>" + pPr + "<w:r>" + rPr
-                    + "<w:t xml:space=\"preserve\">" + xmlEscape(t) + "</w:t></w:r></w:p>\n";
+    QString lineRuns;            // 当前行已生成的 run XML
+    bool lineHasRun = false;
+    auto closeLine = [&]() {
+        if (lineHasRun)
+            result += "<w:p>" + pPr + lineRuns + "</w:p>\n";
+        else
+            result += "<w:p>" + pPr + "</w:p>\n";   // 空行仍需显式段落，否则 Word 折叠
+        lineRuns.clear();
+        lineHasRun = false;
+    };
+    for (const Seg &seg : segs) {
+        const QStringList pieces = seg.text.split('\n');
+        for (int i = 0; i < pieces.size(); ++i) {
+            if (i > 0) closeLine();
+            if (pieces[i].isEmpty()) continue;
+            Seg piece = seg;
+            piece.text = pieces[i];
+            lineRuns += runXml(piece);
+            lineHasRun = true;
         }
     }
+    closeLine();
     return result;
 }
 

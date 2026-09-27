@@ -503,6 +503,56 @@ private slots:
         QVERIFY(xml.count("<w:p>") >= 2);
     }
 
+    // 导出高亮（export-highlight.js）产物：扁平 inline-style span → 彩色 run。
+    // 多行 token（块注释）按行拆段后每行保持颜色
+    void testCodeBlockHighlightColors()
+    {
+        const QString xml = exportDocumentXml(QStringLiteral(
+            "<pre><code class=\"language-cpp\">"
+            "<span style=\"color:#d73a49\">int</span> main() { "
+            "<span style=\"color:#6a737d\">/* c\nmulti */</span> }"
+            "</code></pre>"));
+        // 关键字 run 颜色（extractColor 输出大写 hex）
+        QVERIFY(xml.contains(QLatin1String("<w:color w:val=\"D73A49\"/>")));
+        // 多行注释拆行后两行都保持注释色（跨行保色回归点）
+        QCOMPARE(xml.count(QLatin1String("<w:color w:val=\"6A737D\"/>")), 2);
+        // 无样式文本 run 不带 w:color（等宽字体 run 仍存在）
+        QVERIFY(xml.contains(QLatin1String("w:ascii=\"Consolas\"")));
+    }
+
+    void testCodeBlockHighlightBoldItalicShd()
+    {
+        const QString xml = exportDocumentXml(QStringLiteral(
+            "<pre><code class=\"language-md\">"
+            "<span style=\"color:#005cc5;font-weight:700\"># head</span>\n"
+            "<span style=\"color:#24292e;font-style:italic\">*em*</span>\n"
+            "<span style=\"color:#22863a;background-color:#f0fff4\">+ add</span>"
+            "</code></pre>"));
+        // 粗体 + 颜色同 run；斜体；diff 背景底纹
+        QVERIFY(xml.contains(QLatin1String("<w:b/>")));
+        QVERIFY(xml.contains(QLatin1String("<w:i/>")));
+        QVERIFY(xml.contains(QLatin1String("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F0FFF4\"/>")));
+        // rPr 子元素 schema 序：rFonts → b → i → color → sz → shd（顺序违规
+        // 触发 Word 修复框；用整段 rPr 正则锁定）
+        QVERIFY(QRegularExpression(
+                    R"(<w:rPr><w:rFonts[^>]*/><w:b/><w:color w:val="005CC5"/><w:sz w:val="22"/></w:rPr>)")
+                    .match(xml)
+                    .hasMatch());
+    }
+
+    void testCodeBlockPlainRegression()
+    {
+        // 无高亮链路（降级/旧文档）：纯文本代码块行为不变——逐行段落、灰底、
+        // 无 w:color
+        const QString xml = exportDocumentXml(QStringLiteral(
+            "<pre><code class=\"language-cpp\">int main()\n{\n\treturn 0;\n}</code></pre>"));
+        QVERIFY(!xml.contains(QLatin1String("<w:color w:val=")));
+        QVERIFY(xml.contains(QLatin1String("w:fill=\"F2F2F2\"")));
+        // 4 行 → 4 个代码段落（pPr 前缀计数）
+        QCOMPARE(xml.count(QLatin1String("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F2F2F2\"/>")), 4);
+        QVERIFY(xml.contains(QLatin1String("return 0;")));
+    }
+
     void testTableProducesGrid() {
         QString xml = exportDocumentXml(
             "<table><thead><tr><th>A</th><th>B</th></tr></thead>"
