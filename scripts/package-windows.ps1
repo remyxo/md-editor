@@ -1,9 +1,10 @@
-﻿# Windows 打包：windeployqt 捆绑 Qt → 便携 zip + NSIS 安装器
+﻿# Windows 打包：windeployqt 捆绑 Qt → NSIS 安装器（-SkipZip 可另产便携 zip）
 # 用法: .\scripts\package-windows.ps1 [-Version <版本号>] [-BuildDir <构建目录>] [-SkipZip]
 #   -BuildDir：本地 VM 构建时 build 在 D:\build（见 docs/windows-build-vm.md）；
 #              不传则用仓库内 build\（CI 行为，保持不变）
-#   -SkipZip：跳过便携 zip 只产 NSIS 安装器（CI 用：Release 分发只保留 exe，
-#              zip 制品占 139MB 是 Actions 500MB 存储配额超限主因）
+#   -SkipZip：跳过便携 zip 只产 NSIS 安装器（2026-09-27 用户定版：Windows 分发
+#              只保留安装器，VM 构建恒传此开关；zip 单份 139MB 也是 Actions
+#              500MB 存储配额超限主因）
 param(
     [string]$Version = "",
     [string]$BuildDir = "",

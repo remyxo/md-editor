@@ -65,10 +65,11 @@ try {
     cmake --build D:\build
     if ($LASTEXITCODE -ne 0) { Write-Error "构建失败 (exit $LASTEXITCODE)"; exit $LASTEXITCODE }
 
-    # ---- 6. 打包：windeployqt → 便携 zip + NSIS 安装器（产物落共享卷 dist\ = 宿主仓库 dist/）----
+    # ---- 6. 打包：windeployqt → NSIS 安装器（产物落共享卷 dist\ = 宿主仓库 dist/）----
+    # 2026-09-27 用户定版：Windows 分发只保留 NSIS 安装器，不再产便携 zip
     if (-not $CompileOnly) {
         Write-Host "==> 打包"
-        & (Join-Path $SrcRoot 'scripts\package-windows.ps1') -BuildDir 'D:\build'
+        & (Join-Path $SrcRoot 'scripts\package-windows.ps1') -BuildDir 'D:\build' -SkipZip
     } else {
         Write-Host "==> 编译通过（-CompileOnly，跳过打包）"
     }

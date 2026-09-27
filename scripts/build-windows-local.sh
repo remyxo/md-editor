@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一条命令在本地 win11 KVM 虚拟机里构建 Windows 包（zip + NSIS 安装器）
+# 一条命令在本地 win11 KVM 虚拟机里构建 Windows 包（NSIS 安装器，2026-09-27 起不再产 zip）
 # 产物落在 dist/（virtiofs 共享即宿主仓库 dist/）。前置与搭建见 docs/windows-build-vm.md
 #
 # 用法: ./scripts/build-windows-local.sh [--compile-only]
@@ -74,7 +74,7 @@ if [ "$rc" -eq 0 ]; then
     say "构建完成，产物（dist/）"
     # guest 经 virtiofs 写宿主盘，产物在宿主侧可见可能滞后数秒，带重试
     n=0
-    until ls -lh dist/md-editor-*-win64.zip dist/md-editor-*-win64.exe 2>/dev/null; do
+    until ls -lh dist/md-editor-*-win64.exe 2>/dev/null; do
         n=$((n + 1))
         [ "$n" -ge 10 ] && { echo "（未找到产物文件——检查上方构建日志）"; break; }
         sleep 1
