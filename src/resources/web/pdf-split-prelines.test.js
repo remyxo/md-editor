@@ -75,4 +75,27 @@ describe('__splitPreLines', () => {
         expect(pre.style.background).toBe('transparent');
         expect(pre.style.padding).toBe('0px');
     });
+
+    it('多行元素内部空行保位（修复轮 1：中行 nbsp，两侧片段保色）', () => {
+        loadModule();
+        document.body.innerHTML =
+            '<pre><code id="c">x<span style="color:#d73a49">c1\n\nc2</span>y</code></pre>';
+        window.__splitPreLines();
+        const ls = lines();
+        expect(ls.length).toBe(3);
+        expect(ls[0].textContent).toBe('xc1');
+        expect(ls[0].querySelector('span[style*="#d73a49"]').textContent).toBe('c1');
+        expect(ls[1].textContent).toBe('\u00A0');   // 空行保位：nbsp 占位
+        expect(ls[2].textContent).toBe('c2y');
+        expect(ls[2].querySelector('span[style*="#d73a49"]').textContent).toBe('c2');
+    });
+
+    it('元素内单个换行拆行不并行（修复轮 1：a<span>\\n</span>b 得两行）', () => {
+        loadModule();
+        document.body.innerHTML = '<pre><code id="c">a<span>\n</span>b</code></pre>';
+        window.__splitPreLines();
+        const ls = lines();
+        expect(ls.length).toBe(2);
+        expect(ls.map((x) => x.textContent)).toEqual(['a', 'b']);
+    });
 });

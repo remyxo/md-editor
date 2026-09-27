@@ -48,12 +48,17 @@
                     }
                 }
                 var out = [];
-                sub.forEach(function (ln) {
-                    if (!ln.length) return;   // 空元素（无子节点）不产生行
-                    var el = n.cloneNode(false);
-                    ln.forEach(function (c) { el.appendChild(c); });
-                    out.push([el]);
-                });
+                // 有子节点才展开：sub 的空行是行边界，必须保位（旧版跳过会把
+                // 多行元素内部的空行/行界抹掉——块注释含空行即静默丢行/并行）
+                if (n.childNodes.length) {
+                    sub.forEach(function (ln) {
+                        if (!ln.length) { out.push([]); return; }   // 空行保位
+                        var el = n.cloneNode(false);
+                        ln.forEach(function (c) { el.appendChild(c); });
+                        out.push([el]);
+                    });
+                }
+                // 空元素（无子节点）不产生任何行（视觉与旧行为等价）
                 return out.length ? out : [[]];
             }
 
