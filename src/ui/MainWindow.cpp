@@ -902,12 +902,38 @@ static QString exportDefaultName(const QString &filePath, const QString &ext)
     return base + "." + ext;
 }
 
+// 导出取内容的链路形态：Plain=直接编辑器 HTML（HTML 导出）；Docx=live
+// colgroup 注入（供 DocxExporter 生成 tblGrid）；Pdf=与 Plain 相同取法
+//（PDF 表格列宽由渲染页 table-column-layout.js 现场处理，勿注入编辑器窗口
+// 宽的 colgroup）。Docx/Pdf 均追加代码块语法高亮步
+enum class ExportHtmlMode { Plain, Docx, Pdf };
+
+// 导出前代码块语法高亮（实现见 web/export-highlight.js：与编辑器同一
+// lowlight 实例 + hljs-light 色板）。模板字面量传大 HTML 与源码模式路径
+// 同款（escapeForJsTemplate）；任何失败两侧都降级原文，导出不中断
+static void highlightForExportAsync(EditorTab *tab, const QString &html,
+                                    std::function<void(const QString &)> cb)
+{
+    if (!tab || !tab->webView() || html.isEmpty()
+        || !html.contains(QLatin1String("language-"))) {
+        cb(html);
+        return;
+    }
+    tab->webView()->page()->runJavaScript(
+        QStringLiteral("window.editorApi.highlightExportHtml(`%1`);")
+            .arg(escapeForJsTemplate(html)),
+        [html, cb](const QVariant &result) {
+            const QString s = result.toString();
+            cb(s.isEmpty() ? html : s);
+        });
+}
+
 // 异步取编辑器 HTML：源码模式下编辑器文档是进入源码前的旧快照（内容在
 // source-view textarea），取 getSourceContent() 经 toHtml 转换，用户保持源码
-// 模式不动；WYSIWYG 模式直接 getContent()
+// 模式不动；WYSIWYG 模式按 mode 取 getContent()/getExportHtml()
 static void getEditorHtmlAsync(EditorTab *tab,
                                std::function<void(const QString &)> cb,
-                               bool forDocx = false)
+                               ExportHtmlMode mode = ExportHtmlMode::Plain)
 {
     if (!tab || !tab->webView())
         return;
@@ -916,12 +942,20 @@ static void getEditorHtmlAsync(EditorTab *tab,
     // 供 DocxExporter 生成 tblGrid；源码模式 getSourceContent 经 toHtml 无
     // colgroup，退回等宽网格（现状行为）
     const QString call = src ? QStringLiteral("window.editorApi.getSourceContent();")
-                             : (forDocx ? QStringLiteral("window.editorApi.getExportHtml();")
-                                        : QStringLiteral("window.editorApi.getContent();"));
+                             : (mode == ExportHtmlMode::Docx
+                                    ? QStringLiteral("window.editorApi.getExportHtml();")
+                                    : QStringLiteral("window.editorApi.getContent();"));
     tab->webView()->page()->runJavaScript(call,
-        [src, cb](const QVariant &result) {
+        [tab, src, mode, cb](const QVariant &result) {
             QString s = result.toString();
-            cb(src ? MarkdownHandler::toHtml(s) : s);
+            const QString html = src ? MarkdownHandler::toHtml(s) : s;
+            if (mode == ExportHtmlMode::Plain) {
+                cb(html);
+                return;
+            }
+            // PDF/DOCX：代码块语法高亮（单一来源 export-highlight.js；
+            // JS/C++ 两侧均可降级原文）
+            highlightForExportAsync(tab, html, cb);
         });
 }
 
@@ -996,7 +1030,7 @@ void MainWindow::onExportPdf()
                 if (dlg) dlg->showWriting(total);
             });
             exporter->exportToPdf(html, docDir, path);
-        });
+        }, ExportHtmlMode::Pdf);
 }
 
 void MainWindow::onExportDocx()
@@ -1030,7 +1064,7 @@ void MainWindow::onExportDocx()
             });
             exporter->exportToDocx(html, docDir, path);
         },
-        /*forDocx=*/true);
+        ExportHtmlMode::Docx);
 }
 
 void MainWindow::onExportHtml()
