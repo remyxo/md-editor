@@ -19,6 +19,8 @@
 #include "../core/PdfExporter.h"
 #include "../core/DocxExporter.h"
 #include "../core/HtmlExporter.h"
+#include "../core/ExportCommon.h"
+#include "../core/TableColumnNormalizer.h"
 #include "../app/Application.h"
 #include "../app/ThemeManager.h"
 #include "../app/SystemThemeWatcher.h"
@@ -42,6 +44,7 @@
 #include <QMimeData>
 #include <QKeySequence>
 #include <QPointer>
+#include <memory>
 
 // JS 单引号字符串字面量转义（路径等嵌入 runJavaScript；反斜杠/引号/换行——
 // Windows 路径 C:\Users\.. 的 \ 与含 ' 的 Unix 路径都会破坏字面量）
@@ -928,6 +931,16 @@ static void highlightForExportAsync(EditorTab *tab, const QString &html,
         });
 }
 
+// 导出用时后缀：<1s 整数毫秒；≥1s 秒（四舍五入 1 位小数）。
+// 用 translate 而非 tr：文件内静态自由函数无类 tr 上下文，显式挂 MainWindow
+static QString exportTimeSuffix(qint64 elapsedMs)
+{
+    if (elapsedMs < 1000)
+        return QCoreApplication::translate("MainWindow", "%1 毫秒").arg(elapsedMs);
+    return QCoreApplication::translate("MainWindow", "%1 秒")
+        .arg(QString::number(elapsedMs / 1000.0, 'f', 1));
+}
+
 // 异步取编辑器 HTML：源码模式下编辑器文档是进入源码前的旧快照（内容在
 // source-view textarea），取 getSourceContent() 经 toHtml 转换，用户保持源码
 // 模式不动；WYSIWYG 模式按 mode 取 getContent()/getExportHtml()
@@ -977,6 +990,9 @@ void MainWindow::onExportPdf()
     // 异步获取编辑器 HTML 内容（源码模式下取 source-view 当前内容经 toHtml，
     // 否则导出的是进入源码前的旧快照）
     getEditorHtmlAsync(tab, [this, path, docDir](const QString &html) {
+            // 用时从内容就绪（进度对话框出现）起算，到 exportFinished
+            auto start = std::make_shared<QElapsedTimer>();
+            start->start();
             // 进度对话框（2026-09-21）：paged.js 大文档导出以十秒计，静默等待
             // 会让用户误以为卡死而随手关程序——模态展示「正在导出」，导出完成
             // 前不可关闭；成功自动关闭，失败转错误态等用户确认。QPointer 防
@@ -993,15 +1009,18 @@ void MainWindow::onExportPdf()
                 exporter->deleteLater();
             });
             connect(exporter, &PdfExporter::exportFinished, this,
-                    [this, exporter, dlg](bool ok, const QString &out) {
+                    [this, exporter, dlg, start](bool ok, const QString &out) {
                 // 本条是状态栏最后一条消息：走回退时并入回退说明并延长展示——
                 // pagedFallbackUsed 的独立提示早于 printToPdf 触发，1-3s 后即被
                 // 本条覆盖，用户须从这里得知产物无页眉页脚
                 if (ok && exporter->fallbackUsed())
                     m_statusBar->showMessage(
-                        tr("已导出: %1（分页引擎回退，本次无页眉页脚）").arg(out), 6000);
+                        tr("已导出: %1（分页引擎回退，本次无页眉页脚）, 用时 %2")
+                            .arg(out, exportTimeSuffix(start->elapsed())), 6000);
                 else
-                    m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
+                    m_statusBar->showMessage(
+                        ok ? tr("已导出: %1, 用时 %2").arg(out, exportTimeSuffix(start->elapsed()))
+                           : tr("导出失败"), 3000);
                 if (dlg) {
                     if (ok)
                         dlg->showFinished();
@@ -1050,19 +1069,52 @@ void MainWindow::onExportDocx()
     // 异步获取编辑器 HTML 内容（源码模式下取 source-view 当前内容经 toHtml，
     // 否则导出的是进入源码前的旧快照）
     getEditorHtmlAsync(tab, [this, path, docDir](const QString &html) {
+            // 用时从内容就绪（进度起点）起算：含列宽归一 + mermaid/公式 + 写盘
+            auto start = std::make_shared<QElapsedTimer>();
+            start->start();
             auto *exporter = new DocxExporter(this);
             // 失败路径（空内容/生成失败/mermaid 挂死）须有反馈且回收导出器
             connect(exporter, &DocxExporter::exportError, this,
                     [this, exporter](const QString &err) {
-                m_statusBar->showMessage(tr("导出失败: %1").arg(err), 5000);
-                exporter->deleteLater();
-            });
+                        m_statusBar->showMessage(tr("导出失败: %1").arg(err), 5000);
+                        exporter->deleteLater();
+                    });
             connect(exporter, &DocxExporter::exportFinished, this,
-                    [this, exporter](bool ok, const QString &out) {
-                m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
-                exporter->deleteLater();
-            });
-            exporter->exportToDocx(html, docDir, path);
+                    [this, exporter, start](bool ok, const QString &out) {
+                        m_statusBar->showMessage(
+                            ok ? tr("已导出: %1, 用时 %2").arg(out, exportTimeSuffix(start->elapsed()))
+                               : tr("导出失败"), 3000);
+                        exporter->deleteLater();
+                    });
+            // 表格列宽归一（与 PDF 同构）：编辑器 live colgroup 是窗口宽基准，
+            // 直接缩放到 Word 页宽会短列一字一行/长列独占——经隐藏页按 DOCX
+            // 基准（页宽 avail/11pt/tblCellMar 边距）重测重分配。无表格直通
+            // （免页面加载）；归一失败（空串）降级原 html（live colgroup 缩放
+            // 路径仍在 DocxExporter 内，行为同改造前）
+            if (!html.contains(QLatin1String("<table"))) {
+                exporter->exportToDocx(html, docDir, path);
+                return;
+            }
+            auto *norm = TableColumnNormalizer::instance();
+            // busy（上一轮未结算）返回 0 且不发信号：就地降级直出原 html。
+            // 接受路径无同步发射（setHtml→loadFinished 恒异步），先取 id 再连接；
+            // 并发双导出共享单例时，各单按 id 匹配消费自己的结果，不互抢
+            const quint64 normId = norm->normalize(html, docDir,
+                                                   ExportCommon::pageContentWidthTwips());
+            if (normId == 0) {
+                exporter->exportToDocx(html, docDir, path);
+                return;
+            }
+            auto conn = std::make_shared<QMetaObject::Connection>();
+            *conn = connect(norm, &TableColumnNormalizer::finished, this,
+                    [conn, exporter, html, docDir, path, normId](
+                            quint64 requestId, const QString &normalized) {
+                        // 他轮请求的结果：不是本单，不消费不断连
+                        if (requestId != normId) return;
+                        QObject::disconnect(*conn);   // 单发：只消费一次结果
+                        exporter->exportToDocx(normalized.isEmpty() ? html : normalized,
+                                               docDir, path);
+                    });
         },
         ExportHtmlMode::Docx);
 }
@@ -1084,6 +1136,9 @@ void MainWindow::onExportHtml()
 
     // 源码模式下取 source-view 当前内容经 toHtml，否则导出的是进入源码前的旧快照
     getEditorHtmlAsync(tab, [this, path, docDir, theme](const QString &html) {
+            // 用时从内容就绪起算，到 exportFinished
+            auto start = std::make_shared<QElapsedTimer>();
+            start->start();
             auto *exporter = new HtmlExporter(this);
             connect(exporter, &HtmlExporter::exportError, this,
                     [this, exporter](const QString &err) {
@@ -1091,10 +1146,12 @@ void MainWindow::onExportHtml()
                 exporter->deleteLater();
             });
             connect(exporter, &HtmlExporter::exportFinished, this,
-                    [this, exporter](bool ok, const QString &out) {
-                m_statusBar->showMessage(ok ? tr("已导出: %1").arg(out) : tr("导出失败"), 3000);
-                exporter->deleteLater();
-            });
+                    [this, exporter, start](bool ok, const QString &out) {
+                        m_statusBar->showMessage(
+                            ok ? tr("已导出: %1, 用时 %2").arg(out, exportTimeSuffix(start->elapsed()))
+                               : tr("导出失败"), 3000);
+                        exporter->deleteLater();
+                    });
             exporter->exportToHtml(html, docDir, path, theme);
         });
 }

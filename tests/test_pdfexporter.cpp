@@ -169,9 +169,10 @@ private slots:
         QVERIFY(out.contains("vertical-align:bottom"));
         // 内容格：左右 padding 模拟页边距，宽度由渲染视图尺寸决定（不再钉宽）
         QVERIFY(out.contains("#hfcell{font-size:11pt;padding:0 18.00mm 0 18.00mm;}"));
-        // 字号基准：包装单元格是 <td>，不钉回 11pt 就会被 th,td{font-size:10pt}
-        // 带偏 ⇒ 单元格内所有 em 相对值（标题、行内 code）整体小 10%（实测：
-        // 有无脚注两份 PDF 的标题差一整档）。见 docs/export-visual-spec.md
+        // 字号基准：包装单元格是 <td>，会吃到基础 CSS 的 th,td 字号（历史 10pt
+        // 曾把单元格内所有 em 相对值整体带小 10%，实测标题差一整档；2026-09-24
+        // 起 th,td 与正文统一为 11pt，钉回保留为防御——th,td 字号再变时 em 基准
+        // 不随动）。见 docs/export-visual-spec.md
         QVERIFY(!out.contains("width:65"));               // 无钉宽（auto 布局里也钉不住）
         // 包装表 fixed 布局：列宽不受内容影响，截住 min-content 撑爆
         QVERIFY(out.contains("table.hf{table-layout:fixed;}"));
@@ -266,6 +267,16 @@ private slots:
         //    拆行器实现已迁至共享 web 资源 pdf-split-prelines.js（vitest 覆盖其
         //    行为，含底色清零），渲染页只承载 script 标签接线
         QVERIFY(out.contains("<script src=\"pdf-split-prelines.js\"></script>"));
+        // qrc 打包存在性锁（Task3-M1）：上面的接线断言只锁定模板字符串，与
+        // app.qrc 是否真的打包该文件脱钩——qrc 条目误删时接线断言双绿、渲染页
+        // 运行时 404 静默降级（__splitPreLines 未定义即不拆行），重开 paged 断页
+        // 丢行旧 bug。此处从 qrc 实读，条目缺失即编译期外最早失败点
+        QVERIFY(!ExportCommon::readResource(
+                     QStringLiteral(":/web/pdf-split-prelines.js")).isEmpty());
+        // editor 侧同构接线（highlightExportHtml 依赖）：export-highlight.js
+        // 的 qrc 打包同锁，防同款 404 静默降级（高亮步整体失效）
+        QVERIFY(!ExportCommon::readResource(
+                     QStringLiteral(":/web/export-highlight.js")).isEmpty());
         // <code> 的底色/内边距同样清掉：逐行重排后它的块级子元素会切开行内盒，
         // 首尾空碎片各带一份底色内边距，在代码块上下画出细灰条
         QVERIFY(out.contains("pre code{background:none;padding:0;border-radius:0;}"));
@@ -313,6 +324,12 @@ private slots:
         // nativeHf 同款：屏幕布局 = 打印布局。legacy 路径另测（仍包着）
         QVERIFY2(!out.contains("@media print{"), qPrintable(out));
         QVERIFY2(out.contains("window.__fixTableColumns=function()"), qPrintable(out));
+        // 兼容层 cfg 测量基准随单元格字号（11pt = 单元格与正文统一，
+        // 2026-09-24 定案）——测量与打印渲染必须同字号，列宽分配才不失真
+        QVERIFY2(out.contains("fontSize:'11pt'"), qPrintable(out));
+        // slack:2 边界余量（2026-09-26）：floor 恰=min-content 的边界列（已完成
+        // =60px）经百分比回算少 0.02px 即折行——PDF/DOCX 与 HTML 导出同补 2px
+        QVERIFY(out.contains("slack:2"));
         QVERIFY2(out.contains("table.style.tableLayout='fixed'"), qPrintable(out));
         // 列宽分配基准：页面内容宽（px）注入为 JS 全局（@page 宽−左右边距，
         // 横向换向取短边），不能拿屏幕视口宽度当可用宽
@@ -468,6 +485,12 @@ private slots:
         QVERIFY(out.contains("window.__restoreBody"));
         // paged 激活时不得再有旧 @page{margin:0}（后位级联会覆盖新 margin）
         QVERIFY(!out.contains("@page{margin:0;}"));
+        // paged 屏幕流与打印页内容盒同宽（2026-09-26 修复）：漏清 UA 默认 8px
+        // 边距时屏幕流窄 16px，临界折行多折一行→预分页切块虚胖→断页留白
+        QVERIFY(out.contains("html,body{margin:0;padding:0;}"));
+        // TipTap 单元格内容包 <p>：清零格内段边距，行高与 DOCX 摊平单段一致
+        //（2026-09-26 修复：p{margin-bottom:.3em} 每格加 3.3pt→行高 23.6→26.9pt）
+        QVERIFY(out.contains("th,td p{margin:0;}"));
     }
 
     void testBuildRenderHtmlLegacyPathUnchanged() {

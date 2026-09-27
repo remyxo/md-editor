@@ -260,12 +260,13 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
             "vertical-align:bottom;font-size:9pt;color:#666;text-align:center;}"
             "table.hf>tbody>tr>td{border:none;padding:0;break-inside:auto;}"
             "table.hf{table-layout:fixed;}"
-            // 字号基准必须显式钉回 11pt：包装单元格是 <td>，会吃到基础 CSS 的
-            // th,td{font-size:10pt}，于是单元格内一切 em 相对值都按 10pt 解析
-            // ——标题 h1/h2/h3 各小 10%（实测 h1 22.67px vs paged 侧 24.93px，
-            // 即有无脚注两份 PDF 的标题差一档），行内 code 同理（9pt vs 9.9pt）。
-            // 绝对值字号（表格单元格 10pt、页脚 9pt）不受影响，故只有标题看起来
-            // 分叉。id 选择器特异性高于 th,td，可直接覆盖
+            // 字号基准显式钉回 11pt：包装单元格是 <td>，会吃到基础 CSS 的 th,td
+            // 字号。历史教训（th,td 曾为 10pt，2026-09-24 起与正文统一为 11pt）：
+            // 只要 th,td 字号 ≠ 正文基准，单元格内一切 em 相对值都按该字号解析
+            // ——当时标题 h1/h2/h3 各小 10%（实测 h1 22.67px vs paged 侧 24.93px，
+            // 即有无脚注两份 PDF 的标题差一档），行内 code 同理（9pt vs 9.9pt）；
+            // 绝对值字号（页脚 9pt）不受影响，故只有标题看起来分叉。钉回保留为
+            // 防御：th,td 字号将来再变时，em 基准不随动。id 特异性高于 th,td
             "#hfcell{font-size:11pt;padding:0 %3mm 0 %4mm;}")
             .arg(padBotMmHf, 0, 'f', 2)
             .arg(bandHmmHf, 0, 'f', 2)
@@ -384,8 +385,11 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         //（HtmlExporter::tableColumnNormalizeScript，算法注释与实测证据随实现走）。
         // 本兼容层保持既有函数名与两个调用点不变，并按打印基准传测量样式：
         // 打印 CSS 不作用于屏幕，测量须在打印基准下做，列宽才与打印一致
+        //（fontSize 11pt = 单元格字号，测量基准随单元格字号——2026-09-24 起
+        // 四面统一正文字号 11pt）。2026-09-26 补 slack:2：边界列百分比回算
+        // 差 0.02px 即折行（状态列「已完成」实测），对齐 HTML 导出的余量策略
         "window.__fixTableColumns=function(){window.__normalizeTableColumns("
-        "{avail:window.__pageContentWidthPx,fontSize:'10pt',padding:'4px 8px',"
+        "{avail:window.__pageContentWidthPx,slack:2,fontSize:'11pt',padding:'4px 8px',"
         "fontFamily:'Noto Sans SC,DejaVu Sans,sans-serif'});};"
         // 内容指纹自检（保底零丢失）：分页前快照 body 文本（覆盖所有块类型——
         // 段落/标题/表格/代码/公式/图注），分页后汇总 .pagedjs_page_content 文本
@@ -1036,6 +1040,11 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "%1"                                    // @page 分页规则（paged 激活时）
         "%8"                                    // @media print 开（nativeHf 空）
         "%2"                                    // @page{margin:0}（仅 legacy）
+        "html,body{margin:0;padding:0;}"
+        // ↑ paged 屏幕流与打印页内容盒同宽（2026-09-26 修复）：漏清 UA 默认
+        // 8px 边距时屏幕流窄 16px，临界折行多折一行 → 预分页切块量高虚胖 →
+        // break-before:page 强制断页留白（实测首页 4-6 行空白）；nativeHf
+        // 覆盖层 :257 同款规则本就有，paged/legacy 路径此前靠不到它
         "body{font-family:\"Noto Sans SC\",\"DejaVu Sans\",sans-serif;"
         "font-size:11pt;line-height:1.6;color:#333;"
         // 连续无空格长串（长 URL/色块串）必须能断行，否则横向溢出：paged
@@ -1089,7 +1098,14 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 预分页：整表挪页（本页余量连首行都放不下——表落在"塞不进一行"的页尾时
         // paged.js 必然切表，而切表会触发错位碎片丢行）
         "table.pdf-tbl-head{break-before:page;}"
-        "th,td{border:1px solid #ccc;padding:4px 8px;font-size:10pt;}"
+        // 单元格字号 11pt（= 正文字号，四面统一，2026-09-24 定案；此前 10pt 为
+        // 四面唯一特例）。行高继承 body 1.6 → 单元格行 17.6pt + 上下 padding
+        // 6pt（4px×2）= 23.6pt
+        "th,td{border:1px solid #ccc;padding:4px 8px;font-size:11pt;}"
+        "th,td p{margin:0;}"
+        // ↑ TipTap 单元格内容包 <p>（2026-09-26 修复）：不清零则 p{margin-bottom:
+        // .3em} 每格加 3.3pt，行高 23.6→26.9pt，与 DOCX 摊平单段（无段边距）
+        // 不一致——实测 PDF 首页 18→16 行
         "th{background:#f5f5f5;}"
         "img{max-width:100%;}"
         "blockquote{border-left:3px solid #0078d4;padding:4px 12px;"

@@ -1341,8 +1341,16 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
 
                     // 单元格内容（内联解析）
                     QString cellInner = parseInline(r, cellTag, s);
-                    QString pPr = cellAlign.isEmpty() ? QString()
-                        : QStringLiteral("<w:pPr><w:jc w:val=\"%1\"/></w:pPr>").arg(cellAlign);
+                    // 单元格节律/字号收敛进 TableCell 样式（2026-09-24）：字号
+                    // 22 半磅（= 正文字号 11pt，四面统一 2026-09-24 定案，渲染
+                    // 与测量同基准，折行与 PDF 逐行一致）+ 行高 352 缇 atLeast
+                    //（17.6pt = 11pt×1.6）+ 段前后 0（挡 docDefaults 段后 66 缇）
+                    // ⇒ 行高 23.6pt 与 PDF 逐值一致。
+                    // CT_PPrBase 序列：pStyle 最前，jc 其后
+                    QString pPr = QStringLiteral("<w:pPr><w:pStyle w:val=\"TableCell\"/>");
+                    if (!cellAlign.isEmpty())
+                        pPr += QStringLiteral("<w:jc w:val=\"%1\"/>").arg(cellAlign);
+                    pPr += QStringLiteral("</w:pPr>");
                     rowsXml += QStringLiteral("<w:p>") + pPr + cellInner + QStringLiteral("</w:p>");
                     rowsXml += QStringLiteral("</w:tc>");
                 }
@@ -1362,7 +1370,7 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
     }
 
     // tblPr：带 colgroup ⇒ fixed + 表宽=页内容宽（CT_TblPr 顺序：tblStyle→tblW
-    // →tblBorders→tblLayout）；无 colgroup ⇒ 原样（tblW auto，Word 自动布局）
+    // →tblBorders→tblLayout→tblCellMar）；无 colgroup ⇒ 原样（tblW auto，Word 自动布局）
     QString tblPr = QStringLiteral(
         "<w:tblPr>"
         "<w:tblStyle w:val=\"TableGrid\"/>"
@@ -1379,8 +1387,18 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
     if (colDxa.isEmpty()) {
         tblPr = tblPr.arg(0).arg(QStringLiteral("auto"), QString());
     } else {
+        // tblCellMar 显式声明格边距（左右 120 缇 = 8px、上下 60 缇 = 3pt（逐值
+        // = PDF th,td padding 8px/4px，2026-09-24 收敛；不再锚 Word 默认 108）；
+        // CT_TblPrBase 顺序在 tblLayout 之后）：与 TableColumnNormalizer 测量
+        // 基准 padding '0 8px' 自洽，防 Word/WPS 主题差异
         tblPr = tblPr.arg(s.contentWidthTwips).arg(QStringLiteral("dxa"),
-                      QStringLiteral("<w:tblLayout w:type=\"fixed\"/>"));
+                      QStringLiteral("<w:tblLayout w:type=\"fixed\"/>"
+                                     "<w:tblCellMar>"
+                                     "<w:top w:w=\"60\" w:type=\"dxa\"/>"
+                                     "<w:left w:w=\"120\" w:type=\"dxa\"/>"
+                                     "<w:bottom w:w=\"60\" w:type=\"dxa\"/>"
+                                     "<w:right w:w=\"120\" w:type=\"dxa\"/>"
+                                     "</w:tblCellMar>"));
     }
 
     // OOXML schema：tblGrid 必须先于行
@@ -1498,7 +1516,7 @@ static void parseBody(QXmlStreamReader &r, ParseState &s)
 
 // ============ OOXML 部件生成 ============
 
-// 页眉部件：单段居中文档标题（9pt 灰 #808080），段距紧凑（覆盖 docDefaults 1.15 行距）
+// 页眉部件：单段居中文档标题（9pt 灰 #808080），段距紧凑（覆盖 docDefaults 1.6 行距）
 static QString makeHeaderXml(const QString &title)
 {
     const QString rpr = "<w:rPr><w:color w:val=\"808080\"/><w:sz w:val=\"18\"/></w:rPr>";
@@ -1545,13 +1563,19 @@ static QString makeStylesXml()
         "  <w:docDefaults>"
         // rPr 子元素同样受 CT_RPr 序列约束：rFonts 必须早于 sz
         "<w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"黑体\" w:cs=\"Arial\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault>"
-        "<w:pPrDefault><w:pPr><w:spacing w:line=\"276\" w:lineRule=\"auto\"/></w:pPr></w:pPrDefault>"
+        // 垂直节律逐值对齐 PDF（2026-09-24 校准）：段后 66 缇 = 0.3em = 3.3pt
+        //（PDF p{margin-bottom:.3em}）；行高 352 缇 atLeast = 17.6pt = 11pt×1.6
+        //（Word auto 乘数乘字体自然行高≈1.3×字号，与 CSS 乘字号不可直接对乘数）
+        "<w:pPrDefault><w:pPr><w:spacing w:after=\"66\" w:line=\"352\" w:lineRule=\"atLeast\"/></w:pPr></w:pPrDefault>"
         "</w:docDefaults>\n"
         "  <w:style w:type=\"paragraph\" w:styleId=\"Normal\" w:default=\"1\"><w:name w:val=\"Normal\"/><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>\n"
+        // 标题阶梯收敛（2026-09-24）：h1–h3 与 PDF 逐值（字号半磅近似；行高
+        // =1.6×字号、上下边距 = 1/.8/.6em 与 .3/.2/.2em 全缇值；atLeast 使行高
+        // 不随字体回退塌缩）。h4–h6 保留 Word 显式字号（PDF 无规则，媒介差异）
         // Heading 样式 pPr：CT_PPrBase 序列中 spacing 早于 outlineLvl
-        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"240\" w:after=\"120\"/><w:outlineLvl w:val=\"0\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"32\"/></w:rPr></w:style>\n"
-        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading2\"><w:name w:val=\"heading 2\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"200\" w:after=\"100\"/><w:outlineLvl w:val=\"1\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"28\"/></w:rPr></w:style>\n"
-        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading3\"><w:name w:val=\"heading 3\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"160\" w:after=\"80\"/><w:outlineLvl w:val=\"2\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"26\"/></w:rPr></w:style>\n"
+        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"374\" w:after=\"112\" w:line=\"598\" w:lineRule=\"atLeast\"/><w:outlineLvl w:val=\"0\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"37\"/></w:rPr></w:style>\n"
+        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading2\"><w:name w:val=\"heading 2\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"229\" w:after=\"57\" w:line=\"458\" w:lineRule=\"atLeast\"/><w:outlineLvl w:val=\"1\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"29\"/></w:rPr></w:style>\n"
+        "  <w:style w:type=\"paragraph\" w:styleId=\"Heading3\"><w:name w:val=\"heading 3\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"145\" w:after=\"48\" w:line=\"387\" w:lineRule=\"atLeast\"/><w:outlineLvl w:val=\"2\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"24\"/></w:rPr></w:style>\n"
         "  <w:style w:type=\"paragraph\" w:styleId=\"Heading4\"><w:name w:val=\"heading 4\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"120\" w:after=\"60\"/><w:outlineLvl w:val=\"3\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"24\"/></w:rPr></w:style>\n"
         "  <w:style w:type=\"paragraph\" w:styleId=\"Heading5\"><w:name w:val=\"heading 5\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"100\" w:after=\"40\"/><w:outlineLvl w:val=\"4\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"22\"/></w:rPr></w:style>\n"
         "  <w:style w:type=\"paragraph\" w:styleId=\"Heading6\"><w:name w:val=\"heading 6\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"80\" w:after=\"40\"/><w:outlineLvl w:val=\"5\"/></w:pPr><w:rPr><w:b/><w:sz w:val=\"21\"/></w:rPr></w:style>\n"
@@ -1559,6 +1583,12 @@ static QString makeStylesXml()
         // 表格引用的 TableGrid 与 Hyperlink 的 basedOn 目标都补上定义：
         // 悬空引用 Word 会忽略（不致修复框），但定义齐备才与 Word 自产文档一致
         "  <w:style w:type=\"table\" w:styleId=\"TableGrid\" w:default=\"1\"><w:name w:val=\"Table Grid\"/><w:tblPr/></w:style>\n"
+        // 单元格段落样式（2026-09-24）：字号 22 半磅（= 正文字号 11pt，四面
+        // 统一，2026-09-24 定案：单元格不设特例，渲染与测量同基准）+ 行高
+        // 352 缇 atLeast（17.6pt = 11pt×1.6）+ 段前后 0（挡 docDefaults 段后
+        // 66 缇）⇒ 行高 23.6pt 与 PDF 逐值一致；单元格段落只挂 pStyle，
+        // 节律/字号不逐段展开
+        "  <w:style w:type=\"paragraph\" w:styleId=\"TableCell\"><w:name w:val=\"Table Cell\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"352\" w:lineRule=\"atLeast\"/></w:pPr><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>\n"
         "  <w:style w:type=\"character\" w:styleId=\"DefaultParagraphFont\" w:default=\"1\"><w:name w:val=\"Default Paragraph Font\"/></w:style>\n"
         "  <w:style w:type=\"character\" w:styleId=\"Hyperlink\"><w:name w:val=\"Hyperlink\"/><w:basedOn w:val=\"DefaultParagraphFont\"/><w:rPr><w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/></w:rPr></w:style>\n"
         // 脚注真导出：Word 内置样式名（footnote text / footnote reference），
@@ -1747,7 +1777,8 @@ bool DocxExporter::writeDocx(const QString &html, const QString &docDir, const Q
         const double capHMm = pageH - (mt + mb) * 10.0 - 2.0;
         state.maxImageHeightEmu = capHMm > 0 ? static_cast<int>(capHMm * 36000.0) : 0;
         const auto mm2twips = [](double mm) { return static_cast<int>(qRound(mm * 56.6929134)); };
-        state.contentWidthTwips = contentMm > 0 ? mm2twips(contentMm) : 0;
+        // 单一来源（ExportCommon）：与 TableColumnNormalizer 的 avail 基准同值
+        state.contentWidthTwips = ExportCommon::pageContentWidthTwips();
         headerEnabled = settings.value("export/docxHeaderEnabled", true).toBool();
         footerEnabled = settings.value("export/docxFooterEnabled", true).toBool();
         headerTitle = QFileInfo(outputPath).completeBaseName();

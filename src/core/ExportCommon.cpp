@@ -4,7 +4,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMimeDatabase>
+#include <QPageLayout>
+#include <QPageSize>
 #include <QRegularExpression>
+#include <QSettings>
+#include <QSizeF>
 
 namespace ExportCommon {
 
@@ -103,6 +107,24 @@ QString mimeForExt(const QString &ext)
     if (e == "svg")   return QStringLiteral("image/svg+xml");
     if (e == "webp")  return QStringLiteral("image/webp");
     return QStringLiteral("application/octet-stream");
+}
+
+int pageContentWidthTwips()
+{
+    QSettings settings("md-editor", "md-editor");
+    const int paper = settings.value("export/paperSize",
+                                     static_cast<int>(QPageSize::A4)).toInt();
+    const int orient = settings.value("export/orientation",
+                                      static_cast<int>(QPageLayout::Portrait)).toInt();
+    const double ml = settings.value("export/marginLeft", 1.8).toDouble();
+    const double mr = settings.value("export/marginRight", 1.8).toDouble();
+    const QSizeF ps = QPageSize(static_cast<QPageSize::PageSizeId>(paper))
+                          .size(QPageSize::Millimeter);
+    const bool landscape = (orient == static_cast<int>(QPageLayout::Landscape));
+    const double pageW = landscape ? ps.height() : ps.width();
+    const double contentMm = pageW - (ml + mr) * 10.0;
+    // 与 DocxExporter::writeDocx 的 mm2twips 同式（1mm = 56.6929134 缇）
+    return contentMm > 0 ? static_cast<int>(qRound(contentMm * 56.6929134)) : 0;
 }
 
 } // namespace ExportCommon

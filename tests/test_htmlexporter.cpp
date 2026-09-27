@@ -100,6 +100,10 @@ private slots:
         // > div > p 只命中任务项内容直接段落，嵌套列表段落不受影响
         QVERIFY(HtmlExporter::bodyCss("light").contains("ul[data-type=\"taskList\"] > li > div > p{margin:0;}"));
         QVERIFY(HtmlExporter::bodyCss("dark").contains("ul[data-type=\"taskList\"] > li > div > p{margin:0;}"));
+        // TipTap 单元格内容包 <p>：清零格内段边距，表格行高与 PDF/DOCX 对齐
+        //（2026-09-26 修复：p{margin-bottom:.3em} 每格加 3.3pt→行高与 DOCX 分叉）
+        QVERIFY(HtmlExporter::bodyCss("light").contains("th,td p{margin:0;}"));
+        QVERIFY(HtmlExporter::bodyCss("dark").contains("th,td p{margin:0;}"));
     }
 
     void testBodyCssFootnoteMarkerInlineLayout() {
@@ -290,6 +294,14 @@ private slots:
         // 测量前剥掉既有 colgroup：编辑器二次测量时克隆表带着上轮百分比 col
         // 会污染 auto 测量；导出侧旧 colgroup 本来就在写回前移除，行为不变
         QVERIFY(js.contains("oldCg.remove()"));
+        // px 模式（DOCX 经 TableColumnNormalizer）：colgroup 写 px（DocxExporter
+        // 解析 width:Npx 生成 tblGrid）、跳过单元格内联百分比写回（DOCX 列宽走
+        // tcW，无 paged.js 跨页碎片）；百分比原路径两处锚定子串仍逐字保留
+        QVERIFY(js.contains("if(cfg.px){col.style.width=Math.round(w[c2])+'px';}"));
+        QVERIFY(js.contains("else col.style.width=(w[c2]/total*100).toFixed(3)+'%';"));
+        QVERIFY(js.contains("if(!cfg.px){var rows=table.querySelectorAll('tr');"));
+        // 闭合括号锚定：if(!cfg.px){ 块的收尾（防错删后百分比路径 brace 失衡）
+        QVERIFY(js.contains("}table.style.width='100%';"));
     }
 
     void testAllocateTableColumnsLiftsOverweightColumn() {

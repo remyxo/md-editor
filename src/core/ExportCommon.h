@@ -68,6 +68,13 @@ constexpr qreal kEmuPerPx = 9525.0;      // 96dpi：1px = 9525 EMU（OOXML 图�
 constexpr qreal kMmToPx   = 96.0 / 25.4; // mm → CSS px
 constexpr qreal kMmToPt   = 72.0 / 25.4; // mm → pt
 
+// ── DOCX 页面几何（表格列宽归一基准）──────────────────────────────
+// 页内容宽（twips）= 纸张宽 − 左右边距。QSettings 键与 DocxExporter writeDocx
+// 的 sectPr 声明同源（export/paperSize、export/orientation、export/marginLeft、
+// export/marginRight，默认 A4 竖版 1.8cm）。TableColumnNormalizer 的 avail 与
+// DocxExporter 的 tblW/tblGrid 共用本值——改导出设置两侧同步变
+int pageContentWidthTwips();
+
 } // namespace ExportCommon
 
 #endif // MD_EDITOR_EXPORTCOMMON_H
