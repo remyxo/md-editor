@@ -154,3 +154,13 @@ target_compile_definitions(test_mdconv PRIVATE MDCONV_PATH="$<TARGET_FILE:mdconv
 target_include_directories(test_mdconv PRIVATE ../src)
 target_link_libraries(test_mdconv PRIVATE Qt6::Test Qt6::Gui)
 add_test(NAME test_mdconv COMMAND test_mdconv)
+
+# commonmark 语料收敛棘轮（A2/A5：deb CI on ubuntu-26.04 = Qt 6.10.2 基准把关）
+add_executable(test_commonmark_corpus test_commonmark_corpus.cpp
+    ../src/core/MarkdownHandler.cpp ../src/core/qt/QtMarkdownWriter.cpp)
+target_compile_definitions(test_commonmark_corpus PRIVATE
+    COMMONMARK_SPEC_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/commonmark/spec-0.31.2.json"
+    COMMONMARK_RATCHET_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/commonmark/expected-diverge.txt")
+target_include_directories(test_commonmark_corpus PRIVATE ../src)
+target_link_libraries(test_commonmark_corpus PRIVATE Qt6::Test Qt6::Gui)
+add_test(NAME test_commonmark_corpus COMMAND test_commonmark_corpus)
