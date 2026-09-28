@@ -2,4 +2,4 @@
 # 登记原因只描述现象（Wave 0 不判断该不该修，后续保真专项逐条评估）：
 #   fixed = 一趟字节还原 / converge = 第二趟不动 / diverge = 两趟仍变
 # 基线（2026-09-28，Qt 6.8.2 / Debian 13）：13 节 = fixed 10 / converge 2 / diverge 1
-hr-links # 裸 URL autolink 一趟成 <https://…>、二趟被转义回字面（同 commonmark ex.611 族）；真实链路经 TipTap 归一为 [url](url) 收敛（vitest 已证）——C++ 近似层缺此归一，Wave 1+ 修复候选
+hr-links # 裸 URL autolink 一趟成 <https://…>、二趟被转义回字面（同 commonmark ex.611 族）；真实链路探针实证同样丢失链接性（r2 起转义字面），vitest r2==r3 判据不揭示语义丢失——Wave 1+ 修复候选，修复时须同时补语义形态守卫
