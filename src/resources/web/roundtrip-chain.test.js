@@ -67,6 +67,21 @@ beforeAll(() => {
   window.editorApi.bridge = new Proxy({}, { get: () => () => {} });
 });
 
+// gfm 语料（与 C++ test_gfm_corpus 同一文件、同一分节正则）：真实链路 3 轮
+import { createRequire } from 'module';
+const CORPUS = readFileSync(path.join(W, '..', '..', '..', 'tests', 'fixtures', 'gfm-corpus.md'), 'utf8');
+function corpusSections() {
+  const re = /<!-- corpus: ([a-z0-9-]+) -->/g;
+  const out = []; let m;
+  while ((m = re.exec(CORPUS))) {
+    const start = re.lastIndex;
+    const rest = CORPUS.slice(start);
+    const next = rest.search(/<!-- corpus: /);
+    out.push({ name: m[1], md: (next < 0 ? rest : rest.slice(0, next)).trim() });
+  }
+  return out;
+}
+
 (mdconvAvailable() ? describe : describe.skip)('全链路往返矩阵（真实 TipTap × mdconv）', () => {
   for (const fx of FIXTURES) {
     it(`${fx.name}：3 轮往返收敛（byteStable 或两趟收敛）`, () => {
@@ -101,4 +116,14 @@ beforeAll(() => {
     const md2 = mdconv('fromhtml', window.editorApi.getSaveSnapshot().html);
     expect(md2).toContain('vitest 注入段');
   });
+
+  // gfm 语料（与 C++ test_gfm_corpus 同一文件、同一分节正则）
+  for (const sec of corpusSections()) {
+    it(`gfm 语料[${sec.name}]：真实链路 3 轮收敛`, () => {
+      const r = [sec.md];
+      for (let k = 0; k < 3; k++) r.push(chainRound(r[k]));
+      const ok = r[1] === sec.md || r[2] === r[3];
+      expect(ok, `r1=${JSON.stringify(r[1].slice(0, 200))} r3=${JSON.stringify(r[3].slice(0, 200))}`).toBe(true);
+    });
+  }
 });

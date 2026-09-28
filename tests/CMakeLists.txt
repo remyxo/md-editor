@@ -164,3 +164,13 @@ target_compile_definitions(test_commonmark_corpus PRIVATE
 target_include_directories(test_commonmark_corpus PRIVATE ../src)
 target_link_libraries(test_commonmark_corpus PRIVATE Qt6::Test Qt6::Gui)
 add_test(NAME test_commonmark_corpus COMMAND test_commonmark_corpus)
+
+# gfm/自有语料全链路收敛（小棘轮：diverge 登记制，只减不增，同 commonmark）
+add_executable(test_gfm_corpus test_gfm_corpus.cpp
+    ../src/core/MarkdownHandler.cpp ../src/core/qt/QtMarkdownWriter.cpp)
+target_compile_definitions(test_gfm_corpus PRIVATE
+    GFM_CORPUS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/gfm-corpus.md"
+    GFM_RATCHET_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/gfm-expected-diverge.txt")
+target_include_directories(test_gfm_corpus PRIVATE ../src)
+target_link_libraries(test_gfm_corpus PRIVATE Qt6::Test Qt6::Gui)
+add_test(NAME test_gfm_corpus COMMAND test_gfm_corpus)
