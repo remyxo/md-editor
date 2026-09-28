@@ -12,6 +12,7 @@
 #include "TableGridPopup.h"
 #include "AboutDialog.h"
 #include "ExportProgressDialog.h"
+#include "ExportHtmlAsync.h"
 #include "../core/EditorBridge.h"
 #include "../core/FileManager.h"
 #include "../core/MarkdownHandler.h"
@@ -905,32 +906,6 @@ static QString exportDefaultName(const QString &filePath, const QString &ext)
     return base + "." + ext;
 }
 
-// 导出取内容的链路形态：Plain=直接编辑器 HTML（HTML 导出）；Docx=live
-// colgroup 注入（供 DocxExporter 生成 tblGrid）；Pdf=与 Plain 相同取法
-//（PDF 表格列宽由渲染页 table-column-layout.js 现场处理，勿注入编辑器窗口
-// 宽的 colgroup）。Docx/Pdf 均追加代码块语法高亮步
-enum class ExportHtmlMode { Plain, Docx, Pdf };
-
-// 导出前代码块语法高亮（实现见 web/export-highlight.js：与编辑器同一
-// lowlight 实例 + hljs-light 色板）。模板字面量传大 HTML 与源码模式路径
-// 同款（escapeForJsTemplate）；任何失败两侧都降级原文，导出不中断
-static void highlightForExportAsync(EditorTab *tab, const QString &html,
-                                    std::function<void(const QString &)> cb)
-{
-    if (!tab || !tab->webView() || html.isEmpty()
-        || !html.contains(QLatin1String("language-"))) {
-        cb(html);
-        return;
-    }
-    tab->webView()->page()->runJavaScript(
-        QStringLiteral("window.editorApi.highlightExportHtml(`%1`);")
-            .arg(escapeForJsTemplate(html)),
-        [html, cb](const QVariant &result) {
-            const QString s = result.toString();
-            cb(s.isEmpty() ? html : s);
-        });
-}
-
 // 导出用时后缀：<1s 整数毫秒；≥1s 秒（四舍五入 1 位小数）。
 // 用 translate 而非 tr：文件内静态自由函数无类 tr 上下文，显式挂 MainWindow
 static QString exportTimeSuffix(qint64 elapsedMs)
@@ -939,37 +914,6 @@ static QString exportTimeSuffix(qint64 elapsedMs)
         return QCoreApplication::translate("MainWindow", "%1 毫秒").arg(elapsedMs);
     return QCoreApplication::translate("MainWindow", "%1 秒")
         .arg(QString::number(elapsedMs / 1000.0, 'f', 1));
-}
-
-// 异步取编辑器 HTML：源码模式下编辑器文档是进入源码前的旧快照（内容在
-// source-view textarea），取 getSourceContent() 经 toHtml 转换，用户保持源码
-// 模式不动；WYSIWYG 模式按 mode 取 getContent()/getExportHtml()
-static void getEditorHtmlAsync(EditorTab *tab,
-                               std::function<void(const QString &)> cb,
-                               ExportHtmlMode mode = ExportHtmlMode::Plain)
-{
-    if (!tab || !tab->webView())
-        return;
-    const bool src = tab->isSourceMode();
-    // DOCX 导出取 getExportHtml()：live colgroup 的 px 列宽注入序列化 HTML，
-    // 供 DocxExporter 生成 tblGrid；源码模式 getSourceContent 经 toHtml 无
-    // colgroup，退回等宽网格（现状行为）
-    const QString call = src ? QStringLiteral("window.editorApi.getSourceContent();")
-                             : (mode == ExportHtmlMode::Docx
-                                    ? QStringLiteral("window.editorApi.getExportHtml();")
-                                    : QStringLiteral("window.editorApi.getContent();"));
-    tab->webView()->page()->runJavaScript(call,
-        [tab, src, mode, cb](const QVariant &result) {
-            QString s = result.toString();
-            const QString html = src ? MarkdownHandler::toHtml(s) : s;
-            if (mode == ExportHtmlMode::Plain) {
-                cb(html);
-                return;
-            }
-            // PDF/DOCX：代码块语法高亮（单一来源 export-highlight.js；
-            // JS/C++ 两侧均可降级原文）
-            highlightForExportAsync(tab, html, cb);
-        });
 }
 
 void MainWindow::onExportPdf()
@@ -989,7 +933,7 @@ void MainWindow::onExportPdf()
 
     // 异步获取编辑器 HTML 内容（源码模式下取 source-view 当前内容经 toHtml，
     // 否则导出的是进入源码前的旧快照）
-    getEditorHtmlAsync(tab, [this, path, docDir](const QString &html) {
+    ExportHtmlAsync::get(tab, [this, path, docDir](const QString &html) {
             // 用时从内容就绪（进度对话框出现）起算，到 exportFinished
             auto start = std::make_shared<QElapsedTimer>();
             start->start();
@@ -1049,7 +993,7 @@ void MainWindow::onExportPdf()
                 if (dlg) dlg->showWriting(total);
             });
             exporter->exportToPdf(html, docDir, path);
-        }, ExportHtmlMode::Pdf);
+        }, ExportHtmlAsync::Mode::Pdf);
 }
 
 void MainWindow::onExportDocx()
@@ -1068,7 +1012,7 @@ void MainWindow::onExportDocx()
 
     // 异步获取编辑器 HTML 内容（源码模式下取 source-view 当前内容经 toHtml，
     // 否则导出的是进入源码前的旧快照）
-    getEditorHtmlAsync(tab, [this, path, docDir](const QString &html) {
+    ExportHtmlAsync::get(tab, [this, path, docDir](const QString &html) {
             // 用时从内容就绪（进度起点）起算：含列宽归一 + mermaid/公式 + 写盘
             auto start = std::make_shared<QElapsedTimer>();
             start->start();
@@ -1116,7 +1060,7 @@ void MainWindow::onExportDocx()
                                                docDir, path);
                     });
         },
-        ExportHtmlMode::Docx);
+        ExportHtmlAsync::Mode::Docx);
 }
 
 void MainWindow::onExportHtml()
@@ -1135,7 +1079,7 @@ void MainWindow::onExportHtml()
     QString theme = Application::instance()->themeManager()->currentTheme();
 
     // 源码模式下取 source-view 当前内容经 toHtml，否则导出的是进入源码前的旧快照
-    getEditorHtmlAsync(tab, [this, path, docDir, theme](const QString &html) {
+    ExportHtmlAsync::get(tab, [this, path, docDir, theme](const QString &html) {
             // 用时从内容就绪起算，到 exportFinished
             auto start = std::make_shared<QElapsedTimer>();
             start->start();

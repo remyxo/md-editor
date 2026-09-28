@@ -22,6 +22,7 @@ set(SOURCES
     core/TableColumnNormalizer.cpp
     core/ExportCommon.cpp
     ui/EditorTab.cpp
+    ui/ExportHtmlAsync.cpp
     ui/ExportProgressDialog.cpp
     ui/FilePathMatch.cpp
     ui/TabWidget.cpp
@@ -61,6 +62,7 @@ set(HEADERS
     core/TableColumnNormalizer.h
     core/ExportCommon.h
     ui/EditorTab.h
+    ui/ExportHtmlAsync.h
     ui/ExportProgressDialog.h
     ui/TabWidget.h
     ui/ToolBar.h
