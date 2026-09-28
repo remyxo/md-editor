@@ -5,6 +5,7 @@
 #include "ui/ExportHtmlAsync.h"
 #include "core/DocxExporter.h"
 #include "core/HtmlExporter.h"
+#include "core/JsEscape.h"
 #include "core/MarkdownHandler.h"
 #include "core/PdfExporter.h"
 #include <QCommandLineParser>
@@ -18,8 +19,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
-#include <QScopeGuard>
 #include <QSettings>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QVariant>
 #include <QVariantMap>
@@ -81,6 +82,35 @@ QString evalJsString(MainWindow &w, const QString &expr, int timeoutMs = 30000)
     *alive = false;
     if (!got)
         qWarning("evalJsString %dms 未返回（渲染进程疑似崩溃）: %s",
+                 timeoutMs, qPrintable(expr));
+    return out;
+}
+
+// 取 JS 表达式的 QVariant 原型结果（同步等待单次回调）。与 evalJsString 同
+// 骨架，但保留原始类型：exitSourceModeOrGetMd 返回 bool（快速路径已完成）
+// 或 string（待转换 MD），必须按 userType 判型（MainWindow::onToggleSourceMode
+// 同款），toString 会把 JS true 变 "true" 无法区分两条路径。
+QVariant evalJsValue(MainWindow &w, const QString &expr, int timeoutMs = 30000)
+{
+    QVariant out;
+    bool got = false;
+    QEventLoop loop;
+    const std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, [&]() { loop.quit(); });
+    timeout.start(timeoutMs);
+    w.selfTestCurrentTab()->webView()->page()->runJavaScript(
+        expr, [&, alive](const QVariant &v) {
+            if (!*alive) return;
+            out = v;
+            got = true;
+            loop.quit();
+        });
+    loop.exec();
+    *alive = false;
+    if (!got)
+        qWarning("evalJsValue %dms 未返回（渲染进程疑似崩溃）: %s",
                  timeoutMs, qPrintable(expr));
     return out;
 }
@@ -201,6 +231,126 @@ void recordOutcome(const char *fmt, const QString &path, const ExportOutcome &o,
     }
 }
 
+// 确定性导出设置固定（export / perf 共用）：把导出器从 QSettings 读的键全部
+// 固定为**代码内默认值**（镜像自 PdfExporter.cpp:1199-1220、DocxExporter.cpp:
+// 1761-1783、ExportCommon.cpp:114-120、HtmlExporter.cpp:360 读到的默认值：
+// 四边 margin 1.8、orientation=Portrait / paperSize=A4（枚举 static_cast 与
+// 导出器默认参数同源）、pdf/docx 页眉页脚开、customCss 空）——消除用户机器
+// QSettings 状态差异，golden 特征才可比、perf 导出计时才可跨机器对齐（PDF
+// 页眉页脚开关直接决定走分页路径与否，计时不固定即失真）。析构恢复用户
+// 原值（原本未写过的键 remove 回到默认态），selftest 不留配置副作用
+class PinnedExportSettings {
+public:
+    PinnedExportSettings()
+    {
+        const std::pair<const char *, QVariant> pinned[] = {
+            { "export/marginTop", 1.8 },
+            { "export/marginBottom", 1.8 },
+            { "export/marginLeft", 1.8 },
+            { "export/marginRight", 1.8 },
+            { "export/orientation", static_cast<int>(QPageLayout::Portrait) },
+            { "export/paperSize", static_cast<int>(QPageSize::A4) },
+            { "export/pdfHeaderEnabled", true },
+            { "export/pdfFooterEnabled", true },
+            { "export/docxHeaderEnabled", true },
+            { "export/docxFooterEnabled", true },
+            { "editor/customCss", QString() },
+        };
+        QSettings settings;
+        for (const auto &kv : pinned) {
+            const QString key = QString::fromLatin1(kv.first);
+            m_saved.append({ key, settings.value(key) });   // invalid = 原本未写
+            settings.setValue(key, kv.second);
+        }
+    }
+    ~PinnedExportSettings()
+    {
+        QSettings rs;
+        for (const auto &kv : m_saved) {
+            if (kv.second.isValid()) rs.setValue(kv.first, kv.second);
+            else rs.remove(kv.first);
+        }
+    }
+private:
+    QVector<QPair<QString, QVariant>> m_saved;
+};
+
+// 三格式导出套件结果（runExportSuite 产出）
+struct ExportSuiteOut {
+    QJsonObject timings;        // {"html":ms,"docx":ms,"pdf":ms}
+    QJsonObject files;          // 产物路径
+    bool pagedFallback = false; // PDF：paged.js 失败回退原生分页
+    QStringList errors;         // 空 = 三格式全部成功且产物落盘
+};
+
+// 三格式无头导出套件（export / perf 共用）：清上次残留 → HTML/DOCX/PDF 逐
+// 格式导出并计时（超时上限 60s/120s/180s——PDF 大文档分页以十秒计）。
+// 产物写 artifactsDir：export 用用户指定目录供 golden 对账；perf 只取计时
+// 与成功判定，传临时目录，产物不留盘
+ExportSuiteOut runExportSuite(EditorTab *tab, const QString &file,
+                              const QString &docDir, const QString &artifactsDir)
+{
+    QDir().mkpath(artifactsDir);
+    const QString base = QFileInfo(file).completeBaseName();
+    const QString htmlPath = QDir(artifactsDir).filePath(base + ".html");
+    const QString docxPath = QDir(artifactsDir).filePath(base + ".docx");
+    const QString pdfPath = QDir(artifactsDir).filePath(base + ".pdf");
+    // 清掉上次残留产物：成功判定含「产物落盘」，残留会让失败跑被误判 ok
+    for (const QString &p : { htmlPath, docxPath, pdfPath })
+        QFile::remove(p);
+
+    ExportSuiteOut out;
+    // HTML（Plain：getContent 原文；主题固定 light——不随用户/系统主题漂移）
+    {
+        auto *ex = new HtmlExporter();
+        const ExportOutcome o = runExport(
+            tab, ExportHtmlAsync::Mode::Plain, 60000,
+            [ex, &docDir, &htmlPath](const QString &html, const ExportDone &done) {
+                QObject::connect(ex, &HtmlExporter::exportFinished, ex,
+                    [done](bool ok, const QString &) { done(ok, QString()); });
+                QObject::connect(ex, &HtmlExporter::exportError, ex,
+                    [done](const QString &err) { done(false, err); });
+                ex->exportToHtml(html, docDir, htmlPath, QStringLiteral("light"));
+            });
+        delete ex;   // 导出器持有隐藏渲染视图，结算后立即回收（滞留即泄漏）
+        recordOutcome("html", htmlPath, o, &out.timings, &out.files, &out.errors);
+    }
+    // DOCX（Docx 模式：live colgroup 注入供 tblGrid + 代码块高亮）
+    {
+        auto *ex = new DocxExporter();
+        const ExportOutcome o = runExport(
+            tab, ExportHtmlAsync::Mode::Docx, 120000,
+            [ex, &docDir, &docxPath](const QString &html, const ExportDone &done) {
+                QObject::connect(ex, &DocxExporter::exportFinished, ex,
+                    [done](bool ok, const QString &) { done(ok, QString()); });
+                QObject::connect(ex, &DocxExporter::exportError, ex,
+                    [done](const QString &err) { done(false, err); });
+                ex->exportToDocx(html, docDir, docxPath);
+            });
+        delete ex;
+        recordOutcome("docx", docxPath, o, &out.timings, &out.files, &out.errors);
+    }
+    // PDF（Pdf 模式：高亮；页眉页脚开 → 分页路径，大文档以十秒计，超时上限
+    // 180s）。fallbackUsed：paged.js 失败回退原生分页仍产出 PDF（无页眉
+    // 页脚）——不算失败，只记 paged_fallback 供 golden 判读
+    {
+        auto *ex = new PdfExporter();
+        const ExportOutcome o = runExport(
+            tab, ExportHtmlAsync::Mode::Pdf, 180000,
+            [ex, &docDir, &pdfPath](const QString &html, const ExportDone &done) {
+                QObject::connect(ex, &PdfExporter::exportFinished, ex,
+                    [done](bool ok, const QString &) { done(ok, QString()); });
+                QObject::connect(ex, &PdfExporter::exportError, ex,
+                    [done](const QString &err) { done(false, err); });
+                ex->exportToPdf(html, docDir, pdfPath);
+            });
+        out.pagedFallback = ex->fallbackUsed();
+        delete ex;
+        recordOutcome("pdf", pdfPath, o, &out.timings, &out.files, &out.errors);
+    }
+    return out;
+}
+
 }   // namespace
 
 int SelfTestRunner::run(Application &app)
@@ -291,49 +441,7 @@ int SelfTestRunner::run(Application &app)
             qWarning("export 需要 --file 与 --outdir"); return 1;
         }
 
-        // 确定性导出设置：把导出器从 QSettings 读的键全部固定为**代码内默认值**
-        // （镜像自 PdfExporter.cpp:1199-1220、DocxExporter.cpp:1761-1783、
-        // ExportCommon.cpp:114-120、HtmlExporter.cpp:360 读到的默认值：
-        // 四边 margin 1.8、orientation=Portrait / paperSize=A4（枚举 static_cast
-        // 与导出器默认参数同源）、pdf/docx 页眉页脚开、customCss 空）——消除
-        // 用户机器 QSettings 状态差异，golden 特征才可比。析构守卫恢复用户
-        // 原值（原本未写过的键 remove 回到默认态），selftest 不留配置副作用
-        const std::pair<const char *, QVariant> pinned[] = {
-            { "export/marginTop", 1.8 },
-            { "export/marginBottom", 1.8 },
-            { "export/marginLeft", 1.8 },
-            { "export/marginRight", 1.8 },
-            { "export/orientation", static_cast<int>(QPageLayout::Portrait) },
-            { "export/paperSize", static_cast<int>(QPageSize::A4) },
-            { "export/pdfHeaderEnabled", true },
-            { "export/pdfFooterEnabled", true },
-            { "export/docxHeaderEnabled", true },
-            { "export/docxFooterEnabled", true },
-            { "editor/customCss", QString() },
-        };
-        QSettings settings;
-        QVector<QPair<QString, QVariant>> savedSettings;
-        for (const auto &kv : pinned) {
-            const QString key = QString::fromLatin1(kv.first);
-            savedSettings.append({ key, settings.value(key) });   // invalid = 原本未写
-            settings.setValue(key, kv.second);
-        }
-        const auto restoreSettings = qScopeGuard([&savedSettings]() {
-            QSettings rs;
-            for (const auto &kv : savedSettings) {
-                if (kv.second.isValid()) rs.setValue(kv.first, kv.second);
-                else rs.remove(kv.first);
-            }
-        });
-
-        QDir().mkpath(outdir);
-        const QString base = QFileInfo(file).completeBaseName();
-        const QString htmlPath = QDir(outdir).filePath(base + ".html");
-        const QString docxPath = QDir(outdir).filePath(base + ".docx");
-        const QString pdfPath = QDir(outdir).filePath(base + ".pdf");
-        // 清掉上次残留产物：成功判定含「产物落盘」，残留会让失败跑被误判 ok
-        for (const QString &p : { htmlPath, docxPath, pdfPath })
-            QFile::remove(p);
+        const PinnedExportSettings pinned;   // 确定性导出设置（见类注释）
 
         MainWindow w(file);          // 构造即加载（不 show——无头）
         if (!waitEditorDocReady(w)) {
@@ -344,67 +452,16 @@ int SelfTestRunner::run(Application &app)
         const QString docDir = QFileInfo(
             tab->webView()->property("filePath").toString()).absolutePath();
 
-        QJsonObject timings, files;
-        QStringList errors;
-        bool pagedFallback = false;
+        const ExportSuiteOut suite = runExportSuite(tab, file, docDir, outdir);
 
-        // HTML（Plain：getContent 原文；主题固定 light——不随用户/系统主题漂移）
-        {
-            auto *ex = new HtmlExporter();
-            const ExportOutcome o = runExport(
-                tab, ExportHtmlAsync::Mode::Plain, 60000,
-                [ex, &docDir, &htmlPath](const QString &html, const ExportDone &done) {
-                    QObject::connect(ex, &HtmlExporter::exportFinished, ex,
-                        [done](bool ok, const QString &) { done(ok, QString()); });
-                    QObject::connect(ex, &HtmlExporter::exportError, ex,
-                        [done](const QString &err) { done(false, err); });
-                    ex->exportToHtml(html, docDir, htmlPath, QStringLiteral("light"));
-                });
-            delete ex;   // 导出器持有隐藏渲染视图，结算后立即回收（滞留即泄漏）
-            recordOutcome("html", htmlPath, o, &timings, &files, &errors);
-        }
-        // DOCX（Docx 模式：live colgroup 注入供 tblGrid + 代码块高亮）
-        {
-            auto *ex = new DocxExporter();
-            const ExportOutcome o = runExport(
-                tab, ExportHtmlAsync::Mode::Docx, 120000,
-                [ex, &docDir, &docxPath](const QString &html, const ExportDone &done) {
-                    QObject::connect(ex, &DocxExporter::exportFinished, ex,
-                        [done](bool ok, const QString &) { done(ok, QString()); });
-                    QObject::connect(ex, &DocxExporter::exportError, ex,
-                        [done](const QString &err) { done(false, err); });
-                    ex->exportToDocx(html, docDir, docxPath);
-                });
-            delete ex;
-            recordOutcome("docx", docxPath, o, &timings, &files, &errors);
-        }
-        // PDF（Pdf 模式：高亮；页眉页脚开 → 分页路径，大文档以十秒计，超时上限
-        // 180s）。fallbackUsed：paged.js 失败回退原生分页仍产出 PDF（无页眉
-        // 页脚）——不算失败，只记 paged_fallback 供 golden 判读
-        {
-            auto *ex = new PdfExporter();
-            const ExportOutcome o = runExport(
-                tab, ExportHtmlAsync::Mode::Pdf, 180000,
-                [ex, &docDir, &pdfPath](const QString &html, const ExportDone &done) {
-                    QObject::connect(ex, &PdfExporter::exportFinished, ex,
-                        [done](bool ok, const QString &) { done(ok, QString()); });
-                    QObject::connect(ex, &PdfExporter::exportError, ex,
-                        [done](const QString &err) { done(false, err); });
-                    ex->exportToPdf(html, docDir, pdfPath);
-                });
-            pagedFallback = ex->fallbackUsed();
-            delete ex;
-            recordOutcome("pdf", pdfPath, o, &timings, &files, &errors);
-        }
-
-        const bool ok = errors.isEmpty();
+        const bool ok = suite.errors.isEmpty();
         QJsonObject result{
             { "ok", ok },
-            { "timings_ms", timings },
-            { "files", files },
-            { "paged_fallback", pagedFallback },
+            { "timings_ms", suite.timings },
+            { "files", suite.files },
+            { "paged_fallback", suite.pagedFallback },
             { "error", ok ? QJsonValue()
-                          : QJsonValue(errors.join(QStringLiteral("; "))) }};
+                          : QJsonValue(suite.errors.join(QStringLiteral("; "))) }};
         const QString outPath = parser.value(outOpt);
         if (!outPath.isEmpty()) {
             QDir().mkpath(QFileInfo(outPath).absolutePath());
@@ -414,14 +471,184 @@ int SelfTestRunner::run(Application &app)
         }
         qWarning("selftest export: ok=%d html=%lldms docx=%lldms pdf=%lldms "
                  "paged_fallback=%d err=%s",
-                 ok, qint64(timings.value("html").toDouble()),
-                 qint64(timings.value("docx").toDouble()),
-                 qint64(timings.value("pdf").toDouble()), pagedFallback,
-                 ok ? "-" : qPrintable(errors.join(QStringLiteral("; "))));
+                 ok, qint64(suite.timings.value("html").toDouble()),
+                 qint64(suite.timings.value("docx").toDouble()),
+                 qint64(suite.timings.value("pdf").toDouble()), suite.pagedFallback,
+                 ok ? "-" : qPrintable(suite.errors.join(QStringLiteral("; "))));
         return ok ? 0 : 1;
     }
-    if (sub == "perf")
-        { qWarning("%s 在后续任务实现", qPrintable(sub)); return 3; }
+    if (sub == "perf") {
+        const QString file = parser.value(fileOpt);
+        const QString outPath = parser.value(outOpt);
+        if (file.isEmpty() || outPath.isEmpty()) {
+            qWarning("perf 需要 --file 与 --out"); return 1;
+        }
+
+        const PinnedExportSettings pinned;   // 与 export 同款固定（导出计时可比）
+
+        QElapsedTimer loadTimer;
+        loadTimer.start();
+        MainWindow w(file);          // 构造即加载（不 show——无头）
+        if (!waitEditorDocReady(w)) {
+            qWarning("编辑器 30s 未就绪"); return 1;
+        }
+        const qint64 loadMs = loadTimer.elapsed();
+
+        // 预热等待：大文档（内容 ≥8192 字符）加载 1.5s 后 EditorTab 会触发一次
+        // 丢弃式 getHTML 预热（EditorTab.cpp 冷 JIT 预热注释处）。不等它，这次
+        // getHTML 会排在本测量段的首个 getContent 之前执行（渲染进程按到达序
+        // 串行执行脚本），冷 JIT 成本计入 js_read_ms，基线随「就绪轮询恰好多
+        // 久」漂移；等到 _warmed 再测，口径恒为用户实际体验的预热后状态。小
+        // 文档不触发预热（_warmed 恒 false），8s 超时后直接继续，属预期路径。
+        waitJsTrue(w, QStringLiteral("!!window.editorApi._warmed"), 8000);
+
+        // 进入源码前的文档文字量：慢路径退出销毁重建后的「就绪」判据基准
+        const qlonglong preTextLen = evalJsValue(w, QStringLiteral(
+            "window.editorApi.editor"
+            " ? window.editorApi.editor.state.doc.textContent.length : -1")).toLongLong();
+
+        // ===== 模式切换分段计时 =====
+        // 口径说明：perf **不经** MainWindow::onToggleSourceMode 编排——编排把
+        // 各分段埋在回调链里，外部拿不到分段数；此处按编排同款顺序自行调
+        // editorApi 同款 JS 与 MarkdownHandler 转换（getContent→fromHtml→
+        // enterSourceMode / exitSourceModeOrGetMd / toHtml→exitSourceMode），
+        // 分段与状态栏计时（MainWindow.cpp onToggleSourceMode 的【计时】消息）
+        // 逐段同源，数字可与用户反馈直接对照。编排路径本身（含 tab/工具栏/
+        // 状态栏状态翻转）已由 roundtrip 冒烟（selftest roundtrip）覆盖。
+        // 数字仅采集不设阈值——基线阶段的产物就是数字本身。
+
+        // —— 进入源码三段：JS 读取 / fromHtml 转换 / JS 填充 ——
+        QJsonObject switchEnter;
+        {
+            QElapsedTimer perfTotal;
+            perfTotal.start();
+            const QString html = evalJsValue(
+                w, QStringLiteral("window.editorApi.getContent()")).toString();
+            const qint64 jsReadMs = perfTotal.elapsed();   // 含 IPC 往返（口径同状态栏）
+            QElapsedTimer conv;
+            conv.start();
+            const QString md = MarkdownHandler::fromHtml(html);
+            const qint64 fromHtmlMs = conv.elapsed();
+            QElapsedTimer jsFill;
+            jsFill.start();
+            evalJsValue(w, QStringLiteral("window.editorApi.enterSourceMode(`%1`);")
+                            .arg(JsEscape::forTemplateLiteral(md)));
+            // -15 减经验 IPC 开销 + qMax 防负：状态栏计时同款（MainWindow.cpp）
+            switchEnter = QJsonObject{
+                { "js_read_ms", jsReadMs },
+                { "from_html_ms", fromHtmlMs },
+                { "js_fill_ms", qMax<qint64>(jsFill.elapsed() - 15, 0) },
+                { "total_ms", perfTotal.elapsed() }};
+        }
+        if (!waitJsTrue(w, QStringLiteral("window.editorApi.isSourceMode"), 10000)) {
+            qWarning("perf: 进入源码未生效"); return 1;
+        }
+
+        // —— 快速路径退出（源码未编辑：JS 单调用内复用内存文档，免 C++ 转换）——
+        qint64 switchExitFastMs = 0;
+        {
+            QElapsedTimer perfTotal;
+            perfTotal.start();
+            const QVariant r = evalJsValue(
+                w, QStringLiteral("window.editorApi.exitSourceModeOrGetMd()"));
+            switchExitFastMs = perfTotal.elapsed();
+            // userType 判型：JS true=快速路径；string=源码已编辑（此处不应发生）
+            if (r.userType() != QMetaType::Bool || !r.toBool()) {
+                qWarning("perf: 快速路径退出未命中（源码意外被编辑？）"); return 1;
+            }
+        }
+        if (!waitJsTrue(w, QStringLiteral("!window.editorApi.isSourceMode"), 10000)) {
+            qWarning("perf: 快速路径退出未生效"); return 1;
+        }
+
+        // —— 再次进入源码（不计时）：只为给慢路径退出制造「已编辑」前置态 ——
+        {
+            const QString html = evalJsValue(
+                w, QStringLiteral("window.editorApi.getContent()")).toString();
+            const QString md = MarkdownHandler::fromHtml(html);
+            evalJsValue(w, QStringLiteral("window.editorApi.enterSourceMode(`%1`);")
+                            .arg(JsEscape::forTemplateLiteral(md)));
+        }
+        if (!waitJsTrue(w, QStringLiteral("window.editorApi.isSourceMode"), 10000)) {
+            qWarning("perf: 二次进入源码未生效"); return 1;
+        }
+        // 注入一次源码编辑（roundtrip 同款：textarea 追加 + input 事件，使
+        // sv.value 偏离 _sourceValue → 下次退出必然走慢路径）
+        evalJsValue(w, QStringLiteral(
+            "(function(){var sv=document.getElementById('source-view');"
+            "sv.value += '\\n\\nselftest 注入段。\\n';"
+            "sv.dispatchEvent(new Event('input'));return 'ok';})()"));
+
+        // —— 注入编辑后慢路径退出三段：JS 读取 / toHtml 转换 / JS 重建 ——
+        QJsonObject switchExitEdited;
+        {
+            QElapsedTimer perfTotal;
+            perfTotal.start();
+            const QVariant r = evalJsValue(
+                w, QStringLiteral("window.editorApi.exitSourceModeOrGetMd()"));
+            const qint64 jsReadMs = perfTotal.elapsed();
+            if (r.userType() == QMetaType::Bool) {
+                qWarning("perf: 慢路径退出未命中（注入未生效？）"); return 1;
+            }
+            QElapsedTimer conv;
+            conv.start();
+            const QString html = MarkdownHandler::toHtml(r.toString());
+            const qint64 toHtmlMs = conv.elapsed();
+            QElapsedTimer jsBuild;
+            jsBuild.start();
+            evalJsValue(w, QStringLiteral("window.editorApi.exitSourceMode(`%1`);")
+                            .arg(JsEscape::forTemplateLiteral(html)));
+            switchExitEdited = QJsonObject{
+                { "js_read_ms", jsReadMs },
+                { "to_html_ms", toHtmlMs },
+                { "js_build_ms", qMax<qint64>(jsBuild.elapsed() - 15, 0) },
+                { "total_ms", perfTotal.elapsed() }};
+        }
+        // 慢路径重建「就绪」判据（waitEditorDocReady 修复版同思路）：exitSource
+        // Mode→setContent 销毁重建编辑器，大文档重建后须等文档文字量恢复到
+        // 进入前量级（90%）再进入导出段——避免在半重建状态上采导出数字。
+        // 判据用 doc 文字而非 HTML 序列化形状，不依赖序列化行为。
+        if (!waitJsTrue(w, QStringLiteral(
+                "!!(window.editorApi && window.editorApi.editor"
+                " && window.editorApi.editor.state.doc.textContent.length >= %1)")
+                .arg(preTextLen * 9 / 10), 30000)) {
+            qWarning("perf: 慢路径重建 30s 未就绪"); return 1;
+        }
+
+        // ===== 三格式导出计时（Task 4 的导出套件原样复用；产物落临时目录不留盘）=====
+        const QString docDir = QFileInfo(
+            w.selfTestCurrentTab()->webView()->property("filePath").toString()).absolutePath();
+        const QTemporaryDir artifacts;   // 析构即清，基线只要数字
+        const ExportSuiteOut suite = runExportSuite(
+            w.selfTestCurrentTab(), file, docDir, artifacts.path());
+
+        const bool ok = suite.errors.isEmpty();
+        QJsonObject result{
+            { "load_ms", loadMs },
+            { "switch_enter", switchEnter },
+            { "switch_exit_fast_ms", switchExitFastMs },
+            { "switch_exit_edited", switchExitEdited },
+            { "export_ms", suite.timings },
+            { "paged_fallback", suite.pagedFallback },   // pdf 计时走哪条分页路径的判读依据
+            { "ok", ok },
+            { "error", ok ? QJsonValue()
+                          : QJsonValue(suite.errors.join(QStringLiteral("; "))) }};
+        QDir().mkpath(QFileInfo(outPath).absolutePath());
+        QFile o(outPath);
+        o.open(QIODevice::WriteOnly);
+        o.write(QJsonDocument(result).toJson());
+        qWarning("selftest perf: ok=%d load=%lldms enter=%lldms exit_fast=%lldms "
+                 "exit_edited=%lldms html=%lldms docx=%lldms pdf=%lldms err=%s",
+                 ok, loadMs,
+                 qint64(switchEnter.value("total_ms").toDouble()),
+                 switchExitFastMs,
+                 qint64(switchExitEdited.value("total_ms").toDouble()),
+                 qint64(suite.timings.value("html").toDouble()),
+                 qint64(suite.timings.value("docx").toDouble()),
+                 qint64(suite.timings.value("pdf").toDouble()),
+                 ok ? "-" : qPrintable(suite.errors.join(QStringLiteral("; "))));
+        return ok ? 0 : 1;
+    }
     qWarning("未知子命令: %s", qPrintable(sub));
     return 2;
 }
