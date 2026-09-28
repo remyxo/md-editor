@@ -31,18 +31,22 @@ jobs:
           qmake6 \
           qt6-tools-dev qt6-tools-dev-tools
 
-    - name: JS 测试 (vitest)
-      working-directory: src/resources/web
-      run: |
-        npm ci
-        npm test
-
     - name: 配置 CMake (Release)
       run: |
         cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 
     - name: 构建
       run: cmake --build build --parallel $(nproc)
+
+    # 先构建后 vitest：roundtrip-chain 套件经 MDCONV_PATH 调 build/tests/mdconv
+    # 走真实转换链路（skipIf 自护：二进制缺失时自动跳过该套件）
+    - name: JS 测试 (vitest，含 mdconv 真实链路矩阵)
+      working-directory: src/resources/web
+      env:
+        MDCONV_PATH: ${{ github.workspace }}/build/tests/mdconv
+      run: |
+        npm ci
+        npm test
 
     - name: 运行测试
       run: |
