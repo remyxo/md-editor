@@ -15,6 +15,9 @@ done
 GOLDEN="${GOLDEN:-$WORK/golden.json}"
 env -u WAYLAND_DISPLAY QT_QPA_PLATFORM=xcb xvfb-run -a "$BIN" \
   --selftest export --file "$MD" --outdir "$WORK" --out "$WORK/export.json"
-python3 "$(git rev-parse --show-toplevel)/scripts/export_parity_features.py" "$WORK"
+# 传 basename 让特征提取按 <base>.<ext> 精确取本 md 的产物——工作目录有
+# 先前其他 md 的残留文件时不参与（selftest 只清当前 base 的三个产物）
+python3 "$(git rev-parse --show-toplevel)/scripts/export_parity_features.py" \
+  "$WORK" "$(basename "$MD" .md)"
 python3 "$(git rev-parse --show-toplevel)/scripts/export_parity_compare.py" \
   "$WORK/features.json" "$GOLDEN" $UPDATE

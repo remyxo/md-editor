@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """跨格式可比特征提取：pdftotext -bbox-layout（PDF）× unzip document.xml（DOCX）× 直读（HTML）。
-用法: export_parity_features.py <导出目录>   → 该目录写 features.json"""
+用法: export_parity_features.py <导出目录> [basename]   → 该目录写 features.json
+basename=导出 md 的基名：按 <base>.<ext> 精确取产物，工作目录有他名残留文件时不参与"""
 import json, re, subprocess, sys, zipfile
 from pathlib import Path
 
@@ -38,11 +39,25 @@ def html_features(p: Path):
 
 def main():
     d = Path(sys.argv[1])
+    # 可选 basename：按 <base>.<ext> 精确取（is_file 直判，base 含 glob 元字符
+    # 也安全）；未给时按通配。两种方式命中数都必须恰为 1——0=缺产物、
+    # >1=歧义（他名残留混入，旧版 sorted()[0] 会静默取错文件），均报错退出
+    base = sys.argv[2] if len(sys.argv) > 2 else None
     out = {}
     for stem, fn in (("pdf", pdf_features), ("docx", docx_features), ("html", html_features)):
-        matches = sorted(d.glob(f"*.{stem}"))
-        if matches:
-            out[stem] = fn(matches[0])
+        if base:
+            exact = d / f"{base}.{stem}"
+            matches = [exact] if exact.is_file() else []
+        else:
+            matches = sorted(d.glob(f"*.{stem}"))
+        if not matches:
+            expect = str(exact) if base else f"{d}/*.{stem}"
+            sys.exit(f"错误: {stem} 产物缺失（期望 {expect}）")
+        if len(matches) > 1:
+            sys.exit(f"错误: {stem} 命中 {len(matches)} 个文件（"
+                     + ", ".join(str(m) for m in matches)
+                     + "）——工作目录有他名残留，清理后重跑")
+        out[stem] = fn(matches[0])
     (d / "features.json").write_text(
         json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"features.json 已写入（键: {', '.join(out)}）")
