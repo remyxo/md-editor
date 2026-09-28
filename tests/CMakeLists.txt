@@ -138,3 +138,19 @@ add_executable(test_exportprogress test_exportprogress.cpp
 target_include_directories(test_exportprogress PRIVATE ../src)
 target_link_libraries(test_exportprogress PRIVATE Qt6::Test Qt6::Widgets)
 add_test(NAME test_exportprogress COMMAND test_exportprogress)
+
+# mdconv：MarkdownHandler 转换 CLI 桥（vitest 真实链路矩阵经子进程调用真实
+# C++ 转换；亦是往返排查工具。测试基础设施，不进产品目标）
+add_executable(mdconv mdconv.cpp
+    ../src/core/MarkdownHandler.cpp ../src/core/qt/QtMarkdownWriter.cpp)
+target_include_directories(mdconv PRIVATE ../src)
+target_link_libraries(mdconv PRIVATE Qt6::Gui)
+
+# mdconv 冒烟：CLI 桥与直连转换逐字节一致
+# （测试直连 MarkdownHandler::fromHtml 作对照，须与 mdconv 同编其源）
+add_executable(test_mdconv test_mdconv.cpp
+    ../src/core/MarkdownHandler.cpp ../src/core/qt/QtMarkdownWriter.cpp)
+target_compile_definitions(test_mdconv PRIVATE MDCONV_PATH="$<TARGET_FILE:mdconv>")
+target_include_directories(test_mdconv PRIVATE ../src)
+target_link_libraries(test_mdconv PRIVATE Qt6::Test Qt6::Gui)
+add_test(NAME test_mdconv COMMAND test_mdconv)
