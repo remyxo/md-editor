@@ -9,7 +9,8 @@ class QString;
 // 子命令：
 //   roundtrip --file F --rounds N --out J ：加载→N 轮 WYSIWYG↔源码切换
 //     （第 1 轮注入一次源码编辑），断言 MD 序列收敛；结果 JSON 落盘
-//   export  --file F --outdir D --out J ：无头导出 html/pdf/docx（Task 4）
+//   export  --file F --outdir D --out J ：无头导出 html/docx/pdf 三格式并计时，
+//     导出设置固定为代码默认值（与用户 QSettings 状态无关），结果 JSON 落盘
 //   perf    --file F --out J            ：分段计时基线（Task 5）
 class SelfTestRunner {
 public:
