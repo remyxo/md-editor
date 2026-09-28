@@ -3,6 +3,7 @@ set(SOURCES
     app/Application.cpp
     app/LanguageManager.cpp
     app/MacInstallCheck.cpp
+    app/SelfTestRunner.cpp
     app/SystemThemeWatcher.cpp
     app/ThemeManager.cpp
     core/EditorBridge.cpp
@@ -44,6 +45,7 @@ set(HEADERS
     app/Application.h
     app/LanguageManager.h
     app/MacInstallCheck.h
+    app/SelfTestRunner.h
     app/SystemThemeWatcher.h
     app/ThemeManager.h
     core/EditorBridge.h

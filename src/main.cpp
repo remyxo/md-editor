@@ -1,5 +1,6 @@
 #include "app/Application.h"
 #include "app/MacInstallCheck.h"
+#include "app/SelfTestRunner.h"
 #include "ui/MainWindow.h"
 #include "core/LocalImageSchemeHandler.h"
 #include <QLocale>
@@ -71,6 +72,10 @@ int main(int argc, char *argv[])
     LocalImageSchemeHandler *imgHandler = new LocalImageSchemeHandler(&app);
     profile->installUrlSchemeHandler(kLocalImageScheme, imgHandler);
     profile->setHttpAcceptLanguage("zh-CN,zh;q=0.9");
+
+    // 无头自测试入口（--selftest）：见 app/SelfTestRunner.cpp；正常路径零影响
+    if (SelfTestRunner::isSelfTestInvocation())
+        return SelfTestRunner::run(app);
 
     MainWindow window(initialFile);
     window.show();

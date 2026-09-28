@@ -25,6 +25,10 @@ public:
     explicit MainWindow(const QString &initialFile = QString(), QWidget *parent = nullptr);
     ~MainWindow();
 
+    // ── selftest 专用入口（--selftest，无头自测试；见 app/SelfTestRunner.cpp）──
+    EditorTab *selfTestCurrentTab();
+    void selfTestToggleSourceMode();
+
 private slots:
     void onEditorBridgeCreated(EditorBridge *bridge);
     void onTabChanged(int tabId);

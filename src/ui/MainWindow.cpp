@@ -1209,6 +1209,10 @@ void MainWindow::onNewFile()
     m_tabWidget->openNewTab();
 }
 
+// ── selftest 专用入口（--selftest，无头自测试；见 app/SelfTestRunner.cpp）──
+EditorTab *MainWindow::selfTestCurrentTab() { return m_tabWidget->currentEditorTab(); }
+void MainWindow::selfTestToggleSourceMode() { onToggleSourceMode(); }
+
 void MainWindow::writeTabToFile(EditorTab *tab, const QString &path, bool setPathAfter,
                                  std::function<void(bool)> cb)
 {
