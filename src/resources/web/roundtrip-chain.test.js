@@ -68,7 +68,6 @@ beforeAll(() => {
 });
 
 // gfm 语料（与 C++ test_gfm_corpus 同一文件、同一分节正则）：真实链路 3 轮
-import { createRequire } from 'module';
 const CORPUS = readFileSync(path.join(W, '..', '..', '..', 'tests', 'fixtures', 'gfm-corpus.md'), 'utf8');
 function corpusSections() {
   const re = /<!-- corpus: ([a-z0-9-]+) -->/g;

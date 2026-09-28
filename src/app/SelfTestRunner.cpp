@@ -4,10 +4,12 @@
 #include "ui/EditorTab.h"
 #include "ui/ExportHtmlAsync.h"
 #include "core/DocxExporter.h"
+#include "core/ExportCommon.h"
 #include "core/HtmlExporter.h"
 #include "core/JsEscape.h"
 #include "core/MarkdownHandler.h"
 #include "core/PdfExporter.h"
+#include "core/TableColumnNormalizer.h"
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
@@ -280,6 +282,7 @@ struct ExportSuiteOut {
     QJsonObject timings;        // {"html":ms,"docx":ms,"pdf":ms}
     QJsonObject files;          // 产物路径
     bool pagedFallback = false; // PDF：paged.js 失败回退原生分页
+    bool docxNormalized = false;// DOCX：经 TableColumnNormalizer 实际归一（GUI 同路径）
     QStringList errors;         // 空 = 三格式全部成功且产物落盘
 };
 
@@ -315,17 +318,54 @@ ExportSuiteOut runExportSuite(EditorTab *tab, const QString &file,
         delete ex;   // 导出器持有隐藏渲染视图，结算后立即回收（滞留即泄漏）
         recordOutcome("html", htmlPath, o, &out.timings, &out.files, &out.errors);
     }
-    // DOCX（Docx 模式：live colgroup 注入供 tblGrid + 代码块高亮）
+    // DOCX（Docx 模式：live colgroup 注入供 tblGrid + 代码块高亮）。与 GUI 路径
+    // （MainWindow::onExportDocx）同构：HTML 含 <table> 先经 TableColumnNormalizer
+    // 按 DOCX 基准（页内容宽 twips）重测列宽再入导出器，无表直通（免页面
+    // 加载）；归一失败（空串）降级原 html（live colgroup 缩放路径仍在
+    // DocxExporter 内）——否则 golden 的 DOCX 不是用户会得到的 DOCX（列宽
+    // 不同），perf 的 docx_ms 也漏 normalizer 成本
     {
         auto *ex = new DocxExporter();
         const ExportOutcome o = runExport(
             tab, ExportHtmlAsync::Mode::Docx, 120000,
-            [ex, &docDir, &docxPath](const QString &html, const ExportDone &done) {
+            [ex, &docDir, &docxPath, &out](const QString &html, const ExportDone &done) {
                 QObject::connect(ex, &DocxExporter::exportFinished, ex,
                     [done](bool ok, const QString &) { done(ok, QString()); });
                 QObject::connect(ex, &DocxExporter::exportError, ex,
                     [done](const QString &err) { done(false, err); });
-                ex->exportToDocx(html, docDir, docxPath);
+                if (!html.contains(QLatin1String("<table"))) {
+                    ex->exportToDocx(html, docDir, docxPath);
+                    return;
+                }
+                auto *norm = TableColumnNormalizer::instance();
+                // busy（上一轮未结算）返回 0 且不发信号：就地降级直出原 html
+                //（GUI 同款）。normalizer 连接以导出器为 context：runExport 超时
+                // 返回后 delete ex 即断连，单例迟到的 finished 不触碰已析构的
+                // runExport 栈帧（UAF 守卫）；单例挂死由 runExport 的 120s 超时
+                // 兜底（其内部另有 30s 看门狗）。归一等待计入 docx 计时（与
+                // GUI 用户体感同口径）
+                const quint64 normId = norm->normalize(
+                    html, docDir, ExportCommon::pageContentWidthTwips());
+                if (normId == 0) {
+                    qWarning("selftest docx: normalizer 忙，降级原 html");
+                    ex->exportToDocx(html, docDir, docxPath);
+                    return;
+                }
+                auto conn = std::make_shared<QMetaObject::Connection>();
+                *conn = QObject::connect(
+                    norm, &TableColumnNormalizer::finished, ex,
+                    [conn, ex, html, docDir, docxPath, normId, &out, done](
+                            quint64 requestId, const QString &normalized) {
+                        // 他轮请求的结果：不是本单，不消费不断连
+                        if (requestId != normId) return;
+                        QObject::disconnect(*conn);   // 单发：只消费一次结果
+                        if (normalized.isEmpty())
+                            qWarning("selftest docx: 归一失败，降级原 html");
+                        else
+                            out.docxNormalized = true;
+                        ex->exportToDocx(normalized.isEmpty() ? html : normalized,
+                                         docDir, docxPath);
+                    });
             });
         delete ex;
         recordOutcome("docx", docxPath, o, &out.timings, &out.files, &out.errors);
@@ -420,7 +460,9 @@ int SelfTestRunner::run(Application &app)
 
         QJsonObject result{
             { "ok", ok }, { "rounds", rounds }, { "converged_at", convergedAt },
-            { "load_ms", loadMs }, { "final_md_size", prevMd.size() },
+            { "load_ms", loadMs },
+            { "source_md_size", md0.size() },   // 输入 md_0 字符量（原死变量改为入账）
+            { "final_md_size", prevMd.size() },
             { "md_sizes", roundArr },
             { "error", converged ? QJsonValue() : QJsonValue("未在轮次内收敛") }};
         const QString outPath = parser.value(outOpt);
@@ -460,6 +502,7 @@ int SelfTestRunner::run(Application &app)
             { "timings_ms", suite.timings },
             { "files", suite.files },
             { "paged_fallback", suite.pagedFallback },
+            { "docx_normalized", suite.docxNormalized },
             { "error", ok ? QJsonValue()
                           : QJsonValue(suite.errors.join(QStringLiteral("; "))) }};
         const QString outPath = parser.value(outOpt);
@@ -470,10 +513,11 @@ int SelfTestRunner::run(Application &app)
             o.write(QJsonDocument(result).toJson());
         }
         qWarning("selftest export: ok=%d html=%lldms docx=%lldms pdf=%lldms "
-                 "paged_fallback=%d err=%s",
+                 "paged_fallback=%d docx_normalized=%d err=%s",
                  ok, qint64(suite.timings.value("html").toDouble()),
                  qint64(suite.timings.value("docx").toDouble()),
                  qint64(suite.timings.value("pdf").toDouble()), suite.pagedFallback,
+                 suite.docxNormalized,
                  ok ? "-" : qPrintable(suite.errors.join(QStringLiteral("; "))));
         return ok ? 0 : 1;
     }
@@ -630,6 +674,7 @@ int SelfTestRunner::run(Application &app)
             { "switch_exit_edited", switchExitEdited },
             { "export_ms", suite.timings },
             { "paged_fallback", suite.pagedFallback },   // pdf 计时走哪条分页路径的判读依据
+            { "docx_normalized", suite.docxNormalized }, // docx 计时含 normalizer 归一步的判读依据
             { "ok", ok },
             { "error", ok ? QJsonValue()
                           : QJsonValue(suite.errors.join(QStringLiteral("; "))) }};
@@ -638,7 +683,8 @@ int SelfTestRunner::run(Application &app)
         o.open(QIODevice::WriteOnly);
         o.write(QJsonDocument(result).toJson());
         qWarning("selftest perf: ok=%d load=%lldms enter=%lldms exit_fast=%lldms "
-                 "exit_edited=%lldms html=%lldms docx=%lldms pdf=%lldms err=%s",
+                 "exit_edited=%lldms html=%lldms docx=%lldms pdf=%lldms "
+                 "docx_normalized=%d err=%s",
                  ok, loadMs,
                  qint64(switchEnter.value("total_ms").toDouble()),
                  switchExitFastMs,
@@ -646,6 +692,7 @@ int SelfTestRunner::run(Application &app)
                  qint64(suite.timings.value("html").toDouble()),
                  qint64(suite.timings.value("docx").toDouble()),
                  qint64(suite.timings.value("pdf").toDouble()),
+                 suite.docxNormalized,
                  ok ? "-" : qPrintable(suite.errors.join(QStringLiteral("; "))));
         return ok ? 0 : 1;
     }
