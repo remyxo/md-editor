@@ -212,6 +212,10 @@ static bool isParagraphLine(const QString &line)
     // &nbsp; 行当空行处理生成占位符，此处须排除避免重复/错位标记。
     if (isNbspLiteralLine(line)) return false;
     QString trimmed = line.trimmed();
+    // 纯空白行（仅空格/制表符）＝空行（块边界），非正文行——
+    // CommonMark 视其为 blank line；且 trimmed 为空时取 [0] 越界触发
+    // Q_ASSERT（Debug 构建直接 abort，commonmark 语料 111/112/117/227 即此）
+    if (trimmed.isEmpty()) return false;
     QChar c = trimmed[0];
     if (c == '`') {
         if (!trimmed.startsWith("```"))
