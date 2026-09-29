@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QImageReader>
 #include <QMimeDatabase>
 #include <QPageLayout>
@@ -354,8 +355,14 @@ static QString cssNamedColorToHex(const QString &name)
 static QString extractColor(const QString &style, const QString &prop)
 {
     // (?:^|;\\s*) 确保匹配的属性名在开头或分号后，防止 color 误匹配 background-color 的子串
-    QRegularExpression re("(?:^|;\\s*)" + prop + "\\s*:\\s*([^;]+)", QRegularExpression::CaseInsensitiveOption);
-    auto m = re.match(style);
+    // prop 插值模式按 prop 缓存（单线程导出，无锁安全）；模式串字面量固定
+    static QHash<QString, QRegularExpression> cache;
+    auto it = cache.find(prop);
+    if (it == cache.end())
+        it = cache.insert(prop, QRegularExpression(
+            "(?:^|;\\s*)" + prop + "\\s*:\\s*([^;]+)",
+            QRegularExpression::CaseInsensitiveOption));
+    auto m = it.value().match(style);
     if (!m.hasMatch()) return {};
     QString v = m.captured(1).trimmed();
 
@@ -363,7 +370,7 @@ static QString extractColor(const QString &style, const QString &prop)
     // （从 Word/浏览器粘贴的 HTML 常带 rgb(100%,0%,0%)）；clamp 到 0-255 后
     // 转 6 位十六进制——原样透传超界值会产出 7 位非 ST_HexColor（审查 P2-10：
     // rgb(300,0,0) 曾输出 12C0000，macOS Word 严格校验不过）
-    QRegularExpression rgbRe(
+    static const QRegularExpression rgbRe(
         "rgba?\\(\\s*([\\d.]+)(%)?\\s*,\\s*([\\d.]+)(%)?\\s*,\\s*([\\d.]+)(%)?");
     auto rm = rgbRe.match(v);
     if (rm.hasMatch()) {
@@ -398,7 +405,8 @@ static QString extractColor(const QString &style, const QString &prop)
 // 从 style 中提取 text-align 值
 static QString extractAlign(const QString &style)
 {
-    QRegularExpression re("text-align\\s*:\\s*([^;]+)", QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression re("text-align\\s*:\\s*([^;]+)",
+                                       QRegularExpression::CaseInsensitiveOption);
     auto m = re.match(style);
     if (!m.hasMatch()) return {};
     return m.captured(1).trimmed();
@@ -408,9 +416,14 @@ static QString extractAlign(const QString &style)
 // 粗斜体；主题值为 700/bold、italic，兼容 >=600 数值权重）
 static bool extractFontFlag(const QString &style, const QString &prop)
 {
-    QRegularExpression re("(?:^|;\\s*)" + prop + "\\s*:\\s*([^;]+)",
-                          QRegularExpression::CaseInsensitiveOption);
-    auto m = re.match(style);
+    // prop 插值模式按 prop 缓存（单线程导出，无锁安全）；模式串字面量固定
+    static QHash<QString, QRegularExpression> cache;
+    auto it = cache.find(prop);
+    if (it == cache.end())
+        it = cache.insert(prop, QRegularExpression(
+            "(?:^|;\\s*)" + prop + "\\s*:\\s*([^;]+)",
+            QRegularExpression::CaseInsensitiveOption));
+    auto m = it.value().match(style);
     if (!m.hasMatch()) return false;
     const QString v = m.captured(1).trimmed();
     if (v.compare(QLatin1String("bold"), Qt::CaseInsensitive) == 0) return true;
@@ -421,8 +434,8 @@ static bool extractFontFlag(const QString &style, const QString &prop)
 
 static bool extractItalicFlag(const QString &style)
 {
-    QRegularExpression re("(?:^|;\\s*)font-style\\s*:\\s*([^;]+)",
-                          QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression re("(?:^|;\\s*)font-style\\s*:\\s*([^;]+)",
+                                       QRegularExpression::CaseInsensitiveOption);
     auto m = re.match(style);
     return m.hasMatch()
            && m.captured(1).trimmed().compare(QLatin1String("italic"),
@@ -1268,7 +1281,7 @@ static QString parseTable(QXmlStreamReader &r, ParseState &s)
                 if (ctt == QXmlStreamReader::StartElement
                     && r.name().toString().compare(QLatin1String("col"), Qt::CaseInsensitive) == 0) {
                     QString w = r.attributes().value("style").toString();
-                    QRegularExpression re("(?:^|;)\\s*width\\s*:\\s*(\\d+)px");
+                    static const QRegularExpression re("(?:^|;)\\s*width\\s*:\\s*(\\d+)px");
                     auto m = re.match(w);
                     int dxa = 2340; // 默认宽
                     if (m.hasMatch()) dxa = m.captured(1).toInt() * 15;
