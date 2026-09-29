@@ -919,7 +919,10 @@ static QString parseHeading(QXmlStreamReader &r, int level, ParseState &s)
     return "<w:p>" + pPr + inner + "</w:p>";
 }
 
-static QString parseCodeBlock(QXmlStreamReader &r, ParseState &s)
+// indentLeft：代码块段落左缩进（缇）。缺省 360 = 顶层代码块固定值；
+// 列表项内的代码块由 parseList 传入 720*(ilvl+1)——对齐 numbering 各级
+// 内容位 720+lvl*720（缩进随列表层级，验收反馈 R2），right 固定 360 不变
+static QString parseCodeBlock(QXmlStreamReader &r, ParseState &s, int indentLeft = 360)
 {
     Q_UNUSED(s);
     // 收集 <pre> 内片段流：导出高亮链路（getEditorHtmlAsync →
@@ -982,7 +985,7 @@ static QString parseCodeBlock(QXmlStreamReader &r, ParseState &s)
     QString pPr = "<w:pPr>"
                   "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F2F2F2\"/>"
                   "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>"
-                  "<w:ind w:left=\"360\" w:right=\"360\"/>"
+                  "<w:ind w:left=\"" + QString::number(indentLeft) + "\" w:right=\"360\"/>"
                   "</w:pPr>";
 
     // run 的 rPr 子元素按 CT_RPr schema 序：rFonts → b → i → color → sz → shd
@@ -1145,6 +1148,39 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int i
                     continue;
                 }
 
+                // 块级子元素分派（对齐 parseBlockquote 先例的全量分派）：曾只有
+                // else { skip } 分支，列表项内 pre/blockquote/table/hr/h1-h6 整块
+                // 静默丢弃（2026-09-29 用户验收：列表项内代码块导出 DOCX 双零，
+                // 其前后列表项正常）。这些块与嵌套列表同款直接追加、不经下方
+                // firstP/rest 拆分：① pre/blockquote/hr/标题的产物以 <w:p> 开头，
+                // 走拆分会让首行代码/首段文字被注入 numPr（Word 编成下一序号）；
+                // ② table 产物以 <w:tbl> 开头，拆分找不到前导 <w:p> 时 firstP 与
+                // rest 双空，即使分派也整块丢失。numPr/复选框只属于列表项首个
+                // 文本段（p/div 分支），此处不得触碰
+                if (innerTag == "pre") {
+                    // 缩进随列表层级（R2）：720*(ilvl+1) 对齐所在列表项文字起始位
+                    result += parseCodeBlock(r, s, 720 * (ilvl + 1));
+                    continue;
+                }
+                if (innerTag == "blockquote") {
+                    result += parseBlockquote(r, s);
+                    continue;
+                }
+                if (innerTag == "table") {
+                    result += parseTable(r, s);
+                    continue;
+                }
+                if (innerTag == "hr") {
+                    result += parseHorizontalRule();
+                    continue;
+                }
+                if (innerTag == "h1") { result += parseHeading(r, 1, s); continue; }
+                if (innerTag == "h2") { result += parseHeading(r, 2, s); continue; }
+                if (innerTag == "h3") { result += parseHeading(r, 3, s); continue; }
+                if (innerTag == "h4") { result += parseHeading(r, 4, s); continue; }
+                if (innerTag == "h5") { result += parseHeading(r, 5, s); continue; }
+                if (innerTag == "h6") { result += parseHeading(r, 6, s); continue; }
+
                 QString inner;
                 if (innerTag == "p") {
                     inner = parseParagraph(r, "p", s);
@@ -1165,7 +1201,27 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int i
                             inner += parseParagraph(r, "p", s);
                         } else if (childTag == "ul" || childTag == "ol") {
                             inner += parseList(r, childTag == "ol", s, ilvl + 1);
-                        }
+                        } else if (childTag == "pre") {
+                            // 块级子元素分派（对齐 parseBlockquote 先例）：曾「其他
+                            // 子元素忽略」把任务项内的代码块/引用/表格等整块丢弃。
+                            // 累积进 inner 而非直接追加——div 的全部子块须在 li 层
+                            // 统一做 firstP/rest 拆分（首个 <w:p> 拿复选框前缀 +
+                            // numPr，代码块等后续块落入 rest 原样输出，不拿编号），
+                            // 直接追加会先于拆分结果落盘、打乱文档顺序。
+                            // 缩进随列表层级（R2）：div 与所属 li 同 ilvl
+                            inner += parseCodeBlock(r, s, 720 * (ilvl + 1));
+                        } else if (childTag == "blockquote") {
+                            inner += parseBlockquote(r, s);
+                        } else if (childTag == "table") {
+                            inner += parseTable(r, s);
+                        } else if (childTag == "hr") {
+                            inner += parseHorizontalRule();
+                        } else if (childTag == "h1") inner += parseHeading(r, 1, s);
+                        else if (childTag == "h2") inner += parseHeading(r, 2, s);
+                        else if (childTag == "h3") inner += parseHeading(r, 3, s);
+                        else if (childTag == "h4") inner += parseHeading(r, 4, s);
+                        else if (childTag == "h5") inner += parseHeading(r, 5, s);
+                        else if (childTag == "h6") inner += parseHeading(r, 6, s);
                         // 其他子元素忽略
                     }
                 } else if (innerTag == "label") {

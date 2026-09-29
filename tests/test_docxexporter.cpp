@@ -1002,6 +1002,99 @@ private slots:
         QVERIFY2(xml4.contains("<w:numPr>"), qPrintable(xml4));
     }
 
+    void testListItemCodeBlockSurvives() {
+        // 回归（用户验收 2026-09-29）：列表项内的代码块曾被 parseList 的
+        // else { skip } 分支静默丢弃（document.xml 中 int main 整块消失，
+        // 其前后列表项正常）。分派对齐 parseBlockquote 先例后，pre 子块须
+        // 完整产出（Consolas 等宽样式），且不被注入列表编号——代码段拿
+        // numPr 会被 Word 编成下一序号（同 bug 类的第二形态）
+        QString xml = exportDocumentXml(
+            "<ol><li><p>项一</p>"
+            "<pre><code class=\"language-cpp\">int main() { return 0; }</code></pre></li>"
+            "<li><p>项二</p></li></ol>");
+        QVERIFY2(xml.contains("int main"), qPrintable(xml));
+        QVERIFY2(xml.contains("Consolas"), qPrintable(xml));
+        QVERIFY2(xml.contains("项一"), qPrintable(xml));
+        QVERIFY2(xml.contains("项二"), qPrintable(xml));
+        // 代码段不得拿列表编号（复选框/numPr 只属于列表项首个文本段）
+        QRegularExpression re("<w:p>([\\s\\S]*?)</w:p>");
+        auto it = re.globalMatch(xml);
+        bool codeFound = false;
+        while (it.hasNext()) {
+            const QString para = it.next().captured(1);
+            if (para.contains("int main")) {
+                codeFound = true;
+                QVERIFY2(!para.contains("<w:numPr>"), qPrintable(para));
+                // 缩进随列表层级（验收反馈 R2）：ilvl=0 项内代码块左缩进 720 缇
+                //（numbering 各级内容位 720+lvl*720，与该项文字起始位对齐），
+                // 不得沿用顶层代码块的固定 360
+                QVERIFY2(para.contains("<w:ind w:left=\"720\" w:right=\"360\"/>"),
+                         qPrintable(para));
+            }
+        }
+        QVERIFY2(codeFound, qPrintable(xml));
+        // 列表文本段仍带编号（修复不得误伤既有 numPr 注入）
+        QVERIFY2(xml.contains("<w:numPr>"), qPrintable(xml));
+    }
+
+    void testNestedListItemCodeBlockIndent() {
+        // 缩进随列表层级（验收反馈 R2）：嵌套列表（ilvl=1）项内代码块左缩进
+        // 1440 缇（720+1*720，与二级项文字起始位对齐）；同一导出中顶层代码块
+        // 仍为固定 360（默认参数不改顶层行为，防误伤）
+        QString xml = exportDocumentXml(
+            "<ul><li><p>父项</p>"
+            "<ul><li><p>子项</p>"
+            "<pre><code class=\"language-sh\">echo nested</code></pre></li></ul>"
+            "</li></ul>"
+            "<pre><code class=\"language-sh\">echo top</code></pre>");
+        QRegularExpression re("<w:p>([\\s\\S]*?)</w:p>");
+        auto it = re.globalMatch(xml);
+        bool nestedFound = false, topFound = false;
+        while (it.hasNext()) {
+            const QString para = it.next().captured(1);
+            if (para.contains("echo nested")) {
+                nestedFound = true;
+                QVERIFY2(!para.contains("<w:numPr>"), qPrintable(para));
+                QVERIFY2(para.contains("<w:ind w:left=\"1440\" w:right=\"360\"/>"),
+                         qPrintable(para));
+            }
+            if (para.contains("echo top")) {
+                topFound = true;
+                QVERIFY2(para.contains("<w:ind w:left=\"360\" w:right=\"360\"/>"),
+                         qPrintable(para));
+            }
+        }
+        QVERIFY2(nestedFound, qPrintable(xml));
+        QVERIFY2(topFound, qPrintable(xml));
+    }
+
+    void testTaskItemCodeBlockSurvives() {
+        // 任务列表项（<div> 内容容器路径）：div 内层循环曾只认 p/ul/ol，
+        // 「其他子元素忽略」同样静默丢弃代码块。修复后 pre 落入 firstP/rest
+        // 拆分的 rest 原样输出（复选框前缀 + numPr 只注入 div 首个 <w:p>）
+        QString xml = exportDocumentXml(
+            "<ul><li data-type=\"taskItem\">"
+            "<label><input type=\"checkbox\"></label>"
+            "<div><p>任务项</p>"
+            "<pre><code class=\"language-js\">const x = 1;</code></pre></div></li>"
+            "</ul>");
+        QVERIFY2(xml.contains("const x = 1;"), qPrintable(xml));
+        QVERIFY2(xml.contains("Consolas"), qPrintable(xml));
+        QVERIFY2(xml.contains("任务项"), qPrintable(xml));
+        QVERIFY2(xml.contains("☐"), qPrintable(xml));   // 复选框前缀不丢
+        QRegularExpression re("<w:p>([\\s\\S]*?)</w:p>");
+        auto it = re.globalMatch(xml);
+        bool codeFound = false;
+        while (it.hasNext()) {
+            const QString para = it.next().captured(1);
+            if (para.contains("const x = 1;")) {
+                codeFound = true;
+                QVERIFY2(!para.contains("<w:numPr>"), qPrintable(para));
+            }
+        }
+        QVERIFY2(codeFound, qPrintable(xml));
+    }
+
     void testExtractColorValidatesHex() {
         // D2：CSS 命名色/3 位缩写/非法值不得产出非法 ST_HexColor（Word 严格校验
         // 弹修复框）；rgb()/6 位 hex 正常
