@@ -1095,6 +1095,125 @@ private slots:
         QVERIFY2(codeFound, qPrintable(xml));
     }
 
+    // === 源码模式紧列表裸文本（Qt toHtml 对无 <p> 包裹的 li 直出文本，2026-09-29）===
+
+    // 取出包含指定文本的 <w:p>...</w:p> 完整段落（含开闭标签），用于层级/顺序断言
+    static QString fullParaOf(const QString &xml, const QString &text) {
+        QRegularExpression re("<w:p>[\\s\\S]*?</w:p>");
+        auto it = re.globalMatch(xml);
+        while (it.hasNext()) {
+            const QString para = it.next().captured(0);
+            if (para.contains(text)) return para;
+        }
+        return QString();
+    }
+
+    void bareTextTightListSurvives() {
+        // 回归（用户报障 2026-09-29「源码模式导出 DOCX 内容不完整」）：Qt toHtml
+        // 对紧列表（项间无空行）输出裸文本 li（文本直接挂在 <li> 下、无 <p> 包裹），
+        // parseList 的 li 内层循环只认 StartElement，Characters 全部跳过 →
+        // 整段文字丢失（4.1/4.2 六级嵌套列表整节消失）。修复后：裸文本收进
+        // 游程序列并 flush 成段落，首段拿 ListParagraph + numPr（同 p/div 首发
+        // 段语义），嵌套列表层级/顺序不乱
+        QString xml = exportDocumentXml(
+            "<ol style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 1;\">\n"
+            "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">一级有序项：编辑器内核\n"
+            "<ul style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 2;\">\n"
+            "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">二级无序项：TipTap 初始化链路</li></ul></li>\n"
+            "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">一级有序项：状态同步机制</li></ol>");
+        // 三个项文本全存活
+        QVERIFY2(xml.contains("一级有序项：编辑器内核"), qPrintable(xml));
+        QVERIFY2(xml.contains("二级无序项：TipTap 初始化链路"), qPrintable(xml));
+        QVERIFY2(xml.contains("一级有序项：状态同步机制"), qPrintable(xml));
+        // 层级：顶层裸文本段 ilvl=0，嵌套列表段 ilvl=1
+        QString topPara = fullParaOf(xml, "一级有序项：编辑器内核");
+        QVERIFY2(topPara.contains("<w:numPr>"), qPrintable(topPara));
+        QVERIFY2(topPara.contains("<w:ilvl w:val=\"0\"/>"), qPrintable(topPara));
+        QVERIFY2(topPara.contains("<w:pStyle w:val=\"ListParagraph\"/>"), qPrintable(topPara));
+        QString nestedPara = fullParaOf(xml, "二级无序项：TipTap 初始化链路");
+        QVERIFY2(nestedPara.contains("<w:ilvl w:val=\"1\"/>"), qPrintable(nestedPara));
+        // 顺序：顶层文字段先于嵌套段（文档流序 = 源序）
+        const int posTop = xml.indexOf("一级有序项：编辑器内核");
+        const int posNested = xml.indexOf("二级无序项：TipTap 初始化链路");
+        QVERIFY2(posTop >= 0 && posTop < posNested, qPrintable(xml));
+    }
+
+    void bareTextWithSpanRunSurvives() {
+        // 裸文本 li 内的行内元素（span 等直接挂在 li 下、无 <p> 包裹）：曾不匹配
+        // 任何分支、不被消费 → 文本与颜色全丢。修复后走 parseInline 同款行内
+        // 语义（颜色栈/emoji 切分复用），文本与 w:color 都在
+        QString xml = exportDocumentXml(
+            "<ul style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 1;\">"
+            "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">前文<span style=\"color:#ff0000;\">红字</span>后文</li></ul>");
+        QVERIFY2(xml.contains("前文"), qPrintable(xml));
+        QVERIFY2(xml.contains("红字"), qPrintable(xml));
+        QVERIFY2(xml.contains("后文"), qPrintable(xml));
+        QVERIFY2(xml.contains("<w:color w:val=\"FF0000\"/>"), qPrintable(xml));
+        // 红字 run 与前后文同段（裸文本 + 行内元素共属一个列表段）
+        QString para = fullParaOf(xml, "红字");
+        QVERIFY2(para.contains("前文") && para.contains("后文"), qPrintable(para));
+    }
+
+    void bareTextBeforePreKeepsOrderAndNumPr() {
+        // 用户文件复刻：<li>文本<pre> 形态——裸文本段先 flush（拿 numPr），
+        // 代码块后置（Consolas、无 numPr、缩进 720*(ilvl+1) 沿用 T13 R2）。
+        // 顺序错乱（代码块先于文字）或文字段丢失都判失败
+        QString xml = exportDocumentXml(
+            "<ol style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 3;\">"
+            "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">三级有序项：扩展加载与 schema 注册 "
+            "<pre><code class=\"language-cpp\">int main() { return 0; }</code></pre></li></ol>");
+        QString textPara = fullParaOf(xml, "三级有序项：扩展加载与 schema 注册");
+        QVERIFY2(!textPara.isEmpty(), qPrintable(xml));
+        QVERIFY2(textPara.contains("<w:numPr>"), qPrintable(textPara));
+        QVERIFY2(!textPara.contains("Consolas"), qPrintable(textPara));
+        QString codePara = fullParaOf(xml, "int main");
+        QVERIFY2(codePara.contains("Consolas"), qPrintable(codePara));
+        QVERIFY2(!codePara.contains("<w:numPr>"), qPrintable(codePara));
+        QVERIFY2(codePara.contains("<w:ind w:left=\"720\" w:right=\"360\"/>"),
+                 qPrintable(codePara));   // 顶层 ol（ilvl=0）→ 720*(0+1)，沿 T13 R2
+        QVERIFY2(xml.indexOf("三级有序项：扩展加载与 schema 注册")
+                 < xml.indexOf("int main"), qPrintable(xml));
+    }
+
+    void realQtFixture4xSection() {
+        // 真实 Qt toHtml 夹具：复杂场景综合测试-有脚注.md 源码模式导出产物的
+        // 4.1 节整段（mdconv tohtml 摘取，属性形态原样保留）。曾整节消失
+        // （六级嵌套 + 行内标记 + 列表内代码块全部丢失），逐项断言全存活
+        QString xml = exportDocumentXml(
+        "<ol style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 1;\">\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">一级有序项：编辑器内核\n"
+        "<ul style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 2;\">\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">二级无序项：TipTap 初始化链路\n"
+        "<ol style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 3;\">\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">三级有序项：扩展加载与 schema 注册\n"
+        "<ul style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 4;\">\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">四级无序项：自定义节点（mermaid、代码块、表格）\n"
+        "<ol style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 5;\">\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">五级有序项：NodeView 实现\n"
+        "<ul style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 6;\">\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">六级无序项：paint() 渲染与消毒管线（最深层级）</li></ul></li>\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">五级有序项：序列化适配与往返保真</li></ol></li></ul></li>\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">三级有序项：QWebChannel 通信桥接\n"
+        "<ul style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 4;\">\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">四级无序项：EditorBridge 槽方法\n"
+        "<ul style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 5;\">\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">五级无序项：cursorChanged / contentChanged / headingsChanged / formatChanged</li></ul></li></ul></li></ol></li>\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">二级无序项：状态同步机制</li></ul></li>\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">一级有序项：含行内标记的列表项——<strong>加粗</strong>、<em>斜体</em>、<code>行内代码</code>、<mark>高亮</mark>、H<sub>2</sub>O、X<sup>2</sup>、<kbd>Ctrl</kbd>+<kbd>S</kbd></li>\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">一级有序项：超长列表项（测试自然折行后的悬挂缩进对齐）：本行文本长度远超编辑区一行宽度，折行后的第二行应当与首行文字起始列对齐形成悬挂缩进，而不是顶格；该悬挂关系在导出 PDF 与 DOCX 之后同样必须保持，任何折行行顶格、缩进错位或编号丢失都属于缺陷；同时列表项内部的行内标记如 <strong>加粗</strong> 与 <code>代码</code> 在折行前后均应保持语义不丢失。</li>\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">一级有序项：列表项内含代码块（缩进随列表层级） <pre><code class=\"language-cpp\">// 这段代码块属于上面的列表项，缩进随列表层级\n"
+        "   int main() { return 0; }</code></pre></li>\n"
+        "<li style=\" margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">一级有序项：列表项结尾（验证代码块后列表能正确续排）</li></ol>\n");
+        QVERIFY2(xml.contains("六级无序项"), qPrintable(xml));
+        QVERIFY2(xml.contains("序列化适配与往返保真"), qPrintable(xml));
+        QVERIFY2(xml.contains("QWebChannel 通信桥接"), qPrintable(xml));
+        QVERIFY2(xml.contains("状态同步机制"), qPrintable(xml));
+        // 行内标记与列表内代码块同节不丢（同 bug 的两个伴生形态）
+        QVERIFY2(xml.contains("含行内标记的列表项"), qPrintable(xml));
+        QVERIFY2(xml.contains("int main"), qPrintable(xml));
+        QVERIFY2(xml.contains("列表项结尾"), qPrintable(xml));
+    }
+
     void testExtractColorValidatesHex() {
         // D2：CSS 命名色/3 位缩写/非法值不得产出非法 ST_HexColor（Word 严格校验
         // 弹修复框）；rgb()/6 位 hex 正常

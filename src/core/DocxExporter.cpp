@@ -600,16 +600,14 @@ static QString sanitizeFootnoteRuns(QString runs)
 
 // ============ 内联内容解析 ============
 
-// 在 <w:p>/<w:tc> 等块容器内解析内联内容，返回 OOXML 游程序列
-static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseState &s)
+// 文本 → run 序列发射（parseInline 与 parseList 紧列表裸文本共用的单一来源）：
+// 扫描文本按 emoji 码点自动切分 run（emoji run 换 Noto Color Emoji 字体，其余
+// 继承 fmt——裸文本可能含 ✅/☐ 等符号，缺字形风险同防）。逐字节等价搬运自
+// parseInline 内部 emitRun/flushRun 闭包（2026-09-29 源码模式紧列表裸文本修复
+// 抽出，两处共用一份扫描，禁止复制粘贴出第二份）
+static QString emitTextRuns(const QString &text, const RunFormat &fmt)
 {
-    RunFormat fmt;
-    QString textBuf;
     QString out;
-    // span 开合与颜色压栈的精确配对表（true=该 span 压了颜色层；数学 span 为
-    // false，闭合时不弹）——嵌套/穿插场景下 close 无法从上下文自行判别
-    QList<bool> spanColorPushed;
-
     // 输出一个 run，并根据文本中是否有 emoji 决定是否自动切分
     auto emitRun = [&](const QString &txt, bool isEmoji) {
         if (txt.isEmpty()) return;
@@ -622,37 +620,58 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
         out += "<w:t xml:space=\"preserve\">" + xmlEscape(xmlSanitize(txt)) + "</w:t>";
         out += "</w:r>";
     };
+    // 扫描文本，emoji 字符自动切分为独立 run（使用 Noto Color Emoji 字体）
+    QString seg;
+    bool segIsEmoji = false;
+    bool first = true;
+    for (int i = 0; i < text.length(); ) {
+        uint cp = text.at(i).unicode();
+        int len = 1;
+        if (QChar::isHighSurrogate(cp) && i + 1 < text.length()) {
+            uint lo = text.at(i + 1).unicode();
+            if (QChar::isLowSurrogate(lo)) {
+                cp = QChar::surrogateToUcs4(cp, lo);
+                len = 2;
+            }
+        }
+        bool isEmoji = isEmojiCodepoint(cp);
+        if (first) {
+            segIsEmoji = isEmoji;
+            first = false;
+        }
+        if (isEmoji != segIsEmoji) {
+            emitRun(seg, segIsEmoji);
+            seg.clear();
+            segIsEmoji = isEmoji;
+        }
+        seg += text.mid(i, len);
+        i += len;
+    }
+    emitRun(seg, segIsEmoji);
+    return out;
+}
+
+// 在 <w:p>/<w:tc> 等块容器内解析内联内容，返回 OOXML 游程序列。
+// consumeStart：调用点停在起始元素上（parseList 紧列表裸文本修复的行内分派）
+// ——由本函数把该元素自身也走一遍起始分派（span 压颜色栈 / a 开超链接外壳 /
+// strong 加粗等都挂在起始元素上），否则其样式属性永不生效；stopTag 配对深度
+// 仍按该元素计 1（入口不再自增）
+static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseState &s,
+                           bool consumeStart = false)
+{
+    RunFormat fmt;
+    QString textBuf;
+    QString out;
+    // span 开合与颜色压栈的精确配对表（true=该 span 压了颜色层；数学 span 为
+    // false，闭合时不弹）——嵌套/穿插场景下 close 无法从上下文自行判别
+    QList<bool> spanColorPushed;
+    // stopTag 同名嵌套配对深度：调用点已消费起始元素，从 1 起算（见 EndElement
+    // 处 stopTag 闭合判定）
+    int stopDepth = 1;
 
     auto flushRun = [&]() {
         if (textBuf.isEmpty()) return;
-        // 扫描文本，emoji 字符自动切分为独立 run（使用 Noto Color Emoji 字体）
-        QString seg;
-        bool segIsEmoji = false;
-        bool first = true;
-        for (int i = 0; i < textBuf.length(); ) {
-            uint cp = textBuf.at(i).unicode();
-            int len = 1;
-            if (QChar::isHighSurrogate(cp) && i + 1 < textBuf.length()) {
-                uint lo = textBuf.at(i + 1).unicode();
-                if (QChar::isLowSurrogate(lo)) {
-                    cp = QChar::surrogateToUcs4(cp, lo);
-                    len = 2;
-                }
-            }
-            bool isEmoji = isEmojiCodepoint(cp);
-            if (first) {
-                segIsEmoji = isEmoji;
-                first = false;
-            }
-            if (isEmoji != segIsEmoji) {
-                emitRun(seg, segIsEmoji);
-                seg.clear();
-                segIsEmoji = isEmoji;
-            }
-            seg += textBuf.mid(i, len);
-            i += len;
-        }
-        emitRun(seg, segIsEmoji);
+        out += emitTextRuns(textBuf, fmt);
         textBuf.clear();
     };
 
@@ -661,165 +680,202 @@ static QString parseInline(QXmlStreamReader &r, const QString &stopTag, ParseSta
         return r.name().toString().compare(QLatin1String(name), Qt::CaseInsensitive) == 0;
     };
 
+    // 起始元素分派（主循环与 consumeStart 入口共用的单一来源）：返回
+    // StopHere 表示该分支已整体消费至自身闭合且正是 stopTag 本体（脚注
+    // 引用 sup / 脚注编号 marker span），调用方须立即收尾返回
+    enum StartResult { Continue, StopHere };
+    auto handleStart = [&](const QString &tag) -> StartResult {
+        // 内联格式标签
+        if (tag == "strong" || tag == "b") {
+            flushRun(); fmt.bold = true;
+        } else if (tag == "em" || tag == "i") {
+            flushRun(); fmt.italic = true;
+        } else if (tag == "u") {
+            flushRun(); fmt.underline = true;
+        } else if (tag == "s" || tag == "del" || tag == "strike") {
+            flushRun(); fmt.strike = true;
+        } else if (tag == "code") {
+            flushRun(); fmt.monospace = true;
+        } else if (tag == "mark") {
+            flushRun(); fmt.highlight = true;
+        } else if (tag == "small") {
+            flushRun(); fmt.smallText = true;
+        } else if (tag == "sub") {
+            flushRun(); fmt.subscript = true;
+        } else if (tag == "sup") {
+            // 脚注引用（TipTap 契约 <sup data-type="footnoteRef" data-id="x">x</sup>）：
+            // 转 Word 原生脚注引用（FootnoteReference 样式 + footnoteReference 指向
+            // footnotes.xml 的定义），Word 自动编号上标；元素内的 id 文本丢弃。
+            if (r.attributes().value("data-type").toString() == "footnoteRef") {
+                flushRun();
+                const QString fid = r.attributes().value("data-id").toString();
+                const int num = footnoteNumFor(fid, s);
+                if (!s.footnoteBodyMarkDone.contains(fid)) {
+                    // 首个正文引用：原生脚注标记，外裹隐藏书签（_RefFtn<N>）
+                    // 供重复引用的 NOTEREF 域定位——Word 交叉引用同款机制
+                    s.footnoteBodyMarkDone.insert(fid);
+                    out += QStringLiteral(
+                               "<w:bookmarkStart w:id=\"%1\" w:name=\"_RefFtn%1\"/>"
+                               "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/>"
+                               "<w:vertAlign w:val=\"superscript\"/></w:rPr>"
+                               "<w:footnoteReference w:id=\"%1\"/></w:r>"
+                               "<w:bookmarkEnd w:id=\"%1\"/>").arg(num);
+                } else {
+                    // 重复引用：Word 脚注标记一脚注一锚点，同 id 第二个
+                    // footnoteReference 会触发「无法读取的内容」修复框
+                    // （macOS Word A/B 隔离实证 2026-09-15）——改用 Word 原生
+                    // 交叉引用域 NOTEREF（显示同号、可点击、随重编号更新）
+                    out += QStringLiteral(
+                               "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>"
+                               "<w:r><w:instrText xml:space=\"preserve\">"
+                               " NOTEREF _RefFtn%1 \\r \\h </w:instrText></w:r>"
+                               "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>"
+                               "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/>"
+                               "<w:vertAlign w:val=\"superscript\"/></w:rPr>"
+                               "<w:t>%2</w:t></w:r>"
+                               "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>")
+                               .arg(num)
+                               .arg(num - 1);   // 显示号：正文脚注按序 1 起
+                }
+                int depth = 1;
+                while (!r.atEnd() && depth > 0) {
+                    const auto t2 = r.readNext();
+                    if (t2 == QXmlStreamReader::StartElement) ++depth;
+                    else if (t2 == QXmlStreamReader::EndElement) --depth;
+                }
+                // 本分支已整体消费至自身闭合：若它正是 stopTag 本体（紧列
+                // 表行内分派），闭合已被吃掉，须就地返回，否则外层循环错过
+                // 闭合边界一路读穿全文
+                if (tag == stopTag && stopDepth == 1) return StopHere;
+                return Continue;
+            }
+            flushRun(); fmt.superscript = true;
+        }
+        // span（内联数学 / 颜色）
+        else if (tag == "span") {
+            // 脚注定义里的编号 marker（class=footnote-marker，toHtml 恒输出，
+            // 内含返回按钮等 UI 辅件）：Word 原生 footnoteRef 已渲染编号，
+            // marker 再输出会双编号——整体消费丢弃
+            if (r.attributes().value("class").toString()
+                    .split(' ').contains("footnote-marker")) {
+                int depth = 1;
+                while (!r.atEnd() && depth > 0) {
+                    const auto t2 = r.readNext();
+                    if (t2 == QXmlStreamReader::StartElement) ++depth;
+                    else if (t2 == QXmlStreamReader::EndElement) --depth;
+                }
+                // 本分支已整体消费至自身闭合：stopTag 本体须就地返回（同上）
+                if (tag == stopTag && stopDepth == 1) return StopHere;
+                return Continue;
+            }
+            // 内联公式占位：替换为 <m:oMath> 原生公式（OMML）；渲染失败回退 $...$
+            if (r.attributes().hasAttribute("data-math-idx")) {
+                flushRun();
+                int idx = r.attributes().value("data-math-idx").toInt();
+                QString latex = (idx >= 0 && idx < s.mathSources.size()) ? s.mathSources[idx] : QString();
+                QString omm = (idx >= 0 && idx < s.mathOMML.size()) ? s.mathOMML[idx] : QString();
+                if (!omm.isEmpty()) out += "<m:oMath>" + omm + "</m:oMath>";
+                else out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
+                spanColorPushed.append(false);   // 不占颜色栈（闭合时不弹）
+            }
+            // 内联数学 span 内容为空（KaTeX 渲染），须取 data-latex；
+            // 此判断须先于颜色 span，否则 inline-math 被当普通 span 丢弃。
+            // 占位替换正常运行时此分支不可达，保留作兜底（替换漏匹配时仍输出 $...$）。
+            else if (r.attributes().value("data-type").toString() == "inline-math") {
+                flushRun();
+                QString latex = r.attributes().value("data-latex").toString();
+                out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
+                spanColorPushed.append(false);
+            } else {
+                // 颜色 span：恒压一层（未设置的维度压空串 = 继承外层，CSS 级联
+                // 语义，由 textColor()/bgColor() 取最近非空值）；空 style 的穿透
+                // span 同样压空层，保证开合配对精确
+                flushRun();
+                auto attrs = r.attributes();
+                QString sty = attrs.value("style").toString();
+                fmt.textColorStack.append(extractColor(sty, "color"));
+                fmt.bgColorStack.append(extractColor(sty, "background-color"));
+                spanColorPushed.append(true);
+            }
+        }
+        // 链接
+        else if (tag == "a") {
+            flushRun();
+            QString href = r.attributes().value("href").toString();
+            if (!href.isEmpty()) {
+                QString rid = s.makeRId(href);
+                out += "<w:hyperlink r:id=\"" + rid + "\" w:history=\"1\">";
+            }
+            fmt.hyperlink = true;
+        }
+        // 换行
+        else if (tag == "br") {
+            flushRun();
+            out += "<w:r><w:br/></w:r>";
+        }
+        // 图片：嵌入 OOXML media；文件缺失时降级为占位文本
+        else if (tag == "img") {
+            flushRun();
+            QString alt = r.attributes().value("alt").toString();
+            QByteArray bytes; QString mime; int cx = 0, cy = 0;
+            if (readImageFile(r.attributes().value("src").toString(), s.docDir, &bytes, &mime, &cx, &cy)) {
+                clampToPageArea(cx, cy, s.maxImageWidthEmu, s.maxImageHeightEmu);
+                QString ext = (mime == "image/png") ? "png" : (mime == "image/gif" ? "gif" : "jpg");
+                int rId = addMedia(s, bytes, mime, ext);
+                out += "<w:r>" + buildImageDrawingXml(s.nextDocPrId++, rId, cx, cy) + "</w:r>";
+            } else {
+                out += "<w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r>";
+            }
+        }
+        // input/col 等空元素无需输出（未被上面分支命中即跳过，与
+        // `<span data-type=footnoteRef>` 的编号由 list label 承载同理）
+        // 脚注容器内的定义 div（块级元素穿过内联上下文，footnoteContainer
+        // 分支走 parseInline 时到达这里）：收集到 footnotes.xml，正文不输出
+        else if (tag == "div"
+                 && r.attributes().value("data-type").toString() == "footnoteDef") {
+            flushRun();
+            const QString fid = r.attributes().value("data-id").toString();
+            const int num = footnoteNumFor(fid, s);
+            s.footnoteRunsByNum.insert(
+                num, sanitizeFootnoteRuns(parseInline(r, "div", s)));
+        }
+        // 其他内联标签当作纯文本穿透
+        return Continue;
+    };
+
+    // consumeStart：起始元素此刻正停在读取器上，先补走一遍分派（配对深度在
+    // 声明处已按该元素计 1，此处不再自增；此刻 textBuf 必空，无 pending 文本）
+    if (consumeStart && handleStart(r.name().toString().toLower()) == StopHere)
+        return out;
+
     while (!r.atEnd()) {
         auto tt = r.readNext();
         if (tt == QXmlStreamReader::Characters) {
             textBuf += r.text();
         } else if (tt == QXmlStreamReader::StartElement) {
             QString tag = r.name().toString().toLower();
-
-            // 内联格式标签
-            if (tag == "strong" || tag == "b") {
-                flushRun(); fmt.bold = true;
-            } else if (tag == "em" || tag == "i") {
-                flushRun(); fmt.italic = true;
-            } else if (tag == "u") {
-                flushRun(); fmt.underline = true;
-            } else if (tag == "s" || tag == "del" || tag == "strike") {
-                flushRun(); fmt.strike = true;
-            } else if (tag == "code") {
-                flushRun(); fmt.monospace = true;
-            } else if (tag == "mark") {
-                flushRun(); fmt.highlight = true;
-            } else if (tag == "small") {
-                flushRun(); fmt.smallText = true;
-            } else if (tag == "sub") {
-                flushRun(); fmt.subscript = true;
-            } else if (tag == "sup") {
-                // 脚注引用（TipTap 契约 <sup data-type="footnoteRef" data-id="x">x</sup>）：
-                // 转 Word 原生脚注引用（FootnoteReference 样式 + footnoteReference 指向
-                // footnotes.xml 的定义），Word 自动编号上标；元素内的 id 文本丢弃。
-                if (r.attributes().value("data-type").toString() == "footnoteRef") {
-                    flushRun();
-                    const QString fid = r.attributes().value("data-id").toString();
-                    const int num = footnoteNumFor(fid, s);
-                    if (!s.footnoteBodyMarkDone.contains(fid)) {
-                        // 首个正文引用：原生脚注标记，外裹隐藏书签（_RefFtn<N>）
-                        // 供重复引用的 NOTEREF 域定位——Word 交叉引用同款机制
-                        s.footnoteBodyMarkDone.insert(fid);
-                        out += QStringLiteral(
-                                   "<w:bookmarkStart w:id=\"%1\" w:name=\"_RefFtn%1\"/>"
-                                   "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/>"
-                                   "<w:vertAlign w:val=\"superscript\"/></w:rPr>"
-                                   "<w:footnoteReference w:id=\"%1\"/></w:r>"
-                                   "<w:bookmarkEnd w:id=\"%1\"/>").arg(num);
-                    } else {
-                        // 重复引用：Word 脚注标记一脚注一锚点，同 id 第二个
-                        // footnoteReference 会触发「无法读取的内容」修复框
-                        // （macOS Word A/B 隔离实证 2026-09-15）——改用 Word 原生
-                        // 交叉引用域 NOTEREF（显示同号、可点击、随重编号更新）
-                        out += QStringLiteral(
-                                   "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>"
-                                   "<w:r><w:instrText xml:space=\"preserve\">"
-                                   " NOTEREF _RefFtn%1 \\r \\h </w:instrText></w:r>"
-                                   "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>"
-                                   "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/>"
-                                   "<w:vertAlign w:val=\"superscript\"/></w:rPr>"
-                                   "<w:t>%2</w:t></w:r>"
-                                   "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>")
-                                   .arg(num)
-                                   .arg(num - 1);   // 显示号：正文脚注按序 1 起
-                    }
-                    int depth = 1;
-                    while (!r.atEnd() && depth > 0) {
-                        const auto t2 = r.readNext();
-                        if (t2 == QXmlStreamReader::StartElement) ++depth;
-                        else if (t2 == QXmlStreamReader::EndElement) --depth;
-                    }
-                    continue;
-                }
-                flushRun(); fmt.superscript = true;
+            if (tag == stopTag) ++stopDepth;   // 嵌套同名起始：配对计数
+            if (handleStart(tag) == StopHere) {
+                flushRun();   // StopHere 路径补 flush：startTag 前的 pending 文本不丢
+                return out;
             }
-            // span（内联数学 / 颜色）
-            else if (tag == "span") {
-                // 脚注定义里的编号 marker（class=footnote-marker，toHtml 恒输出，
-                // 内含返回按钮等 UI 辅件）：Word 原生 footnoteRef 已渲染编号，
-                // marker 再输出会双编号——整体消费丢弃
-                if (r.attributes().value("class").toString()
-                        .split(' ').contains("footnote-marker")) {
-                    int depth = 1;
-                    while (!r.atEnd() && depth > 0) {
-                        const auto t2 = r.readNext();
-                        if (t2 == QXmlStreamReader::StartElement) ++depth;
-                        else if (t2 == QXmlStreamReader::EndElement) --depth;
-                    }
-                    continue;
-                }
-                // 内联公式占位：替换为 <m:oMath> 原生公式（OMML）；渲染失败回退 $...$
-                if (r.attributes().hasAttribute("data-math-idx")) {
-                    flushRun();
-                    int idx = r.attributes().value("data-math-idx").toInt();
-                    QString latex = (idx >= 0 && idx < s.mathSources.size()) ? s.mathSources[idx] : QString();
-                    QString omm = (idx >= 0 && idx < s.mathOMML.size()) ? s.mathOMML[idx] : QString();
-                    if (!omm.isEmpty()) out += "<m:oMath>" + omm + "</m:oMath>";
-                    else out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
-                    spanColorPushed.append(false);   // 不占颜色栈（闭合时不弹）
-                }
-                // 内联数学 span 内容为空（KaTeX 渲染），须取 data-latex；
-                // 此判断须先于颜色 span，否则 inline-math 被当普通 span 丢弃。
-                // 占位替换正常运行时此分支不可达，保留作兜底（替换漏匹配时仍输出 $...$）。
-                else if (r.attributes().value("data-type").toString() == "inline-math") {
-                    flushRun();
-                    QString latex = r.attributes().value("data-latex").toString();
-                    out += "<w:r><w:t>$" + xmlEscape(latex) + "$</w:t></w:r>";
-                    spanColorPushed.append(false);
-                } else {
-                    // 颜色 span：恒压一层（未设置的维度压空串 = 继承外层，CSS 级联
-                    // 语义，由 textColor()/bgColor() 取最近非空值）；空 style 的穿透
-                    // span 同样压空层，保证开合配对精确
-                    flushRun();
-                    auto attrs = r.attributes();
-                    QString sty = attrs.value("style").toString();
-                    fmt.textColorStack.append(extractColor(sty, "color"));
-                    fmt.bgColorStack.append(extractColor(sty, "background-color"));
-                    spanColorPushed.append(true);
-                }
-            }
-            // 链接
-            else if (tag == "a") {
-                flushRun();
-                QString href = r.attributes().value("href").toString();
-                if (!href.isEmpty()) {
-                    QString rid = s.makeRId(href);
-                    out += "<w:hyperlink r:id=\"" + rid + "\" w:history=\"1\">";
-                }
-                fmt.hyperlink = true;
-            }
-            // 换行
-            else if (tag == "br") {
-                flushRun();
-                out += "<w:r><w:br/></w:r>";
-            }
-            // 图片：嵌入 OOXML media；文件缺失时降级为占位文本
-            else if (tag == "img") {
-                flushRun();
-                QString alt = r.attributes().value("alt").toString();
-                QByteArray bytes; QString mime; int cx = 0, cy = 0;
-                if (readImageFile(r.attributes().value("src").toString(), s.docDir, &bytes, &mime, &cx, &cy)) {
-                    clampToPageArea(cx, cy, s.maxImageWidthEmu, s.maxImageHeightEmu);
-                    QString ext = (mime == "image/png") ? "png" : (mime == "image/gif" ? "gif" : "jpg");
-                    int rId = addMedia(s, bytes, mime, ext);
-                    out += "<w:r>" + buildImageDrawingXml(s.nextDocPrId++, rId, cx, cy) + "</w:r>";
-                } else {
-                    out += "<w:r><w:t>[图片" + (alt.isEmpty() ? "" : ": " + xmlEscape(alt)) + "]</w:t></w:r>";
-                }
-            }
-            // input/col 等空元素无需输出（未被上面分支命中即跳过，与
-            // `<span data-type=footnoteRef>` 的编号由 list label 承载同理）
-            // 脚注容器内的定义 div（块级元素穿过内联上下文，footnoteContainer
-            // 分支走 parseInline 时到达这里）：收集到 footnotes.xml，正文不输出
-            else if (tag == "div"
-                     && r.attributes().value("data-type").toString() == "footnoteDef") {
-                flushRun();
-                const QString fid = r.attributes().value("data-id").toString();
-                const int num = footnoteNumFor(fid, s);
-                s.footnoteRunsByNum.insert(
-                    num, sanitizeFootnoteRuns(parseInline(r, "div", s)));
-            }
-            // 其他内联标签当作纯文本穿透
         } else if (tt == QXmlStreamReader::EndElement) {
             QString tag = r.name().toString().toLower();
 
+            // stopTag 闭合判定（须先于下方行内格式分支）：parseList 紧列表裸
+            // 文本修复以行内元素名为 stopTag 复用本函数（stopTag=span/code/
+            // strong 等均为下方分支成员，置于链中会被格式分支拦截）。停机为
+            // 双路径：① 头部 stopDepth 归零——consumeStart 入口已消费起始元素
+            // （深度自 1 起算）的路径；② 链末同名兜底——既有调用方（p/h1-h6/
+            // div/td，读取器停在未消费的起始元素上，循环首 token 即同名起始把
+            // 深度计到 2，闭合时头部差 1 不归零）正由此返回。即任何同名闭合都
+            // 停（首个即返回），删兜底块级调用方将读穿全文；</a> 作 stopTag 时
+            // 补上悬挂的超链接外壳
+            if (tag == stopTag && --stopDepth == 0) {
+                flushRun();
+                if (tag == "a" && fmt.hyperlink) out += "</w:hyperlink>";
+                return out;
+            }
             if (tag == "strong" || tag == "b") {
                 flushRun(); fmt.bold = false;
             } else if (tag == "em" || tag == "i") {
@@ -1134,12 +1190,73 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int i
         if (tag == "li") {
             // 列表项：内部是块内容（p, div 等）
             QString taskPrefix; // 任务列表复选框前缀
+            // 源码模式紧列表裸文本形态（Qt toHtml 对无 <p> 包裹的 li 直出文本，
+            // span 等行内元素也直接挂在 li 下）：裸文本与行内元素累积的 OOXML
+            // 游程序列，遇块级子元素或 li 闭合时 flush 成段落。firstParaEmitted
+            // 记录本 li 是否已输出首个段落（防裸文本段与 p 段双 numPr = Word
+            // 双编号）
+            QString bareRuns;
+            bool firstParaEmitted = false;
+            // 把 bareRuns 包成段落追加：首个段落与下方 firstP 注入路径同款
+            // （ListParagraph 样式 + numPr + 复选框前缀），其后为无 numPr 的
+            // 普通段（rest 语义）。ckRun/listPPr 字符串形态与下方注入路径一致
+            auto flushBareRuns = [&]() {
+                if (bareRuns.isEmpty()) return;
+                QString paraRuns;
+                if (!firstParaEmitted) {
+                    QString pPrXml = "<w:pPr>"
+                                     "<w:pStyle w:val=\"ListParagraph\"/>"
+                                     "<w:numPr>"
+                                     "<w:ilvl w:val=\"" + QString::number(ilvl) + "\"/>"
+                                     "<w:numId w:val=\"" + QString::number(numId) + "\"/>"
+                                     "</w:numPr>"
+                                     "</w:pPr>";
+                    if (!taskPrefix.isEmpty()) {
+                        // 复选框 run 显式指定符号字体（同下方 firstP 注入路径）：
+                        // Arial/黑体 无 U+2610/U+2612 字形，缺省回退不可靠
+                        pPrXml += "<w:r><w:rPr><w:rFonts w:ascii=\"Segoe UI Symbol\" w:hAnsi=\"Segoe UI Symbol\" w:cs=\"Segoe UI Symbol\"/></w:rPr><w:t xml:space=\"preserve\">" + taskPrefix + "</w:t></w:r>";
+                        taskPrefix.clear();
+                    }
+                    paraRuns = pPrXml;
+                    firstParaEmitted = true;
+                }
+                result += "<w:p>" + paraRuns + bareRuns + "</w:p>";
+                bareRuns.clear();
+            };
             while (!r.atEnd()) {
                 auto tt2 = r.readNext();
-                if (tt2 == QXmlStreamReader::EndElement && r.name().toString().compare(QLatin1String("li"), Qt::CaseInsensitive) == 0)
+                if (tt2 == QXmlStreamReader::EndElement && r.name().toString().compare(QLatin1String("li"), Qt::CaseInsensitive) == 0) {
+                    // li 闭合前 flush 残余裸文本（纯裸文本项的唯一 flush 点）
+                    flushBareRuns();
                     break;
+                }
+                // 裸文本（源码模式紧列表形态）：纯空白片（toHtml 美化换行/缩进）
+                // 丢弃；有实质内容经 emitTextRuns 发射进 bareRuns（与 parseInline
+                // 同款 emoji 自动切分，缺字形风险同防）
+                if (tt2 == QXmlStreamReader::Characters) {
+                    QString bareText = r.text().toString();
+                    // 剥首尾换行（只剥 \n/\r，词间空格不动）：toHtml 在紧列表 li
+                    // 的文本与嵌套块之间留源码级换行（如「…内核\n<ul>」，换行与
+                    // 文本同 token），xmlSanitize 有意不剥 09/0A，直接入 w:t 会在
+                    // Word 行尾多出可见断口
+                    while (bareText.endsWith('\n') || bareText.endsWith('\r'))
+                        bareText.chop(1);
+                    while (bareText.startsWith('\n') || bareText.startsWith('\r'))
+                        bareText.remove(0, 1);
+                    if (!bareText.trimmed().isEmpty())
+                        bareRuns += emitTextRuns(bareText, RunFormat());
+                    continue;
+                }
                 if (tt2 != QXmlStreamReader::StartElement) continue;
                 QString innerTag = r.name().toString().toLower();
+
+                // 块级子元素（含任务项容器 label/内容 div）分派前 flush：
+                // `<li>文本<块>` 的文字段须先于块落盘。行内元素（下方白名单）
+                // 不 flush，与裸文本同段累积
+                static const QSet<QString> liBlockTags = {
+                    "ul", "ol", "pre", "blockquote", "table", "hr",
+                    "h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "label"};
+                if (liBlockTags.contains(innerTag)) flushBareRuns();
 
                 // 嵌套列表：递归解析，ilvl 递增；结果自带 numPr（独立 numId + 当前 ilvl），
                 // 直接追加，不得再套父列表的 numPr（否则仍落回 ilvl=0 与父项同列）。
@@ -1181,6 +1298,22 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int i
                 if (innerTag == "h5") { result += parseHeading(r, 5, s); continue; }
                 if (innerTag == "h6") { result += parseHeading(r, 6, s); continue; }
 
+                // 行内元素（源码模式紧列表形态：span/strong 等直接挂在 li 下，
+                // 曾不匹配任何分支、不被消费 → 文本与颜色全丢）：以该元素名为
+                // stopTag 复用 parseInline（读到其闭合停，颜色栈/emoji 全复用），
+                // 累积进 bareRuns 与裸文本同段输出
+                static const QSet<QString> liInlineTags = {
+                    "span", "strong", "b", "em", "i", "u", "s", "code", "a",
+                    "sub", "sup", "mark", "kbd", "small", "br", "img", "cite",
+                    "q", "del", "ins", "font", "big", "tt"};
+                if (liInlineTags.contains(innerTag)) {
+                    // consumeStart=true：起始元素已被本循环消费，交 parseInline
+                    // 补走一遍起始分派（span 颜色压栈 / a 超链接外壳 / strong
+                    // 加粗等都挂在起始元素上，跳过则全部失效）
+                    bareRuns += parseInline(r, innerTag, s, /*consumeStart=*/true);
+                    continue;
+                }
+
                 QString inner;
                 if (innerTag == "p") {
                     inner = parseParagraph(r, "p", s);
@@ -1189,6 +1322,9 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int i
                     // 迭代其子块。<p> 用 parseParagraph，嵌套 <ul>/<ol> 递归（ilvl+1、自带 numPr）。
                     // 曾因直接 parseParagraph 让 parseInline 吞掉嵌套列表文字，子任务并入父段、
                     // 嵌套列表整体消失（「无缩进」与「文字合并」两个症状同源）。
+                    // 只认块级子元素、不收集 div 直接子级裸文本：Qt toHtml 不产
+                    // div（紧列表裸文本形态已在 li 层收集），TipTap taskItem 的
+                    // div 内容必在 p 内，维持现状即可
                     inner.clear();
                     while (!r.atEnd()) {
                         auto dt = r.readNext();
@@ -1256,43 +1392,49 @@ static QString parseList(QXmlStreamReader &r, bool ordered, ParseState &s, int i
                     }
                 }
                 if (!firstP.isEmpty()) {
-                    // 任务列表复选框前缀（仅首个段落；已带 numPr 的嵌套列表段落不注入）
-                    if (!taskPrefix.isEmpty() && !firstP.contains("<w:numPr>")) {
-                        // 复选框 run 显式指定符号字体：Arial/黑体 无 U+2610/U+2612 字形，
-                        // 缺省回退在部分 Word/WPS 环境不可靠，☐/☒ 会渲染成空白。
-                        QString ckRun = "<w:r><w:rPr><w:rFonts w:ascii=\"Segoe UI Symbol\" w:hAnsi=\"Segoe UI Symbol\" w:cs=\"Segoe UI Symbol\"/></w:rPr><w:t xml:space=\"preserve\">" + taskPrefix + "</w:t></w:r>";
-                        int pPrEnd = firstP.indexOf("</w:pPr>");
-                        if (pPrEnd >= 0) {
-                            firstP = firstP.left(pPrEnd + 8) + ckRun + firstP.mid(pPrEnd + 8);
-                        } else {
-                            // <w:p> 共 5 个字符，mid(5) 才跳过整个开标签；mid(4) 会残留一个
-                            // 孤立的 ">" 文本节点（<w:p> 内不允许裸文本），Word 打开时可能
-                            // 丢弃该段或触发修复，导致任务列表复选框丢失、退化为普通列表。
-                            firstP = QStringLiteral("<w:p>") + ckRun + firstP.mid(5);
+                    // 仅本 li 的首个段落注入复选框 + numPr：若已 flush 过裸文本
+                    // 段（紧列表裸文本与显式 p 混合形态），该 p 属 rest 语义，
+                    // 再注入会与裸文本段双 numPr（Word 编成两个序号）
+                    if (!firstParaEmitted) {
+                        // 任务列表复选框前缀（仅首个段落；已带 numPr 的嵌套列表段落不注入）
+                        if (!taskPrefix.isEmpty() && !firstP.contains("<w:numPr>")) {
+                            // 复选框 run 显式指定符号字体：Arial/黑体 无 U+2610/U+2612 字形，
+                            // 缺省回退在部分 Word/WPS 环境不可靠，☐/☒ 会渲染成空白。
+                            QString ckRun = "<w:r><w:rPr><w:rFonts w:ascii=\"Segoe UI Symbol\" w:hAnsi=\"Segoe UI Symbol\" w:cs=\"Segoe UI Symbol\"/></w:rPr><w:t xml:space=\"preserve\">" + taskPrefix + "</w:t></w:r>";
+                            int pPrEnd = firstP.indexOf("</w:pPr>");
+                            if (pPrEnd >= 0) {
+                                firstP = firstP.left(pPrEnd + 8) + ckRun + firstP.mid(pPrEnd + 8);
+                            } else {
+                                // <w:p> 共 5 个字符，mid(5) 才跳过整个开标签；mid(4) 会残留一个
+                                // 孤立的 ">" 文本节点（<w:p> 内不允许裸文本），Word 打开时可能
+                                // 丢弃该段或触发修复，导致任务列表复选框丢失、退化为普通列表。
+                                firstP = QStringLiteral("<w:p>") + ckRun + firstP.mid(5);
+                            }
+                            taskPrefix.clear();
                         }
-                        taskPrefix.clear();
-                    }
-                    // 列表 numPr（仅首个段落；ilvl 取当前嵌套深度 0=顶层，子列表由递归承载）
-                    if (!firstP.contains("<w:numPr>")) {
-                        QString listPPr = "<w:pStyle w:val=\"ListParagraph\"/>"
-                                          "<w:numPr>"
-                                          "<w:ilvl w:val=\"" + QString::number(ilvl) + "\"/>"
-                                          "<w:numId w:val=\"" + QString::number(numId) + "\"/>"
-                                          "</w:numPr>";
-                        int pPrStart = firstP.indexOf("<w:pPr>");
-                        int pPrEnd   = firstP.indexOf("</w:pPr>");
-                        if (pPrStart >= 0 && pPrEnd > pPrStart) {
-                            // 已有 pPr：合并列表属性到已有 pPr 开头（保持单个 <w:pPr>，否则非法）
-                            QString existing = firstP.mid(pPrStart + 7, pPrEnd - pPrStart - 7);
-                            firstP = firstP.left(pPrStart + 7) + listPPr + existing + firstP.mid(pPrEnd);
+                        // 列表 numPr（仅首个段落；ilvl 取当前嵌套深度 0=顶层，子列表由递归承载）
+                        if (!firstP.contains("<w:numPr>")) {
+                            QString listPPr = "<w:pStyle w:val=\"ListParagraph\"/>"
+                                              "<w:numPr>"
+                                              "<w:ilvl w:val=\"" + QString::number(ilvl) + "\"/>"
+                                              "<w:numId w:val=\"" + QString::number(numId) + "\"/>"
+                                              "</w:numPr>";
+                            int pPrStart = firstP.indexOf("<w:pPr>");
+                            int pPrEnd   = firstP.indexOf("</w:pPr>");
+                            if (pPrStart >= 0 && pPrEnd > pPrStart) {
+                                // 已有 pPr：合并列表属性到已有 pPr 开头（保持单个 <w:pPr>，否则非法）
+                                QString existing = firstP.mid(pPrStart + 7, pPrEnd - pPrStart - 7);
+                                firstP = firstP.left(pPrStart + 7) + listPPr + existing + firstP.mid(pPrEnd);
+                            } else {
+                                // 无 pPr：在首个 <w:p> 后插入。不可用 QString::replace（会替换所有
+                                // <w:p>，嵌套列表段落将被二次包装成双 numPr），须按 index 精确定位首个。
+                                firstP = QStringLiteral("<w:p><w:pPr>") + listPPr + QStringLiteral("</w:pPr>") + firstP.mid(5);
+                            }
                         } else {
-                            // 无 pPr：在首个 <w:p> 后插入。不可用 QString::replace（会替换所有
-                            // <w:p>，嵌套列表段落将被二次包装成双 numPr），须按 index 精确定位首个。
-                            firstP = QStringLiteral("<w:p><w:pPr>") + listPPr + QStringLiteral("</w:pPr>") + firstP.mid(5);
+                            // 首个块已是嵌套列表段落（父项无自身文本的边界情形）：丢弃悬空复选框
+                            taskPrefix.clear();
                         }
-                    } else {
-                        // 首个块已是嵌套列表段落（父项无自身文本的边界情形）：丢弃悬空复选框
-                        taskPrefix.clear();
+                        firstParaEmitted = true;   // 首发段已输出
                     }
                     result += firstP;
                 }
