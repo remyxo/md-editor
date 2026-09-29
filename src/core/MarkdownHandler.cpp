@@ -3685,9 +3685,12 @@ static QString blockMathLatexToMarkdown(const QString &latex)
 
     // 显式 LaTeX 环境（aligned/matrix/pmatrix/cases 等）：逐字还原多行书写形式
     if (t.contains("\\begin{")) {
+        // 函数级 static 一次构造（原为每次调用现构造）；模式串逐字未动
+        static const QRegularExpression beginEnvRe(R"(\\begin\{([^}]*)\})");
+        static const QRegularExpression endEnvRe(R"(\\end\{([^}]*)\})");
         QString r = t;
-        r.replace(QRegularExpression(R"(\\begin\{([^}]*)\})"), "\n\\begin{\\1}\n");
-        r.replace(QRegularExpression(R"(\\end\{([^}]*)\})"), "\n\\end{\\1}\n");
+        r.replace(beginEnvRe, "\n\\begin{\\1}\n");
+        r.replace(endEnvRe, "\n\\end{\\1}\n");
         r.replace(" \\\\ ", " \\\\\n");
         QStringList lines;
         for (const QString &l : r.split('\n')) {
@@ -3749,15 +3752,25 @@ static QString mdEquivTagsToSyntax(const QString &s, const char *selfTag)
         {"sub",           "~",  "~"},
         {"sup",           "^",  "^"},
     };
+    // 六族正则函数级 static 一次构造（原为循环内逐族现构造，每次调用 6 个
+    // QRegularExpression 构造 + PCRE 编译）；构造公式与原版逐字一致（同款
+    // .arg(f.tags)），famRes[i] 与 fams[i] 按铸造顺序一一对应，迭代顺序不变。
+    static const QVector<QRegularExpression> famRes = [] {
+        QVector<QRegularExpression> out;
+        for (const Fam &f : fams)
+            out << QRegularExpression(
+                QStringLiteral("<(%1)\\b[^>]*>(.*?)</\\1>")
+                    .arg(QLatin1String(f.tags)),
+                QRegularExpression::DotMatchesEverythingOption);
+        return out;
+    }();
     QString r = s;
-    for (const Fam &f : fams) {
-        if (qstrncmp(f.tags, selfTag, qstrlen(selfTag)) == 0)
+    const int famCount = int(sizeof(fams) / sizeof(fams[0]));
+    for (int i = 0; i < famCount; ++i) {
+        if (qstrncmp(fams[i].tags, selfTag, qstrlen(selfTag)) == 0)
             continue;   // 同族嵌套歧义，保留字面
-        const QRegularExpression re(
-            QStringLiteral("<(%1)\\b[^>]*>(.*?)</\\1>")
-                .arg(QLatin1String(f.tags)),
-            QRegularExpression::DotMatchesEverythingOption);
-        globalReplaceWith(r, re,
+        const Fam &f = fams[i];
+        globalReplaceWith(r, famRes.at(i),
             [&f](const QRegularExpressionMatch &m) {
                 return QString::fromLatin1(f.open) + m.captured(2)
                        + QString::fromLatin1(f.close);
@@ -3785,8 +3798,10 @@ static QString blockquoteInnerInlineToMd(const QString &inner)
             return "[" + m.captured(2) + "]("
                    + unescapeHtmlEntities(m.captured(1)) + ")";
         });
-    // 图片：<img ...> → ![alt](src)；无 src 的畸形 img 保留原样交后续剥离
-    globalReplaceWith(r, QRegularExpression(R"(<img\b[^>]*>)"),
+    // 图片：<img ...> → ![alt](src)；无 src 的畸形 img 保留原样交后续剥离。
+    // 正则原为 globalReplaceWith 调用内临时构造，提升为具名函数级 static 后传入
+    static const QRegularExpression imgTagRe(R"(<img\b[^>]*>)");
+    globalReplaceWith(r, imgTagRe,
         [](const QRegularExpressionMatch &m) {
             const QString tag = m.captured(0);
             auto attr = [&tag](const char *name) {
@@ -5631,8 +5646,10 @@ QString MarkdownHandler::fromHtml(const QString &html)
             for (auto &cell : cells) {
                 cell = cell.trimmed();
                 // Qt toMarkdown 把分隔行输出为单连字符（|-|-|），故匹配 1+ 连字符
-                // （含 :---: 对齐写法），而非 3+。
-                if (QRegularExpression("^:?-+:?$").match(cell).hasMatch())
+                // （含 :---: 对齐写法），而非 3+。函数级 static 一次构造
+                // （原为每单元格现构造，表格行数×列数次/文档）。
+                static const QRegularExpression sepCellRe("^:?-+:?$");
+                if (sepCellRe.match(cell).hasMatch())
                     isSep = true;
             }
             if (isSep) {
