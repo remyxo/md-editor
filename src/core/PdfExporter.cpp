@@ -274,7 +274,9 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
             .arg(spec.marginsMm.left(), 0, 'f', 2);
         // 底垫 hack 已撤（2026-09-21）：页脚搬进纸底带后与正文不相压，
         // 22px 单元格底垫失去存在理由——撤销后行高恢复自然，与 paged 同源
-        pageCss += QStringLiteral(
+        // QString 而非 QStringLiteral：rgb 三通道改由 PageSigColor 常量拼接，
+        // 表达式内含 +，不满足 QStringLiteral 仅收字面量的前提
+        pageCss += QString(
             // 行原子性（模板 @media print 的 tr,th,td{break-inside:avoid} 生
             // 效）：tr{break-inside:auto} 下 Chromium 行分片绘制越过分页器末
             // 端直插下边距（实测墨底 875pt，越页底 34pt）；avoid 推挤留空的
@@ -286,7 +288,8 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
             // +1 为文档内唯一标识（表头/mermaid 灰全排除）——PdfPageGeometry
             // 色锚定据此认页码本尊，冒名/漏检双向失灵曾致校正追幻影死锁
             ".hf-pg{position:relative;left:0;width:100%;"
-            "font-size:9pt;color:rgb(102,102,103);}");
+            "font-size:9pt;color:rgb(" + QString::number(PageSigColor::R) + "," +
+            QString::number(PageSigColor::G) + "," + QString::number(PageSigColor::B) + ");}");
     }
     // 旧 @page{margin:0}（Qt QPageLayout 边距方案）仅 legacy 路保留；
     // paged 路径下若同存，@media print 内的后位规则会级联覆盖新 margin

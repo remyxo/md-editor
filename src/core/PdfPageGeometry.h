@@ -4,6 +4,15 @@
 #include <QByteArray>
 #include <QVector>
 
+// 页码签名色单一来源：视觉同 #666、蓝通道 +1 为文档内唯一标识（表头/
+// mermaid 灰全排除）。PdfExporter 产色（.hf-pg CSS）与本文件检测窗
+// （差值特征）必须同源——历史上无共享常量，改色忘同步即冒名/漏检双向失灵
+namespace PageSigColor {
+constexpr int R = 102;
+constexpr int G = 102;
+constexpr int B = 103;
+}
+
 // PDF 页内容几何测量（nativeHf 页脚定位用，2026-09-20）：
 // 逐页解析内容流，跟踪图形状态（CTM/qQ 栈 + 文本矩阵），对路径构造
 // （m/l/c/v/y/re）、文本定位（Td/TD/Tm/T*/Tj 系）、XObject 绘制
