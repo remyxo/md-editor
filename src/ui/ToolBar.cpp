@@ -253,9 +253,12 @@ void ToolBar::setupUi()
         m_exportButton->setCheckable(false);
         m_exportButton->setArrowType(Qt::NoArrow); // chevron 由 QSS menu-indicator 提供（同对齐/上下标按钮）
         m_exportMenu = new QMenu(m_exportButton);
-        m_exportMenu->addAction(tr("导出 PDF..."), this, &ToolBar::pdfExportClicked);
-        m_exportMenu->addAction(tr("导出 DOCX..."), this, &ToolBar::docxExportClicked);
-        m_exportMenu->addAction(tr("导出 HTML..."), this, &ToolBar::htmlExportClicked);
+        QAction *actPdf = m_exportMenu->addAction(tr("导出 PDF..."), this, &ToolBar::pdfExportClicked);
+        actPdf->setObjectName("exportPdfAction");
+        QAction *actDocx = m_exportMenu->addAction(tr("导出 DOCX..."), this, &ToolBar::docxExportClicked);
+        actDocx->setObjectName("exportDocxAction");
+        QAction *actHtml = m_exportMenu->addAction(tr("导出 HTML..."), this, &ToolBar::htmlExportClicked);
+        actHtml->setObjectName("exportHtmlAction");
         m_exportButton->setMenu(m_exportMenu);
         m_exportButton->installEventFilter(this);
         addWidget(m_exportButton);
@@ -479,16 +482,21 @@ QMenu *ToolBar::buildColorMenu(bool forText)
 void ToolBar::setSourceMode(bool on)
 {
     m_sourceMode = on;
-    // 源码模式下灰化所有编辑/格式化按钮，保留源码切换和导出按钮可用
+    // 源码模式下灰化所有编辑/格式化按钮，保留源码切换和导出（按钮与其
+    // 菜单项——2026-09-28 修复：菜单项 QAction 此前无 objectName 被
+    // findChildren 收进 m_allActions 一并灰化，与下方「导出按钮恒可用」
+    // 的意图矛盾）可用。撤销/重做在退出分支（!on）跳过：其启用态由
+    // updateHistoryState(canUndo,canRedo) 维护（退出源码时 editor.js
+    // notifyHistory 会带最新态刷新），无差别点亮会出现「不可撤销却亮着」
+    // 的窗口期；进源码方向仍随通用路径灰化
     for (QAction *a : m_allActions) {
-        if (a->objectName() != QStringLiteral("sourceAction")) {
-            a->setEnabled(!on);
-        }
-    }
-    if (!on) {
-        for (QAction *a : m_allActions) {
-            a->setEnabled(true);
-        }
+        // 退出分支跳过撤销/重做，否则本循环的 setEnabled(!on) 已先行点亮
+        if (!on && (a == m_undoAction || a == m_redoAction))
+            continue;
+        const QString n = a->objectName();
+        if (n == QLatin1String("sourceAction") || n.startsWith(QLatin1String("export")))
+            continue;
+        a->setEnabled(!on);
     }
     m_headingCombo->setEnabled(!on);
     // 导出按钮是 QToolButton widget，单独控制
