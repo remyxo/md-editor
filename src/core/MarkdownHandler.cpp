@@ -603,8 +603,25 @@ static void protectEmptyAltImages(QString &processed,
             sentinels << ph;
             return "![" + ph + "](" + m.captured(2) + ")";
         });
-    for (int i = 0; i < codes.size(); ++i)
-        processed.replace("\x01EUI" + QString::number(i) + "\x01", codes[i]);
+    // 还原行内代码段（单遍重建，原逐 token replace 循环）：token→备份哈希
+    // 查表，一次 globalMatch 重建，免 K 个 token 各自全文扫描移位的 O(K·n)。
+    // 安全前提（替换值不含被匹配模式）：codes 为暂存前的原文 code span，
+    // EUI token 在捕获之后才铸造（序号即捕获序），备份不含 token 形态文本；
+    // 此前 escapeUnclosedHtmlTags 的 EUT token 已在其函数内还原殆尽。查表
+    // 未命中（用户字面 token 形态文本）原样保留，与逐 token replace 只碰
+    // 确切铸造 token 的行为一致。
+    if (!codes.isEmpty()) {
+        static const QRegularExpression euiPhRe("\x01EUI[0-9]+\x01");
+        QHash<QString, QString> euiMap;
+        euiMap.reserve(codes.size());
+        for (int i = 0; i < codes.size(); ++i)
+            euiMap.insert("\x01EUI" + QString::number(i) + "\x01", codes[i]);
+        globalReplaceWith(processed, euiPhRe,
+            [&euiMap](const QRegularExpressionMatch &m) {
+                auto it = euiMap.constFind(m.captured(0));
+                return it != euiMap.constEnd() ? *it : m.captured(0);
+            });
+    }
 }
 
 // 空 alt 图片的 alt 占位注入（fromHtml 侧，与 toHtml 的 ZZIA 保形对偶）。
@@ -787,9 +804,25 @@ static void escapeUnclosedHtmlTags(QString &s)
         off = m.capturedStart() + inner.length() + 8;   // &lt;(4) + inner + &gt;(4)
     }
 
-    // 还原行内代码段（内容未参与转义）
-    for (int i = 0; i < codes.size(); ++i)
-        s.replace("\x01EUT" + QString::number(i) + "\x01", codes[i]);
+    // 还原行内代码段（内容未参与转义；单遍重建，原逐 token replace 循环）：
+    // token→备份哈希查表，一次 globalMatch 重建，免 K 个 token 各自全文扫描
+    // 移位的 O(K·n)。安全前提（替换值不含被匹配模式）：codes 为暂存前的
+    // 原文 code span，EUT token 在捕获之后才铸造（序号即捕获序），备份不含
+    // token 形态文本；中间的未闭合标签转义只产出 &lt;/&gt; 实体，不产生也
+    // 不切分 token。查表未命中（用户字面 token 形态文本）原样保留，与逐
+    // token replace 只碰确切铸造 token 的行为一致。
+    if (!codes.isEmpty()) {
+        static const QRegularExpression eutPhRe("\x01EUT[0-9]+\x01");
+        QHash<QString, QString> eutMap;
+        eutMap.reserve(codes.size());
+        for (int i = 0; i < codes.size(); ++i)
+            eutMap.insert("\x01EUT" + QString::number(i) + "\x01", codes[i]);
+        globalReplaceWith(s, eutPhRe,
+            [&eutMap](const QRegularExpressionMatch &m) {
+                auto it = eutMap.constFind(m.captured(0));
+                return it != eutMap.constEnd() ? *it : m.captured(0);
+            });
+    }
 }
 
 // 提取下标 ~x~（Pandoc 语法）为占位符。
@@ -2631,9 +2664,25 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
         // 最终 \x01 泄漏进 HTML。单遍重建（stashPlainDivs：跳过分支在捕获
         // 段内递归，保旧 offset+1 重叠语义）。
         processed = stashPlainDivs(processed, collisions, divBackups, divPhs);
-        // 3) 还原行内代码
-        for (int i = 0; i < codes.size(); ++i)
-            processed.replace("\x01CODE" + QString::number(i) + "\x01", codes[i]);
+        // 3) 还原行内代码（单遍重建，原逐 token replace 循环）：token→备份
+        // 哈希查表，一次 globalMatch 重建，免 K 个 token 各自全文扫描移位的
+        // O(K·n)。安全前提（替换值不含被匹配模式）：codes 为暂存前的原文
+        // code span，CODE token 在捕获之后才铸造（序号即捕获序），备份不含
+        // token 形态文本；stashPlainDivs 对含 token 的捕获整体跳过（不吞
+        // 占位符），token 原样存活至本步。查表未命中（用户字面 token 形态
+        // 文本）原样保留，与逐 token replace 只碰确切铸造 token 的行为一致。
+        if (!codes.isEmpty()) {
+            static const QRegularExpression codePhRe("\x01CODE[0-9]+\x01");
+            QHash<QString, QString> codeMap;
+            codeMap.reserve(codes.size());
+            for (int i = 0; i < codes.size(); ++i)
+                codeMap.insert("\x01CODE" + QString::number(i) + "\x01", codes[i]);
+            globalReplaceWith(processed, codePhRe,
+                [&codeMap](const QRegularExpressionMatch &m) {
+                    auto it = codeMap.constFind(m.captured(0));
+                    return it != codeMap.constEnd() ? *it : m.captured(0);
+                });
+        }
     }
 
     // 强调包裹行内代码 → 占位符保护（绕开 md4c 对 `*`/`**` 直接包 code span 的
