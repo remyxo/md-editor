@@ -1359,30 +1359,74 @@ static QString buildTaskListHtml(const QStringList &taskLines,
 // fromHtml 方向：从 <ul 开标签位置平衡扫描，返回配对 </ul> 的起始位置；失败返回 -1
 static int findMatchingUlClose(const QString &s, int openTagStart)
 {
-    static const QRegularExpression ulTagRe("<(/?)ul\\b[^>]*>");
+    // 手写 indexOf 平衡扫描替代逐次 QRegularExpression::match(s, offset)——
+    // match() 每次从 offset 扫到整个字符串末尾（实测耗时 ∝ 剩余长度），K 次
+    // 调用即 O(K·n) 退化；QString::indexOf 对字面模式 SIMD 定位，成本只随
+    // 实际匹配区间增长。翻译范式与 findMatchingListClose 一致。
+    // 语义对齐正则 <(/?)ul\b[^>]*>：ul 后须非单词字符（> 或空白）才算标签。
+    static const QString ulOpenTag  = QStringLiteral("<ul");
+    static const QString ulCloseTag = QStringLiteral("</ul");
+    const auto isWordChar = [](QChar ch) {
+        const ushort u = ch.unicode();
+        return (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z')
+            || (u >= '0' && u <= '9') || u == '_';
+    };
+    const auto isTag = [&s, &isWordChar](int i, int tagLen) {
+        // `<ul` 后是 i+3、`</ul` 后是 i+4（closeTag 多一个 '/'）
+        return i >= 0 && i + tagLen < s.size() && !isWordChar(s.at(i + tagLen));
+    };
     int depth = 0;
     int pos = openTagStart;
     while (true) {
-        auto m = ulTagRe.match(s, pos);
-        if (!m.hasMatch()) return -1;
-        if (m.captured(1).isEmpty()) ++depth;   // <ul ...>
-        else if (--depth == 0) return m.capturedStart();
-        pos = m.capturedEnd();
+        const int o = s.indexOf(ulOpenTag, pos);
+        const int c = s.indexOf(ulCloseTag, pos);
+        const bool oOk = isTag(o, ulOpenTag.size());
+        const bool cOk = isTag(c, ulCloseTag.size());
+        if (!oOk && !cOk) return -1;
+        if (cOk && (!oOk || c <= o)) {
+            if (--depth == 0) return c;
+            pos = c + ulCloseTag.size();
+        } else {
+            ++depth;
+            pos = o + ulOpenTag.size();
+        }
     }
 }
 
 // fromHtml 方向：从 <div 开标签位置平衡扫描，返回配对 </div> 的起始位置；失败返回 -1
 static int findMatchingDivClose(const QString &s, int openTagStart)
 {
-    static const QRegularExpression divTagRe("<(/?)div\\b[^>]*>");
+    // 手写 indexOf 平衡扫描替代逐次 QRegularExpression::match(s, offset)——
+    // match() 每次从 offset 扫到整个字符串末尾（实测耗时 ∝ 剩余长度），K 次
+    // 调用即 O(K·n) 退化；QString::indexOf 对字面模式 SIMD 定位，成本只随
+    // 实际匹配区间增长。翻译范式与 findMatchingListClose 一致。
+    // 语义对齐正则 <(/?)div\b[^>]*>：div 后须非单词字符（> 或空白）才算标签。
+    static const QString divOpenTag  = QStringLiteral("<div");
+    static const QString divCloseTag = QStringLiteral("</div");
+    const auto isWordChar = [](QChar ch) {
+        const ushort u = ch.unicode();
+        return (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z')
+            || (u >= '0' && u <= '9') || u == '_';
+    };
+    const auto isTag = [&s, &isWordChar](int i, int tagLen) {
+        // `<div` 后是 i+4、`</div` 后是 i+5（closeTag 多一个 '/'）
+        return i >= 0 && i + tagLen < s.size() && !isWordChar(s.at(i + tagLen));
+    };
     int depth = 0;
     int pos = openTagStart;
     while (true) {
-        auto m = divTagRe.match(s, pos);
-        if (!m.hasMatch()) return -1;
-        if (m.captured(1).isEmpty()) ++depth;    // <div ...>
-        else if (--depth == 0) return m.capturedStart();
-        pos = m.capturedEnd();
+        const int o = s.indexOf(divOpenTag, pos);
+        const int c = s.indexOf(divCloseTag, pos);
+        const bool oOk = isTag(o, divOpenTag.size());
+        const bool cOk = isTag(c, divCloseTag.size());
+        if (!oOk && !cOk) return -1;
+        if (cOk && (!oOk || c <= o)) {
+            if (--depth == 0) return c;
+            pos = c + divCloseTag.size();
+        } else {
+            ++depth;
+            pos = o + divOpenTag.size();
+        }
     }
 }
 
@@ -1391,15 +1435,37 @@ static int findMatchingDivClose(const QString &s, int openTagStart)
 //   非贪婪 .*?</span> 会停在首个嵌套 </span>，必须平衡扫描才能取到完整内容。
 static int findMatchingSpanClose(const QString &s, int openTagStart)
 {
-    static const QRegularExpression spanTagRe("<(/?)span\\b[^>]*>");
+    // 手写 indexOf 平衡扫描替代逐次 QRegularExpression::match(s, offset)——
+    // match() 每次从 offset 扫到整个字符串末尾（实测耗时 ∝ 剩余长度），K 次
+    // 调用即 O(K·n) 退化；QString::indexOf 对字面模式 SIMD 定位，成本只随
+    // 实际匹配区间增长。翻译范式与 findMatchingListClose 一致。
+    // 语义对齐正则 <(/?)span\b[^>]*>：span 后须非单词字符（> 或空白）才算标签。
+    static const QString spanOpenTag  = QStringLiteral("<span");
+    static const QString spanCloseTag = QStringLiteral("</span");
+    const auto isWordChar = [](QChar ch) {
+        const ushort u = ch.unicode();
+        return (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z')
+            || (u >= '0' && u <= '9') || u == '_';
+    };
+    const auto isTag = [&s, &isWordChar](int i, int tagLen) {
+        // `<span` 后是 i+5、`</span` 后是 i+6（closeTag 多一个 '/'）
+        return i >= 0 && i + tagLen < s.size() && !isWordChar(s.at(i + tagLen));
+    };
     int depth = 0;
     int pos = openTagStart;
     while (true) {
-        auto m = spanTagRe.match(s, pos);
-        if (!m.hasMatch()) return -1;
-        if (m.captured(1).isEmpty()) ++depth;   // <span ...>
-        else if (--depth == 0) return m.capturedStart();
-        pos = m.capturedEnd();
+        const int o = s.indexOf(spanOpenTag, pos);
+        const int c = s.indexOf(spanCloseTag, pos);
+        const bool oOk = isTag(o, spanOpenTag.size());
+        const bool cOk = isTag(c, spanCloseTag.size());
+        if (!oOk && !cOk) return -1;
+        if (cOk && (!oOk || c <= o)) {
+            if (--depth == 0) return c;
+            pos = c + spanCloseTag.size();
+        } else {
+            ++depth;
+            pos = o + spanOpenTag.size();
+        }
     }
 }
 
@@ -1408,15 +1474,38 @@ static int findMatchingSpanClose(const QString &s, int openTagStart)
 // 片段（曾使二级引用经递归 + Qt 未闭合引用序列化多加一级前缀）。
 static int findMatchingBlockquoteClose(const QString &s, int openTagStart)
 {
-    static const QRegularExpression bqTagRe("<(/?)blockquote\\b[^>]*>");
+    // 手写 indexOf 平衡扫描替代逐次 QRegularExpression::match(s, offset)——
+    // match() 每次从 offset 扫到整个字符串末尾（实测耗时 ∝ 剩余长度），K 次
+    // 调用即 O(K·n) 退化；QString::indexOf 对字面模式 SIMD 定位，成本只随
+    // 实际匹配区间增长。翻译范式与 findMatchingListClose 一致。
+    // 语义对齐正则 <(/?)blockquote\b[^>]*>：blockquote 后须非单词字符
+    // （> 或空白）才算标签。
+    static const QString bqOpenTag  = QStringLiteral("<blockquote");
+    static const QString bqCloseTag = QStringLiteral("</blockquote");
+    const auto isWordChar = [](QChar ch) {
+        const ushort u = ch.unicode();
+        return (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z')
+            || (u >= '0' && u <= '9') || u == '_';
+    };
+    const auto isTag = [&s, &isWordChar](int i, int tagLen) {
+        // `<blockquote` 后是 i+11、`</blockquote` 后是 i+12（closeTag 多 '/'）
+        return i >= 0 && i + tagLen < s.size() && !isWordChar(s.at(i + tagLen));
+    };
     int depth = 0;
     int pos = openTagStart;
     while (true) {
-        auto m = bqTagRe.match(s, pos);
-        if (!m.hasMatch()) return -1;
-        if (m.captured(1).isEmpty()) ++depth;   // <blockquote ...>
-        else if (--depth == 0) return m.capturedStart();
-        pos = m.capturedEnd();
+        const int o = s.indexOf(bqOpenTag, pos);
+        const int c = s.indexOf(bqCloseTag, pos);
+        const bool oOk = isTag(o, bqOpenTag.size());
+        const bool cOk = isTag(c, bqCloseTag.size());
+        if (!oOk && !cOk) return -1;
+        if (cOk && (!oOk || c <= o)) {
+            if (--depth == 0) return c;
+            pos = c + bqCloseTag.size();
+        } else {
+            ++depth;
+            pos = o + bqOpenTag.size();
+        }
     }
 }
 
