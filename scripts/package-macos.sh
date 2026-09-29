@@ -17,6 +17,14 @@ else
     macdeployqt "$APP" -always-overwrite
 fi
 
+# 安全瘦身：DevTools 前端资源（同 Windows 侧理由）
+DEVTOOLS_PAK=$(find "$APP" -name 'qtwebengine_devtools_resources.pak' -print -quit 2>/dev/null || true)
+if [ -n "$DEVTOOLS_PAK" ]; then
+    SZ=$(du -m "$DEVTOOLS_PAK" | cut -f1)
+    rm -f "$DEVTOOLS_PAK"
+    echo "已删 devtools pak (~${SZ}MB)"
+fi
+
 # 1.5 注入 Markdown 文档类型声明：LSItemContentTypes 指向系统 UTI
 #     net.daringfireball.markdown——「打开方式」推荐列表按 UTI 匹配，只声明扩展名
 #     会被灰掉（v0.16.0 及之前的现象，需切「全部应用」才能选）。Typora/MacDown/

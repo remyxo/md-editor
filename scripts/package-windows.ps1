@@ -52,9 +52,18 @@ $fs.Close()
 if ($subsys -ne 2) { throw "md-editor.exe PE 子系统为 $subsys（应为 2/GUI）——add_executable 是否漏了 WIN32 标志？" }
 Write-Host "PE 子系统校验: GUI (2) 通过"
 
-# 3. windeployqt 部署 Qt DLL / WebEngine 资源 / VC 运行库（部署到 exe 旁）
-& windeployqt --release --compiler-runtime --no-translations (Join-Path $dist "md-editor.exe")
+# 3. windeployqt 部署 Qt DLL / WebEngine 资源（不部署 VC 运行库安装器——
+#    NSIS 从不执行它，装完只是 $INSTDIR 里 24.4MB 死重；用户机器缺运行库
+#    时由安装器提示下载或用户自装。--no-translations 维持）
+& windeployqt --release --no-translations (Join-Path $dist "md-editor.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败 (exit $LASTEXITCODE)" }
+
+# 3.5 安全瘦身：DevTools 前端资源（编辑器不用；CDP 取证走 WebSocket 不需要
+#     前端）与 QML 调试工具（非 QML 应用）
+$devtools = Join-Path $dist "resources\qtwebengine_devtools_resources.pak"
+if (Test-Path $devtools) { Remove-Item -Force $devtools; Write-Host "已删 devtools pak (~9.2MB)" }
+$qmltooling = Join-Path $dist "qmltooling"
+if (Test-Path $qmltooling) { Remove-Item -Recurse -Force $qmltooling; Write-Host "已删 qmltooling (~1MB)" }
 
 # 4. 便携 zip（与 NSIS 安装器统一落 dist\，不散在仓库根；-SkipZip 跳过）
 if (-not $SkipZip) {
