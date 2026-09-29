@@ -245,19 +245,24 @@ void EditorTab::loadFile(const QString &path, const QString &content)
         }
 
         // 外部文件变更时若处于源码模式，同步刷新 textarea 内容
-        // setContent 仅更新 WYSIWYG 编辑器，源码区 <textarea> 需单独更新
-        QString mdEscaped = content;
-        mdEscaped.replace("\\", "\\\\").replace("`", "\\`");
-        mdEscaped.replace("$", "\\$");
-        runJsCommand(QString(
-            "(function(){"
-            "var a=window.editorApi;"
-            "if(!a||!a.isSourceMode)return;"
-            "var sv=document.getElementById('source-view');"
-            "if(!sv)return;"
-            "sv.value=`%1`;a._sourceValue=`%1`;"
-            "if(a._srcSearch)a._srcOnSourceEdit();"   // 外部同步不触发 input，手动刷新搜索高亮
-            "})()").arg(mdEscaped));
+        // setContent 仅更新 WYSIWYG 编辑器，源码区 <textarea> 需单独更新。
+        // 守卫前置到 C++（2026-09-28 速赢）：常规加载（非源码模式）下
+        // 这段全文 MD IPC 纯浪费——载荷翻倍，守卫在 JS 端才判等于白发。
+        // 正常路径（页面刚加载）不可能处于源码模式，守卫恒假即零发送。
+        if (isSourceMode()) {
+            QString mdEscaped = content;
+            mdEscaped.replace("\\", "\\\\").replace("`", "\\`");
+            mdEscaped.replace("$", "\\$");
+            runJsCommand(QString(
+                "(function(){"
+                "var a=window.editorApi;"
+                "if(!a||!a.isSourceMode)return;"
+                "var sv=document.getElementById('source-view');"
+                "if(!sv)return;"
+                "sv.value=`%1`;a._sourceValue=`%1`;"
+                "if(a._srcSearch)a._srcOnSourceEdit();"   // 外部同步不触发 input，手动刷新搜索高亮
+                "})()").arg(mdEscaped));
+        }
     }
 }
 
