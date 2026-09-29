@@ -51,6 +51,7 @@ set(HEADERS
     core/EditorBridge.h
     core/FileManager.h
     core/ImageManager.h
+    core/JsEscape.h
     core/LocalImageSchemeHandler.h
     core/MarkdownHandler.h
     core/qt/QtMarkdownWriter.h

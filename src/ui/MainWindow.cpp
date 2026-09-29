@@ -17,6 +17,7 @@
 #include "../core/FileManager.h"
 #include "../core/MarkdownHandler.h"
 #include "../core/ImageManager.h"
+#include "../core/JsEscape.h"
 #include "../core/PdfExporter.h"
 #include "../core/DocxExporter.h"
 #include "../core/HtmlExporter.h"
@@ -47,17 +48,8 @@
 #include <QPointer>
 #include <memory>
 
-// JS 单引号字符串字面量转义（路径等嵌入 runJavaScript；反斜杠/引号/换行——
-// Windows 路径 C:\Users\.. 的 \ 与含 ' 的 Unix 路径都会破坏字面量）
-static QString jsSingleQuoted(const QString &s)
-{
-    QString t(s);
-    t.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-    t.replace(QLatin1Char('\''), QStringLiteral("\\'"));
-    t.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
-    t.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
-    return t;
-}
+// JS 单引号/模板字面量转义已收敛到 core/JsEscape.h 单一来源（jsSingleQuoted /
+// forTemplateLiteral），本文件不再保留内联副本
 
 // 读编辑器设置并应用到单个 tab（新 tab 页面加载完成时用）。曾直接调用四个
 // apply*（各自遍历全部标签页）——N 个标签的会话恢复产生 O(N²) 次
@@ -495,35 +487,29 @@ void MainWindow::connectSignals()
     });
 
     // === 搜索栏 ===
-    // JS 字符串字面量转义（query / rep 嵌入 runJavaScript）
-    auto jsStr = [](const QString &s) {
-        QString t(s);
-        t.replace("\\", "\\\\").replace("'", "\\'")
-         .replace("\n", "\\n").replace("\r", "\\r");
-        return t;
-    };
+    // JS 字符串字面量转义统一走 core/JsEscape.h（query / rep 嵌入 runJavaScript）
     auto runSearchJs = [this](const QString &jsBody) {
         EditorTab *tab = m_tabWidget->currentEditorTab();
         if (tab) tab->runJsCommand("(function(){var ed=window.editorApi;if(!ed||!ed.editor)return;" + jsBody + "})();");
     };
 
     connect(m_searchBar, &SearchBar::searchParamsChanged, this,
-            [this, jsStr, runSearchJs](const QString &text, bool cs, bool rx, bool ww) {
+            [this, runSearchJs](const QString &text, bool cs, bool rx, bool ww) {
         runSearchJs(QStringLiteral("ed.startSearch('%1',%2,%3,%4);")
-                    .arg(jsStr(text)).arg(cs).arg(rx).arg(ww));
+                    .arg(JsEscape::jsSingleQuoted(text)).arg(cs).arg(rx).arg(ww));
     });
     connect(m_searchBar, &SearchBar::searchResumeRequested, this,
-            [this, jsStr, runSearchJs](const QString &text, bool cs, bool rx, bool ww) {
+            [this, runSearchJs](const QString &text, bool cs, bool rx, bool ww) {
         runSearchJs(QStringLiteral("ed.resumeSearch('%1',%2,%3,%4);")
-                    .arg(jsStr(text)).arg(cs).arg(rx).arg(ww));
+                    .arg(JsEscape::jsSingleQuoted(text)).arg(cs).arg(rx).arg(ww));
     });
     connect(m_searchBar, &SearchBar::findNextRequested, this, [this, runSearchJs]() { runSearchJs("ed.searchNext();"); });
     connect(m_searchBar, &SearchBar::findPrevRequested, this, [this, runSearchJs]() { runSearchJs("ed.searchPrev();"); });
-    connect(m_searchBar, &SearchBar::replaceRequested, this, [this, jsStr, runSearchJs](const QString &rep) {
-        runSearchJs(QStringLiteral("ed.replaceOne('%1');").arg(jsStr(rep)));
+    connect(m_searchBar, &SearchBar::replaceRequested, this, [this, runSearchJs](const QString &rep) {
+        runSearchJs(QStringLiteral("ed.replaceOne('%1');").arg(JsEscape::jsSingleQuoted(rep)));
     });
-    connect(m_searchBar, &SearchBar::replaceAllRequested, this, [this, jsStr, runSearchJs](const QString &rep) {
-        runSearchJs(QStringLiteral("ed.replaceAll('%1');").arg(jsStr(rep)));
+    connect(m_searchBar, &SearchBar::replaceAllRequested, this, [this, runSearchJs](const QString &rep) {
+        runSearchJs(QStringLiteral("ed.replaceAll('%1');").arg(JsEscape::jsSingleQuoted(rep)));
     });
     connect(m_searchBar, &SearchBar::closeRequested, this, [this, runSearchJs]() {
         m_searchBar->setVisible(false);
@@ -683,16 +669,6 @@ void MainWindow::runEditorCommand(const QString &js)
     }
 }
 
-// 转义字符串以安全嵌入 JS 模板字面量 `...`（与 EditorTab::loadFile 一致）
-static QString escapeForJsTemplate(const QString &s)
-{
-    QString r = s;
-    r.replace("\\", "\\\\");
-    r.replace("`", "\\`");
-    r.replace("$", "\\$");
-    return r;
-}
-
 // === 工具栏响应实现 ===
 
 void MainWindow::onBoldClicked()
@@ -744,26 +720,16 @@ void MainWindow::onInsertLink()
     runEditorCommand("window.editorApi.insertLink();");
 }
 
-// 转义为单引号 JS 字符串字面量内容（不含外层引号）
-static QString jsEscape(const QString &s)
-{
-    QString out = s;
-    out.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-    out.replace(QLatin1Char('\''), QStringLiteral("\\'"));
-    out.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
-    out.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
-    return out;
-}
-
 // 构造图片落盘结果回调 JS：成功 {ok:true,path}；失败 {ok:false,err}
+// （字符串转义统一走 JsEscape::jsSingleQuoted，见 core/JsEscape.h）
 static QString jsImageSaveResult(const QString &requestId, bool ok,
                                  const QString &path, const QString &err)
 {
     if (ok)
         return QStringLiteral("window.editorApi._onImageSaveResult('%1',{ok:true,path:'%2'});")
-            .arg(jsEscape(requestId), jsEscape(path));
+            .arg(JsEscape::jsSingleQuoted(requestId), JsEscape::jsSingleQuoted(path));
     return QStringLiteral("window.editorApi._onImageSaveResult('%1',{ok:false,err:'%2'});")
-        .arg(jsEscape(requestId), jsEscape(err));
+        .arg(JsEscape::jsSingleQuoted(requestId), JsEscape::jsSingleQuoted(err));
 }
 
 void MainWindow::onImageSaveRequested(EditorTab *tab, const QString &requestId,
@@ -799,7 +765,7 @@ void MainWindow::onInsertImage()
     if (!path.isEmpty()) {
         // 路径含 ' 或 \（Windows）时须转义，否则 JS 语法错误、插入静默失败
         QString js = QString("window.editorApi.insertImage('%1');")
-                         .arg(jsSingleQuoted(path));
+                         .arg(JsEscape::jsSingleQuoted(path));
         runEditorCommand(js);
     }
 }
@@ -825,7 +791,7 @@ void MainWindow::onToggleSourceMode()
                 conv.start();
                 QString md = MarkdownHandler::fromHtml(html);
                 const qint64 convMs = conv.elapsed();
-                QString escaped = escapeForJsTemplate(md);
+                QString escaped = JsEscape::forTemplateLiteral(md);
                 QElapsedTimer jsFill;
                 jsFill.start();
                 tab->webView()->page()->runJavaScript(
@@ -881,7 +847,7 @@ void MainWindow::onToggleSourceMode()
                 conv.start();
                 QString html = MarkdownHandler::toHtml(md);
                 const qint64 convMs = conv.elapsed();
-                QString escaped = escapeForJsTemplate(html);
+                QString escaped = JsEscape::forTemplateLiteral(html);
                 QElapsedTimer jsBuild;
                 jsBuild.start();
                 tab->webView()->page()->runJavaScript(

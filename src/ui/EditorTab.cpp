@@ -1,4 +1,5 @@
 #include "EditorTab.h"
+#include "../core/JsEscape.h"
 #include "../core/LocalImageSchemeHandler.h"
 #include "../core/MarkdownHandler.h"
 #include "../app/Application.h"
@@ -228,11 +229,9 @@ void EditorTab::loadFile(const QString &path, const QString &content)
             html = fullHtml;
         }
 
-        QString escaped = html;
-        escaped.replace("\\", "\\\\");
-        escaped.replace("`", "\\`");
-        escaped.replace("$", "\\$");
-        QString js = QString("window.editorApi.setContent(`%1`);").arg(escaped);
+        // 转义后嵌入模板字面量（\ ` $，单一来源见 core/JsEscape.h）
+        QString js = QString("window.editorApi.setContent(`%1`);")
+                         .arg(JsEscape::forTemplateLiteral(html));
         m_webView->page()->runJavaScript(js);
         // 大文档冷 JIT 预热：加载 1.5 秒后空闲跑一次丢弃式 getHTML，消除首次
         // 切换源码模式 ~1s 的冷 JIT 停顿（编辑器聚焦时 JS 侧自动推迟重试）
@@ -250,9 +249,8 @@ void EditorTab::loadFile(const QString &path, const QString &content)
         // 这段全文 MD IPC 纯浪费——载荷翻倍，守卫在 JS 端才判等于白发。
         // 正常路径（页面刚加载）不可能处于源码模式，守卫恒假即零发送。
         if (isSourceMode()) {
-            QString mdEscaped = content;
-            mdEscaped.replace("\\", "\\\\").replace("`", "\\`");
-            mdEscaped.replace("$", "\\$");
+            // 与 setContent 同一模板字面量转义（\ ` $），单一来源 core/JsEscape.h
+            QString mdEscaped = JsEscape::forTemplateLiteral(content);
             runJsCommand(QString(
                 "(function(){"
                 "var a=window.editorApi;"
@@ -325,9 +323,11 @@ void EditorTab::pushDocDir()
     QString path = m_webView->property("filePath").toString();
     if (path.isEmpty() || !m_pageLoaded) return;
     QString dir = QFileInfo(path).absolutePath();
-    QString esc = dir;
-    esc.replace("\\", "\\\\").replace("'", "\\'");
-    runJsCommand(QString("window.editorApi.setDocDir('%1');").arg(esc));
+    // 旧内联版只转义 \ 与 '；收敛到 JsEscape::jsSingleQuoted 后额外覆盖
+    // \n/\r——目录路径含换行时旧版产生裸换行的非法 JS（setDocDir 静默
+    // 失败），无换行路径输出逐字节不变
+    runJsCommand(QString("window.editorApi.setDocDir('%1');")
+                     .arg(JsEscape::jsSingleQuoted(dir)));
 }
 
 void EditorTab::setEditorTheme(const QString &theme)
@@ -364,9 +364,9 @@ void EditorTab::setEditorWidth(int width)
 void EditorTab::applyCustomCss(const QString &css)
 {
     if (m_pageLoaded) {
-        QString esc = css;
-        esc.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r");
-        runJsCommand(QString("window.editorApi.applyCustomCss('%1');").arg(esc));
+        // 单引号字符串安全化（\ ' \n \r，单一来源见 core/JsEscape.h）
+        runJsCommand(QString("window.editorApi.applyCustomCss('%1');")
+                         .arg(JsEscape::jsSingleQuoted(css)));
     }
 }
 
