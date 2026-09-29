@@ -284,9 +284,10 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
             "#numhost{position:absolute;top:0;left:0;width:100%;}"
             // 页码片（每片恰一页高 = 打印片段高）：position:relative 作片内
             // abs 页码的 containing block——页码盒整体落在片段内（纸底带），
-            // 见 __stampPageNumbers。色 rgb(102,102,103)：视觉同 #666，蓝通道
-            // +1 为文档内唯一标识（表头/mermaid 灰全排除）——PdfPageGeometry
-            // 色锚定据此认页码本尊，冒名/漏检双向失灵曾致校正追幻影死锁
+            // 见 __stampPageNumbers。色值见 PageSigColor（.hf-pg 产色单一
+            // 来源）：视觉同 #666，蓝通道 +1 为文档内唯一标识（表头/mermaid
+            // 灰全排除）——PdfPageGeometry 色锚定据此认页码本尊，冒名/漏检
+            // 双向失灵曾致校正追幻影死锁
             ".hf-pg{position:relative;left:0;width:100%;"
             "font-size:9pt;color:rgb(" + QString::number(PageSigColor::R) + "," +
             QString::number(PageSigColor::G) + "," + QString::number(PageSigColor::B) + ");}");

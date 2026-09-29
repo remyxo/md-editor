@@ -688,9 +688,10 @@ private:
             if (d.y() < minY)
                 minY = d.y();
             ++ops;
-            // 页码标记识别：rgb(102,102,103) 差值特征（r≈g、b−r∈(0.001,
-            // 0.01)）——蓝通道 +1 是页码专用签名（表头 #666 与 mermaid 灰
-            // 的 r=g=b 全排除）；用差值而非绝对值，色值整体舍入不敏感
+            // 页码标记识别：色值见 PageSigColor（.hf-pg 产色单一来源），检测
+            // 用其差值特征（r≈g、b−r∈(0.001,0.01)）——蓝通道 +1 是页码专用
+            // 签名（表头 #666 与 mermaid 灰的 r=g=b 全排除）；用差值而非
+            // 绝对值，色值整体舍入不敏感
             static_assert(PageSigColor::B - PageSigColor::R == 1, "蓝通道 +1 签名是检测窗前提");
             if (qAbs(gs.fr - gs.fg) < 0.002 && gs.fb > gs.fr + 0.001
                 && gs.fb < gs.fr + 0.01 && gs.fr > 0.3 && gs.fr < 0.5

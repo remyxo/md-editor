@@ -53,8 +53,10 @@ if ($subsys -ne 2) { throw "md-editor.exe PE 子系统为 $subsys（应为 2/GUI
 Write-Host "PE 子系统校验: GUI (2) 通过"
 
 # 3. windeployqt 部署 Qt DLL / WebEngine 资源（不部署 VC 运行库安装器——
-#    NSIS 从不执行它，装完只是 $INSTDIR 里 24.4MB 死重；用户机器缺运行库
-#    时由安装器提示下载或用户自装。--no-translations 维持）
+#    NSIS 从不执行它，装完只是 $INSTDIR 里 24.4MB 死重；安装器（md-editor.nsi）
+#    既不安装也不检测 VC 运行库，缺运行库的机器需用户自行安装 VC++
+#    Redistributable（基线既有状况：旧版 vc_redist.x64.exe 同样只是死重、
+#    从未被安装器执行）。--no-translations 维持）
 & windeployqt --release --no-translations (Join-Path $dist "md-editor.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败 (exit $LASTEXITCODE)" }
 

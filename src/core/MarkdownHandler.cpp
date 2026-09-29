@@ -4,6 +4,7 @@
 #include <QSet>
 #include <QVector>
 #include <QFontDatabase>
+#include <QHash>
 #include <initializer_list>
 #include "qt/QtMarkdownWriter.h"
 
@@ -590,6 +591,9 @@ static void protectEmptyAltImages(QString &processed,
     globalReplaceWith(processed, csRe,
         [&codes](const QRegularExpressionMatch &m) {
             codes << m.captured(0);
+            // 贪婪 \x 陷阱：C++ 十六进制转义贪婪，"\x01EUI" 实为 0x1E+"UI"
+            // （十六进制吞掉 E 才停），铸造/正则/哈希键三处必须用同款字面量，
+            // 勿「纠正」写法——护栏（conv-byte-snapshot）会拦截破坏
             return "\x01EUI" + QString::number(codes.size() - 1) + "\x01";
         });
     static const QRegularExpression imgRe(
@@ -767,6 +771,9 @@ static void escapeUnclosedHtmlTags(QString &s)
         const auto cm = csRe.match(s, csOff);
         if (!cm.hasMatch()) break;
         codes << cm.captured(0);   // 含反引号的整个 span（还原时原样回填）
+        // 贪婪 \x 陷阱："\x01EUT" 实为 0x1E+"UT"（十六进制转义吞 E 才停），
+        // 铸造/正则/哈希键三处必须用同款字面量，勿「纠正」写法——护栏
+        // （conv-byte-snapshot）会拦截破坏
         const QString ph = "\x01EUT" + QString::number(codes.size() - 1) + "\x01";
         s.replace(cm.capturedStart(), cm.capturedLength(), ph);
         csOff = cm.capturedStart() + ph.length();
@@ -2745,6 +2752,9 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
         globalReplaceWith(processed, codeSpanRe,
             [&codes](const QRegularExpressionMatch &m) {
                 codes << m.captured(0);
+                // 贪婪 \x 陷阱："\x01CODE" 实为 0x1C+"ODE"（十六进制转义吞
+                // C 才停），铸造/正则/哈希键三处必须用同款字面量，勿「纠正」
+                // 写法——护栏（conv-byte-snapshot）会拦截破坏
                 return "\x01CODE" + QString::number(codes.size() - 1) + "\x01";
             });
         // 2) 保护 <div>。捕获文本含 \x01（行内代码占位符）时跳过——说明该
