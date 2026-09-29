@@ -5632,6 +5632,10 @@ QString MarkdownHandler::fromHtml(const QString &html)
     //    <strong> mark，后续往返持续污染。此处检测并剥离两种模式：
     //    a) 已有标题前缀：剥离 span/strong，并按 font-size 重新定级前缀
     //    b) 无标题前缀：剥离后按 font-size 恢复标题前缀（xx-large→#, x-large→##, large→###）
+    //    两处均为「逐 match replace、pos 跳过替换串」循环，改 globalReplaceWith
+    //    单遍重建：旧循环从不重扫替换串（pos 直达其尾），单遍收集同理不重扫；
+    //    替换串不以 \n 结尾、被替换匹配恒以 </div> 结尾，衔接处不产生新 ^ 行锚，
+    //    匹配序列与产物逐字节一致。
     {
         auto headingForSize = [](const QString &fs) -> QString {
             if (fs == "xx-large") return "# ";
@@ -5646,22 +5650,15 @@ QString MarkdownHandler::fromHtml(const QString &html)
         //    捕获组：1=旧前缀(丢弃) 2=div 属性 3=font-size 4=内容
         {
             auto processPrefixed = [&](const QRegularExpression &re) {
-                int pos = 0;
-                while (true) {
-                    auto m = re.match(md, pos);
-                    if (!m.hasMatch()) break;
+                globalReplaceWith(md, re, [&](const QRegularExpressionMatch &m) {
                     QString divAttrs = m.captured(2).trimmed();
                     QString fontSize = m.captured(3);
                     QString content = m.captured(4);
                     QString prefix = headingForSize(fontSize);
-                    QString replacement;
                     if (divAttrs.isEmpty())
-                        replacement = prefix + content;
-                    else
-                        replacement = prefix + "<div " + divAttrs + ">" + content + "</div>";
-                    md.replace(m.capturedStart(), m.capturedLength(), replacement);
-                    pos = m.capturedStart() + replacement.length();
-                }
+                        return prefix + content;
+                    return prefix + "<div " + divAttrs + ">" + content + "</div>";
+                });
             };
             static const QRegularExpression prefixedStrongSpan(
                 R"re(^(#{1,6}\s+)<div\b([^>]*)>\s*<strong>\s*<span\s+style\s*=\s*"(?=.*\bfont-size\s*:\s*(xx-large|x-large|large)\b)(?=.*\bfont-weight\s*:\s*700\b)[^"]*"[^>]*>(.*?)</span>\s*</strong>\s*</div>)re",
@@ -5673,25 +5670,18 @@ QString MarkdownHandler::fromHtml(const QString &html)
             processPrefixed(prefixedSpan);
         }
 
-        // 模式 b：无标题前缀 — 剥离后恢复 # 前缀
+        // 模式 b：无标题前缀 — 剥离后恢复 # 前缀（等价性依据见块首注释）
         {
             auto process = [&](const QRegularExpression &re) {
-                int pos = 0;
-                while (true) {
-                    auto m = re.match(md, pos);
-                    if (!m.hasMatch()) break;
+                globalReplaceWith(md, re, [&](const QRegularExpressionMatch &m) {
                     QString divAttrs = m.captured(1).trimmed();
                     QString fontSize = m.captured(2);
                     QString content = m.captured(3);
                     QString prefix = headingForSize(fontSize);
-                    QString replacement;
                     if (divAttrs.isEmpty())
-                        replacement = prefix + content;
-                    else
-                        replacement = prefix + "<div " + divAttrs + ">" + content + "</div>";
-                    md.replace(m.capturedStart(), m.capturedLength(), replacement);
-                    pos = m.capturedStart() + replacement.length();
-                }
+                        return prefix + content;
+                    return prefix + "<div " + divAttrs + ">" + content + "</div>";
+                });
             };
             static const QRegularExpression bareStrongSpan(
                 R"re(<div\b([^>]*)>\s*<strong>\s*<span\s+style\s*=\s*"(?=.*\bfont-size\s*:\s*(xx-large|x-large|large)\b)(?=.*\bfont-weight\s*:\s*700\b)[^"]*"[^>]*>(.*?)</span>\s*</strong>\s*</div>)re");
