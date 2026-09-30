@@ -61,11 +61,15 @@ Write-Host "PE 子系统校验: GUI (2) 通过"
 if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败 (exit $LASTEXITCODE)" }
 
 # 3.5 安全瘦身：DevTools 前端资源（编辑器不用；CDP 取证走 WebSocket 不需要
-#     前端）与 QML 调试工具（非 QML 应用）
+#     前端）与 QML 调试工具（非 QML 应用）；vc_redist 残留（windeployqt 部署
+#     目录不清场，历史上带 --compiler-runtime 的构建留下的死重会被 NSIS
+#     目录打包一直带进安装器——2026-09-29 全链对账实测 ~25.6MB 残留）
 $devtools = Join-Path $dist "resources\qtwebengine_devtools_resources.pak"
 if (Test-Path $devtools) { Remove-Item -Force $devtools; Write-Host "已删 devtools pak (~9.2MB)" }
 $qmltooling = Join-Path $dist "qmltooling"
 if (Test-Path $qmltooling) { Remove-Item -Recurse -Force $qmltooling; Write-Host "已删 qmltooling (~1MB)" }
+$vcRedist = Join-Path $dist "vc_redist.x64.exe"
+if (Test-Path $vcRedist) { Remove-Item -Force $vcRedist; Write-Host "已删 vc_redist 残留 (~25.6MB)" }
 
 # 4. 便携 zip（与 NSIS 安装器统一落 dist\，不散在仓库根；-SkipZip 跳过）
 if (-not $SkipZip) {

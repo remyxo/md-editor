@@ -15,12 +15,18 @@ $installer = Get-ChildItem "W:\dist" -Filter "md-editor-*-win64.exe" | Select-Ob
 if ($installer) { Write-Host ("安装器: {0:N1} MB（基线 113.9MB）" -f ($installer.Length / 1MB)) }
 
 Write-Host "=== 2. dumpbin 静态依赖链（激进砍候选） ==="
-$dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
-    -latest -find "**\dumpbin.exe" | Select-Object -First 1
-if (-not $dumpbin) { throw "未找到 dumpbin（vswhere）" }
-foreach ($dll in @("md-editor.exe", "Qt6WebEngineCore.dll", "Qt6Gui.dll")) {
-    Write-Host "--- $dll 依赖 ---"
-    & $dumpbin /DEPENDENTS (Join-Path $dist $dll) | Select-String "\.dll" | ForEach-Object { $_.ToString().Trim() }
+# dumpbin 直查 D:\BuildTools（provision 钉死的安装位）：sshd 非交互会话里
+# vswhere 自动探测不可靠（build-windows-vm.ps1 同款结论，2026-09-29 实测踩坑）
+$dumpbin = Get-ChildItem 'D:\BuildTools\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' `
+    -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+if (-not $dumpbin) {
+    # 环境故障降级（同 pre-push 语义）：跳过依赖链检查，不阻断第 3 步 A/B
+    Write-Warning "未找到 dumpbin（D:\BuildTools）——依赖链检查跳过"
+} else {
+    foreach ($dll in @("md-editor.exe", "Qt6WebEngineCore.dll", "Qt6Gui.dll")) {
+        Write-Host "--- $dll 依赖 ---"
+        & $dumpbin /DEPENDENTS (Join-Path $dist $dll) | Select-String "\.dll" | ForEach-Object { $_.ToString().Trim() }
+    }
 }
 
 Write-Host "=== 3. 激进砍 A/B（隔离候选后跑 selftest export） ==="
@@ -37,10 +43,21 @@ foreach ($c in $candidates) {
 }
 $bench = "W:\src\resources\web\markdown-guide.md"
 try {
-    & (Join-Path $dist "md-editor.exe") --selftest export --file $bench `
-        --outdir $abOut --out (Join-Path $abOut "export.json")
-    $ok = (Get-Content (Join-Path $abOut "export.json") -Raw | ConvertFrom-Json).ok
-    Write-Host ("A/B selftest export: ok={0}（true=三候选隔离后渲染导出仍通）" -f $ok)
+    # md-editor.exe 是 GUI 子系统程序：PowerShell & 直接调用不阻塞（$LASTEXITCODE
+    # 恒空，export.json 未生成即读——2026-09-29 首跑误报根因）；Start-Process -Wait
+    # 在 sshd 会话同样拿不到 ExitCode。经 cmd.exe console 宿主转调：阻塞等待且
+    # 退出码可靠（实测 cmd /c 直跑 exit 0、三产物齐）
+    $exe = Join-Path $dist "md-editor.exe"
+    $ej = Join-Path $abOut "export.json"
+    if (Test-Path $ej) { Remove-Item $ej }
+    & cmd.exe /c "`"$exe`" --selftest export --file `"$bench`" --outdir `"$abOut`" --out `"$ej`""
+    $code = $LASTEXITCODE
+    if ($code -eq 0 -and (Test-Path $ej)) {
+        $ok = (Get-Content $ej -Raw | ConvertFrom-Json).ok
+        Write-Host ("A/B selftest export: ok={0}（true=三候选隔离后渲染导出仍通）" -f $ok)
+    } else {
+        Write-Host ("A/B selftest export: 失败（exit={0}, json={1}——三候选不可全砍或环境异常）" -f $code, (Test-Path $ej))
+    }
 } finally {
     foreach ($c in $candidates) {   # 恢复现场：任何结局（含启动失败）都移回，防 ~35MB DLL 滞留隔离区
         $q = Join-Path $quarantine $c
