@@ -26,3 +26,4 @@ qt6-base*
 # （gitignore 不用引号转义，带引号是字面字符会导致条目不生效）
 $QAXHoneypot/
 /QAXDownload/
+/src/resources/web/node_modules
