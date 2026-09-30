@@ -8,8 +8,10 @@
 //   代码块内每击键全量重算所有块（打字卡顿）。
 //
 // 相对上游的改动（行为对齐项见 vendored-lowlight-plugin.test.js）：
-//   1. init 不同步高亮：块收集入 pending，空闲分批补算（文档顺序，首屏在顶部
-//      先算）；requestIdleCallback 不可用时降级 setTimeout
+//   1. init 不同步高亮：块收集入 pending，空闲分批补算；分批调度为
+//      「视口优先 + CM6 Work 风格时间预算」：可视区内块 → 光标邻域块 →
+//      其余按文档顺序，单片时间预算 + 片间停顿让路输入/渲染，单轮总预算
+//      超限降级为纯文档顺序 2 块/片保底推进（对症切源码后「空→高亮渐显」）
 //   2. apply 增量化：docChanged 只同步重算「与 step 相交」的块，其余块经
 //      高亮结果缓存（语言+文本 → token 序列）命中复用；未算过的块异步补；
 //      零块相交且无待算块的编辑（普通文字击键）走 DecorationSet.map 快路径
@@ -28,18 +30,116 @@
     var HIGHLIGHT_CACHE_LIMIT = 256;
     var _hlCache = new Map();   // key -> [{ len, cls }]
 
-    // 空闲批次大小：单块 ~8-30ms，6 块一批保证 idle 回调不超时被掐
+    // 空闲批次大小：单块 ~8-30ms，6 块保证单片不超预算太多、dispatch 粒度适中
     var BATCH_SIZE = 6;
+
+    // CM6 Work 风格预算常量组（CodeMirror 6 @codemirror/language 的 parse work
+    // 调度思想：单片时间预算 + 片间停顿让路输入/渲染；单位均 ms）
+    var CHUNK_BUDGET_MS = 50;       // 单片高亮预算：片内 performance.now() 超此即止（保底 1 块）
+    var CHUNK_GAP_MS = 100;         // 片间最小停顿：让路输入/渲染
+    var TOTAL_BUDGET_MS = 3000;     // 单轮补全总预算：超限降级为纯文档顺序 2 块/片继续
+                                     //（视口/光标邻域优先有其调度成本，且此时可视区早已
+                                     // 着色——远块保底推进，永不饿死）
+    var DEGRADED_CHUNK_BLOCKS = 2;  // 降级模式每片块数（纯文档顺序）
+    var CURSOR_RADIUS = 2000;       // 光标邻域半径（文档位置字符数：|块 pos - 选头| ≤ 此值）
 
     // view() 钩子登记的当前 EditorView（批次 dispatch 需要；destroy 清空）
     var _view = null;
-    // 有在途空闲检查器（防重复调度）
+    // 有在途调度（空闲起步或片间停顿中；防重复调度）
     var _ticking = false;
+
+    // 视口判定注入钩子（测试用）：null = production 默认（块元素矩形与视口求交）
+    var _viewportProbe = null;
+    // 轮内视口判定缓存：块 pos -> 是否可视。同一轮内复用，避免每片对全部待算
+    // 块重复 getBoundingClientRect 强制布局；滚动位置变化即整体失效（读滚动是
+    // 廉价状态读，不触发布局）
+    var _viewVerdicts = new Map();
+    var _viewCacheScrollKey = null;
+    // 当前补全轮状态（轮 = 同一文档代次内一批 pending 从出现到排干）
+    var _roundActive = false;
+    var _roundStart = 0;
+    var _roundEpoch = -1;
+    var _roundDoc = null;
+
+    // performance.now 优先（单调时钟），缺失环境回退 Date.now
+    var _now = function() {
+        return (window.performance && typeof window.performance.now === 'function')
+            ? window.performance.now() : Date.now();
+    };
 
     var _ric = function(fn) {
         if (window.requestIdleCallback) return window.requestIdleCallback(fn);
         return window.setTimeout(fn, 16);
     };
+
+    // isInputPending 静默降级：QWebEngine 各版本 navigator.scheduling 可能缺失，
+    // 读不到一律视为无输入挂起（不让路），行为回退到固定片间停顿
+    function _inputPending() {
+        try {
+            var sch = window.navigator && window.navigator.scheduling;
+            return !!(sch && typeof sch.isInputPending === 'function'
+                && sch.isInputPending());
+        } catch (e) { return false; }
+    }
+
+    // 视口判定（production 默认：块元素矩形与窗口视口求交；keep-warm 的
+    // visibility:hidden DOM 布局仍有效，矩形可用；未挂载/零矩形判不在视口）
+    function _blockInView(el) {
+        if (_viewportProbe) return !!_viewportProbe(el);
+        var r = el.getBoundingClientRect();
+        var vh = (typeof window.innerHeight === 'number') ? window.innerHeight : 0;
+        return r.bottom > 0 && r.top < vh;
+    }
+
+    // 滚动指纹：窗口或编辑器容器滚动变化即作废轮内视口缓存
+    function _scrollKey(view) {
+        var domScroll = (view && view.dom && view.dom.scrollTop) ? view.dom.scrollTop : 0;
+        return (window.scrollY || 0) + '|' + domScroll;
+    }
+
+    // 取块 DOM 元素（view.nodeDOM(pos) = 块节点对应元素，与 domAtPos 取块等价
+    // 但直接返回节点本身；NodeView 场景返回 nodeview 的顶层 DOM）
+    function _blockDom(view, pos) {
+        try {
+            var el = view.nodeDOM(pos);
+            return (el && el.getBoundingClientRect) ? el : null;
+        } catch (e) { return null; }
+    }
+
+    // pending 稳定排序：可视区内块(0) → 光标邻域块(1) → 其余(2)；
+    // 同优先级按 pos 升序（确定性，pending 本身按文档序收集，显式次键兜底）
+    function _orderPending(view, pending) {
+        var key = _scrollKey(view);
+        if (key !== _viewCacheScrollKey) {
+            _viewVerdicts.clear();
+            _viewCacheScrollKey = key;
+        }
+        var head = view.state.selection.head;
+        var items = [];
+        for (var i = 0; i < pending.length; i++) {
+            var p = pending[i];
+            var rank = 2;
+            if (!_viewVerdicts.has(p)) {
+                var el = _blockDom(view, p);
+                _viewVerdicts.set(p, !!(el && _blockInView(el)));
+            }
+            if (_viewVerdicts.get(p)) rank = 0;
+            else if (Math.abs(p - head) <= CURSOR_RADIUS) rank = 1;
+            items.push({ pos: p, rank: rank });
+        }
+        items.sort(function(a, b) { return a.rank - b.rank || a.pos - b.pos; });
+        return items.map(function(it) { return it.pos; });
+    }
+
+    // 轮结束/重置：清轮状态与视口缓存（新轮重新探视口）
+    function _endRound() {
+        _roundActive = false;
+        _roundStart = 0;
+        _roundEpoch = -1;
+        _roundDoc = null;
+        _viewVerdicts.clear();
+        _viewCacheScrollKey = null;
+    }
 
     // 上游 parseNodes：highlight.js AST 展平为 {text, classes} 序列
     function parseNodes(nodes, className) {
@@ -127,33 +227,71 @@
     // key 全局唯一即可
     var _pluginKey = null;
 
-    // 调度一次空闲批次（apply 中 pending 非空 / view() 启动时调用）
+    // 调度下一片批次（apply 批次合并后 pending 非空 / view() 启动时调用）：
+    //   轮首片经空闲回调起步（不与加载/渲染抢跑，保持既有语义）；
+    //   轮内后续片走片间停顿 setTimeout(CHUNK_GAP_MS)，isInputPending 为真时
+    //   再让一片（无该 API 则跳过检查——保底降级，见 _inputPending）
     function scheduleTick(pluginKey) {
         if (_ticking || !_view) return;
         _ticking = true;
-        _ric(function() {
-            _ticking = false;
-            var view = _view;
-            if (!view || (view.isDestroyed && view.isDestroyed())) return;
-            var st = pluginKey.getState(view.state);
-            if (!st || !st.pending.length) return;
-            var take = Math.min(BATCH_SIZE, st.pending.length);
-            var decos = [];
-            for (var i = 0; i < take; i++) {
-                var pos = st.pending[i];
-                var node = view.state.doc.nodeAt(pos);
-                if (!node) continue;   // 批次间隙块被删：apply 侧 epoch 已作废此批
-                decos = decos.concat(buildDecos(pos,
-                    highlightBlock(node, st.name, st.lowlight, st.defaultLanguage)));
-            }
-            view.dispatch(view.state.tr.setMeta(pluginKey, {
-                kind: 'batch',
-                epoch: st.epoch,
-                positions: st.pending.slice(0, take),
-                decos: decos
-            }));
-        });
+        if (_roundActive) {
+            setTimeout(function gapTick() {
+                if (_inputPending()) { setTimeout(gapTick, CHUNK_GAP_MS); return; }
+                _ticking = false;
+                runChunk(pluginKey);
+            }, CHUNK_GAP_MS);
+        } else {
+            _ric(function() {
+                _ticking = false;
+                runChunk(pluginKey);
+            });
+        }
     }
+
+    // 执行一片：视口优先排序取块 → 预算内高亮 → 单事务合入 state
+    //（apply 批次合并分支在其 remain 非空时回调 scheduleTick 接续下一片）
+    function runChunk(pluginKey) {
+        var view = _view;
+        if (!view || (view.isDestroyed && view.isDestroyed())) return;
+        var st = pluginKey.getState(view.state);
+        if (!st || !st.pending.length) { _endRound(); return; }
+        // 轮生命周期：跨轮（编辑器重建/文档代次变更）即开新轮并重探视口
+        if (!_roundActive || st.epoch !== _roundEpoch || view.state.doc !== _roundDoc) {
+            _roundActive = true;
+            _roundStart = _now();
+            _roundEpoch = st.epoch;
+            _roundDoc = view.state.doc;
+            _viewVerdicts.clear();
+        }
+        // 总预算超限：降级为纯文档顺序 2 块/片（跳过视口排序成本，保底推进）
+        var degraded = (_now() - _roundStart) > TOTAL_BUDGET_MS;
+        var ordered = degraded ? st.pending : _orderPending(view, st.pending);
+        var cap = degraded ? DEGRADED_CHUNK_BLOCKS : BATCH_SIZE;
+        var t0 = _now();
+        var decos = [];
+        var taken = [];
+        for (var i = 0; i < ordered.length && taken.length < cap; i++) {
+            // 预算即止：片内耗时超 CHUNK_BUDGET_MS 停止取块（保底已完成 1 块）
+            if (taken.length > 0 && _now() - t0 >= CHUNK_BUDGET_MS) break;
+            var pos = ordered[i];
+            var node = view.state.doc.nodeAt(pos);
+            taken.push(pos);   // 上报本片位置（含已删块，apply 侧据此清出 pending）
+            if (!node) continue;   // 批次间隙块被删：apply 侧 epoch 已作废此批
+            decos = decos.concat(buildDecos(pos,
+                highlightBlock(node, st.name, st.lowlight, st.defaultLanguage)));
+        }
+        view.dispatch(view.state.tr.setMeta(pluginKey, {
+            kind: 'batch',
+            epoch: st.epoch,
+            positions: taken,
+            decos: decos
+        }));
+    }
+
+    // 测试钩子：注入 mock 视口判定（jsdom 无真视口）；传假值恢复 production 默认
+    window.__setViewportProbe = function(fn) {
+        _viewportProbe = (typeof fn === 'function') ? fn : null;
+    };
 
     window.AsyncLowlightPlugin = function(options) {
         var name = options.name;
@@ -177,6 +315,8 @@
                 // 与上游差异点 1：init 不高亮，块收集入 pending 空闲分批
                 //（setContent 是新建编辑器不走 apply，块必须在 init 收集）
                 init: function(_, state) {
+                    // 新编辑器 = 新文档代次：结束在途补全轮（清轮状态与视口缓存）
+                    _endRound();
                     var pending = findBlocks(state.doc, name).map(function(b) {
                         return b.pos;
                     });

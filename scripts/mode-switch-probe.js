@@ -23,8 +23,11 @@
 //                   keep-warm 隐藏保留的 WYSIWYG DOM 中（visibility:hidden
 //                   保留布局，getBoundingClientRect 仍有效）；②本机实测 4k
 //                   bench 空闲高亮 ~1s 跑完、且切入编排的 C++ 转换间隙里批次
-//                   照样推进——故探针装「空闲闸门」把高亮批次挂起到源码首帧
-//                   才释放（受控起点），否则首帧时刻高亮已完成、指标恒 ~0。
+//                   照样推进——故探针装「空闲闸门」把高亮挂起到源码首帧才释放，
+//                   否则首帧时刻高亮已完成、指标恒 ~0。闸门只拦
+//                   requestIdleCallback：旧调度链被全量冻结；新调度（视口优先
+//                   版）首片后走 setTimeout 不经闸门，首片早于注入跑掉则链在途
+//                   推进——口径以 queuedAtRelease/pendingAtRelease 金丝雀核对。
 //   wrap_cache_hit  第 3 次切入源码后、enterSourceMode 同步返回时刻
 //                   _srcWrapCache 是否命中当前文本（0/1）。
 //                   ★ 演进点：当前实现 _srcStop 退出即清缓存，本指标恒为 0
@@ -58,9 +61,12 @@
         //（fromHtml + 填充 ~0.8s）的 C++ 转换间隙里渲染线程空闲、批次照样推进
         //——不闸住则源码首帧时刻高亮已完成，viewport_hl_ms 恒为 ~0，
         // Task 3「视口优先」无 A/B 信号。
-        // 做法：安装时把 requestIdleCallback 换成排队暂缓版（vendored 插件的空闲
-        // 批次全部挂起）；measureHl 轮在**源码首帧**才释放（受控起点：首帧时刻
-        // 批次全在途，指标测纯调度完成时间），非测量轮在 armEnter 即释放。
+        // 做法：安装时把 requestIdleCallback 换成排队暂缓版；measureHl 轮在
+        // **源码首帧**才释放，非测量轮在 armEnter 即释放。闸门只拦 ric，冻结
+        // 效果分双口径：旧调度每批经 ric 重入 → 链全量冻结（首帧时刻全部待算
+        // 块在途）；新调度（视口优先版）首片经 ric、后续片走 setTimeout 不经
+        // 闸门——首片若早于注入跑掉，链即在途推进（首帧前可能已排若干片）。
+        // 消费方以 queuedAtRelease/pendingAtRelease 作金丝雀核对口径再比较。
         _idleGate: { queued: [], released: false, seq: 0, origRic: null,
                      releasedAtMs: null, queuedAtRelease: 0 },
 
@@ -145,9 +151,9 @@
         },
 
         armEnter: function (opts) {
-            // 空闲闸门释放时机（见 installIdleGate）：measureHl 轮推迟到源码首帧
-            // 才释放（受控起点——首帧时刻批次全在途，指标测的是纯调度完成时间，
-            // 对 Task 3「视口优先」最敏感且方差最小）；非测量轮在武装时即释放
+            // 空闲闸门释放时机（见 installIdleGate 的双口径说明）：measureHl 轮
+            // 推迟到源码首帧才释放（旧调度=链全量冻结；新调度首片跑掉后链在途
+            // 推进，口径以金丝雀字段核对）；非测量轮在武装时即释放
             if (!(opts && opts.measureHl)) this.releaseIdleGate();
             this.currentCycle = this.newCycle();
             this.currentCycle.measureHl = !!(opts && opts.measureHl);
@@ -167,8 +173,10 @@
             c.firstFrameBy = by || 'raf';
             try { performance.mark('msw_first_frame'); } catch (e) { /* mark 失败不碍测量 */ }
             if (c.measureHl) {
-                // 源码首帧才释放闸门：首帧时刻高亮批次全在途（受控起点），
-                // 此后按真实空闲调度推进直到可视区块全部着色
+                // 源码首帧才释放闸门（冻结口径=首帧时刻全部待算块在途；
+                // 在途口径=新调度首片已跑、链经 setTimeout 推进，首帧前可能
+                // 已排若干片——见 installIdleGate 双口径说明），此后按真实
+                // 空闲调度推进直到可视区块全部着色
                 this.releaseIdleGate();
                 this.startHlWatch(c);
             }
@@ -554,7 +562,8 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined'
             const installed = await cdp.evaluate('window.__msProbeInstallResult');
             if (installed !== 'ok' && installed !== 'already') fail('探针注入失败: ' + installed);
 
-            // 3. 等内容就绪（setContent 完成；此间高亮批次被闸门挂起）
+            // 3. 等内容就绪（setContent 完成；此间高亮批次被闸门挂起——
+            //    旧调度全链冻结；新调度仅首片前注入才冻结，见双口径说明）
             const readyExpr = '!!(window.editorApi && window.editorApi.editor ' +
                 '&& window.editorApi.editor.state ' +
                 '&& window.editorApi.editor.state.doc.content.size > 2)';
@@ -703,6 +712,14 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined'
         return (v.length % 2) ? v[mid] : (v[mid - 1] + v[mid]) / 2;
     }
 
+    // 原子落盘：先写临时文件再 rename——读方（汇总/人工排查/下游消费）不会
+    // 读到半截 JSON；rename 在同目录内、POSIX 原子
+    function writeJsonAtomic(file, text) {
+        const tmp = file + '.tmp';
+        fs.writeFileSync(tmp, text, 'utf8');
+        fs.renameSync(tmp, file);
+    }
+
     async function aggregate(opts) {
         const rounds = [];
         for (let i = 1; i <= opts.rounds; i++) {
@@ -711,9 +728,14 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined'
             rounds.push(JSON.parse(fs.readFileSync(p, 'utf8')));
         }
         const pick = (k) => rounds.map(r => r[k]);
+        // viewport_hl_ms 的 45s 总闸 timeout 样本不代表完成时延，不进中位数；
+        // 被剔除的轮号在顶层上抛（samples.viewport_hl_ms 仍保留全量原始值）
+        const hlTimeout = rounds.map(r => !!(r.detail && r.detail.hl && r.detail.hl.timeout));
+        const hlKept = rounds.filter((r, i) => !hlTimeout[i]);
+        const hlExcludedRounds = rounds.filter((r, i) => hlTimeout[i]).map(r => r.round);
         const metrics = {
             switch_ms: median(pick('switch_ms')),
-            viewport_hl_ms: median(pick('viewport_hl_ms')),
+            viewport_hl_ms: median(hlKept.map(r => r.viewport_hl_ms)),
             wrap_cache_hit: median(pick('wrap_cache_hit'))
         };
         const out = {
@@ -734,9 +756,11 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined'
                 exit_ms: rounds.map(r => r.breakdown.exit_ms),
                 wrap_measure_ms: rounds.map(r => r.breakdown.wrap_measure_ms)
             },
+            // timeout 样本剔除标记（空数组 = 全部样本有效；全剔除时中位数为 null）
+            viewport_hl_ms_timeout_excluded_rounds: hlExcludedRounds,
             protocol: {
                 switch_ms: '切入(getContent 被调)→源码首帧 + 退出(exitSourceModeOrGetMd 被调)→WYSIWYG 首帧；不含源码停留；不含 C++ runJavaScript 派发开销(~15ms，见 detail.cpp_timing 交叉核对)',
-                viewport_hl_ms: '源码首帧→视口内全部 div.code-block pre code 含 .hljs-* 后代（或 asyncLowlight pending 归零兜底）；首帧=enterSourceMode 返回后首个 rAF；空闲闸门：探针把 requestIdleCallback 排队挂起至源码首帧才释放（受控起点——首帧时刻批次全在途；本机 4k 空闲高亮 ~1s 跑完且切入编排的转换间隙里批次照样推进，不闸则首帧时刻高亮已完成、指标恒 ~0）',
+                viewport_hl_ms: '源码首帧→视口内全部 div.code-block pre code 含 .hljs-* 后代（或 asyncLowlight pending 归零兜底）；首帧=enterSourceMode 返回后首个 rAF；空闲闸门（只拦 requestIdleCallback）双口径：旧调度每批经 ric 重入，注入后链全量冻结（首帧时刻全部待算块在途）；新调度（视口优先版，2026-09-30 起）首片经 ric、后续片走 setTimeout 不经闸门——首片若早于注入跑掉，链即在途推进（首帧前可能已排若干片）。两口径不可直比，消费方必须以 idle_gate.queuedAtRelease/pendingAtRelease 作金丝雀核对口径（queued≥1 且 pendingAtRelease=全量 → 冻结口径；queued=0 且 pendingAtRelease<全量 → 在途口径）再作 A/B 比较；不闸则首帧时刻高亮可能已完成、指标恒 ~0（本机 4k 空闲高亮 ~1s 跑完且切入编排的转换间隙里批次照样推进）；45s 总闸 timeout 样本不进中位数，剔除轮号见 viewport_hl_ms_timeout_excluded_rounds',
                 wrap_cache_hit: '第 3 次切入后 enterSourceMode 同步返回时刻 _srcWrapCache 命中 0/1；当前实现 _srcStop 退出清缓存恒 0（占位）——Task 4 落地 __wrapCacheState() 后 probe.readWrapCache 切换消费',
                 wrap_measure_note: '折行全文测量耗时远超计划预期（实测 bench-500 ~21s、guide ~23s、bench-4000 45s 上限内不完成即 >10min 量级）——4k 的 wrap_measure_ms 记 -1、wrap_cache_hit 无法在有界停留内翻面，Task 4 的 0→1 翻面以 guide 级文档为准',
                 anchor: '切入前光标置文档末尾+页面滚到底（可视区锚定文档尾部代码块）',
@@ -747,7 +771,7 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined'
             rounds_detail: rounds
         };
         fs.mkdirSync(path.dirname(opts.out), { recursive: true });
-        fs.writeFileSync(opts.out, JSON.stringify(out, null, 2) + '\n', 'utf8');
+        writeJsonAtomic(opts.out, JSON.stringify(out, null, 2) + '\n');
         process.stdout.write('已写入: ' + opts.out + '\n');
         process.stdout.write([
             '中位数(共 ' + opts.rounds + ' 轮):',
@@ -804,7 +828,7 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined'
         const round = await driveRound(opts);
         if (!round || round.switch_ms === null || round.viewport_hl_ms === null)
             fail('第 ' + opts.round + ' 轮测量不完整: ' + JSON.stringify(round));
-        fs.writeFileSync(opts.out, JSON.stringify(round, null, 2) + '\n', 'utf8');
+        writeJsonAtomic(opts.out, JSON.stringify(round, null, 2) + '\n');
         process.stdout.write(JSON.stringify({
             round: opts.round,
             switch_ms: round.switch_ms,
