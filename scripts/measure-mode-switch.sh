@@ -7,9 +7,9 @@
 #   viewport_hl_ms  源码首帧 → 视口内全部代码块 .hljs-* 高亮完成的时延
 #                   （探针以「空闲闸门」挂起高亮批次至切入武装时刻，保证切入时
 #                   高亮尚在途——本机 4k 加载段高亮 ~2s 跑完，不闸则恒 ~0）
-#   wrap_cache_hit  第 3 次切入源码时刻折行缓存命中（0/1；当前实现恒 0 占位，
-#                   Task 4 落地 __wrapCacheState() 后由探针切换消费；4k 折行
-#                   全文测量 >10min 不可能在有界停留内完成，翻面以 guide 为准）
+#   wrap_cache_hit  第 3 次切入源码时刻折行缓存命中（0/1，1=命中；探针优先消费
+#                   editor.js 的 window.__wrapCacheState()，Task 4 起跨会话缓存
+#                   保留，未编辑往返应为 1；4k 折行测量 >10min，翻面以 guide 为准）
 #
 # 用法:
 #   scripts/measure-mode-switch.sh <md文件> <输出目录> [--rounds N] [--query 查询词]
