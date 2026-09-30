@@ -28,6 +28,29 @@ function countLowlight() {
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// target 元素起点之前、parent 子树内累计的文本字符数（块内相对偏移）
+function textOffsetBefore(parent, target) {
+  let off = 0;
+  function visit(node) {
+    if (node === target) return true;
+    if (node.nodeType === 3) { off += node.nodeValue.length; return false; }
+    if (node.nodeType === 1) {
+      for (let c = node.firstChild; c; c = c.nextSibling) {
+        if (visit(c)) return true;
+      }
+    }
+    return false;
+  }
+  visit(parent);
+  return off;
+}
+
+// 取 vendored plugin 实例（key 以 asyncLowlight 开头，见 AsyncLowlightPlugin）
+function findAsyncPlugin() {
+  const ed = window.editorApi.editor;
+  return ed.state.plugins.find(p => p.key.indexOf('asyncLowlight') === 0);
+}
 // 等空闲批次跑完：56 块以内 6 块/批 × setTimeout(16ms) 级别，留足余量
 async function waitIdleBlocks(n, timeout = 4000) {
   const t0 = Date.now();
@@ -95,5 +118,52 @@ describe('vendored 异步代码块高亮', () => {
     expect(hlCalls).toBeLessThanOrEqual(1);   // 内容回滚的块重算 ≤1，其余缓存
     const firstCode = document.querySelector('pre code');
     expect(firstCode.querySelector('.hljs-keyword')).toBeTruthy();
+  });
+
+  it('普通文本击键走 map 快路径：代码块装饰保位不重建', async () => {
+    const ed = window.editorApi.editor;
+    const plugin = findAsyncPlugin();
+    expect(plugin).toBeTruthy();
+    // 快路径前提：空闲批次已算完（pending 清空——非空时必须走慢路径重收集）
+    const t0 = Date.now();
+    while (plugin.getState(ed.state).pending.length && Date.now() - t0 < 4000) {
+      await sleep(40);
+    }
+    expect(plugin.getState(ed.state).pending.length).toBe(0);
+
+    countLowlight();
+    const before = plugin.getState(ed.state);
+    const beforeDecos = before.decos.find().map(d => [d.from, d.to])
+      .sort((a, b) => a[0] - b[0]);
+    expect(beforeDecos.length).toBeGreaterThan(0);
+
+    // 击键前记录第一个代码块内首个高亮 span 的块内字符偏移
+    const codeEl = document.querySelector('pre code');
+    const span = codeEl.querySelector('.hljs-keyword');
+    expect(span).toBeTruthy();
+    const offBefore = textOffsetBefore(codeEl, span);
+
+    // 在代码块之前插入普通段落并击键（两个事务均与全部代码块零相交）
+    ed.chain().insertContentAt(0, '<p>h</p>').run();
+    ed.chain().setTextSelection(2).insertContent('i').run();
+
+    const after = plugin.getState(ed.state);
+    // a) decoration 数量一致，且每条整体平移量恒定（DecorationSet.map 保位）
+    const afterDecos = after.decos.find().map(d => [d.from, d.to])
+      .sort((a, b) => a[0] - b[0]);
+    expect(afterDecos.length).toBe(beforeDecos.length);
+    const delta = afterDecos[0][0] - beforeDecos[0][0];
+    expect(delta).toBeGreaterThan(0);   // 段落(2) + 击键(1) 均插在块之前
+    for (let i = 0; i < beforeDecos.length; i++) {
+      expect(afterDecos[i][0] - beforeDecos[i][0]).toBe(delta);
+      expect(afterDecos[i][1] - beforeDecos[i][1]).toBe(delta);
+    }
+    // b) 高亮零调用；epoch 不变（未经慢路径重建——慢路径 docChanged 会 epoch+1）
+    expect(hlCalls + autoCalls).toBe(0);
+    expect(after.epoch).toBe(before.epoch);
+    // c) DOM 上高亮 span 仍在，块内字符偏移不变（映射后落在原字符上）
+    const span2 = document.querySelector('pre code .hljs-keyword');
+    expect(span2).toBeTruthy();
+    expect(textOffsetBefore(span2.closest('code'), span2)).toBe(offBefore);
   });
 });

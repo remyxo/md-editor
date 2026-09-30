@@ -11,7 +11,8 @@
 //   1. init 不同步高亮：块收集入 pending，空闲分批补算（文档顺序，首屏在顶部
 //      先算）；requestIdleCallback 不可用时降级 setTimeout
 //   2. apply 增量化：docChanged 只同步重算「与 step 相交」的块，其余块经
-//      高亮结果缓存（语言+文本 → token 序列）命中复用；未算过的块异步补
+//      高亮结果缓存（语言+文本 → token 序列）命中复用；未算过的块异步补；
+//      零块相交且无待算块的编辑（普通文字击键）走 DecorationSet.map 快路径
 //   3. 批次经 tr.setMeta(pluginKey) 合入 state；文档变化以 epoch 计数作废在途批次
 //   4. 语言可用性判定：上游额外查 highlight.js core 的 getLanguage（供手动
 //      register 场景），本项目 lowlight 为自建实例，listLanguages/registered 足够
@@ -213,6 +214,34 @@
                         // 差异点 2：只同步重算与 step 相交的块；其余缓存命中或入 pending
                         var steps = tr.steps;
                         var blocks = findBlocks(tr.doc, name);
+                        // 先判定零块相交（普通文字击键——step 与全部块无交集），
+                        // 命中则走 map 快路径，跳过逐块缓存键拼接与全量重建
+                        var touchedPos = [];
+                        for (var i = 0; i < blocks.length; i++) {
+                            var b = blocks[i];
+                            var bFrom = b.pos, bTo = b.pos + b.node.nodeSize;
+                            for (var s = 0; s < steps.length; s++) {
+                                var st = steps[s];
+                                if (st.from === undefined || st.to === undefined) continue;
+                                // 部分相交即受影响（块内文本编辑 / 属性变更 / 整块替换）
+                                if (st.from < bTo && st.to > bFrom) {
+                                    touchedPos.push(b.pos);
+                                    break;
+                                }
+                            }
+                        }
+                        if (touchedPos.length === 0 && state.pending.length === 0) {
+                            // 快路径：无块相交且无待算块——既有装饰随事务平移（借空事务分支先例）
+                            // pending 为空是前提：pending 块的 pos 是旧 doc 坐标，需重定位，
+                            // 有 pending 时走慢路径（findBlocks 已重收集）保证正确性
+                            return {
+                                decos: state.decos.map(tr.mapping, tr.doc),
+                                pending: [],
+                                epoch: state.epoch,
+                                name: name, lowlight: lowlight,
+                                defaultLanguage: defaultLanguage
+                            };
+                        }
                         var decos = [];
                         var pending = [];
                         for (var i = 0; i < blocks.length; i++) {
