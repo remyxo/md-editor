@@ -29,11 +29,10 @@
 //                   版）首片后走 setTimeout 不经闸门，首片早于注入跑掉则链在途
 //                   推进——口径以 queuedAtRelease/pendingAtRelease 金丝雀核对。
 //   wrap_cache_hit  第 3 次切入源码后、enterSourceMode 同步返回时刻
-//                   _srcWrapCache 是否命中当前文本（0/1）。
-//                   ★ 演进点：当前实现 _srcStop 退出即清缓存，本指标恒为 0
-//                   （占位基线）；Task 4 落地 window.__wrapCacheState() 后，
-//                   readWrapCache() 改为优先消费该只读探针——本文件内唯一
-//                   需要随 Task 4 调整的位置（搜索「演进点」）。
+//                   折行缓存是否命中当前文本（0/1）。★ 演进点（Task 4 已落地）：
+//                   readWrapCache() 优先消费 editor.js 的 window.__wrapCacheState()
+//                   只读探针（hit = 当前文本 + 当前端量指纹精确命中）；Task 4 起
+//                   _srcStop 不再清缓存，未编辑往返本指标应为 1。
 //
 // 测量锚定：切入源码前把光标置文档末尾（源码视图随光标所在标题滚动到文末，
 // 可视区代码块 = 文档尾部块，文档顺序的空闲高亮批次最后才轮到——最大化
@@ -102,11 +101,22 @@
             for (var i = 0; i < q.length; i++) gate.runQueued(q[i]);
         },
 
-        // 折行缓存只读探测。★演进点：Task 4 落地 window.__wrapCacheState() 后，
-        // 此处改为「if (typeof window.__wrapCacheState === 'function')
-        // return window.__wrapCacheState();」，当前先用 _srcWrapCache 直读 +
-        // DOM/textarea 对齐判定兜底（_srcWrapCache 是 editorApi 对象属性，可直接读）。
+        // 折行缓存只读探测。★演进点（Task 4 已落地）：优先消费 editor.js 暴露的
+        // window.__wrapCacheState() 只读探针（返回 {entries, hit}，hit = 当前文本 +
+        // 当前端量指纹精确命中）；本探针诊断字段做兼容映射——present = 有条目
+        //（周期 2 等回填的判据），pending 直读 editorApi 轻量标志字段。旧
+        // _srcWrapCache 单条直读路径保留为旧版二进制兜底（其 wrapPoints 诊断字段
+        // 新路径不再有等价物，从略）。
         readWrapCache: function () {
+            if (typeof window.__wrapCacheState === 'function') {
+                var st = window.__wrapCacheState();
+                return {
+                    entries: st.entries,
+                    present: st.entries > 0,
+                    hit: !!st.hit,
+                    pending: !!api._srcWrapPending
+                };
+            }
             var sv = document.getElementById('source-view');
             var c = api._srcWrapCache;
             return {
@@ -636,7 +646,7 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined'
             }, EXIT_TIMEOUT_MS, '切出源码首帧（周期 2）');
 
             // === 周期 3：带搜索状态第 3 次切入——enterSourceMode 返回时刻读折行缓存
-            //     命中（wrap_cache_hit；当前实现退出即清缓存恒 0，Task 4 后应为 1） ===
+            //     命中（wrap_cache_hit；Task 4 起跨会话缓存保留，未编辑往返应为 1） ===
             await cdp.evaluate('window.__msProbe.armEnter({measureHl:false})');
             await sendKey(displayNum, authFile);
             await pollGuard(async () => {
@@ -761,7 +771,7 @@ if (typeof process !== 'undefined' && typeof require !== 'undefined'
             protocol: {
                 switch_ms: '切入(getContent 被调)→源码首帧 + 退出(exitSourceModeOrGetMd 被调)→WYSIWYG 首帧；不含源码停留；不含 C++ runJavaScript 派发开销(~15ms，见 detail.cpp_timing 交叉核对)',
                 viewport_hl_ms: '源码首帧→视口内全部 div.code-block pre code 含 .hljs-* 后代（或 asyncLowlight pending 归零兜底）；首帧=enterSourceMode 返回后首个 rAF；空闲闸门（只拦 requestIdleCallback）双口径：旧调度每批经 ric 重入，注入后链全量冻结（首帧时刻全部待算块在途）；新调度（视口优先版，2026-09-30 起）首片经 ric、后续片走 setTimeout 不经闸门——首片若早于注入跑掉，链即在途推进（首帧前可能已排若干片）。两口径不可直比，消费方必须以 idle_gate.queuedAtRelease/pendingAtRelease 作金丝雀核对口径（queued≥1 且 pendingAtRelease=全量 → 冻结口径；queued=0 且 pendingAtRelease<全量 → 在途口径）再作 A/B 比较；不闸则首帧时刻高亮可能已完成、指标恒 ~0（本机 4k 空闲高亮 ~1s 跑完且切入编排的转换间隙里批次照样推进）；45s 总闸 timeout 样本不进中位数，剔除轮号见 viewport_hl_ms_timeout_excluded_rounds',
-                wrap_cache_hit: '第 3 次切入后 enterSourceMode 同步返回时刻 _srcWrapCache 命中 0/1；当前实现 _srcStop 退出清缓存恒 0（占位）——Task 4 落地 __wrapCacheState() 后 probe.readWrapCache 切换消费',
+                wrap_cache_hit: '第 3 次切入后 enterSourceMode 同步返回时刻折行缓存命中 0/1；Task 4 起 probe.readWrapCache 优先消费 window.__wrapCacheState()（hit = 当前文本 + 当前端量指纹精确命中，跨会话缓存 _srcStop 不清），未编辑往返应为 1',
                 wrap_measure_note: '折行全文测量耗时远超计划预期（实测 bench-500 ~21s、guide ~23s、bench-4000 45s 上限内不完成即 >10min 量级）——4k 的 wrap_measure_ms 记 -1、wrap_cache_hit 无法在有界停留内翻面，Task 4 的 0→1 翻面以 guide 级文档为准',
                 anchor: '切入前光标置文档末尾+页面滚到底（可视区锚定文档尾部代码块）',
                 trigger: 'XTEST 合成 Ctrl+\\ → Qt QAction 快捷键 → MainWindow::onToggleSourceMode 真实编排',

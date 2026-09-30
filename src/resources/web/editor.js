@@ -1295,6 +1295,11 @@ window.editorApi = {
     _warmTries: 0,           // 预热因编辑器聚焦而推迟的重试次数
     _onSourceInput: null,
     _srcSearch: null,          // 源码模式搜索状态 {query,caseSensitive,regex,wholeWord,matches,current}
+    // 折行点缓存（跨源码会话保留）：Map<key, {text, points}>，key = 度量指纹 +
+    // '\x00' + 文本指纹（见 _srcWrapCacheKey），LRU 上限 _SRC_WRAP_CACHE_MAX。
+    // _srcStop 不清空——痛点②「看一眼源码再切回也要全文重测」（guide 档实测
+    // ~23s、4k 档 O(行²) >10min）；度量/文本变化由 key 自然失效
+    _srcWrapCacheMap: null,
 
     // 源码区随内容撑高：textarea 不再内部滚动（滚动条停在 textarea 右缘、距窗口右缘
     // ~10%），而是撑到内容高度让页面滚动——滚动条贴窗口右缘，与 WYSIWYG 一致。
@@ -2854,8 +2859,10 @@ window.editorApi = {
             caretDocY = sv.getBoundingClientRect().top + window.scrollY + padTop +
                 (m.wrap.scrollHeight - padTop - padBottom);
         } else {
-            // 兜底：无测量层时按行号估算（行高 × 行号，仅作近似滚动）
-            var pts = this._srcWrapCache ? this._srcWrapCache.points : null;
+            // 兜底：无测量层时按行号估算（行高 × 行号，仅作近似滚动）——精确命中
+            // 或同度量旧条目均可作估算来源（跨会话缓存保留后来源更稳）
+            var cacheEntry = this._srcWrapCacheLookup(sv.value) || this._srcWrapCacheApprox();
+            var pts = cacheEntry ? cacheEntry.points : null;
             if (pts && pts.length) {
                 var li = 0;
                 while (li < pts.length - 1 && pts[li + 1] <= mk.from) li++;
@@ -2915,6 +2922,100 @@ window.editorApi = {
         return { wrap: mt, width: wt, lh: parseFloat(cs.lineHeight),
                  padTop: parseFloat(cs.paddingTop), padLeft: parseFloat(cs.paddingLeft) };
     },
+    // === 折行点缓存（跨源码会话保留，Map + LRU） ===
+    // key = 度量指纹 + '\x00' + 文本指纹（length + FNV-1a 32 位哈希）。折行结果由
+    // 「字体 + 可用宽度 + 缩放」唯一决定，任一变化旧点即不可用，故这些量全部入
+    // 指纹；Map.get 后还须 text 全等比对才命中（哈希碰撞防御——碰撞时宁可 miss
+    // 重测，不可用错折行点）。
+    _SRC_WRAP_CACHE_MAX: 4,   // LRU 上限：多文档/多标签往返各留一条
+
+    // 度量指纹：取 _srcEnsureMeasureTa 同步进测量层的同一份计算样式
+    //（fontFamily/fontSize/width——width 即 textarea 布局宽度，随视口宽变化）与
+    // window 现值（视口宽/DPR/zoom）拼接。注意 cs.width 是 border-box 宽
+    //（#source-view 为 box-sizing:border-box + padding: 40px 60px），折行决定量
+    // 是内容宽 = 宽 − 水平 padding − 水平 border，三者须一并入指纹；font-weight/
+    // style 影响字形宽度（合成粗/斜体改折行）同样入指纹。
+    // 失效依赖：QSS 主题若改编辑区字号 → fontSize 变 → 指纹变 → 自动 miss，
+    // 无需显式钩子；FixedFont 族名跨平台差异天然入 key
+    //（docs/cross-platform-monospace-font.md）。
+    _srcWrapCacheMfp: function() {
+        var fam = '', size = '', w = '', extras = '';
+        var sv = document.getElementById('source-view');
+        if (sv) {
+            try {
+                var cs = window.getComputedStyle(sv);
+                fam = cs.fontFamily || '';
+                size = cs.fontSize || '';
+                w = cs.width || '';
+                extras = [cs.paddingLeft, cs.paddingRight,
+                          cs.borderLeftWidth, cs.borderRightWidth,
+                          cs.fontWeight, cs.fontStyle].join(',');
+            } catch (e) { /* 样式不可读：留空参与指纹（两侧同为空仍一致可比） */ }
+        }
+        var vv = window.visualViewport;
+        return [fam, size, w, extras, window.innerWidth || 0,
+                window.devicePixelRatio || 1, vv ? (vv.scale || 1) : 1].join('\x1f');
+    },
+    // FNV-1a 32 位（仓库无现成轻量 hash，自实现纯函数不引依赖）：基数 0x811c9dc5、
+    // 素数 0x01000193 以移位和实现（>>>0 归一 mod 2^32，各移位项经 int32 截断后
+    // double 求和精确，等价于乘法取模）
+    _srcFnv1a32: function(s) {
+        var h = 0x811c9dc5;
+        for (var i = 0; i < s.length; i++) {
+            h ^= s.charCodeAt(i);
+            h = (h + (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+        }
+        return h >>> 0;
+    },
+    _srcWrapCacheKey: function(text, mfp) {
+        // '\x00' 分隔度量与文本两部：近似回退时按前缀比对「同度量」条目。mfp 可
+        // 显式传入（测量结果按起点锁存的指纹建 key，见 _srcWrapCacheCommit）
+        return (mfp === undefined || mfp === null ? this._srcWrapCacheMfp() : mfp)
+            + '\x00' + text.length + ':' + this._srcFnv1a32(text);
+    },
+    // 写入 + LRU 淘汰：重写视为最新（删了重插，Map 迭代序 = 插入序，首项即最旧）
+    _srcWrapCacheSet: function(text, points, mfp) {
+        if (!this._srcWrapCacheMap) this._srcWrapCacheMap = new Map();
+        var key = this._srcWrapCacheKey(text, mfp);
+        if (this._srcWrapCacheMap.has(key)) this._srcWrapCacheMap.delete(key);
+        this._srcWrapCacheMap.set(key, { text: text, points: points });
+        while (this._srcWrapCacheMap.size > this._SRC_WRAP_CACHE_MAX) {
+            this._srcWrapCacheMap.delete(this._srcWrapCacheMap.keys().next().value);
+        }
+    },
+    // 测量结果提交（防测量窗内度量漂移）：起点锁存的度量指纹与当前一致才入缓存。
+    // 测量层样式在 _srcEnsureMeasureTa 起点锁存（inline px 值），测量窗（guide 档
+    // ~23s）内窗口缩放/字号变化时，测得的是旧度量下的折行点——若按完成时刻的
+    // 新指纹入缓存，后续精确命中会拿到错位点且无自愈；不一致即丢弃本次结果
+    //（不入缓存返回 false），调用方照常清 pending 并重渲染，lookup miss 自然
+    // 走按新度量的重测。
+    _srcWrapCacheCommit: function(text, points, mfp0) {
+        if (this._srcWrapCacheMfp() !== mfp0) return false;
+        this._srcWrapCacheSet(text, points, mfp0);
+        return true;
+    },
+    // 精确查找：key 命中且 text 全等才返回条目（并触碰 LRU 移到最新端）
+    _srcWrapCacheLookup: function(text) {
+        if (!this._srcWrapCacheMap) return null;
+        var key = this._srcWrapCacheKey(text);
+        var e = this._srcWrapCacheMap.get(key);
+        if (!e || e.text !== text) return null;
+        this._srcWrapCacheMap.delete(key);
+        this._srcWrapCacheMap.set(key, e);
+        return e;
+    },
+    // 同度量指纹下「文本已变」的最近条目（Map 尾部 = 最近使用）：仅供文本编辑期间
+    // 的近似渲染与滚动估算（旧行为等价物）；跨度度（字号/宽度变了）不回退——
+    // 错宽度的旧折行点会让高亮明显错位，宁可空着等重测
+    _srcWrapCacheApprox: function() {
+        if (!this._srcWrapCacheMap) return null;
+        var prefix = this._srcWrapCacheMfp() + '\x00';
+        var found = null;
+        this._srcWrapCacheMap.forEach(function(e, k) {
+            if (k.lastIndexOf(prefix, 0) === 0) found = e;
+        });
+        return found;
+    },
     // 计算 textarea 实际折行点（各行行首字符偏移），异步分块执行。scrollHeight 每次
     // 读取都触发重排，大文档无缓存时的首次测量若同步跑会阻塞模式切换数秒，故：
     //   1) 每行在上限 [上一行行首, 上限] 内二分找「行数 ≥ line」的第一个前缀长度；
@@ -2930,6 +3031,9 @@ window.editorApi = {
         this._srcWrapPending = text;
         var m = this._srcEnsureMeasureTa();
         if (!m) return;
+        // 度量指纹起点锁存（测量层样式同在此刻锁存为 inline px）：完成时经
+        // _srcWrapCacheCommit 比对，测量窗内度量漂移即丢弃结果（不入缓存）
+        var mfp0 = this._srcWrapCacheMfp();
         var lh = m.lh;
         var wcs = window.getComputedStyle(m.wrap);
         var pad = parseFloat(wcs.paddingTop) + parseFloat(wcs.paddingBottom);
@@ -2939,7 +3043,7 @@ window.editorApi = {
         };
         var total = linesOf(text);
         if (total <= 0) {
-            this._srcWrapCache = { text: text, points: [0] };
+            this._srcWrapCacheCommit(text, [0], mfp0);
             this._srcWrapPending = null;
             return;
         }
@@ -2971,7 +3075,9 @@ window.editorApi = {
                 for (var i = 0; i < pts.length; i++) {
                     if (i === 0 || pts[i] !== pts[i - 1]) out.push(pts[i]);
                 }
-                self._srcWrapCache = { text: text, points: out };
+                // 度量漂移被丢弃时此处 lookup miss → 自动按新度量重测（自愈）；
+                // 正常提交则立即以缓存点渲染
+                self._srcWrapCacheCommit(text, out, mfp0);
                 self._srcWrapPending = null;
                 self._srcRenderHighlights();
                 return;
@@ -3022,16 +3128,19 @@ window.editorApi = {
         }
         return rects;
     },
-    // 取折行点（按文本缓存）：文本未变直接命中；变了先用旧值近似渲染（响应即时编辑），
-    // 并安排延迟重测刷新，避免大文档每次按键都阻塞。
+    // 取折行点（按 key 缓存，跨源码会话保留）：当前文本 + 当前端量指纹精确命中
+    // 直接返回；文本已变但度量未变先用同度量旧值近似渲染（响应即时编辑）并安排
+    // 延迟重测刷新；无可用缓存（首测或度量已变）发起异步分块测量，先返回 null。
     _srcGetWrapPoints: function() {
         var sv = document.getElementById('source-view');
         if (!sv) return null;
         var text = sv.value;
-        if (this._srcWrapCache && this._srcWrapCache.text === text) return this._srcWrapCache.points;
-        if (this._srcWrapCache) {
+        var entry = this._srcWrapCacheLookup(text);
+        if (entry) return entry.points;
+        var approx = this._srcWrapCacheApprox();
+        if (approx) {
             this._srcScheduleWrapRemeasure();
-            return this._srcWrapCache.points;
+            return approx.points;
         }
         // 无缓存：发起异步分块测量，先返回 null（渲染跳过、textarea 保持正常显示），
         // 测量完成后回填缓存并自动刷新高亮——大文档进源码模式不再同步阻塞数秒
@@ -3046,7 +3155,7 @@ window.editorApi = {
             var sv = document.getElementById('source-view');
             if (!sv || !self._srcSearch || !self._srcSearch.query) return;
             var text = sv.value;
-            if (text !== (self._srcWrapCache ? self._srcWrapCache.text : '')) {
+            if (!self._srcWrapCacheLookup(text)) {
                 self._srcEnsureAsyncWrapPoints(text);
             }
         }, 150);
@@ -3168,9 +3277,10 @@ window.editorApi = {
     },
     _srcStop: function() {
         this._srcSearch = null;
-        // 清空折行缓存与延迟重测定时器，并递增代号作废进行中的异步分块测量
-        // （共享测量层，残留任务若继续跑会在下次搜索时误刷新）
-        this._srcWrapCache = null;
+        // 折行缓存（_srcWrapCacheMap）跨源码会话保留，此处不清：重进是同一文本
+        // 同一度量，命中即免全文重测；度量/文本变化由 key 指纹自然失效。仍需清
+        // 延迟重测定时器并递增代号作废进行中的异步分块测量（共享测量层，残留
+        // 任务若继续跑会在下次搜索时误刷新）
         this._srcWrapPending = null;
         if (this._srcWrapGen) this._srcWrapGen++;
         if (this._srcWrapTimer) { clearTimeout(this._srcWrapTimer); this._srcWrapTimer = null; }
@@ -5115,6 +5225,20 @@ window.editorApi = {
             if (ed) ed.view.focus();
         }
     }
+};
+
+// 折行缓存只读探针（切换性能基线 scripts/mode-switch-probe.js 消费）：返回
+// { entries, hit }——entries 为 LRU Map 当前条目数；hit 为「当前 #source-view
+// 文本 + 当前度量指纹」是否精确命中缓存。只读语义（lookup 会 refresh LRU 序，
+// 无副作用），不暴露内部 Map/条目对象（防外部持有条目后绕过 LRU 淘汰与全等校验）。
+window.__wrapCacheState = function() {
+    var api = window.editorApi;
+    var sv = document.getElementById('source-view');
+    var hit = !!(sv && api && api._srcWrapCacheLookup && api._srcWrapCacheLookup(sv.value));
+    return {
+        entries: (api && api._srcWrapCacheMap) ? api._srcWrapCacheMap.size : 0,
+        hit: hit
+    };
 };
 
 // DOM 加载完成后初始化
