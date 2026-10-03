@@ -160,17 +160,19 @@ static bool isHrTagLine(const QString &line)
     return re.match(line).hasMatch();
 }
 
-// 顶层围栏行判定（CommonMark 全族）：≤3 空格缩进 + ≥3 个连续同种围栏字符
-// （反引号或波浪号）。此前只认零缩进反引号围栏，~~~ 波浪围栏与合法缩进围栏
-// 整族漏保护——围栏行与内容行落入 BRMARKER 段落逻辑被注入 <br data-brk>，
+// 围栏行判定（CommonMark 全族，任意缩进）：≥3 个连续同种围栏字符（反引号或
+// 波浪号），前导任意空格。此前只认零缩进反引号围栏，~~~ 波浪围栏与合法缩进
+// 围栏整族漏保护——围栏行与内容行落入 BRMARKER 段落逻辑被注入 <br data-brk>，
 // fromHtml 剥离后代码行无分隔拼接、语言信息串被打碎。
+// 缩进上限（≤3 或任意）由调用方按上下文决定：顶层缩进 ≥4 是缩进代码块
+//（CommonMark ex.134），列表项内容缩进基线 +3 内才是合法围栏列（坑 4）。
 // 返回 false = 非围栏行；true 时 *indent/*run/*ch 给出缩进列、围栏长度与字符。
-static bool isTopLevelFenceLine(const QString &line, int *indent, int *run, QChar *ch)
+static bool isFenceLineAnyIndent(const QString &line, int *indent, int *run, QChar *ch)
 {
     int i = 0;
     while (i < line.size() && line[i] == QLatin1Char(' '))
         ++i;
-    if (i > 3 || i >= line.size())
+    if (i >= line.size())
         return false;
     const QChar c = line[i];
     if (c != QLatin1Char('`') && c != QLatin1Char('~'))
@@ -184,6 +186,30 @@ static bool isTopLevelFenceLine(const QString &line, int *indent, int *run, QCha
     *run = r;
     *ch = c;
     return true;
+}
+
+// 顶层围栏行：≤3 空格缩进（CommonMark 顶层围栏列）。
+static bool isTopLevelFenceLine(const QString &line, int *indent, int *run, QChar *ch)
+{
+    return isFenceLineAnyIndent(line, indent, run, ch) && *indent <= 3;
+}
+
+// 列表项行的内容缩进列（标记结束后的首内容列，fromHtml 序列化口径：
+// 无序 "- " 宽 2、有序 "N. " 宽 = 数字位数 + 2，子级缩进 = 父项内容列）。
+// toHtml 的坑 4 修复用它近似「扫描器见到围栏时的列表内容缩进基线」：fromHtml
+// 对列表项内代码块输出的围栏缩进恒等于所属项的内容列（实测 8sp/3sp 形态）。
+// 非列表项行返回 -1。
+static int listItemContentColumn(const QString &line)
+{
+    static const QRegularExpression re(
+        "^(\\s*)(?:([-*+])\\s+(\\S)|(\\d{1,9})[.)]\\s+(\\S))");
+    const auto m = re.match(line);
+    if (!m.hasMatch())
+        return -1;
+    const int markerStart = m.captured(1).size();
+    if (!m.captured(2).isEmpty())
+        return markerStart + 2;              // "- x"：标记 "- " 宽 2
+    return markerStart + m.captured(4).size() + 2;   // "10. x"：数字位 + ". "
 }
 
 // md 行为顶层代码围栏行时更新围栏状态（fromHtml 产物恒为反引号围栏）。
@@ -2105,6 +2131,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     QString processed;
     int codeFenceLen = 0; // 当前代码块开启围栏的字符数（0 = 不在代码块；``` 或 ~~~）
     QChar codeFenceChar = QLatin1Char('`');   // 开启围栏的字符（闭合须同字符，CommonMark）
+    int codeFenceOpenIndent = 0; // 开启围栏的缩进列（坑 4：缩进围栏的闭合判定基准）
+    int listCtxIndent = -1;  // 最近列表项的内容缩进列（-1 = 无列表上下文，坑 4 认领门）
     int tlFenceIndent = 0, tlFenceRun = 0;    // isTopLevelFenceLine 出参（当前行）
     QChar tlFenceChar = QLatin1Char('`');
     int bqCodeFenceLen = 0; // 当前块引用内代码围栏长度（0 = 不在块引用代码块）
@@ -2177,6 +2205,26 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
 
         // 块引用内代码围栏长度（> ``` / > ~~~），0 表示非块引用围栏行
         int bqFenceLen = blockquoteCodeFenceLen(line);
+
+        // 列表内容缩进基线（坑 4）：扫描器无容器栈，用「最近列表项的内容列」
+        // 近似「本行所处列表项的内容缩进」。fromHtml 对列表项内代码块输出的
+        // 围栏缩进恒等于该列。列表项行刷新基线；空白行保持（松散列表分隔）；
+        // 缩进 ≥ 基线的行视为项内容续行保持；其余（顶层/更浅缩进的非列表行）
+        // 重置 -1（列表已终结——错误保留旧基线会把顶层缩进代码块误认成围栏）。
+        // 仅块外维护：围栏/块引用代码/公式内容行不是列表结构。
+        if (codeFenceLen == 0 && bqCodeFenceLen == 0 && bqFenceLen == 0
+            && !inMathBlock) {
+            const int contentCol = listItemContentColumn(line);
+            if (contentCol >= 0) {
+                listCtxIndent = contentCol;
+            } else if (!line.trimmed().isEmpty()) {
+                int ws = 0;
+                while (ws < line.size() && line[ws] == QLatin1Char(' '))
+                    ++ws;
+                if (listCtxIndent < 0 || ws < listCtxIndent)
+                    listCtxIndent = -1;
+            }
+        }
 
         // 表格区域状态机（GFM Tables 扩展：表格在「首个空行或其他块级结构」处结束）。
         // Qt setMarkdown 会把紧随表格行的纯文本行惰性延续为数据行（GFM 一致），却会
@@ -2262,8 +2310,24 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             lastBlock = BT_NONE;
         } else if (inMathBlock) {
             mathLines << line;
-        } else if (isTopLevelFenceLine(line, &tlFenceIndent, &tlFenceRun, &tlFenceChar)) {
-            // 顶层围栏行（``` / ~~~，≤3 空格缩进，CommonMark 全族）
+        } else if (isTopLevelFenceLine(line, &tlFenceIndent, &tlFenceRun, &tlFenceChar)
+                   || (isFenceLineAnyIndent(line, &tlFenceIndent, &tlFenceRun,
+                                            &tlFenceChar)
+                       && ((codeFenceLen > 0
+                            && tlFenceIndent <= codeFenceOpenIndent)
+                           || (codeFenceLen == 0 && bqCodeFenceLen == 0
+                               && tlFenceIndent >= 4 && listCtxIndent >= 0
+                               && tlFenceIndent <= listCtxIndent + 3)))) {
+            // 顶层围栏行（``` / ~~~，≤3 空格缩进，CommonMark 全族）；
+            // 坑 4（读写不对称）扩展：fromHtml 对列表项内代码块按列表内容缩进
+            // 输出围栏（≥4sp，实测 8sp/3sp 形态），此前 isTopLevelFenceLine 的
+            // ≤3 规则拒绝认领——写得出读不回，二次解析（源码模式导出同一路径）
+            // 时该围栏的 col-0 闭合被误判为新块开栏，吞掉区间内整节尾部成无语言
+            // <pre> 字面量。现按 CommonMark 缩进围栏语义配对：
+            //   开栏：≥4sp 仅当处于列表内容缩进基线 +3 内（列表项子块的合法
+            //        围栏列；顶层 ≥4sp 是缩进代码块，ex.134，不认领）
+            //   闭栏：缩进 ≤ 开栏缩进（fromHtml 闭合围栏有 col-0 懒形态与
+            //        开栏同缩进两种产出路径，均在 ≤ 内）
             if (codeFenceLen == 0) {
                 // 开启新代码块：提取语言（信息串为围栏后的文本），整块用占位符保护，
                 // 内容不经 setMarkdown（其围栏解析同样朴素，嵌套围栏会二次错乱）。
@@ -2274,12 +2338,20 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                     line.mid(tlFenceIndent + tlFenceRun).trimmed());
                 codeFenceLen = tlFenceRun;
                 codeFenceChar = tlFenceChar;
+                codeFenceOpenIndent = tlFenceIndent;
                 codeContent.clear();
                 // 占位符序号须避开源文档/已产出内容中的字面同串（如 audit 文档
                 // 里示例的 `ZZCB0ZZ`），否则还原时用户文本被误替换。串存 codeBlockPhs，
                 // 与 codeBlocks 一一对应，还原时按存储值回填。
                 codeBlockPhs << collisionFreePlaceholder(collisions,
                     "CB", codeBlocks.size());
+                // 坑 4：缩进围栏的占位符与顶层围栏同款顶格发出（不按开栏缩进前缀
+                // 发出——设计偏离记录：实测 md4c 对 ≥4sp 文本行不做列表项懒延续，
+                // 缩进前缀形态（无论是否空行隔离）产出的 <pre> 落位（<ol> 直接
+                // 子块 / 行内粘连）fromHtml 均无法正确序列化；顶格发出使占位符
+                // 成为列表项段落的懒延续，还原的 <pre> 粘连进 <li>，TipTap 解析
+                // 时提升为项内 codeBlock 块、fromHtml 按列表内容缩进输出围栏——
+                // 即回到 fromHtml 自产的合法缩进围栏形态，读写对称、往返收敛）。
                 processed += codeBlockPhs.last() + "\n";
             } else if (tlFenceChar == codeFenceChar && tlFenceRun >= codeFenceLen
                        && line.mid(tlFenceIndent + tlFenceRun).trimmed().isEmpty()) {
@@ -2291,6 +2363,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                     : QStringLiteral("<code class=\"language-") + escapeHtmlAttr(codeFenceLang) + "\">";
                 codeBlocks << "<pre>" + codeOpen + content.toHtmlEscaped() + "</code></pre>";
                 codeFenceLen = 0;
+                codeFenceOpenIndent = 0;
             } else {
                 // 代码块内容（含异种围栏行、以围栏开头但不足以闭合的嵌套围栏行）
                 codeContent << line;
@@ -2712,6 +2785,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             : QStringLiteral("<code class=\"language-") + escapeHtmlAttr(codeFenceLang) + "\">";
         codeBlocks << "<pre>" + codeOpen + content.toHtmlEscaped() + "</code></pre>";
         codeFenceLen = 0;
+        codeFenceOpenIndent = 0;
     }
     // ③ 未闭合块引用内代码围栏 > ```：占位符在闭合时才生成（不会崩溃），但
     //    EOF 未闭合时已收集内容无处还原（静默丢弃）。按闭合同款逻辑补还原

@@ -1,6 +1,6 @@
 # 代码块围栏往返机制（嵌套围栏）
 
-嵌套围栏（外层 ````` ```` ````` 内含 `` ``` ``）在 MD→HTML→MD 往返中的三个坑与修复记录。
+嵌套围栏（外层 ````` ```` ````` 内含 `` ``` ``）在 MD→HTML→MD 往返中的四个坑与修复记录。
 
 ## 坑 1：toHtml 的朴素围栏翻转（解析层）
 
@@ -25,6 +25,37 @@
 **根因**：`QTextDocument::setHtml` 把相邻块级元素占位符之间的 `\n` 当**软换行**，两个占位符进入**同一个段落**；`toMarkdown` 输出为同一行、空格分隔（`ZZCB0ZZ ZZBM0ZZ`）。还原多行备份后首尾粘连。
 
 **修复**：占位符还原**之前**，凡备份含 `\n` 的占位符强制独占一行——正则检测前后是否有同行内容，有则插入空行。
+
+## 坑 4：列表内容缩进围栏的读写不对称（解析层，2026-10-03）
+
+**症状**：列表项内代码块经切源码/保存后，围栏被 fromHtml 归位到「列表内容缩进」（如三级项内容列 8sp、一级有序项内容列 3sp）。再次解析（源码模式导出走同一 `toHtml`）时，≥4sp 的开栏不被认领，其 col-0 闭合围栏被误判为**新块开栏**，吞掉区间内整节尾部——四级~六级嵌套列表、后续一级项、下一个代码块全部成为一个无语言 `<pre>` 的字面内容（源码模式导出 HTML/PDF/DOCX 里整段渲染为等宽字面代码；取证见 w2-alpha 报告与 `scripts/probe-srcmode-md.sh`）。
+
+**根因**：读写两侧的围栏缩进域不相交——
+
+- **写侧（fromHtml / QtMarkdownWriter + 列表序列化）**：列表项内 codeBlock 按**列表内容缩进**输出围栏（`        ```cpp`），内容行与闭合围栏为 col-0 懒形态（同块引用代码块的 lazy 形态）。合法 CommonMark（缩进 ≤ 列表内容缩进 + 3 的围栏属于列表项子块）。
+- **读侧（toHtml 扫描器 `isTopLevelFenceLine`）**：只认 **≤3sp 缩进**的围栏行（CommonMark **顶层**围栏规则），≥4sp 一律拒绝——fromHtml 自己写得出的形态自己读不回。
+
+**修复**（方向 A，扫描器认领域扩展，ZZBQ 前例向列表上下文的延伸）：
+
+1. **任意缩进围栏行判定** `isFenceLineAnyIndent`（`isTopLevelFenceLine` 改为其 ≤3 特例）；
+2. **列表内容缩进基线** `listCtxIndent`：扫描循环维护「最近列表项的内容列」（`listItemContentColumn`：无序标记宽 2、有序 = 数字位 + 2，与 fromHtml 序列化口径一致）。列表项行刷新；空白行保持（松散列表分隔）；缩进 ≥ 基线的续行保持；顶层/更浅缩进的非列表行重置 -1；
+3. **认领门**：开栏缩进 ≥4 时仅当 `listCtxIndent ≥ 0` 且 `开栏缩进 ≤ 基线 + 3`（列表项子块的合法围栏列）才认领——顶层 ≥4sp 缩进是**缩进代码块**（CommonMark ex.134），不认领（负例测试守护）；
+4. **配对规则**（CommonMark 缩进围栏语义）：闭合围栏须同字符、长度 ≥ 开栏、纯围栏行（info string 仅开栏可有）、**缩进 ≤ 开栏缩进**（覆盖 fromHtml 的 col-0 懒闭合与开栏同缩进两种闭合产出路径）；开栏缩进随块记录（`codeFenceOpenIndent`）；
+5. **占位符发出**：与顶层围栏同款**顶格**发出（ZZCB 既有铸造/还原机制零改动，仅扩认领范围）。
+
+**设计偏离记录**（w2-alpha 方案 vs 实测）：方案原定「占位符带列表内容缩进前缀发出（ZZBQ 同款）」——实测 md4c 对 ≥4sp 文本行**不做**列表项懒延续：缩进前缀形态（无论是否空行隔离）产出的 `<pre>` 落位（`<ol>` 直接子块 / 行内粘连进 `<li>`）fromHtml 均无法正确序列化（往返泄漏原始 `<ul style=…>` 文本）。顶格发出使占位符成为列表项段落的懒延续，`<pre>` 粘连进 `<li>`，TipTap 解析时提升为项内 codeBlock 块、fromHtml 按列表内容缩进输出围栏——即回到 fromHtml 自产的合法形态，读写对称（`toHtml(gen1)` 与 `toHtml(顶格原稿)` 逐字节一致，已入测试锚）。修复后源码模式两跳往返收敛（selftest roundtrip 真实链路 converged_at=1）。
+
+**配对组合穷举表**（进测试 `testIndentedFencePairingMatrix`）：
+
+| 维度 | 取值 |
+|------|------|
+| 开栏缩进 | 4 / 6 / 8sp（= 列表内容列：L2 无序 4、两位数有序 4、L3 有序 8） |
+| 闭栏缩进 | 0（懒形态）/ 开栏同缩进 / 中间档（C ≤ I 均闭合） |
+| 围栏内容行 | col-0 / 与开栏同缩进 / 列表标记形（`- 看似列表`）/ 更深缩进 |
+| info string | 仅开栏可有；带尾文本的围栏行是内容不是闭合 |
+| 负例（不认领） | 顶层 4sp（ex.134 缩进代码块）/ 无列表上下文深缩进 / 列表已被顶层段落终结后的深缩进 |
+
+**653 指纹影响**（conv-byte-snapshot 铁闸）：commonmark 653 例中仅 **ex.263**（`1.  foo` 松散列表内 4sp 围栏 + 内容列内容）digest 变化——该例从 md4c 窄口径自然解析改为与顶格围栏同款的扫描器认领路径；其行为与「同一文档的 col-0 围栏孪生形态」完全一致（既有行为），两趟收敛不变。发散数 66 持平，gfm 棘轮 1 持平。
 
 ## 块引用内代码围栏（`> ```）
 
@@ -75,4 +106,4 @@ MD ──toHtml──► HTML ──TipTap parseHTML──► PM doc ──getHT
 
 ## 相关测试
 
-`tests/test_markdownhandler.cpp`：`testNestedFenceCodeBlock`、`testNestedFenceRoundTrip`、`testCodeBlockAdjacentBlockMathRoundTrip`、`testAdjacentCodeBlocksNotMerged`、`testBlockquoteCodeFenceRoundTrip`。
+`tests/test_markdownhandler.cpp`：`testNestedFenceCodeBlock`、`testNestedFenceRoundTrip`、`testCodeBlockAdjacentBlockMathRoundTrip`、`testAdjacentCodeBlocksNotMerged`、`testBlockquoteCodeFenceRoundTrip`、`testIndentedListFenceClaimed`、`testIndentedFencePairingMatrix`、`testIndentedFenceOutsideListNotClaimed`、`testSourceModeIndentedFenceNoSectionSwallow`（坑 4 用例族）。

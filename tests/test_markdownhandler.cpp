@@ -24,6 +24,25 @@ static QString e2eRoundTrip(const QString &md)
         simulateTipTapSerialization(MarkdownHandler::toHtml(md)));
 }
 
+// 提取 HTML 中全部 <pre>…</pre> 的内部文本（含属性形态 <pre …>），供
+// 「某文本不得被吞进代码块」类断言使用。
+static QStringList preContentsOf(const QString &html)
+{
+    QStringList out;
+    qsizetype from = 0;
+    const QString open = QStringLiteral("<pre");
+    while (true) {
+        const qsizetype s = html.indexOf(open, from);
+        if (s < 0) break;
+        const qsizetype gt = html.indexOf(QLatin1Char('>'), s);
+        const qsizetype e = html.indexOf(QStringLiteral("</pre>"), gt);
+        if (gt < 0 || e < 0) break;
+        out << html.mid(gt + 1, e - gt - 1);
+        from = e + 6;
+    }
+    return out;
+}
+
 class TestMarkdownHandler : public QObject {
     Q_OBJECT
 private slots:
@@ -3217,6 +3236,208 @@ private slots:
                  qPrintable("往返后外层仍应是 markdown 代码块，实际: " + html2));
         QVERIFY2(html2.contains("```cpp"),
                  qPrintable("往返后内层 ```cpp 应作为字面内容保留，实际: " + html2));
+    }
+
+    void testIndentedListFenceClaimed()
+    {
+        // 坑 4（读写不对称）：fromHtml 对列表项内代码块按「列表内容缩进」输出
+        // 围栏（≥4sp 时超出 isTopLevelFenceLine 的 ≤3 认领域）。修复前 toHtml
+        // 不认领该围栏，其闭合围栏（col-0）被误判为新块开栏，吞掉区间内全部
+        // 内容（整节尾部成无语言 <pre> 字面量——源码模式导出 Consolas 量化）。
+        // 修复后：扫描器按列表内容缩进基线认领缩进围栏，配对收集为 ZZCB。
+        const struct { const char *name; QString md; const char *lang; } cases[] = {
+            // 二级无序项内代码块（内容列 4 → 围栏 4sp；闭合 col-0 懒形态）
+            {"L2无序4sp", QStringLiteral(
+                 "- 一级\n  - 二级\n    ```cpp\nint x;\n```\n  - 二级续"),
+             "cpp"},
+            // 三级有序项内代码块（内容列 8 → 围栏 8sp，w2-alpha 实测形态）
+            {"L3有序8sp", QStringLiteral(
+                 "1. 一级\n   - 二级\n     1. 三级\n        ```cpp\nint x;\n```\n"
+                 "        - 四级\n"),
+             "cpp"},
+            // 两位数有序项（"10. " 内容列 4 → 围栏 4sp）
+            {"两位数有序4sp", QStringLiteral(
+                 "9. 九\n10. 十\n    ```js\nint x;\n```\n11. 十一"),
+             "js"},
+        };
+        for (const auto &c : cases) {
+            const QString html = MarkdownHandler::toHtml(c.md);
+            const QString langClass =
+                QStringLiteral("class=\"language-") + c.lang + QLatin1String("\"");
+            QVERIFY2(html.contains(langClass),
+                     qPrintable(QString("%1：应认领缩进围栏并保留语言，HTML=[%2]")
+                                    .arg(c.name, html)));
+            QVERIFY2(html.contains(QLatin1String("int x;")) || html.contains(QLatin1String("x\n")),
+                     qPrintable(QString("%1：代码内容应保留，HTML=[%2]").arg(c.name, html)));
+            // 围栏后的列表续行不得被吞进代码块（修复前的爆发形态）
+            const bool tailInList = html.contains(QStringLiteral("四级"))
+                                    || html.contains(QStringLiteral("二级续"))
+                                    || html.contains(QStringLiteral("十一"));
+            QVERIFY2(tailInList,
+                     qPrintable(QString("%1：围栏后列表行应存活于 HTML，HTML=[%2]")
+                                    .arg(c.name, html)));
+            for (const QString &pre : preContentsOf(html)) {
+                QVERIFY2(!pre.contains(QStringLiteral("二级续"))
+                             && !pre.contains(QStringLiteral("四级"))
+                             && !pre.contains(QStringLiteral("十一")),
+                         qPrintable(QString("%1：列表行被吞进代码块，pre=[%2]")
+                                        .arg(c.name, pre)));
+            }
+            // 往返内容存活 + 无占位符泄漏（字节级两趟收敛不在本断言：粘连 <pre>
+            // 的列表项需经真实 TipTap DOM 重构（pre 提升为项内块级 codeBlock）
+            // 才能序列化回行首缩进围栏，sim 只近似属性转义不建 DOM——收敛性由
+            // commonmark/gfm 语料棘轮与 headless 探针（真实链路）把关）
+            const QString r1 = e2eRoundTrip(c.md);
+            QVERIFY2(!r1.contains(QLatin1String("ZZCB")),
+                     qPrintable(QString("%1：占位符泄漏，MD=[%2]").arg(c.name, r1)));
+            QVERIFY2(r1.contains(QLatin1String("int x;")),
+                     qPrintable(QString("%1：往返代码内容应保留，MD=[%2]").arg(c.name, r1)));
+            QVERIFY2(r1.contains(QStringLiteral("二级续"))
+                         || r1.contains(QStringLiteral("四级"))
+                         || r1.contains(QStringLiteral("十一")),
+                     qPrintable(QString("%1：往返列表续行应保留，MD=[%2]").arg(c.name, r1)));
+        }
+    }
+
+    void testIndentedFencePairingMatrix()
+    {
+        // 缩进围栏配对组合穷举表（w2-alpha 第五节骨架）：
+        //   开栏缩进 I（4/6/8）× 闭栏缩进 C（0/I/中间档，C ≤ I 合法闭合）
+        //   × 围栏内容嵌缩进行（col-0 / 与开栏同缩进 / 更深缩进 / 列表标记形）
+        //   × info string 仅开栏可有（带尾文本的围栏行不是闭合，是内容）
+        const struct { const char *name; QString md; QString content; } cases[] = {
+            {"开8闭0", QStringLiteral(
+                 "- a\n  - b\n    - c\n        ```cpp\n代码一\n        - 看似列表\n```\n后文"),
+             QStringLiteral("代码一")},
+            {"开8闭4", QStringLiteral(
+                 "- a\n  - b\n    - c\n        ```cpp\n代码二\n    ```\n后文"),
+             QStringLiteral("代码二")},
+            {"开8闭8", QStringLiteral(
+                 "- a\n  - b\n    - c\n        ```cpp\n代码三\n        ```\n后文"),
+             QStringLiteral("代码三")},
+            {"开6闭0", QStringLiteral(
+                 "1. a\n   1. b\n      ```js\nx\n```\n后文"),
+             QStringLiteral("x")},
+            {"开4闭4", QStringLiteral(
+                 "- a\n  - b\n    ```cpp\n    缩进内容\n    ```\n后文"),
+             QStringLiteral("缩进内容")},
+            {"开4闭0", QStringLiteral(
+                 "- a\n  - b\n    ```cpp\n内容\n```\n  - c"),
+             QStringLiteral("内容")},
+            {"闭栏带尾文本是内容", QStringLiteral(
+                 "- a\n  - b\n    ```cpp\n行一\n    ```尾文本\n    ```\n后文"),
+             QStringLiteral("行一")},
+        };
+        for (const auto &c : cases) {
+            const QString html = MarkdownHandler::toHtml(c.md);
+            QVERIFY2(html.contains(QLatin1String("language-")),
+                     qPrintable(QString("%1：缩进围栏应被认领，HTML=[%2]").arg(c.name, html)));
+            QVERIFY2(html.contains(c.content),
+                     qPrintable(QString("%1：代码内容应保留，HTML=[%2]").arg(c.name, html)));
+            const QStringList pres = preContentsOf(html);
+            // 带尾文本的伪闭合行是内容；真闭合行本身不进内容
+            if (QString::fromUtf8(c.name) == QStringLiteral("闭栏带尾文本是内容")) {
+                QVERIFY2(pres.join(QChar::fromLatin1('\n')).contains(QStringLiteral("```尾文本")),
+                         qPrintable(QString("%1：伪闭合应作为内容保留，HTML=[%2]").arg(c.name, html)));
+            } else {
+                for (const QString &pre : pres)
+                    QVERIFY2(!pre.trimmed().isEmpty() && !pre.contains(QStringLiteral("后文"))
+                                 && !pre.contains(QLatin1String("- c")),
+                             qPrintable(QString("%1：闭合后文本被吞进代码块，pre=[%2]")
+                                            .arg(c.name, pre)));
+            }
+            QVERIFY2(html.contains(QStringLiteral("后文")) || html.contains(QLatin1String(">c<")),
+                     qPrintable(QString("%1：闭合围栏后的正文应存活，HTML=[%2]").arg(c.name, html)));
+            // 往返内容存活 + 无占位符泄漏（字节收敛见 testIndentedListFenceClaimed 注）
+            const QString r1 = e2eRoundTrip(c.md);
+            QVERIFY2(!r1.contains(QLatin1String("ZZ")),
+                     qPrintable(QString("%1：占位符泄漏，MD=[%2]").arg(c.name, r1)));
+            QVERIFY2(r1.contains(c.content),
+                     qPrintable(QString("%1：往返代码内容应保留，MD=[%2]").arg(c.name, r1)));
+        }
+    }
+
+    void testIndentedFenceOutsideListNotClaimed()
+    {
+        // 负例：缩进 ≥4 且无列表上下文（或列表已被顶层段落终结）的围栏行不得被
+        // 认领——顶层 ≥4sp 缩进是缩进代码块（CommonMark ex.134/109），认领即
+        // 回归。期望行为与修复前一致：不产生带 language 的代码块、内容不丢。
+        //（两趟收敛不在本测试范围：此族属既有已知 diverge，见 expected-diverge
+        //  134/138 的围栏漂移登记——本测试守护的是「不得新认领」。）
+        const QStringList cases = {
+            QStringLiteral("    ```\n    aaa\n    ```"),
+            QStringLiteral("段落文本\n\n        ```js\nx\n        ```"),
+            QStringLiteral("- 项\n\n无列表续行的顶层段落\n\n        ```js\nx\n        ```"),
+        };
+        for (const QString &md : cases) {
+            const QString html = MarkdownHandler::toHtml(md);
+            QVERIFY2(!html.contains(QLatin1String("language-")),
+                     qPrintable(QString("无列表上下文的深缩进围栏不得被认领，MD=[%1] HTML=[%2]")
+                                    .arg(md, html)));
+            QVERIFY2(html.contains(QLatin1String("aaa")) || html.contains(QLatin1Char('x')),
+                     qPrintable(QString("内容不得丢失，HTML=[%1]").arg(html)));
+        }
+    }
+
+    void testSourceModeIndentedFenceNoSectionSwallow()
+    {
+        // w2-alpha 实测锚（min-repro gen1 形态）：列表项内代码块的围栏已被
+        // fromHtml 归位到列表内容缩进（8sp / 3sp），内容与闭合保持 col-0。
+        // 修复前 toHtml(gen1)：8sp 围栏不认领 → col-0 闭合被当新块开栏 →
+        // 四级~六级嵌套列表 + 2./3. 一级项 + 第二个代码块全部吞进一个无语言
+        // <pre>（16 行字面量）。修复后应与原始顶格形态同构：两个带 language
+        // 的代码块、嵌套列表存活、5. 续排项存活。
+        const QString gen1 = QStringLiteral(
+            "1. 一级有序项：编辑器内核\n"
+            "   - 二级无序项：TipTap 初始化链路\n"
+            "     1. 三级有序项：扩展加载与 schema 注册\n"
+            "        ```cpp\n"
+            "// 这段代码块属于上面的列表项，缩进随列表层级\n"
+            "int main() { return 0; }\n"
+            "```\n"
+            "        - 四级无序项：自定义节点\n"
+            "          1. 五级有序项：NodeView 实现\n"
+            "             - 六级无序项：paint() 渲染\n"
+            "2. 一级有序项：行内元素混合\n"
+            "3. 一级有序项：默认路径与应用启动\n"
+            "4. 一级有序项：列表项内含代码块\n"
+            "   ```cpp\n"
+            "// 第二个代码块\n"
+            "int main() \n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+            "```\n"
+            "5. 一级有序项：列表项结尾\n");
+        const QString html = MarkdownHandler::toHtml(gen1);
+        QCOMPARE(html.count(QLatin1String("language-cpp")), 2);
+        for (const QString &pre : preContentsOf(html)) {
+            QVERIFY2(!pre.contains(QStringLiteral("四级")) && !pre.contains(QStringLiteral("五级"))
+                         && !pre.contains(QStringLiteral("六级")) && !pre.contains(QStringLiteral("一级有序项")),
+                     qPrintable(QString("节尾被吞进代码块，pre=[%1]").arg(pre)));
+        }
+        QVERIFY2(html.contains(QStringLiteral("四级")) && html.contains(QStringLiteral("五级"))
+                     && html.contains(QStringLiteral("六级")),
+                 qPrintable(QString("嵌套列表行应存活于代码块之外，HTML=[%1]").arg(html)));
+        QVERIFY2(html.contains(QLatin1String("int main() { return 0; }")),
+                 qPrintable(QString("第一个代码块内容应保留，HTML=[%1]").arg(html)));
+        // 读写对称锚：gen1（缩进围栏）与原始顶格形态的 toHtml 输出必须逐字节
+        // 一致——同一编辑器文档的两种合法 MD 源形态，中间表示唯一。修复前
+        // gen1 的输出含吞节 <pre>（原始形态无），即不对称的机器可判证据。
+        QString orig = gen1;
+        orig.replace(QStringLiteral("\n        ```cpp"), QStringLiteral("\n```cpp"))
+            .replace(QStringLiteral("\n   ```cpp"), QStringLiteral("\n```cpp"));
+        QCOMPARE(html, MarkdownHandler::toHtml(orig));
+        // 往返内容存活 + 无占位符泄漏（字节收敛需真实 TipTap DOM 重构，由
+        // headless 探针与语料棘轮把关——见 testIndentedListFenceClaimed 注）
+        const QString r1 = e2eRoundTrip(gen1);
+        QVERIFY2(!r1.contains(QLatin1String("ZZ")),
+                 qPrintable(QString("占位符泄漏，MD=[%1]").arg(r1)));
+        QVERIFY2(r1.contains(QLatin1String("int main() { return 0; }"))
+                     && r1.contains(QLatin1String("```cpp")),
+                 qPrintable(QString("往返代码块应保留，MD=[%1]").arg(r1)));
+        QVERIFY2(r1.contains(QStringLiteral("四级")) && r1.contains(QStringLiteral("六级")),
+                 qPrintable(QString("往返嵌套列表应保留，MD=[%1]").arg(r1)));
     }
 
 
