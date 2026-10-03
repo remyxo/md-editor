@@ -32,8 +32,10 @@ void get(EditorTab *tab, std::function<void(const QString &)> cb, Mode mode)
         return;
     const bool src = tab->isSourceMode();
     // DOCX 导出取 getExportHtml()：live colgroup 的 px 列宽注入序列化 HTML，
-    // 供 DocxExporter 生成 tblGrid；源码模式 getSourceContent 经 toHtml 无
-    // colgroup，退回等宽网格（现状行为）
+    // 供 DocxExporter 生成 tblGrid；源码模式 getSourceContent 经 toHtml 产
+    // Qt DOM（无 live colgroup 起步）——两路都经 MainWindow 归一层在 DOCX
+    // 页宽基准下重测重分配注入 px colgroup（测量基准含 border 清零统一，
+    // 见 TableColumnNormalizer），等宽网格仅在归一失败降级时出现
     const QString call = src ? QStringLiteral("window.editorApi.getSourceContent();")
                              : (mode == Mode::Docx
                                     ? QStringLiteral("window.editorApi.getExportHtml();")

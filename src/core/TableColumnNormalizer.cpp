@@ -41,6 +41,12 @@ QString TableColumnNormalizer::buildNormalizeScript(int availTwips)
     // 11pt = 单元格与正文统一字号（2026-09-24 定案：四面统一，单元格不设
     // 特例；DOCX 与 PDF 渲染/测量同基准，折行/行高与 PDF 逐行相等）；
     // '0 8px' 对应显式 tblCellMar 120 缇（= PDF th,td 横向 padding 8px，测量与渲染同基准）；
+    // border:'0' 测量期清边框（2026-10-03 γ 修复）：Qt toHtml 的 border="1"
+    // 呈现属性让 UA 给单元格画 1px 折叠边框、每列 min/max 测量 +1px，TipTap
+    // 片段无边框——两模式输入同经本归一层，测量基准统一清零（同清 td/th 与
+    // table 两处，只清单元格残留表级 0.5px；w2-gamma 取证，回归门见
+    // scripts/probe-docx-table-parity.sh）。编辑器 live 测量与 HTML/PDF 导出
+    // 调用点不传该键，守卫式构造性无变化；
     // avail 单位换算 twips → px（96dpi：1px = 15 缇）。
     // slack:2：边界列（floor 恰=min-content）百分比回算少 0.02px 即折行，与 HTML 导出同款余量
     // IIFE 同步返回 body.innerHTML（非 Promise，runJavaScript 可直接取回字符串；
@@ -49,7 +55,7 @@ QString TableColumnNormalizer::buildNormalizeScript(int availTwips)
          + QStringLiteral(
                "(function(){"
                "window.__normalizeTableColumns({px:true,avail:%1,slack:2,fontSize:'11pt',"
-               "padding:'0 8px',fontFamily:'Noto Sans SC,DejaVu Sans,sans-serif'});"
+               "padding:'0 8px',border:'0',fontFamily:'Noto Sans SC,DejaVu Sans,sans-serif'});"
                "return document.body?document.body.innerHTML:'';"
                "})()").arg(QString::number(availTwips / 15.0, 'f', 1));
 }

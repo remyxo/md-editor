@@ -744,6 +744,13 @@ private slots:
         QVERIFY(js.contains("fontSize:'11pt'"));
         QVERIFY(js.contains("padding:'0 8px'"));
         QVERIFY(js.contains("fontFamily:'Noto Sans SC,DejaVu Sans,sans-serif'});"));
+        // border:'0' 测量期清边框（γ 修复，2026-10-03）：Qt toHtml 的 border="1"
+        // 呈现属性让 UA 给单元格画 1px 折叠边框、每列 min/max 测量 +1px，TipTap
+        // 片段无边框——两模式输入同经本归一层，测量基准统一清零（归一器设计
+        // 意图：输出不依赖输入路径的渲染上下文）。同清 td/th 与 table 两处：
+        // 只清单元格会残留表级 UA 边框 0.5px 到首末列（w2-gamma 取证实证，
+        // 见 scripts/probe-docx-table-parity.sh 头注）
+        QVERIFY(js.contains("border:'0',fontFamily:"));
         QVERIFY(js.endsWith("return document.body?document.body.innerHTML:'';"
                             "})()"));
     }

@@ -10,10 +10,14 @@
 'use strict';
 
 // 就地测量表格各网格列的 min-content / max-content 宽（px，含 colspan 展开）。
-// cfg 可选：{ fontSize, padding, fontFamily } 测量期临时样式（导出侧传打印
-// 基准；编辑器不传 ⇒ 按实际渲染样式测量）。测量前剥掉表格已有 colgroup：
-// 编辑器二次测量时克隆表带着上轮的百分比 col 会污染 auto 测量；导出侧旧
-// colgroup 本来就在写回前被移除，行为不变。返回 null 表示表格不可测。
+// cfg 可选：{ fontSize, padding, fontFamily, border } 测量期临时样式（导出侧传
+// 打印基准；编辑器不传 ⇒ 按实际渲染样式测量）。border 为导出侧（DOCX 归一）
+// 测量基准统一用：Qt toHtml 的 border="1" 呈现属性让 UA 给单元格画 1px 折叠
+// 边框、每列测量 +1px，TipTap 片段无边框——'0' 须同清 td/th 与 table 两处
+//（只清单元格会残留表级 UA 边框 0.5px 到首末列，w2-gamma 取证实证）；
+// 编辑器不传（live 布局照旧在 editor.css 边框下测量）。测量前剥掉表格已有
+// colgroup：编辑器二次测量时克隆表带着上轮的百分比 col 会污染 auto 测量；
+// 导出侧旧 colgroup 本来就在写回前被移除，行为不变。返回 null 表示表格不可测。
 global.__measureTableColumns=function(table,cfg){
 cfg=cfg||{};
 var firstRow=table.querySelector('tr');
@@ -25,12 +29,14 @@ for(var i=0;i<all.length;i++){
 saved.push([all[i],all[i].getAttribute('style')]);
 if(cfg.fontSize)all[i].style.fontSize=cfg.fontSize;
 if(cfg.padding)all[i].style.padding=cfg.padding;
+if(cfg.border)all[i].style.borderWidth=cfg.border;
 all[i].style.overflowWrap='normal';
 all[i].style.wordBreak='keep-all';
 }
 var savedTable=table.getAttribute('style');
 table.style.borderCollapse='collapse';
 if(cfg.fontFamily)table.style.fontFamily=cfg.fontFamily;
+if(cfg.border)table.style.borderWidth=cfg.border;
 table.style.tableLayout='auto';
 var expand=function(){
 var out=[],ci=0;

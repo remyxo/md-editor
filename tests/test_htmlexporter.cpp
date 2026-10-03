@@ -277,6 +277,12 @@ private slots:
         QVERIFY(js.contains("if(cfg.fontSize)all[i].style.fontSize=cfg.fontSize;"));
         QVERIFY(js.contains("if(cfg.padding)all[i].style.padding=cfg.padding;"));
         QVERIFY(js.contains("if(cfg.fontFamily)table.style.fontFamily=cfg.fontFamily;"));
+        // cfg.border 测量期清边框守卫（γ 修复，2026-10-03）：td/th 与 table
+        // 两处都要清——只清单元格会残留表级 UA 边框 0.5px 到首末列
+        //（w2-gamma border-css-zero 实验证）。守卫式=HTML/PDF 既有调用点
+        //（不传该键）构造性无变化
+        QVERIFY(js.contains("if(cfg.border)all[i].style.borderWidth=cfg.border;"));
+        QVERIFY(js.contains("if(cfg.border)table.style.borderWidth=cfg.border;"));
         // 百分比固定列：colgroup + 每行单元格内联宽都写（paged.js 跨页碎片是
         // cloneNode(false) 浅克隆、丢 colgroup 子元素，只写 colgroup 会换页错列）
         QVERIFY(js.contains("col.style.width=(w[c2]/total*100).toFixed(3)+'%';"));
