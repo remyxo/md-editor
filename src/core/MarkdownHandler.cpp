@@ -1238,6 +1238,36 @@ static bool isListItemLine(const QString &line)
     return re.match(line).hasMatch();
 }
 
+// 行是否以「文本形态」进入转换中间流（processed）——md4c 视其为段落的懒
+// 延续行而非新块起始。闭合围栏的代码块占位符 ZZCB 是独立文本行，若紧随的
+// 行也是文本形态，setMarkdown 会把两者并进同一段落，还原后产出
+// <p style="margin…"><pre>…</pre> 文字</p> 畸形（发现 13：TipTap 解析时
+// codeBlock 被提升出段落、留下空段落/前导空格段落链 = 「同一文件代码块与
+// 前后内容间距不一致」的根因）——toHtml 在闭合围栏后据此补空行隔断。
+// 结构性行（列表标记/ATX 标题/块引用）在 md4c 中打断段落，占位符本就独立
+// 成段（后处理剥 <p> 包裹即干净顶层 <pre>），无须补；列表行还有更硬的
+// 约束（见 toHtml 闭合分支的上下文门）。占位符化行（围栏 → ZZCB、hr →
+// ZZHR、块级公式 → ZZMB、表格行）与 setext === 下划线对 md4c 是纯文本：
+//   - === 不是「打断段落」而是「消费段落」——占位符行被吃成标题内容，
+//     还原后 <h1><pre>…</pre></h1> 畸形（评审 R1 更正），须按文本形态补空行；
+//   - 相邻代码块/水平线/公式与 <pre> 的并段畸形同治。
+// 注意：非 1 起始的有序列表行（如 "5. 项"）按 CommonMark 同样不能打断
+// 段落（会与占位符并段），但为列表行场景零行为变化有意按列表行统一跳过
+// ——残留边界（罕见形态，语料 0 命中）见 code-fence-roundtrip.md 坑 5。
+static bool isTextLikeContinuationLine(const QString &line)
+{
+    if (line.trimmed().isEmpty())
+        return false;                 // 空行/EOF：占位符已独立成段
+    if (isListItemLine(line))
+        return false;                 // 列表标记打断段落（含任务项）
+    const QString t = line.trimmed();
+    if (t.startsWith(QLatin1Char('#')))
+        return false;                 // ATX 标题打断段落
+    if (t.startsWith(QLatin1Char('>')))
+        return false;                 // 块引用打断段落
+    return true;                      // 纯文本/缩进文本/=== 下划线/占位符化行 → 文本延续
+}
+
 // 判断某行是否为「80 列折行」产生的续行——该判定及其消费方（反换行合并
 // 循环）已随折行根治退役：序列化改用 vendored QtMarkdownWriter 并关闭
 // 折行（serializeMarkdownNoWrap），不再产生折行续行。历史机制详见
@@ -2133,6 +2163,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     QChar codeFenceChar = QLatin1Char('`');   // 开启围栏的字符（闭合须同字符，CommonMark）
     int codeFenceOpenIndent = 0; // 开启围栏的缩进列（坑 4：缩进围栏的闭合判定基准）
     int listCtxIndent = -1;  // 最近列表项的内容缩进列（-1 = 无列表上下文，坑 4 认领门）
+    int codeFenceListCtx = -1;   // 开栏行进入循环时的列表上下文（坑 5 补空行的上下文门）
+    bool codeFenceOpenAfterBlank = true;  // 开栏行的上一源行是否空行（同上，见闭合分支）
     int tlFenceIndent = 0, tlFenceRun = 0;    // isTopLevelFenceLine 出参（当前行）
     QChar tlFenceChar = QLatin1Char('`');
     int bqCodeFenceLen = 0; // 当前块引用内代码围栏长度（0 = 不在块引用代码块）
@@ -2197,6 +2229,12 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     for (int i = 0; i < lines.size(); ++i) {
         const QString &line = lines[i];
         const QString &next = (i + 1 < lines.size()) ? lines[i + 1] : QString();
+
+        // 本行进入循环时的列表上下文（坑 5 上下文门用）：须在下方坑 4 维护块
+        // 之前快照——围栏行自身的维护会按其缩进改写 listCtxIndent（col-0 围栏
+        // 行会把列表基线重置 -1），而「围栏是否作为列表项段落的懒延续到达」
+        // 取决于它之前的上下文（上一行建立的值）。
+        const int listCtxBeforeLine = listCtxIndent;
 
         // 脚注定义行 [^id]: 内容（非代码块）—— 抽取归集到文末容器，从正文流移除
         static const QRegularExpression footnoteDefRe("^\\[\\^([^\\]]+)\\]\\s*:\\s*(.*)$");
@@ -2339,6 +2377,9 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                 codeFenceLen = tlFenceRun;
                 codeFenceChar = tlFenceChar;
                 codeFenceOpenIndent = tlFenceIndent;
+                codeFenceListCtx = listCtxBeforeLine;
+                codeFenceOpenAfterBlank =
+                    (i == 0 || lines[i - 1].trimmed().isEmpty());
                 codeContent.clear();
                 // 占位符序号须避开源文档/已产出内容中的字面同串（如 audit 文档
                 // 里示例的 `ZZCB0ZZ`），否则还原时用户文本被误替换。串存 codeBlockPhs，
@@ -2363,7 +2404,38 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                     : QStringLiteral("<code class=\"language-") + escapeHtmlAttr(codeFenceLang) + "\">";
                 codeBlocks << "<pre>" + codeOpen + content.toHtmlEscaped() + "</code></pre>";
                 codeFenceLen = 0;
+                // 上下文门的两项输入须在清零前暂存（评审 R1 定位的时序坑：
+                // codeFenceOpenIndent 此处清零，下方判定不得再读它）
+                const int closedFenceOpenIndent = codeFenceOpenIndent;
+                const int closedFenceListCtx = codeFenceListCtx;
+                const bool closedFenceAfterBlank = codeFenceOpenAfterBlank;
                 codeFenceOpenIndent = 0;
+                codeFenceListCtx = -1;
+                codeFenceOpenAfterBlank = true;
+                // 发现 13（坑 5）：闭合围栏后紧跟「文本形态行」时在中间流补一个
+                // 空行。占位符在开栏时已发出，其与后续内容之间若无空行，md4c
+                // 会把后续文本行懒延续进占位符所在段落 → <p …><pre>…</pre> 文字
+                // </p> 并段畸形（TipTap 提升后留空段落链，代码块间距不一致）。
+                // 只改送入 setMarkdown 的中间流，不改用户内容本身；fromHtml 产出
+                // 的围栏后本就有空行（往返不动点形态），读写对称不受影响。
+                // 判定复用坑 4 的配对状态（本分支=已配对闭合）：未配对/内容行里
+                // 的 ``` 不会走到这里，无误判面。除「下一行文本形态」外还有两道
+                // 上下文门（评审 R1 Critical-1）：
+                //   ① 开栏缩进 ≤3（顶层围栏列）——坑 4 认领的缩进围栏（≥4sp，
+                //      列表项内容缩进形态）一律不插：其占位符本就以项内懒延续
+                //      发出（坑 4 设计），后续续文并段是读写对称的既有行为；
+                //   ② 开栏时不在「列表项段落的懒延续」中（开栏行之前无活跃列
+                //      表上下文，或其间有空行）——P3 族（`- 项一\n  ```cpp…```
+                //      \n  项一续文`，含 col-0 围栏/col-0 续文变体）的占位符与
+                //      续文同为项段落懒延续，补空行会把续文拆成 <li> 间裸 <p>
+                //      或拆散单个 <ul>（实测回归）。空行隔断的围栏是独立块，
+                //      不受此门限制（`- 项\n\n```…``` \n紧跟文字` 仍治）。
+                if (closedFenceOpenIndent <= 3
+                    && !(closedFenceListCtx >= 0 && !closedFenceAfterBlank)
+                    && isTextLikeContinuationLine(next)
+                    && !processed.endsWith("\n\n")) {
+                    processed += '\n';
+                }
             } else {
                 // 代码块内容（含异种围栏行、以围栏开头但不足以闭合的嵌套围栏行）
                 codeContent << line;
@@ -2786,6 +2858,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
         codeBlocks << "<pre>" + codeOpen + content.toHtmlEscaped() + "</code></pre>";
         codeFenceLen = 0;
         codeFenceOpenIndent = 0;
+        codeFenceListCtx = -1;        // 状态清零（EOF 未闭合，无后续行无需补空行）
+        codeFenceOpenAfterBlank = true;
     }
     // ③ 未闭合块引用内代码围栏 > ```：占位符在闭合时才生成（不会崩溃），但
     //    EOF 未闭合时已收集内容无处还原（静默丢弃）。按闭合同款逻辑补还原

@@ -1,6 +1,6 @@
 # 代码块围栏往返机制（嵌套围栏）
 
-嵌套围栏（外层 ````` ```` ````` 内含 `` ``` ``）在 MD→HTML→MD 往返中的四个坑与修复记录。
+嵌套围栏（外层 ````` ```` ````` 内含 `` ``` ``）在 MD→HTML→MD 往返中的五个坑与修复记录。
 
 ## 坑 1：toHtml 的朴素围栏翻转（解析层）
 
@@ -57,6 +57,30 @@
 
 **653 指纹影响**（conv-byte-snapshot 铁闸）：commonmark 653 例中仅 **ex.263**（`1.  foo` 松散列表内 4sp 围栏 + 内容列内容）digest 变化——该例从 md4c 窄口径自然解析改为与顶格围栏同款的扫描器认领路径；其行为与「同一文档的 col-0 围栏孪生形态」完全一致（既有行为），两趟收敛不变。发散数 66 持平，gfm 棘轮 1 持平。
 
+## 坑 5：闭合围栏后紧跟文字的并段畸形（发现 13，2026-10-03；R1 修订 2026-10-04）
+
+**症状**：`setMarkdown` 对「``` 闭合行的下一行直接是文字」的输入，把代码块与该文字行合进同一段落。在占位符路径上表现为：代码块占位符 `ZZCB<n>ZZ`（开栏时发出的独立文本行）与紧随的文本行被 md4c 懒延续并段，还原后产出 `<p style="margin…"><pre>…</pre> 文字</p>` 畸形。TipTap 解析时 codeBlock 被提升出段落、留下**空段落 → codeBlock → 前导空格段落 → 空段落**链（vitest 实测形态）——即用户目视「同一份文件里代码块与前后内容间距不一致」的根因（围栏后是空行则占位符独立成段、后处理剥 `<p>` 包裹，输出干净顶层 `<pre>`，两种写法产生不同间距）。四变体实验：a=闭合后紧跟文字（并段）；b=闭合后空行（干净，对照）；c=围栏前不空行（前后全并段、吞后续块）；d=纯段落同触发（无语言亦然）。
+
+**修复**：toHtml 在**配对闭合围栏**（复用坑 4 配对状态机的分支——未配对/内容行里的 ``` 不触发）后判定三道门，全过才在中间流该围栏后补一个空行（只改送入 `setMarkdown` 的中间流不改用户内容；fromHtml 产出的围栏后本就有空行（往返不动点形态），读写对称不受影响）：
+
+1. **下一行是文本形态**（`isTextLikeContinuationLine`：纯文本/缩进文本/setext `===` 下划线/占位符化行——相邻围栏 → ZZCB、`---` → ZZHR、块级公式 → ZZMB、表格行）。列表标记/ATX 标题/块引用行在 md4c 中**打断段落**，占位符本就独立成段，无须补。注意非 1 起始的有序列表行（如 `5. 项`）按 CommonMark **同样不能打断段落**（会与占位符并段，语料 0 命中），但为列表行场景零行为变化有意按列表行统一跳过（见残留边界）。
+2. **开栏缩进 ≤3**（顶层围栏列）：坑 4 认领的缩进围栏（≥4sp，列表项内容缩进形态）一律不插——其占位符本就以项内懒延续发出（坑 4 设计），后续续文并段是读写对称的既有行为。
+3. **开栏时不处于「列表项段落的懒延续」中**：开栏行进入循环时有活跃列表上下文（`codeFenceListCtx ≥ 0`）**且**开栏行与上一源行之间无空行（`codeFenceOpenAfterBlank` 为假）则不插——P3 族（`- 项一\n  ```cpp…``` \n  项一续文`，含 col-0 围栏 / col-0 续文变体；真实语料 docs/superpowers/specs/2026-08-09-emoji-picker-design.md:146）的占位符与续文同为项段落懒延续，补空行会把续文拆成 `<li>` 间裸 `<p>`（非法嵌套）或把单个 `<ul>` 拆成两个。空行隔断的围栏是独立块，不受此门限制（`- 项\n\n```…```\n紧跟文字` 仍治）。两项输入须在闭合分支清零 `codeFenceOpenIndent` 之前暂存（时序坑，评审 R1 定位）。
+
+**为什么结构性后续行/列表上下文不补**（关键交互，实测教训）：朴素的「闭合后任意非空行都插」会把 tight 列表翻成 loose、坑 4 缩进围栏不动点链路逐字节改变并发散（gen1/min-repro 家族实测）；「仅看下一行形态」会拆散 P3 族的项内续文（评审 R1 实测回归）。收紧为三道门后：**列表行后续与列表上下文围栏（P3/gen1/min-repro/bench①/emoji 语料）全部与修复前逐字节相同**。
+
+**setext `===` 更正**（评审 R1 Important-1）：`===` 下划线不是「打断段落」而是「消费段落」——占位符行被吃成标题内容，还原后 `<h1><pre>…</pre></h1>` 畸形、往返残留空 `#` 标题；按文本形态补空行后同治（与 `-` 空列表项族对称，ex.278 即后者）。
+
+**坑 4 实测变化的语料**：`foo\n```\nbar\n```\nbaz`（CommonMark ex.140=变体 c）与 `-\n  foo\n…` 族（ex.278，`-` 空列表项被 setext 下划线化成 `<h2><pre>` 畸形）为铁闸实测变化的 2 例，方向均=并段转分块（向 CommonMark 期望靠近）。
+
+**残留边界**（有意取舍，非缺陷）：
+
+- **变体 c 的前侧粘连**（`<p>前文段落 <pre>…</pre></p>`，pre 在段尾）保留：TipTap 提升后畸形比后侧并段轻——**仅尾部一个空段落，无前导空格段落**（实测有尾部空段）；before 侧补空行属新行为面不做。
+- **非 1 起始有序列表行**（`5. 项`）紧跟闭合围栏的并段保持既有行为（语料 0 命中，无 653 实证变化）；彻底修复需区分「列表行能否打断段落」与「是否处于既有列表上下文」，留待实际用户报告再评估。**4sp 缩进的列表行**（`    - 项` 形态，md4c 视上下文或为缩进代码）同属此族残留。
+- **块引用内代码围栏（ZZBQ）同类并段不治**：`> ``` 的闭合后紧跟块引用内文字的并段是另一路径（占位符以 `> ZZBQ` 行发出、块引用重构层处理），本坑未触碰，如有用户报告按坑 A-C 同款思路另行评估。
+
+**653 指纹影响**：commonmark 653 例中仅 **ex.140 / ex.278** digest 变化（方向=并段转分块，见上）；两例的两趟收敛性不变（140 原在棘轮内仍发散、278 原收敛仍收敛），发散数 66 持平，gfm 棘轮 1 持平。R1 修订（上下文门 + `===` 文本化）后 digest 与首版完全相同（`===` 紧跟闭合围栏形态语料 0 例，P3 族语料 0 例）。
+
 ## 块引用内代码围栏（`> ```）
 
 块引用内代码块（`> ``` `）是另一组往返坑，涉及 BRMARKER、块引用重构与空行边界三处叠加。
@@ -106,4 +130,4 @@ MD ──toHtml──► HTML ──TipTap parseHTML──► PM doc ──getHT
 
 ## 相关测试
 
-`tests/test_markdownhandler.cpp`：`testNestedFenceCodeBlock`、`testNestedFenceRoundTrip`、`testCodeBlockAdjacentBlockMathRoundTrip`、`testAdjacentCodeBlocksNotMerged`、`testBlockquoteCodeFenceRoundTrip`、`testIndentedListFenceClaimed`、`testIndentedFencePairingMatrix`、`testIndentedFenceOutsideListNotClaimed`、`testSourceModeIndentedFenceNoSectionSwallow`（坑 4 用例族）。
+`tests/test_markdownhandler.cpp`：`testNestedFenceCodeBlock`、`testNestedFenceRoundTrip`、`testCodeBlockAdjacentBlockMathRoundTrip`、`testAdjacentCodeBlocksNotMerged`、`testBlockquoteCodeFenceRoundTrip`、`testIndentedListFenceClaimed`、`testIndentedFencePairingMatrix`、`testIndentedFenceOutsideListNotClaimed`、`testSourceModeIndentedFenceNoSectionSwallow`（坑 4 用例族）、`testCloseFenceFollowedTextNotMerged`（坑 5 四变体 + 相邻/守卫锚）、`testCloseFenceInListContinuationNotSplit`（P3 族三变体，R1）、`testSetextLineAfterCloseFenceNotHeading`（`===` 锚，R1）；`src/resources/web/roundtrip-chain.test.js`「闭合围栏后紧跟文字」用例（真实 TipTap 链路形态对照：干净 `<pre>` → `paragraph, codeBlock, paragraph` 直邻，并段畸形 → 空段落链，探针判别力实证）。

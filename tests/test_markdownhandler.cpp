@@ -3440,6 +3440,176 @@ private slots:
                  qPrintable(QString("往返嵌套列表应保留，MD=[%1]").arg(r1)));
     }
 
+    void testCloseFenceFollowedTextNotMerged()
+    {
+        // 发现 13（四变体实验 a/b/c/d）：Qt setMarkdown 对「``` 闭合行的下一行
+        // 直接是文字」的输入把代码块与该文字并进同一段落，占位符还原后产出
+        // <p style="margin…"><pre>…</pre> 文字</p> 畸形；TipTap 解析时 codeBlock
+        // 被提升出段落、留下空段落/前导空格段落链（用户目视「同一份文件里
+        // 代码块与前后内容间距不一致」的根因）。围栏后是空行（变体 b）则占位符
+        // 独立成段、后处理剥 <p> 包裹，输出干净顶层 <pre>。
+        // 修复：toHtml 在配对闭合围栏后紧跟「文本形态行」（会懒延续占位符段落
+        // 的行——纯文本/缩进文本/占位符化行如相邻围栏、hr、公式）时于中间流
+        // 该围栏后补一个空行；结构性行（列表/标题/块引用）本就打断段落，不补
+        // （补了会把 tight 列表翻 loose，坑 4 不动点链路发散，见实现注释）。
+        // 段首并段畸形探测器：<p …> 开头直接跟 <pre>（变体 a/d 的形态）
+        static const QRegularExpression pPreMergeRe(
+            QStringLiteral("<p[^>]*>\\s*<pre"));
+        auto ownParagraph = [](const QString &text) {
+            return QRegularExpression(
+                QStringLiteral("<p[^>]*>") + QRegularExpression::escape(text)
+                    + QStringLiteral("</p>"));
+        };
+
+        // 变体 a：闭合围栏后紧跟文字 → <pre> 与文字分块（干净顶层 <pre> +
+        // 独立段落）。修复前：<p …><pre>…</pre> 紧跟文字</p> 并段畸形。
+        const QString mdA = QStringLiteral(
+            "前文段落\n\n```cpp\nint x;\n```\n紧跟文字\n");
+        const QString htmlA = MarkdownHandler::toHtml(mdA);
+        QVERIFY2(!pPreMergeRe.match(htmlA).hasMatch(),
+                 qPrintable(QString("变体 a：<pre> 被并进段落，HTML=[%1]").arg(htmlA)));
+        QVERIFY2(ownParagraph(QStringLiteral("紧跟文字")).match(htmlA).hasMatch(),
+                 qPrintable(QString("变体 a：闭合后文字应独立成段，HTML=[%1]").arg(htmlA)));
+        QVERIFY2(htmlA.contains(QLatin1String("language-cpp"))
+                     && htmlA.contains(QLatin1String("int x;")),
+                 qPrintable(QString("变体 a：代码内容与语言应保留，HTML=[%1]").arg(htmlA)));
+
+        // 变体 b（对照）：闭合围栏后空行 → 行为不变（本就干净，仍干净）
+        const QString mdB = QStringLiteral(
+            "前文段落\n\n```cpp\nint x;\n```\n\n空行后文字\n");
+        const QString htmlB = MarkdownHandler::toHtml(mdB);
+        QVERIFY2(!pPreMergeRe.match(htmlB).hasMatch(),
+                 qPrintable(QString("变体 b：对照形态应保持干净，HTML=[%1]").arg(htmlB)));
+        QVERIFY2(ownParagraph(QStringLiteral("空行后文字")).match(htmlB).hasMatch(),
+                 qPrintable(QString("变体 b：空行后文字应独立成段，HTML=[%1]").arg(htmlB)));
+
+        // 变体 c：围栏前不空行 + 闭合后紧跟文字 → 「吞后续块」症状同治
+        //（后续块文字不再被并进含 <pre> 的段落）。围栏前正文与 <pre> 的同段
+        // 粘连保留：<pre> 在段尾，TipTap 提升不产生空段落畸形（对照变体 a/d
+        // 的段首 <pre> 形态），且补空行会引入 before 侧新行为——本测试只锚
+        // 「后续块不被吞」。
+        const QString mdC = QStringLiteral(
+            "前文段落\n```cpp\nint x;\n```\n后续块文字\n");
+        const QString htmlC = MarkdownHandler::toHtml(mdC);
+        QVERIFY2(ownParagraph(QStringLiteral("后续块文字")).match(htmlC).hasMatch(),
+                 qPrintable(QString("变体 c：后续块文字不应被吞进含 <pre> 的段落，HTML=[%1]")
+                                .arg(htmlC)));
+        QVERIFY2(htmlC.contains(QLatin1String("language-cpp")),
+                 qPrintable(QString("变体 c：代码块应保留，HTML=[%1]").arg(htmlC)));
+
+        // 变体 d：纯段落同触发（无前文、无语言）
+        const QString mdD = QStringLiteral("```\nplain\n```\n直接文字\n");
+        const QString htmlD = MarkdownHandler::toHtml(mdD);
+        QVERIFY2(!pPreMergeRe.match(htmlD).hasMatch(),
+                 qPrintable(QString("变体 d：<pre> 被并进段落，HTML=[%1]").arg(htmlD)));
+        QVERIFY2(ownParagraph(QStringLiteral("直接文字")).match(htmlD).hasMatch(),
+                 qPrintable(QString("变体 d：闭合后文字应独立成段，HTML=[%1]").arg(htmlD)));
+
+        // 相邻代码块（闭合围栏后紧跟开栏）：同属文本形态延续，同治——修复前
+        // 两个 <pre> 并进同一段落（<p …><pre>cpp</pre> <pre>python</pre></p>）
+        const QString mdAdj = QStringLiteral("```cpp\na\n```\n```python\nc\n```\n");
+        const QString htmlAdj = MarkdownHandler::toHtml(mdAdj);
+        QVERIFY2(!pPreMergeRe.match(htmlAdj).hasMatch(),
+                 qPrintable(QString("相邻代码块不应并进段落，HTML=[%1]").arg(htmlAdj)));
+        QVERIFY2(htmlAdj.contains(QLatin1String("language-cpp"))
+                     && htmlAdj.contains(QLatin1String("language-python")),
+                 qPrintable(QString("相邻代码块语言应各自保留，HTML=[%1]").arg(htmlAdj)));
+
+        // 结构性后续行（本就打断段落、修复前后零变化——列表场景的守卫锚）：
+        // 列表行不补空行（补了 tight→loose 翻转，坑 4 家族往返发散）
+        const QString mdList = QStringLiteral(
+            "- 项\n\n```cpp\nint x;\n```\n- 下一项\n");
+        const QString htmlList = MarkdownHandler::toHtml(mdList);
+        QVERIFY2(!pPreMergeRe.match(htmlList).hasMatch(),
+                 qPrintable(QString("列表行后应保持独立成块，HTML=[%1]").arg(htmlList)));
+        QVERIFY2(htmlList.contains(QLatin1String("<li"))
+                     && htmlList.contains(QStringLiteral("下一项")),
+                 qPrintable(QString("列表后续行应存活，HTML=[%1]").arg(htmlList)));
+        // 标题行同理（零变化守卫）
+        const QString mdHead = QStringLiteral("```cpp\nint x;\n```\n# 标题\n");
+        const QString htmlHead = MarkdownHandler::toHtml(mdHead);
+        QVERIFY2(!pPreMergeRe.match(htmlHead).hasMatch()
+                     && htmlHead.contains(QLatin1String("<h1")),
+                 qPrintable(QString("标题行后应保持独立成块，HTML=[%1]").arg(htmlHead)));
+
+        // 往返：并段畸形消除后首趟即归一（空行由 fromHtml 产出，两趟收敛）
+        for (const QString &md : { mdA, mdD }) {
+            const QString r1 = e2eRoundTrip(md);
+            QVERIFY2(!r1.contains(QLatin1String("ZZ")),
+                     qPrintable(QString("占位符泄漏，MD=[%1]").arg(r1)));
+            QVERIFY2(r1.contains(QLatin1String("```")),
+                     qPrintable(QString("往返代码块围栏应保留，MD=[%1]").arg(r1)));
+        }
+    }
+
+    void testCloseFenceInListContinuationNotSplit()
+    {
+        // 评审 R1 锚（P3 族）：列表项内容缩进围栏 + 闭合后紧跟项内续文（真实
+        // 语料形态：docs/superpowers/specs/2026-08-09-emoji-picker-design.md
+        // :146）。占位符与续文同为列表项段落的懒延续，并段（<li>项一 <pre>…
+        // </pre> 项一续文</li>）是该形态的既有行为（坑 4 读写对称设计），不是
+        // 畸形——补空行会把续文拆成 <li> 间裸 <p>（非法嵌套）或把单个 <ul>
+        // 拆成两个，往返丢列表归属。本测试锚定：不拆列表（单个 ul）、续文留在
+        // 项内（与 <pre> 同 <li>）、往返文本存活。
+        // 三变体：2sp 围栏+2sp 续文（P3）/ 2sp 围栏+col-0 续文（P3'）/ col-0
+        // 围栏+col-0 续文（P3''，lazy continuation 形态）。
+        const QStringList cases = {
+            QStringLiteral("- 项一\n  ```cpp\nint a;\n  ```\n  项一续文\n- 项二\n"),
+            QStringLiteral("- 项一\n  ```cpp\nint a;\n  ```\n项一续文\n- 项二\n"),
+            QStringLiteral("- 项一\n```cpp\nint a;\n```\n项一续文\n- 项二\n"),
+        };
+        static const QRegularExpression liPreRe(
+            QStringLiteral("</pre>\\s*项一续文\\s*</li>"));
+        static const QRegularExpression barePRe(
+            QStringLiteral("(</li>\\s*<p|<p[^>]*>\\s*项一续文)"));
+        for (int k = 0; k < cases.size(); ++k) {
+            const QString &md = cases[k];
+            const QString html = MarkdownHandler::toHtml(md);
+            QVERIFY2(html.count(QLatin1String("<ul")) == 1,
+                     qPrintable(QString("P3 变体 %1：列表被拆分，HTML=[%2]")
+                                    .arg(k).arg(html)));
+            QVERIFY2(liPreRe.match(html).hasMatch(),
+                     qPrintable(QString("P3 变体 %1：续文应与 <pre> 同 <li>（既有并段形态），"
+                                        "HTML=[%2]").arg(k).arg(html)));
+            QVERIFY2(!barePRe.match(html).hasMatch(),
+                     qPrintable(QString("P3 变体 %1：<li> 间不得出现裸 <p>（非法嵌套），"
+                                        "HTML=[%2]").arg(k).arg(html)));
+            QVERIFY2(html.contains(QLatin1String("language-cpp"))
+                         && html.contains(QLatin1String("int a;")),
+                     qPrintable(QString("P3 变体 %1：代码块应保留，HTML=[%2]").arg(k).arg(html)));
+            // 往返：续文与列表项文本存活、无占位符泄漏（真实链路收敛由 selftest
+            // 与语料棘轮把关——sim 链对 li 内并段 <pre> 的 TipTap 重构建模受限）
+            const QString r1 = e2eRoundTrip(md);
+            QVERIFY2(!r1.contains(QLatin1String("ZZ")),
+                     qPrintable(QString("P3 变体 %1：占位符泄漏，MD=[%2]").arg(k).arg(r1)));
+            QVERIFY2(r1.contains(QStringLiteral("项一续文"))
+                         && r1.contains(QStringLiteral("项二")),
+                     qPrintable(QString("P3 变体 %1：续文与后续项应存活，MD=[%2]").arg(k).arg(r1)));
+        }
+    }
+
+    void testSetextLineAfterCloseFenceNotHeading()
+    {
+        // 评审 R1 锚：闭合围栏后紧跟 === 行。setext 下划线不是「打断段落」而是
+        // 「消费段落」——占位符行被吃成标题内容，还原后 <h1><pre>…</pre></h1>
+        // 畸形，往返残留空 # 标题（"# \n\n```cpp…"）。=== 属文本形态延续，
+        // 补空行后占位符独立成段（干净顶层 <pre>），=== 独立成段不再吃掉它。
+        const QString md = QStringLiteral("```cpp\nint x;\n```\n===\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(!QRegularExpression(QStringLiteral("<h[1-6][^>]*>\\s*<pre"))
+                     .match(html).hasMatch(),
+                 qPrintable(QString("<pre> 不得被并进标题，HTML=[%1]").arg(html)));
+        QVERIFY2(!html.contains(QLatin1String("<h1")),
+                 qPrintable(QString("=== 不得把占位符吃成 H1，HTML=[%1]").arg(html)));
+        QVERIFY2(html.contains(QLatin1String("language-cpp")),
+                 qPrintable(QString("代码块应保留，HTML=[%1]").arg(html)));
+        const QString r1 = e2eRoundTrip(md);
+        QVERIFY2(!r1.contains(QLatin1String("ZZ")),
+                 qPrintable(QString("占位符泄漏，MD=[%1]").arg(r1)));
+        QVERIFY2(r1.contains(QLatin1String("```")),
+                 qPrintable(QString("往返代码块围栏应保留，MD=[%1]").arg(r1)));
+    }
+
 
     void testUnclosedHtmlTagNoSwallow()
     {

@@ -98,6 +98,33 @@ function corpusSections() {
     });
   }
 
+  it('闭合围栏后紧跟文字（发现 13）：codeBlock 直邻段落，无空段落畸形', () => {
+    // 上游根因：Qt setMarkdown 把「``` 闭合行的下一行直接是文字」并进同一段落
+    // （<p …><pre>…</pre> 文字</p>），TipTap 解析时 codeBlock 被提升出段落、
+    // 留下空段落/前导空格段落链（用户目视「同一文件代码块间距不一致」）。
+    // C++ 侧 toHtml 已在闭合围栏后补空行（占位符独立成段），本测试在真实
+    // TipTap 链路验证下游自愈：干净顶层 <pre> → codeBlock 与段落直邻。
+    const md = '前文段落\n\n```cpp\nint x;\n```\n紧跟文字\n';
+    const html = bodyOf(mdconv('tohtml', md));
+    expect(/<p[^>]*>\s*<pre/.test(html), `toHtml 不得产出 <p><pre> 并段形态: ${html}`)
+      .toBe(false);
+    window.editorApi.setContent(html);
+    const types = [];
+    window.editorApi.editor.state.doc.forEach((n) => types.push(n.type.name));
+    // 干净形态：段落 → codeBlock → 段落（无空段落、无前导空格段落）
+    expect(types).toEqual(['paragraph', 'codeBlock', 'paragraph']);
+    // 对照（探针判别力）：注入修复前的并段畸形 HTML → TipTap 提升产生空段落链，
+    // 证明上面的 types 断言对畸形形态是红的（非伪绿）。
+    const merged = '<p style="margin-top:6px; margin-bottom:6px;">'
+      + '<pre><code class="language-cpp">int x;</code></pre> 紧跟文字</p>';
+    window.editorApi.setContent(merged);
+    const types2 = [];
+    window.editorApi.editor.state.doc.forEach((n) => types2.push(n.type.name));
+    expect(types2).toContain('codeBlock');
+    expect(types2.length, `并段畸形应产生多余节点（空段落/前导空格段落）: ${types2}`)
+      .toBeGreaterThan(3);
+  });
+
   it('源码编辑退出路径：注入段存活且标脏', () => {
     const md0 = FIXTURES[0].md;
     const html = bodyOf(mdconv('tohtml', md0));
