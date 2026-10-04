@@ -371,12 +371,15 @@ ExportSuiteOut runExportSuite(EditorTab *tab, const QString &file,
         recordOutcome("docx", docxPath, o, &out.timings, &out.files, &out.errors);
     }
     // PDF（Pdf 模式：高亮；页眉页脚开 → 分页路径，大文档以十秒计，超时上限
-    // 180s）。fallbackUsed：paged.js 失败回退原生分页仍产出 PDF（无页眉
-    // 页脚）——不算失败，只记 paged_fallback 供 golden 判读
+    // 420s——W3-3 B 起导出器轮询预算按规模自适应（max(30s, 估页数×1.5s+10s)，
+    // 185 页档 ≈288s），工装上限须覆盖导出器自身预算 + 回退页打印，否则大档
+    // 验收在导出器正常回退前就被工装截杀）。fallbackUsed：paged.js 失败/超时
+    // 回退原生分页仍产出 PDF（无页眉页脚）——不算失败，只记 paged_fallback
+    // 供 golden 判读
     {
         auto *ex = new PdfExporter();
         const ExportOutcome o = runExport(
-            tab, ExportHtmlAsync::Mode::Pdf, 180000,
+            tab, ExportHtmlAsync::Mode::Pdf, 420000,
             [ex, &docDir, &pdfPath](const QString &html, const ExportDone &done) {
                 QObject::connect(ex, &PdfExporter::exportFinished, ex,
                     [done](bool ok, const QString &) { done(ok, QString()); });

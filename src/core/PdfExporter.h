@@ -53,6 +53,21 @@ public:
     // = 左右边距）。见 nativeHfPrintMargins 实现处注释
     static QMarginsF nativeHfPrintMargins();
 
+    // paged 路径轮询超时预算（次数，100ms/拍；W3-3 B 按规模自适应）：
+    // max(30s, estimatedPages×1.5s + 10s)。progressSeen=false（尚未排出任何
+    // 页）恒 30s 底数——rAF 垫片失效等「引擎死走」场景不因大文档估计值拖到
+    // 分钟级才回退；estimatedPages<=0 同理。提为静态供单测锁形，依据与实测
+    // 数字见 w3-paged-evidence.md 四.B（分页 ~0.93s/页，30s 一刀切必然击穿
+    // ~32 页含脚注档）
+    static int pagedPollLimit(int estimatedPages, bool progressSeen);
+
+    // 脚注引用检测（nativeHf 门控判据，W3-3 顺手项）：标签形态匹配——真脚注
+    // 引用是文档里的实际元素（TipTap 与 MarkdownHandler 都产
+    // <sup data-type="footnoteRef" ...>）。旧实现为全文子串
+    // contains("data-type=\"footnoteRef\"")，代码块字面含该串的无脚注文档
+    // 被假阳性降级 paged 慢路径（取证报告二节遗留观察）
+    static bool htmlHasFootnoteRef(const QString &html);
+
     // 本次导出是否走了回退（paged.js 失败/超时/内容校验不过 → 原生分页，产物
     // 无页眉页脚）。pagedFallbackUsed 信号先于 printToPdf 触发，其状态栏提示
     // 会被随后的导出成功消息覆盖——调用方须在 exportFinished 时据此把回退
@@ -83,6 +98,9 @@ private:
     void startPagedExport(const QString &pagedFullHtml);
     // 原生页眉页脚路径任一环节失败 → 重建 paged 版 HTML 走完整 paged.js 链路
     void fallbackFromNativeHf(const QString &reason);
+    // paged 路径轮询超时 → 换载无 paged 的 legacy 渲染页再打印（W3-3 C 竞态
+    // 收口：不对运行中的页面 __restoreBody 拆 DOM，旧文档随导航整体销毁）
+    void fallbackFromPagedTimeout();
 
     QWebEngineView *m_renderView;
     QString m_pendingOutputPath;
@@ -110,6 +128,10 @@ private:
     bool m_printStarted = false;   // 防轮询回调竞态导致重复 printToPdf
     bool m_fallbackUsed = false;   // 进入回退路径（fallback/超时）时置位
     int m_lastPagedPages = 0;      // 进度信号去重（页数增长才发 pagedProgress）
+    int m_estPages = 0;            // 估页数（正文流高/版心高，W3-3 B 超时预算输入）
+    int m_pagedContentPx = 0;      // 版心高 px（估页数分母，与 __pagedContentPx 同源）
+    bool m_timeoutFallbackUsed = false;  // 超时→legacy 换载已用过（再超时即报错防循环）
+    int m_renderGen = 0;           // 渲染页代号：setHtml 换载 +1，迟到的旧页轮询回调按代号丢弃
 };
 
 #endif // MD_EDITOR_PDFEXPORTER_H

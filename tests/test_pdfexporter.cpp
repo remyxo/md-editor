@@ -721,6 +721,75 @@ private slots:
         QCOMPARE(legacy.count("img{max-width:100%;}"), 1);
     }
 
+    void testPagedPollLimitAdaptiveByScale() {
+        // W3-3 B（超时预算按规模自适应，w3-paged-evidence.md 四.B）：30s 一刀切
+        // 在 ~0.93s/页的分页速度下必然击穿 ~32 页档（30s 轮询先于指纹校验触发，
+        // 静默回退无页眉页脚）。预算 = max(30s, 页数×1.5s + 10s)，100ms/拍：
+        // · 底数 30s：小文档不慢化（原行为保底）
+        // · progressSeen=false（尚未排出任何页）恒 30s——rAF 垫片失效等
+        //   「引擎死走」场景不被大文档估计值拖到分钟级才回退
+        // · 1.5s/页 ≈ 实测 0.93s/页 的 1.6 倍余量 + 10s 固定开销（mermaid/
+        //   列宽归一/切块等分页前置）
+        QCOMPARE(PdfExporter::pagedPollLimit(0, false), 300);
+        QCOMPARE(PdfExporter::pagedPollLimit(0, true), 300);      // 快照缺席估不出页数
+        QCOMPARE(PdfExporter::pagedPollLimit(500, false), 300);   // 无进展不放宽
+        QCOMPARE(PdfExporter::pagedPollLimit(5, true), 300);      // 17.5s < 30s 取底
+        QCOMPARE(PdfExporter::pagedPollLimit(20, true), 400);     // 20×1.5+10=40s
+        QCOMPARE(PdfExporter::pagedPollLimit(47, true), 805);     // fnsparse 档 47 页 ≈ 80.5s
+        QCOMPARE(PdfExporter::pagedPollLimit(93, true), 1495);    // bench-4000 估 93 页
+        QVERIFY(PdfExporter::pagedPollLimit(100, true)
+                > PdfExporter::pagedPollLimit(50, true));         // 单调不回缩
+        QCOMPARE(PdfExporter::pagedPollLimit(100000, true), 1500100);   // 无 int 溢出
+    }
+
+    void testHtmlHasFootnoteRefTagForm() {
+        // W3-3 顺手项（取证报告二节遗留观察）：脚注门从全文子串
+        // contains("data-type=\"footnoteRef\"") 收紧为标签形态匹配——代码块/
+        // 行内代码字面含该串的**无脚注**文档（如讨论本机制的开发文档）曾被
+        // 假阳性禁用 nativeHf、整体降级 paged 慢路径。两条序列化路径
+        //（TipTap renderHTML / MarkdownHandler 手写 HTML）都产
+        // <sup data-type="footnoteRef" ...>（属性双引号）
+        QVERIFY(PdfExporter::htmlHasFootnoteRef(
+            "<p>正文<sup data-type=\"footnoteRef\" data-id=\"1\">1</sup></p>"));
+        // 属性序变化仍命中（保守：不给属性序留回归缝——标签形态的判据是
+        // 「真元素携带该属性」，宁走 paged 不误吞脚注）
+        QVERIFY(PdfExporter::htmlHasFootnoteRef(
+            "<sup data-id=\"1\" data-type=\"footnoteRef\">1</sup>"));
+        // 代码块字面文本：HTML 序列化后 < 已成 &lt;（ProseMirror/Qt 均转义
+        // 文本节点），标签开头形态不可能命中；C++ 源码形态的 \" 同样不命中
+        QVERIFY(!PdfExporter::htmlHasFootnoteRef(
+            "<pre><code>!html.contains(\"data-type=\\\"footnoteRef\\\"\")</code></pre>"));
+        QVERIFY(!PdfExporter::htmlHasFootnoteRef(
+            "<pre><code>&lt;sup data-type=\"footnoteRef\" data-id=\"1\"&gt;"
+            "1&lt;/sup&gt;</code></pre>"));
+        // 裸文本（无标签上下文）与相邻属性粘连（xdata-type）不命中
+        QVERIFY(!PdfExporter::htmlHasFootnoteRef("说明 data-type=\"footnoteRef\" 的语义"));
+        QVERIFY(!PdfExporter::htmlHasFootnoteRef("<sup xdata-type=\"footnoteRef\">"));
+        QVERIFY(!PdfExporter::htmlHasFootnoteRef("<p>无脚注文档</p>"));
+    }
+
+    void testBuildRenderHtmlPagedTimeoutWiring() {
+        // W3-3 B/C 接线锁形：
+        // 1) 正文流总高快照 __preBodyH：脚注浮动/预分页切块之后的稳定流上取、
+        //    preview 之前——C++ 轮询读回后按 版心高 估页数定自适应预算
+        // 2) fallback() 终态守卫：C++ 已判超时回退（__printState='fallback'）后
+        //    引擎的迟到 rejection 是回退的既成后果，静默返回不再输出误导性
+        //    「paged.js 分页失败」崩行（拆 DOM 竞态收口的配合项，见
+        //    fallbackFromPagedTimeout）
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "",
+                                                   specWithHeader());
+        QVERIFY(out.contains("window.__preBodyH=document.body.scrollHeight;"));
+        QVERIFY(out.indexOf("window.__preBodyH=")
+                > out.indexOf("window.__prepaginateTables("));
+        QVERIFY(out.indexOf("window.__preBodyH=")
+                < out.indexOf("PagedPolyfill.preview()"));
+        QVERIFY(out.contains(
+            "if(window.__printState==='fallback')return window.__printState;"));
+        QVERIFY(out.indexOf(
+                    "if(window.__printState==='fallback')return window.__printState;")
+                > out.indexOf("var fallback=function(e){"));
+    }
+
     void testPagedPrintMarginsTinyNonZero() {
         // paged 路径 Qt 打印边距（mm）形状锁：每边必须 > 0 且 <= 1.0——
         // ① Qt 6.8 printToPdf 对恰为 0 的边距套用 ~18mm（51pt）有效默认打印

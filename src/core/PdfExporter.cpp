@@ -16,6 +16,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <algorithm>
+#include <limits>
 #include <QPdfDocument>
 
 PdfExporter::PdfExporter(QObject *parent)
@@ -496,6 +497,12 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "throw new Error('MEASURE_DONE');}});}catch(e){window.__measureDbg='注册失败 '+e;}"
         "}"
         "var fallback=function(e){"
+        // 终态守卫（W3-3 C）：C++ 轮询已判超时回退（__printState='fallback'，
+        // 见 fallbackFromPagedTimeout）后引擎的迟到 rejection 是回退的既成
+        // 后果、不是独立故障——静默返回，不再输出误导性「paged.js 分页失败」
+        // 崩行污染诊断（此前超时拆 DOM 与在途布局的竞态崩行一直被当成引擎
+        // 自身故障追查，取证报告 3.2）
+        "if(window.__printState==='fallback')return window.__printState;"
         // 测量遍靠抛错中断（只排第一页即止），不是失败：原样返回让 C++ 取高重载
         "if(window.__printState==='measured')return 'measured';"
         "console.warn('paged.js 分页失败，回退原生分页: '+(e&&e.message||e));"
@@ -688,6 +695,11 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 窄，行高/块高因此偏大。测量到此结束，**清除后**才进分页——绝不能带进
         // 打印媒体（html{overflow:hidden} 在打印下会裁掉整份文档）
         "try{document.documentElement.style.overflow='';}catch(e){}"
+        // 正文流总高快照（W3-3 B）：取在脚注浮动/预分页切块之后的**稳定流**上
+        //（其后只剩分页本身），C++ 轮询读回后按 版心高(__pagedContentPx 同源)
+        // 估页数、给轮询超时预算定规模——30s 一刀切在 ~0.93s/页下必然击穿
+        // ~32 页含脚注档（取证报告一节计时模型）
+        "window.__preBodyH=document.body.scrollHeight;"
         "return PagedPolyfill.preview()"
         ".then(function(){"
         // 页脚 counter(pages) 修正：脚注溢出产生的续页走 chunker.clonePage——
@@ -1215,6 +1227,41 @@ QMarginsF PdfExporter::nativeHfPrintMargins()
     return QMarginsF(0.1, 0.1, 0.1, 0.1);
 }
 
+int PdfExporter::pagedPollLimit(int estimatedPages, bool progressSeen)
+{
+    // W3-3 B（超时预算按规模自适应，依据 w3-paged-evidence.md 四.B + 一节
+    // 计时模型）：paged.js 分页 ~0.93s/页（脚注文档含浮动开销），30s 一刀切
+    // 只够 ~32 页——超过的含脚注文档必然超时回退（静默、产物无页眉页脚），
+    // 稀疏脚注 35-50 页中档被误杀。预算 max(30s, 页数×1.5s+10s)：
+    // · 1.5s/页 ≈ 实测 0.93s/页 的 1.6 倍余量（fnsparse 49 页实测 46.4s，
+    //   预算 83.5s；bench-2000 47 页 43.5s，预算 80.5s——都能走完分页进到
+    //   指纹校验，诚实呈现而非超时截断）
+    // · 10s 固定开销：mermaid 渲染/列宽归一/预分页切块等分页前置
+    // · progressSeen=false（尚未排出任何页）恒 30s 底数：rAF 垫片失效等
+    //   「引擎死走」场景维持原兜底节奏，大文档估计值不得拖长死等
+    if (!progressSeen || estimatedPages <= 0)
+        return 300;   // 30s × 100ms（原固定预算，小文档不慢化）
+    const qint64 ms = qMax<qint64>(30000,
+                                   qint64(estimatedPages) * 1500 + 10000);
+    return int(qMin<qint64>(ms / 100, qint64(std::numeric_limits<int>::max())));
+}
+
+bool PdfExporter::htmlHasFootnoteRef(const QString &html)
+{
+    // 标签形态匹配：真脚注引用是文档里的实际元素（TipTap renderHTML 与
+    // MarkdownHandler 两条序列化路径都产 <sup data-type="footnoteRef" ...>，
+    // 属性双引号）。取「任意标签名 + 属性上下文」的保守形态（sup 以外的
+    // 元素若携带该属性同样按有脚注处理——门的意义是保护 float:footnote
+    // 版式，宁走 paged 不误吞脚注）；代码块/行内代码里的字面文本经 HTML
+    // 序列化后 < 已成 &lt;（文本节点转义是两条路径的恒定行为），不可能
+    // 匹配 <标签 开头。旧全文子串 contains("data-type=\"footnoteRef\"")
+    // 对字面含该串的开发文档假阳性，无脚注文档被无辜降级慢路径
+    // （W3-3 取证报告二节遗留观察）
+    static const QRegularExpression re(
+        QStringLiteral("<[a-zA-Z][a-zA-Z0-9-]*\\b[^>]*\\bdata-type=\"footnoteRef\""));
+    return re.match(html).hasMatch();
+}
+
 void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const QString &outputPath,
                               QPageLayout::Orientation orientation,
                               QPageSize::PageSizeId paperSize)
@@ -1256,8 +1303,7 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     m_srcCustomCss = customCss;
     m_nativeHfPass = 0;
     PdfPageSpec htmlSpec = spec;
-    htmlSpec.nativeHf = spec.pagedActive()
-        && !html.contains(QLatin1String("data-type=\"footnoteRef\""));
+    htmlSpec.nativeHf = spec.pagedActive() && !htmlHasFootnoteRef(html);
     QString fullHtml = buildRenderHtml(html, docDir, katexCss, customCss, htmlSpec);
 
     m_pendingOutputPath = outputPath;
@@ -1286,6 +1332,19 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     m_printStarted = false;
     m_fallbackUsed = false;
     m_lastPagedPages = 0;
+    m_estPages = 0;
+    m_timeoutFallbackUsed = false;
+    m_renderGen = 0;
+    // 版心高（px）：超时预算的页数估计分母（正文流高/版心高 → 估页数），
+    // 与 buildRenderHtml 注入 paged 页的 __pagedContentPx 同源（纸高 − 上下
+    // 边距，横向换向取长边；W3-3 B）
+    {
+        const QSizeF pm0 = QPageSize(spec.paper).size(QPageSize::Millimeter);
+        const double contentHmm
+            = (orient == QPageLayout::Landscape ? pm0.width() : pm0.height())
+              - spec.marginsMm.top() - spec.marginsMm.bottom();
+        m_pagedContentPx = qRound(contentHmm / 25.4 * 96.0);
+    }
 
     disconnect(m_renderView, &QWebEngineView::loadFinished, this, nullptr);
     disconnect(m_renderView->page(), &QWebEnginePage::pdfPrintingFinished,
@@ -1364,31 +1423,39 @@ void PdfExporter::onLoadFinished(bool ok)
 
 void PdfExporter::pollPrintState()
 {
-    // 超时兜底（30s × 100ms）：rAF 垫片失效等极端情况导致 __printState 永停
-    // working——还原 body 走 legacy 版式，宁可无页眉页脚也不交白纸
-    if (++m_printPollCount > 300) {
+    // 超时兜底（W3-3 B 预算自适应）：rAF 垫片失效等极端情况导致 __printState
+    // 永停 working——回退 legacy 版式，宁可无页眉页脚也不交白纸。预算按规模
+    // 推导（pagedPollLimit）：已见分页进展的大文档给 max(30s, 估页数×1.5s
+    // +10s)——估页数 = 正文流高/版心高（__preBodyH 快照），已排页数超过估计
+    // 时以实测续命（引擎确在排版就不误杀）；小文档/无进展维持 30s 底数不慢化
+    if (++m_printPollCount
+        > pagedPollLimit(qMax(m_estPages, m_lastPagedPages + 1),
+                         m_lastPagedPages > 0)) {
         m_printPoll.stop();
         if (m_printStarted)
             return;
         m_printStarted = true;
-        m_fallbackUsed = true;
-        m_renderView->page()->runJavaScript(
-            "try{window.__restoreBody&&window.__restoreBody();}catch(e){}");
-        emit pagedFallbackUsed();
-        emit writingPdf(0);
-        m_renderView->page()->printToPdf(m_pendingOutputPath, m_legacyLayout);
+        fallbackFromPagedTimeout();
         return;
     }
     // 状态 + 已生成页数一并读（复用同一轮询，零额外开销）：working 期间页数
     // 增长即发 pagedProgress——paged.js 大文档分页以十秒计（2026-09-15 性能
     // 取证 ~0.8s/页），全程静默等待体感差
+    // 派发时记下渲染页代号：runJavaScript 回调是异步的，若期间发生 setHtml
+    // 换载（测量遍重载 / nativeHf 回退重载 / 超时回退换载 legacy 页），回调
+    // 读到的是**已作废的旧页**状态——按代号整体丢弃，防止旧页的终态绕过
+    // 防重闸（超时回退会复位 m_printStarted 重新武装）触发双打印/错版式打印
+    const int gen = m_renderGen;
     m_renderView->page()->runJavaScript(
         "(function(){return JSON.stringify({s:window.__printState||'',"
         "n:document.querySelectorAll('.pagedjs_page').length,"
         "t:window.__hfPagTall||0,"
         "m:window.__measureH||0,"
-        "g:window.__measureDbg||''});})()",
-        [this](const QVariant &v) {
+        "g:window.__measureDbg||'',"
+        "b:window.__preBodyH||0});})()",
+        [this, gen](const QVariant &v) {
+            if (gen != m_renderGen)
+                return;
             QJsonParseError e;
             const QJsonDocument d = QJsonDocument::fromJson(v.toString().toUtf8(), &e);
             const QJsonObject o = d.object();
@@ -1398,6 +1465,16 @@ void PdfExporter::pollPrintState()
                                       ? o.value("s").toString() : QString();
             const int pages = e.error == QJsonParseError::NoError
                                       ? o.value("n").toInt() : 0;
+            // 估页数（W3-3 B）：正文流高（__preBodyH 快照）/版心高 向上取整，
+            // 只增不减（快照取自分页前稳定流，异常抖动不收紧预算）
+            if (e.error == QJsonParseError::NoError && m_pagedContentPx > 0) {
+                const int bodyH = o.value("b").toInt();
+                if (bodyH > 0) {
+                    const int est = (bodyH + m_pagedContentPx - 1) / m_pagedContentPx;
+                    if (est > m_estPages)
+                        m_estPages = est;
+                }
+            }
             if (state == QLatin1String("working") && pages > m_lastPagedPages) {
                 m_lastPagedPages = pages;
                 emit pagedProgress(pages);
@@ -1797,5 +1874,47 @@ void PdfExporter::startPagedExport(const QString &pagedFullHtml)
     // 回退重载：复位防重闸与进度基线（nativehf 遍已置位）
     m_printStarted = false;
     m_lastPagedPages = 0;
+    ++m_renderGen;   // 旧页在途回调按代号丢弃（见 pollPrintState 派发点注释）
     m_renderView->setHtml(pagedFullHtml, QUrl("qrc:/web/"));
+}
+
+void PdfExporter::fallbackFromPagedTimeout()
+{
+    // W3-3 C（竞态收口 + 静默消除，取证报告 3.2/四.C）：超时回退不再对运行中
+    // 的页面调 __restoreBody()——paged.js 无法真正 abort，摘除 .pagedjs_pages
+    // 后仍在跑的 Chunker 对已脱离文档的元素取 offsetParent=null 崩溃
+    // （paged.polyfill.js:1407），stderr 出「paged.js 分页失败」误导性崩行
+    //（超时的后果被当成引擎自身故障）。改为：旧页置终态（fallback() 检测到
+    // 即静默跳过告警/还原）→ **整页换载**无 paged 的 legacy 渲染页——旧文档
+    // 随导航整体销毁，在途布局与产物彻底解耦，DOM 手术竞态面归零；legacy 页
+    // 经 onLoadFinished→__preparePrint→'legacy' 终态由既有轮询按 m_legacyLayout
+    // 打印（与「用户关页眉页脚导出」同款管线，含 Task5 的列宽归一）
+    qWarning("[PdfExport] paged.js 分页超时（%d s，已排 %d 页/估 %d 页），"
+             "回退原生分页（产物无页眉页脚）",
+             m_printPollCount / 10, m_lastPagedPages, m_estPages);
+    if (m_timeoutFallbackUsed) {
+        // 双保险：回退页自身也超时（极端环境）——不再无限重建，如实报错
+        qWarning("[PdfExport] 回退页亦超时，导出失败");
+        emit exportError(QStringLiteral("PDF 导出超时（分页与回退路径均未完成）"));
+        return;
+    }
+    m_timeoutFallbackUsed = true;
+    m_fallbackUsed = true;
+    emit pagedFallbackUsed();
+    m_renderView->page()->runJavaScript(
+        "try{window.__printState='fallback';}catch(e){}");
+    PdfPageSpec legacySpec = m_spec;
+    legacySpec.headerEnabled = false;   // pagedActive() 即 false：不注入 paged.js
+    legacySpec.footerEnabled = false;
+    const QString legacyHtml = buildRenderHtml(m_srcHtml, m_srcDocDir, m_srcKatexCss,
+                                               m_srcCustomCss, legacySpec);
+    // 测量值/进度基线/估页数一并复位：legacy 遍不注入 paged 测量参数、不发
+    // 分页进度、预算回 30s 底数（legacy 终态本就数秒内到达）
+    m_measuredBoxH = 0;
+    m_measuredFnH = 0;
+    m_lastPagedPages = 0;
+    m_estPages = 0;
+    m_printStarted = false;   // 重新武装：legacy 终态到达后由轮询打印
+    ++m_renderGen;   // 旧 paged 页在途回调按代号丢弃，防换载后双打印（见下）
+    m_renderView->setHtml(legacyHtml, QUrl("qrc:/web/"));
 }
