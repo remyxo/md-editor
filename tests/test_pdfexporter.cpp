@@ -281,7 +281,7 @@ private slots:
         // 首尾空碎片各带一份底色内边距，在代码块上下画出细灰条
         QVERIFY(out.contains("pre code{background:none;padding:0;border-radius:0;}"));
         QVERIFY(out.contains("__splitPreLines"));
-        // 逐行重排仅 paged 路径调用（legacy 走原生分页，pre 由引擎处理）
+        // 逐行重排仅 nativeHf/paged 路径调用（legacy 走原生分页，pre 由引擎处理）
         QVERIFY(out.indexOf("window.__splitPreLines();")
                 > out.indexOf("if(!window.PagedPolyfill)"));
         // R3 表格断点修正：paged.js 只在「下一行 top 越界」时断页，行底压线贴合
@@ -503,6 +503,46 @@ private slots:
         QVERIFY(!out.contains("window.requestAnimationFrame=function"));   // 无 paged 无需垫片
     }
 
+    void testBuildRenderHtmlLegacyRunsTableColumnNormalize() {
+        // 排版决策与页眉页脚开关正交（W3 Task5）：legacy（页眉页脚全关）与
+        // nativeHf/paged 同跑 __fixTableColumns。取证（2026-10-04 真实产品链路
+        // A/B，工装见任务报告）：同一文档两配置整表水平覆盖同为 17.95~192.02mm
+        //（几何同源——页内容盒同为纸宽−左右边距），但 legacy 缺归一时 auto 布局
+        // 把 CJK 短列压塌（编号 12.36→9.48mm、状态 16.76→11.01mm「已完成」一字
+        // 一行、页数 5→7）——开关组合不得改变列宽决策
+        QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
+        // 共享调用点（warn 文案不带 nativeHf 前缀，与守卫内旧文案区分）位于
+        // no-polyfill 分支顶层：在 __NATIVE_HF 守卫之外、提前 return 之前
+        const qsizetype branch = out.indexOf("if(!window.PagedPolyfill){");
+        const qsizetype fix = out.indexOf(
+            "try{window.__fixTableColumns();}catch(e){console.warn('列宽归一失败: '");
+        const qsizetype state = out.indexOf(
+            "window.__printState=window.__NATIVE_HF?'nativehf':'legacy';");
+        QVERIFY(branch >= 0);
+        QVERIFY(fix > branch);
+        QVERIFY(fix < state);
+        // 守卫外：调用点之前恰 1 个 __NATIVE_HF 守卫（splitPreLines 所在），全文
+        // 恰 2 个（其后还有分页守卫）——归一对三条路径共同生效
+        QCOMPARE(out.left(fix).count("if(window.__NATIVE_HF){"), 1);
+        QCOMPARE(out.count("if(window.__NATIVE_HF){"), 2);
+        // 次序：拆行（nativeHf 守卫内）→ 归一（守卫外）→ 分页（nativeHf 守卫内）
+        QVERIFY(out.indexOf("nativeHf 代码块逐行重排失败") < fix);
+        QVERIFY(fix < out.indexOf("nativeHf 分页: "));
+        // 拆行器仍仅 nativeHf/paged 调用：legacy 的 pre 由引擎原生分页（既有设计，
+        // 见 testBuildRenderHtmlPrintCssSplittable 注释），不随本修复扩面
+        QVERIFY(out.indexOf("window.__splitPreLines();")
+                > out.indexOf("if(window.__NATIVE_HF){"));
+        // 列宽基准随 legacy 注入：legacy 打印内容宽 = 纸宽 − 用户左右边距（Qt
+        // QPageLayout 边距承载页边距，与 nativeHf 的 #hfcell 内垫同宽）——A4/
+        // 18mm 默认 657.6px
+        QVERIFY(out.contains("window.__pageContentWidthPx=657.6;"));
+        // 基础 CSS 不包 @media print（对齐 nativeHf/paged 的「屏幕布局 = 打印布局」
+        // 分页前测量不变式）：legacy 归一测量在屏幕媒体做，包着会量在无基础 CSS
+        // 的裸布局上（th,td 边框缺席致测量基准漂移；行高 30px vs 成品 52px 同款
+        // 教训）。@media 包装与否在打印媒体规则集相同，legacy 打印产物不受影响
+        QVERIFY(!out.contains("@media print{"));
+    }
+
     void testBuildRenderHtmlHeaderOnly() {
         PdfPageSpec s = specWithHeader(); s.footerEnabled = false;
         QString out = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", s);
@@ -646,13 +686,13 @@ private slots:
         QVERIFY(!out.contains("@media print{"));
         QVERIFY(out.contains("img:not([width])"));
         // legacy 路径（页眉页脚全关）无 paged 分页，不注入两条容纳规则：img 宽度
-        // 规则仅剩 @media print 内的一处（前缀计数区分屏幕副本与打印副本；打印
-        // 副本的 %% 死值已在 #32 修正为有效单 %，形态由
-        // testBuildRenderHtmlPrintCssPercentValid 锁定，此处只锁数量）
+        // 规则仅剩基础 CSS 一处——W3 Task5 起 legacy 也跑列宽归一，基础 CSS 不再
+        // 包 @media print（归一测量须在屏幕媒体做），无条件生效的基础副本即唯一
+        // 副本（%% 死值已由 #32 修正，形态见 testBuildRenderHtmlPrintCssPercentValid）
         QString legacy = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
         QVERIFY(!legacy.contains("img:not([width])"));
         QCOMPARE(legacy.count("img{max-width:100"), 1);
-        QVERIFY(legacy.lastIndexOf("img{max-width:100") > legacy.indexOf("@media print{"));
+        QVERIFY(!legacy.contains("@media print{"));
     }
 
     void testBuildRenderHtmlPrintCssPercentValid() {
@@ -671,7 +711,8 @@ private slots:
             "table{border-collapse:collapse;width:100%;margin:0.5em 0;}"));
         QVERIFY(out.contains("img{max-width:100%;}"));
         QCOMPARE(out.count("img{max-width:100%;}"), 2);
-        // legacy 态：img{max-width:100%;} 恰 1 处（仅 @media print 内的打印副本）
+        // legacy 态：img{max-width:100%;} 恰 1 处——W3 Task5 起 legacy 不包
+        // @media print（列宽归一在屏幕媒体测量），无条件生效的基础副本即唯一副本
         QString legacy = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
         QVERIFY(!legacy.contains("%%"));
         QVERIFY(legacy.contains(

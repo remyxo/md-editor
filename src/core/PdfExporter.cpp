@@ -513,13 +513,18 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         // 函数内的 getBoundingClientRect 强制回流，保证在压制生效的布局上取值
         "try{document.documentElement.style.overflow='hidden';}catch(e){}"
         "if(!window.PagedPolyfill){"
-        // nativeHf 三条前置（顺序即依赖）：① 代码块逐行重排成行块（与 paged
-        // 路径同款），长代码块才能按行断页；② 表格列宽归一（屏幕布局 = 打印
-        // 布局后，其两趟 intrinsic 测量与 paged 路径同源，两引擎列宽一致）；
-        // ③ 轻量分页切页（依赖前两步的最终块高）
+        // 三条前置（顺序即依赖）：① 代码块逐行重排成行块（nativeHf 守卫内，与
+        // paged 路径同款），长代码块才能按行断页——legacy 走引擎原生分页不拆
+        //（既有设计，pre 由 Chromium 逐行盒断页）；② 表格列宽归一——守卫外，
+        // nativeHf 与 legacy 共用：排版决策与页眉页脚开关正交（W3 Task5 取证：
+        // 两配置页内容盒同为纸宽−左右边距、几何同源，开关不得改变列宽决策；
+        // 屏幕布局 = 打印布局后，两趟 intrinsic 测量与 paged 路径同源）；
+        // ③ 轻量分页切页（nativeHf 守卫内，依赖前两步的最终块高）
         "if(window.__NATIVE_HF){"
         "try{window.__splitPreLines();}catch(e){console.warn('nativeHf 代码块逐行重排失败: '+(e&&e.message||e));}"
-        "try{window.__fixTableColumns();}catch(e){console.warn('nativeHf 列宽归一失败: '+(e&&e.message||e));}"
+        "}"
+        "try{window.__fixTableColumns();}catch(e){console.warn('列宽归一失败: '+(e&&e.message||e));}"
+        "if(window.__NATIVE_HF){"
         "try{console.warn('nativeHf 分页: '+window.__paginateNativeHf("
         "window.__hfPageContentPx,window.__hfPageMarginBottomPx));}"
         "catch(e){console.warn('nativeHf 分页失败: '+(e&&e.message||e));}"
@@ -1027,17 +1032,31 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
             - spec.marginsMm.top() - spec.marginsMm.bottom();
         libs.prepend(QStringLiteral("<script>window.__pagedContentPx=%1;</script>")
                          .arg(pageContentHmm / 25.4 * 96.0, 0, 'f', 1));
+    } else {
+        // legacy（页眉页脚全关）同样注入列宽归一基准（W3 Task5：排版决策与
+        // 页眉页脚开关正交）：打印内容宽 = 纸宽 − 用户左右边距——Qt
+        // QPageLayout 边距承载页边距，与 nativeHf 的 #hfcell 内垫、paged 的
+        // @page 边距围出的内容宽同源。缺此基准时归一层退回 body.clientWidth
+        //（隐藏视图 640px 默认宽），列宽分配整体失真
+        const double contentWmm = (spec.orientation == QPageLayout::Landscape
+                                       ? paperMm.height() : paperMm.width())
+            - spec.marginsMm.left() - spec.marginsMm.right();
+        libs.prepend(QStringLiteral("<script>window.__pageContentWidthPx=%1;</script>")
+                         .arg(contentWmm / 25.4 * 96.0, 0, 'f', 1));
     }
 
-    // 基础文档 CSS 的媒体包装：**nativeHf 与 paged 两条分页路径都不包**，只有
-    // legacy（无 paged.js、只打印一次）包着。paged 路径原先靠 paged.js 的
+    // 基础文档 CSS 的媒体包装：**三条路径都不包**。paged 路径原先靠 paged.js 的
     // PrintMedia 处理器解包——但那是 preview() 里才发生的，而分页前的表格列宽
     // 归一（两趟 intrinsic 测量）与预分页切块**都在屏幕媒体里做**，包着就量在
     // 「无基础 CSS」的裸布局上（实测表格行高 30px，成品 52px ⇒ 切块按 30px/行
     // 算，每块塞进 ~1.7 倍行数 ⇒ paged.js 只能再切碎、页尾大片留白）。不包即
-    // 屏幕布局 = 打印布局，与 nativeHf 同款
-    const QString mediaOpen = (nativeHf || paged) ? QString() : QStringLiteral("@media print{");
-    const QString mediaClose = (nativeHf || paged) ? QString() : QStringLiteral("}");
+    // 屏幕布局 = 打印布局，与 nativeHf 同款。legacy 自 W3 Task5 起也跑列宽归一
+    //（排版决策与页眉页脚开关正交），同一测量不变式随之覆盖：包着会让 legacy
+    // 的归一量在裸布局上（th,td 边框缺席，测量基准与打印漂移）。@media 包装
+    // 与否在打印媒体的规则集相同——legacy 打印产物不受影响，变化的只有隐藏
+    // 渲染视图的屏幕呈现（屏幕不是交付物）
+    const QString mediaOpen;
+    const QString mediaClose;
 
     QString fullHtml = QString(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><style>"

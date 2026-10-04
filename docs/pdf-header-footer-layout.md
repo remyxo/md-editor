@@ -97,10 +97,12 @@ vertical-align 翻译成 align-items，bottom→flex-end 即"贴向正文一侧"
 - 测量期临时 `documentElement.style.overflow='hidden'`（滚动条吃掉 ~15px 视口宽），
   **罩住全部分页前测量**（列宽归一 + 预分页切块），进 `preview()` 前才清
   （绝不带进打印媒体：`html{overflow:hidden}` 在打印下会裁掉整份文档）；
-- 基础文档 CSS 对 nativeHf 与 paged 两路都**不包** `@media print`：paged.js 的
+- 基础文档 CSS 对三条路径都**不包** `@media print`：paged.js 的
   PrintMedia 处理器确实会把 `@media print` 规则并进主规则表，但那是 `preview()`
   里才发生的——分页前测量跑在它之前，包着就量在「无基础 CSS」的裸布局上
-  （实测行高 30px，成品 52px）。只有 legacy 路径包着（无 paged.js，只打印）。
+  （实测行高 30px，成品 52px）。legacy 路径 2026-10-04（W3 Task5）起同款不包：
+  其列宽归一同样在屏幕媒体测量；`@media` 包装与否在打印媒体规则集相同，
+  legacy 打印产物不受影响。
 
 ## 成品防线（失守即回退 paged.js，绝不交错稿）
 
