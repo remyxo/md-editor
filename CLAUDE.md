@@ -100,6 +100,7 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 | `src/resources/themes/light.qss` | 亮色主题 QSS |
 | `src/resources/themes/dark.qss` | 暗色主题 QSS |
 | `src/core/MarkdownHandler.cpp` | MD↔HTML 转换（基于 QTextDocument） |
+| `src/core/ConversionQueue.{h,cpp}` | 每 tab 转换任务队列：QtConcurrent worker 执行 + GUI 线程完成回调（loadFile/保存/切源码模式共用，串行次序 + 加载代次护栏，W4-1） |
 | `src/core/qt/QtMarkdownWriter.{h,cpp}` | vendored Qt 序列化器（去 80 列折行 + 版本固定，见 docs/vendor-qt-markdown-writer.md） |
 | `src/core/FileManager.cpp` | 文件 I/O + 文件监控 |
 | `src/core/DocxExporter.cpp` | DOCX 导出（基于 QTextDocument + zip） |

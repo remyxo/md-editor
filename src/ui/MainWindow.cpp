@@ -780,37 +780,64 @@ void MainWindow::onToggleSourceMode()
         // → 进入源码模式：获取编辑器 HTML → 转换为 MD → 显示到 textarea
         // 模式切换计时（JS 读取 → fromHtml 转换 → JS 填充），结果显示在状态栏：
         // 用户靠此数据反馈切换耗时分布，属正式功能而非调试插桩
+        //
+        // W4-1：fromHtml 移至 worker 线程（大文档数百毫秒，同步执行期间 GUI
+        // 冻结）。移线程后异步链更长——中途 tab 被关闭时 runJavaScript 回调
+        // 不再执行、m_sourceModeToggling（单实例闸）将永久卡死，全部模式
+        // 切换从此失效。挂 tab destroyed 兜底释放闸，正常完成时显式断开
         QElapsedTimer perfTotal;
         perfTotal.start();
+        const QMetaObject::Connection gateGuard =
+            connect(tab, &QObject::destroyed, this, [this]() {
+                m_sourceModeToggling = false;
+            });
         tab->webView()->page()->runJavaScript(
             QStringLiteral("window.editorApi.getContent()"),
-            [this, tab, perfTotal](const QVariant &result) {
+            [this, tab, perfTotal, gateGuard](const QVariant &result) {
+                if (m_tabWidget->indexOf(tab) < 0) {
+                    disconnect(gateGuard);
+                    m_sourceModeToggling = false;
+                    return;
+                }
                 QString html = result.toString();
                 const qint64 jsReadMs = perfTotal.elapsed();
-                QElapsedTimer conv;
-                conv.start();
-                QString md = MarkdownHandler::fromHtml(html);
-                const qint64 convMs = conv.elapsed();
-                QString escaped = JsEscape::forTemplateLiteral(md);
-                QElapsedTimer jsFill;
-                jsFill.start();
-                tab->webView()->page()->runJavaScript(
-                    QString("window.editorApi.enterSourceMode(`%1`);").arg(escaped),
-                    [this, tab, jsReadMs, convMs, jsFill, perfTotal](const QVariant &) {
-                        tab->setSourceMode(true);
-                        m_toolBar->setSourceMode(true);
-                        m_statusBar->setSourceMode(true);
-                        if (QAction *act = m_menuBar->findChild<QAction *>(
-                                QStringLiteral("sourceModeAction")))
-                            act->setChecked(true);
-                        const qint64 fillMs = jsFill.elapsed() - 15; // 减去经验 IPC 开销
-                        const QString msg = QStringLiteral(
-                            "【计时】进入源码: JS读取 %1ms · fromHtml %2ms · JS填充 %3ms · 总计 %4ms")
-                            .arg(jsReadMs).arg(convMs).arg(qMax<qint64>(fillMs, 0))
-                            .arg(perfTotal.elapsed());
-                        qWarning() << msg;
-                        m_statusBar->showMessage(msg, 6000);
-                        m_sourceModeToggling = false;
+                // fromHtml 在 worker 线程执行（convMs 为 worker 实测耗时，不含
+                // 排队），完成回调回 GUI 线程继续 IPC 链
+                tab->enqueueConversion(
+                    [html]() { return MarkdownHandler::fromHtml(html); },
+                    [this, tab, jsReadMs, perfTotal, gateGuard](const QString &md, qint64 convMs) {
+                        if (m_tabWidget->indexOf(tab) < 0) {
+                            disconnect(gateGuard);
+                            m_sourceModeToggling = false;
+                            return;
+                        }
+                        QString escaped = JsEscape::forTemplateLiteral(md);
+                        QElapsedTimer jsFill;
+                        jsFill.start();
+                        tab->webView()->page()->runJavaScript(
+                            QString("window.editorApi.enterSourceMode(`%1`);").arg(escaped),
+                            [this, tab, jsReadMs, convMs, jsFill, perfTotal, gateGuard](const QVariant &) {
+                                if (m_tabWidget->indexOf(tab) < 0) {
+                                    disconnect(gateGuard);
+                                    m_sourceModeToggling = false;
+                                    return;
+                                }
+                                tab->setSourceMode(true);
+                                m_toolBar->setSourceMode(true);
+                                m_statusBar->setSourceMode(true);
+                                if (QAction *act = m_menuBar->findChild<QAction *>(
+                                        QStringLiteral("sourceModeAction")))
+                                    act->setChecked(true);
+                                const qint64 fillMs = jsFill.elapsed() - 15; // 减去经验 IPC 开销
+                                const QString msg = QStringLiteral(
+                                    "【计时】进入源码: JS读取 %1ms · fromHtml %2ms · JS填充 %3ms · 总计 %4ms")
+                                    .arg(jsReadMs).arg(convMs).arg(qMax<qint64>(fillMs, 0))
+                                    .arg(perfTotal.elapsed());
+                                qWarning() << msg;
+                                m_statusBar->showMessage(msg, 6000);
+                                disconnect(gateGuard);
+                                m_sourceModeToggling = false;
+                            });
                     });
             });
     } else {
@@ -1184,42 +1211,56 @@ void MainWindow::writeTabToFile(EditorTab *tab, const QString &path, bool setPat
 {
     if (!tab)
         return;
-    // 异步获取内容 → 写入。快照携带文档版本：落盘后 markCleanIfUnchanged 比对，
-    // 保存窗口（getContent→writeFile 异步间隙）内再编辑则不清脏标记——旧
-    // markClean 无条件清，窗口内的击键静默失去未保存指示（关闭不再提示）。
+    // 异步获取内容 → 转换（worker 线程）→ 写入。快照携带文档版本：落盘后
+    // markCleanIfUnchanged 比对，保存窗口（getContent→writeFile 异步间隙）内
+    // 再编辑则不清脏标记——旧 markClean 无条件清，窗口内的击键静默失去未
+    // 保存指示（关闭不再提示）。
     // 源码模式下编辑器文档是进入源码前的旧快照：取 source-view 内容——本身即
-    // MD，无需 fromHtml；否则源码编辑被静默丢弃
+    // MD，无需 fromHtml（免转换，保持同步路径）；否则源码编辑被静默丢弃
     const bool sourceMode = tab->isSourceMode();
     tab->webView()->page()->runJavaScript(
         sourceMode ? QStringLiteral("window.editorApi.getSourceSnapshot();")
                    : QStringLiteral("window.editorApi.getSaveSnapshot();"),
         [this, tab, path, setPathAfter, sourceMode, cb](const QVariant &result) {
             const QVariantMap snap = result.toMap();
-            QString md = sourceMode ? snap.value(QStringLiteral("source")).toString()
-                                    : MarkdownHandler::fromHtml(snap.value(QStringLiteral("html")).toString());
             const int docVersion = snap.value(QStringLiteral("version"), -1).toInt();
-            const bool ok = m_fileManager->writeFile(path, md);
-            if (ok) {
-                m_statusBar->showMessage(tr("已保存"), 2000);
-                tab->runJsCommand(
-                    QStringLiteral("window.editorApi.markCleanIfUnchanged(%1);").arg(docVersion));
-                if (setPathAfter)
-                    tab->setFilePath(path);
-                int idx = m_tabWidget->indexOf(tab);
-                if (idx >= 0) {
-                    m_tabWidget->markTabSaved(idx, path);
+            // 落盘公共尾段：fromHtml 产出（或源码模式直取）后仍在 GUI 线程执行
+            auto finishSave = [this, tab, path, setPathAfter, cb, docVersion](const QString &md) {
+                const bool ok = m_fileManager->writeFile(path, md);
+                if (ok) {
+                    m_statusBar->showMessage(tr("已保存"), 2000);
+                    tab->runJsCommand(
+                        QStringLiteral("window.editorApi.markCleanIfUnchanged(%1);").arg(docVersion));
+                    if (setPathAfter)
+                        tab->setFilePath(path);
+                    int idx = m_tabWidget->indexOf(tab);
+                    if (idx >= 0) {
+                        m_tabWidget->markTabSaved(idx, path);
+                    }
+                    m_tabWidget->completePendingTabClose();
+                } else {
+                    m_statusBar->showMessage(tr("保存失败"), 3000);
+                    // 模态警告框：状态栏 3 秒小字在真实故障（磁盘满/只读目录/权限）
+                    // 下等于没有提示（用户实测向 /usr 另存「没有任何提示」）
+                    QMessageBox::warning(this, tr("保存失败"),
+                        tr("无法写入 %1：\n%2").arg(path,
+                            m_lastWriteError.isEmpty() ? tr("未知错误") : m_lastWriteError));
                 }
-                m_tabWidget->completePendingTabClose();
+                if (cb)
+                    cb(ok);
+            };
+            if (sourceMode) {
+                finishSave(snap.value(QStringLiteral("source")).toString());
             } else {
-                m_statusBar->showMessage(tr("保存失败"), 3000);
-                // 模态警告框：状态栏 3 秒小字在真实故障（磁盘满/只读目录/权限）
-                // 下等于没有提示（用户实测向 /usr 另存「没有任何提示」）
-                QMessageBox::warning(this, tr("保存失败"),
-                    tr("无法写入 %1：\n%2").arg(path,
-                        m_lastWriteError.isEmpty() ? tr("未知错误") : m_lastWriteError));
+                // fromHtml 移至 worker 线程（W4-1）：大文档数百毫秒的转换不再
+                // 冻结 GUI。同 tab 转换串行保证连续保存的新快照恒后落盘——
+                // 线程池并行完成导致的旧内容后写覆盖被队列次序杜绝；任务不
+                // 受加载代次影响（新加载不作废用户显式请求的保存）
+                const QString html = snap.value(QStringLiteral("html")).toString();
+                tab->enqueueConversion(
+                    [html]() { return MarkdownHandler::fromHtml(html); },
+                    [finishSave](const QString &md, qint64) { finishSave(md); });
             }
-            if (cb)
-                cb(ok);
         });
 }
 

@@ -7,6 +7,7 @@ set(SOURCES
     app/SystemThemeWatcher.cpp
     app/ThemeManager.cpp
     core/EditorBridge.cpp
+    core/ConversionQueue.cpp
     core/FileManager.cpp
     core/ImageManager.cpp
     core/LocalImageSchemeHandler.cpp
@@ -49,6 +50,7 @@ set(HEADERS
     app/SystemThemeWatcher.h
     app/ThemeManager.h
     core/EditorBridge.h
+    core/ConversionQueue.h
     core/FileManager.h
     core/ImageManager.h
     core/JsEscape.h
@@ -139,6 +141,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::WebEngineWidgets
     Qt6::WebChannel
     Qt6::Pdf
+    Qt6::Concurrent
 )
 
 # 编译翻译资源并打入 qrc：生成 :/i18n/md-editor_en_US.qm

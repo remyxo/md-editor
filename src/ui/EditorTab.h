@@ -6,6 +6,7 @@
 #include <QWebChannel>
 #include <QMenu>
 #include "../core/EditorBridge.h"
+#include "../core/ConversionQueue.h"
 
 // 自定义 WebEngineView，重写上下文菜单为中文
 class EditorWebView : public QWebEngineView {
@@ -56,6 +57,11 @@ public:
     void setSourceMode(bool on);
     bool isSourceMode() const;
     void runJsCommand(const QString &js);
+    // 异步转换入队（同 tab 串行、完成回调 GUI 线程执行；本 tab 析构则在途
+    // 结果直接丢弃）。loadFile 内部用于 toHtml；MainWindow 保存/切源码模式
+    // 经此走 fromHtml——重负载转换不再阻塞 GUI 线程
+    void enqueueConversion(ConversionQueue::ConvFn conv, ConversionQueue::Done done,
+                           bool tiedToLoadEpoch = false);
 
 signals:
     void pageLoadFinished(bool ok);
@@ -74,6 +80,9 @@ private:
     QString m_pendingContent;   // 惰性加载的待载内容（非活动标签页，激活时 flush）
     bool m_permanentReadOnly = false;
     bool m_sourceMode = false;
+    // 本 tab 的 MD↔HTML 异步转换队列（loadFile/保存/切源码模式共用；随本
+    // tab 析构而在途结果自然丢弃）。QObject 成员不设 parent：由成员析构销毁
+    ConversionQueue m_convQueue;
     // 已注册进 localimg:// 目录围栏的文档目录（换文件/析构时撤销，见 setFilePath）
     QString m_allowedDir;
 };

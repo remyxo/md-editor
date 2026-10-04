@@ -1,4 +1,4 @@
-find_package(Qt6 REQUIRED COMPONENTS Test Gui)
+find_package(Qt6 REQUIRED COMPONENTS Test Gui Concurrent)
 
 # vendored QtMarkdownWriter 与 QTextDocument::toMarkdown() 的等价性回归
 # （上游同步防线，详见 docs/vendor-qt-markdown-writer.md）
@@ -116,6 +116,15 @@ add_executable(test_editorpath test_editorpath.cpp
 target_include_directories(test_editorpath PRIVATE ../src)
 target_link_libraries(test_editorpath PRIVATE Qt6::Test Qt6::Gui)
 add_test(NAME test_editorpath COMMAND test_editorpath)
+
+# W4-1 转换移线程：ConversionQueue 时序契约（串行次序/代次护栏/析构丢弃/
+# 线程身份）+ worker 线程与 GUI 线程转换逐字节一致 + UI 冻结量化
+add_executable(test_conversionqueue test_conversionqueue.cpp
+    ../src/core/ConversionQueue.cpp ../src/core/MarkdownHandler.cpp
+    ../src/core/qt/QtMarkdownWriter.cpp)
+target_include_directories(test_conversionqueue PRIVATE ../src)
+target_link_libraries(test_conversionqueue PRIVATE Qt6::Test Qt6::Gui Qt6::Concurrent)
+add_test(NAME test_conversionqueue COMMAND test_conversionqueue)
 
 # DMG 背景图生成器（拖拽安装布局）：QImage 解码验证 PNG 合法性 + 渐变/箭头像素断言
 add_executable(test_dmgbg test_dmgbg.cpp)

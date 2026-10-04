@@ -215,53 +215,69 @@ void EditorTab::loadFile(const QString &path, const QString &content)
     // 立即加载：作废未决的惰性内容（如外部变更重载先于激活发生，防止陈旧覆盖）
     m_pendingContent.clear();
     if (m_pageLoaded) {
-        // MD → HTML 转换
-        QString fullHtml = MarkdownHandler::toHtml(content);
+        // 新加载作废旧：在途/排队的加载类转换完成后被代次护栏丢弃——快速
+        // 连续重载（外部变更风暴）不会把旧内容 setContent 进编辑器
+        m_convQueue.bumpLoadEpoch();
+        const qint64 contentSize = content.size();
+        // MD → HTML（含 body 提取）移至 worker 线程：4k 级文档 toHtml 达
+        // 数百毫秒，同步执行期间 GUI 线程冻结（窗口不可拖动、菜单无响应）。
+        // worker lambda 只捕获纯数据；IPC 调用与定时器留在 GUI 线程完成回调
+        m_convQueue.enqueue(
+            [content]() {
+                QString fullHtml = MarkdownHandler::toHtml(content);
 
-        // 提取 <body> 内容（QTextDocument::toHtml 返回完整 HTML 文档）
-        int bodyStart = fullHtml.indexOf("<body");
-        int bodyEnd = fullHtml.indexOf("</body>");
-        QString html;
-        if (bodyStart >= 0 && bodyEnd > bodyStart) {
-            bodyStart = fullHtml.indexOf('>', bodyStart) + 1;
-            html = fullHtml.mid(bodyStart, bodyEnd - bodyStart).trimmed();
-        } else {
-            html = fullHtml;
-        }
+                // 提取 <body> 内容（QTextDocument::toHtml 返回完整 HTML 文档）
+                int bodyStart = fullHtml.indexOf("<body");
+                int bodyEnd = fullHtml.indexOf("</body>");
+                if (bodyStart >= 0 && bodyEnd > bodyStart) {
+                    bodyStart = fullHtml.indexOf('>', bodyStart) + 1;
+                    return fullHtml.mid(bodyStart, bodyEnd - bodyStart).trimmed();
+                }
+                return fullHtml;
+            },
+            [this, content, contentSize](const QString &html, qint64) {
+                // 转义后嵌入模板字面量（\ ` $，单一来源见 core/JsEscape.h）
+                QString js = QString("window.editorApi.setContent(`%1`);")
+                                 .arg(JsEscape::forTemplateLiteral(html));
+                m_webView->page()->runJavaScript(js);
+                // 大文档冷 JIT 预热：内容就绪 1.5 秒后空闲跑一次丢弃式
+                // getHTML，消除首次切换源码模式 ~1s 的冷 JIT 停顿（编辑器
+                // 聚焦时 JS 侧自动推迟重试）
+                if (contentSize >= 8192) {
+                    QTimer::singleShot(1500, this, [this]() {
+                        if (m_pageLoaded && m_webView)
+                            m_webView->page()->runJavaScript(
+                                QStringLiteral("window.editorApi.warmup()"));
+                    });
+                }
 
-        // 转义后嵌入模板字面量（\ ` $，单一来源见 core/JsEscape.h）
-        QString js = QString("window.editorApi.setContent(`%1`);")
-                         .arg(JsEscape::forTemplateLiteral(html));
-        m_webView->page()->runJavaScript(js);
-        // 大文档冷 JIT 预热：加载 1.5 秒后空闲跑一次丢弃式 getHTML，消除首次
-        // 切换源码模式 ~1s 的冷 JIT 停顿（编辑器聚焦时 JS 侧自动推迟重试）
-        if (content.size() >= 8192) {
-            QTimer::singleShot(1500, this, [this]() {
-                if (m_pageLoaded && m_webView)
-                    m_webView->page()->runJavaScript(
-                        QStringLiteral("window.editorApi.warmup()"));
-            });
-        }
-
-        // 外部文件变更时若处于源码模式，同步刷新 textarea 内容
-        // setContent 仅更新 WYSIWYG 编辑器，源码区 <textarea> 需单独更新。
-        // 守卫前置到 C++（2026-09-28 速赢）：常规加载（非源码模式）下
-        // 这段全文 MD IPC 纯浪费——载荷翻倍，守卫在 JS 端才判等于白发。
-        // 正常路径（页面刚加载）不可能处于源码模式，守卫恒假即零发送。
-        if (isSourceMode()) {
-            // 与 setContent 同一模板字面量转义（\ ` $），单一来源 core/JsEscape.h
-            QString mdEscaped = JsEscape::forTemplateLiteral(content);
-            runJsCommand(QString(
-                "(function(){"
-                "var a=window.editorApi;"
-                "if(!a||!a.isSourceMode)return;"
-                "var sv=document.getElementById('source-view');"
-                "if(!sv)return;"
-                "sv.value=`%1`;a._sourceValue=`%1`;"
-                "if(a._srcSearch)a._srcOnSourceEdit();"   // 外部同步不触发 input，手动刷新搜索高亮
-                "})()").arg(mdEscaped));
-        }
+                // 外部文件变更时若处于源码模式，同步刷新 textarea 内容
+                // setContent 仅更新 WYSIWYG 编辑器，源码区 <textarea> 需单独更新。
+                // 守卫前置到 C++（2026-09-28 速赢）：常规加载（非源码模式）下
+                // 这段全文 MD IPC 纯浪费——载荷翻倍，守卫在 JS 端才判等于白发。
+                // 正常路径（页面刚加载）不可能处于源码模式，守卫恒假即零发送。
+                if (isSourceMode()) {
+                    // 与 setContent 同一模板字面量转义（\ ` $），单一来源 core/JsEscape.h
+                    QString mdEscaped = JsEscape::forTemplateLiteral(content);
+                    runJsCommand(QString(
+                        "(function(){"
+                        "var a=window.editorApi;"
+                        "if(!a||!a.isSourceMode)return;"
+                        "var sv=document.getElementById('source-view');"
+                        "if(!sv)return;"
+                        "sv.value=`%1`;a._sourceValue=`%1`;"
+                        "if(a._srcSearch)a._srcOnSourceEdit();"   // 外部同步不触发 input，手动刷新搜索高亮
+                        "})()").arg(mdEscaped));
+                }
+            },
+            /*tiedToLoadEpoch=*/true);
     }
+}
+
+void EditorTab::enqueueConversion(ConversionQueue::ConvFn conv, ConversionQueue::Done done,
+                                  bool tiedToLoadEpoch)
+{
+    m_convQueue.enqueue(std::move(conv), std::move(done), tiedToLoadEpoch);
 }
 
 EditorTab::~EditorTab()

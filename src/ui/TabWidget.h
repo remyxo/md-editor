@@ -3,6 +3,7 @@
 
 #include <QTabWidget>
 #include <QMap>
+#include <QPointer>
 #include <QSet>
 
 class EditorTab;
@@ -42,7 +43,7 @@ private slots:
 
 private:
     int m_nextTabId;
-    EditorTab *m_pendingCloseTab = nullptr;   // 待关闭 tab（记指针防下标漂移）
+    QPointer<EditorTab> m_pendingCloseTab;    // 待关闭 tab（记指针防下标漂移；QPointer 防 tab 已销毁的悬垂解引用）
     QMap<int, EditorTab *> m_tabs;
     QSet<EditorTab *> m_untitledTabs;   // 显式追踪未命名 tab（帮助页无 tooltip 但非未命名）
     QString generateUntitledName();
