@@ -3608,6 +3608,13 @@ private slots:
                  qPrintable(QString("占位符泄漏，MD=[%1]").arg(r1)));
         QVERIFY2(r1.contains(QLatin1String("```")),
                  qPrintable(QString("往返代码块围栏应保留，MD=[%1]").arg(r1)));
+        // === 往返存活锚（终审 Minor#4）：r1 中 === 须以原文或 Qt setext 保护
+        // 转义形 \=\==（防行首 === 再被解析为 setext 下划线）存活——否则 ===
+        // 被静默丢弃时上方断言仍绿，锚失效。
+        QVERIFY2(r1.contains(QStringLiteral("==="))
+                     || r1.contains(QStringLiteral("\\=\\==")),
+                 qPrintable(QString("=== 往返应存活（原文或 \\=\\== 转义形），"
+                                    "MD=[%1]").arg(r1)));
     }
 
 
