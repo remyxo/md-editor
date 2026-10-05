@@ -3028,7 +3028,10 @@ window.editorApi = {
         var prefix = this._srcWrapCacheMfp() + '\x00';
         var found = null;
         this._srcWrapCacheMap.forEach(function(e, k) {
-            if (k.lastIndexOf(prefix, 0) === 0) found = e;
+            // 携带旧文本全文（entry.text；key 侧是长度:哈希指纹不含全文）：
+            // 近似点消费方按编辑量平移（见 _srcShiftWrapPoints）
+            if (k.lastIndexOf(prefix, 0) === 0)
+                found = { points: e.points, oldText: e.text };
         });
         return found;
     },
@@ -3041,7 +3044,7 @@ window.editorApi = {
     //      刷新高亮，模式切换不阻塞。
     // 同一文本已排队则复用；文本中途变更/搜索停止用递增代号（_srcWrapGen）作废旧任务
     // （测量层 _srcEnsureMeasureTa 是共享的，不能并发跑两个任务互相污染）。
-    _srcEnsureAsyncWrapPoints: function(text) {
+    _srcEnsureAsyncWrapPoints: function(text, opts) {
         var self = this;
         var gen = (this._srcWrapGen = (this._srcWrapGen || 0) + 1);
         this._srcWrapPending = text;
@@ -3063,7 +3066,30 @@ window.editorApi = {
             this._srcWrapPending = null;
             return;
         }
-        var pts = [0], line = 2, prevLineLen = 0;
+        // 局部增量续测（2026-10-05 二层修复）：编辑后编辑行之前的行结构不变，
+        // 预置其折行点（平移所得）、自下一行起续测，行首越过 stopAfterPos
+        //（最远匹配终点）即提前完成——行结构变化的编辑也能在局部测量成本内
+        // 快速精确，替代全文档重测的分钟级窗口。
+        var prefixPoints = opts && opts.prefixPoints;
+        var stopAfterPos = opts && opts.stopAfterPos;
+        var pts, line, prevLineLen;
+        if (prefixPoints && prefixPoints.length > 1) {
+            if (total < prefixPoints.length) {
+                // 编辑使总行数少于预置行数（删行/并段）——预置按编辑前行结构，
+                // 后半段在新文本中不再逐行成立，退回全量测量保证正确性
+                pts = [0];
+                line = 2;
+                prevLineLen = 0;
+            } else {
+                pts = prefixPoints.slice();
+                line = pts.length + 1;
+                prevLineLen = pts[pts.length - 1] - pts[pts.length - 2];
+            }
+        } else {
+            pts = [0];
+            line = 2;
+            prevLineLen = 0;
+        }
         var BUDGET = 16;
         function nextChunk() {
             if (gen !== self._srcWrapGen) return;   // 已被更新的测量取代，作废
@@ -3091,6 +3117,12 @@ window.editorApi = {
                 pts.push(start);
                 prevLineLen = start - prev;
                 line++;
+                // 局部续测目标达成：最新行首已越过最远匹配终点，其后行不影响
+                // 当前任何匹配的行归属/行号，提前完成提交（去重收尾统一处理）
+                if (stopAfterPos !== undefined && start > stopAfterPos) {
+                    line = total + 1;   // 跳过余行，走完成分支
+                    break;
+                }
                 if (performance.now() - t0 > BUDGET) break;
             }
             if (line > total) {
@@ -3162,13 +3194,69 @@ window.editorApi = {
         if (entry) return entry.points;
         var approx = this._srcWrapCacheApprox();
         if (approx) {
-            this._srcScheduleWrapRemeasure();
-            return approx.points;
+            // 单点编辑（打字/删字）可把旧折行点按编辑量平移到新文本坐标系，
+            // 行结构不变时与真实重测逐点一致——近似渲染零偏移。多点编辑无法
+            // 平移时退化为旧行为（旧点直配新文本，偏移可容忍，重测自愈）。
+            var shifted = this._srcShiftWrapPoints(approx.points, approx.oldText, text);
+            var pts = shifted ? shifted.points : approx.points;
+            // 局部增量重测（二层）：编辑行之前的行结构不变（平移精确），自编辑
+            // 行起续测至最远匹配终点——行结构变化的编辑（长行重折/跨折行阈值）
+            // 平移只是近似，此处在局部测量成本内（几行~几十行，远小于全文档）
+            // 快速修正，替代全文档重测的分钟级偏移窗口。
+            if (shifted && this._srcSearch && this._srcSearch.matches.length) {
+                var s = shifted.editAt;
+                var maxTo = 0;
+                for (var mi = 0; mi < this._srcSearch.matches.length; mi++)
+                    maxTo = Math.max(maxTo, this._srcSearch.matches[mi].to);
+                // 编辑行 k：最大行首 ≤ s；prefix 覆盖 0..k 行，自 k+1 行续测
+                var k = 0;
+                while (k + 1 < pts.length && pts[k + 1] <= s) k++;
+                if (this._srcWrapPending !== text) {
+                    this._srcEnsureAsyncWrapPoints(text, {
+                        prefixPoints: pts.slice(0, k + 1),
+                        stopAfterPos: maxTo
+                    });
+                }
+            } else {
+                this._srcScheduleWrapRemeasure();
+            }
+            return pts;
         }
         // 无缓存：发起异步分块测量，先返回 null（渲染跳过、textarea 保持正常显示），
         // 测量完成后回填缓存并自动刷新高亮——大文档进源码模式不再同步阻塞数秒
         if (this._srcWrapPending !== text) this._srcEnsureAsyncWrapPoints(text);
         return null;
+    },
+    // 单区间编辑（插入/删除/单处替换）下把旧文本折行点平移到新文本坐标系：
+    // diff 公共前后缀得编辑区间 old [s, s+oldSpan) → new [s, s+newSpan)，行首
+    // <s 不动、≥s+oldSpan 平移 delta=newLen−oldLen、区间内钳到 s+newSpan。
+    // 插入（oldSpan=0）时 v≥s 全体 +delta；行结构不变的编辑平移结果与真实
+    // 重测一致；diff 出多个编辑区间返回 null（调用方退化为旧行为）。
+    // 背景：2026-10-05 用户报告——标题追加 1 字符后搜索色块右移 1 字符宽且
+    // 长期不自愈（超长段落重测秒-分钟级），旧近似点直配新文本使每个行首
+    // 坐标偏小 N，x = measure(slice(旧行首, from)) 多含 N 字符即偏移根源。
+    // 返回 { points, editAt }（editAt=编辑起点，供局部增量重测定位编辑行）。
+    _srcShiftWrapPoints: function(points, oldText, newText) {
+        if (oldText === newText) return { points: points, editAt: 0 };
+        var minLen = Math.min(oldText.length, newText.length);
+        var s = 0;
+        while (s < minLen && oldText.charCodeAt(s) === newText.charCodeAt(s)) s++;
+        var e = 0;
+        while (e < minLen - s &&
+               oldText.charCodeAt(oldText.length - 1 - e) ===
+               newText.charCodeAt(newText.length - 1 - e)) e++;
+        if (s + e !== minLen) return null;   // 公共前后缀覆盖不满较短侧 → 多区间
+        var oldSpan = oldText.length - e - s;
+        var newSpan = newText.length - e - s;
+        var delta = newText.length - oldText.length;
+        var out = new Array(points.length);
+        for (var i = 0; i < points.length; i++) {
+            var v = points[i];
+            if (v < s) out[i] = v;
+            else if (v >= s + oldSpan) out[i] = v + delta;
+            else out[i] = s + newSpan;
+        }
+        return { points: out, editAt: s };
     },
     _srcScheduleWrapRemeasure: function() {
         var self = this;

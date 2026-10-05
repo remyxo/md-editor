@@ -45,6 +45,8 @@ const STYLE = {
 const CAP = 10;
 const LH = 28.8;
 const PADV = 80;   // paddingTop + paddingBottom，mock scrollHeight 还原用
+const PADH = 60;   // paddingLeft（渲染 left 含此偏移）
+const PADTOP = 40; // paddingTop 单侧（渲染 top 含此偏移；PADV 是上下双侧和）
 function linesOfMock(prefix) {
   const hard = prefix.split('\n');
   let n = 0;
@@ -250,5 +252,166 @@ describe('两态过渡观感（症状②：激活类先行，不等折行测量�
     api._srcStartSearch('围栏', false, false, false);
     expect(document.body.classList.contains('src-search-active')).toBe(false);
     api._srcStop();
+  });
+});
+
+describe('编辑后近似折行点平移（2026-10-05 用户报告：标题+1 字符 → 色块右移 1 字符宽）', () => {
+  // 取证（CDP 真文档）：编辑后 _srcGetWrapPoints 走 _srcWrapCacheApprox 返回
+  // 旧文本折行点直接配新文本测量——旧行首坐标全体偏小 N（编辑量），
+  // x = measure(slice(旧行首, from)) 多含 N 字符 → 色块右移 N 字符宽；
+  // 150ms 后重测在超长段落文档上秒-分钟级，偏移长期可见。
+  async function waitRender() {
+    const ov = document.getElementById('source-overlay');
+    let guard = 0;
+    while (!ov.querySelector('.src-mark-current') && guard++ < 5000)
+      await new Promise(r => setTimeout(r, 0));
+    return ov;
+  }
+
+  it('单点插入：近似点按编辑量平移，色块 left 与基线一致（现状偏 1 字符=9px）', async () => {
+    const api = window.editorApi;
+    const sv = document.getElementById('source-view');
+    const ov = document.getElementById('source-overlay');
+    const text = '## 二、超长超宽色块\n标签先行替换为 ZZ 前缀占位符加以保护';
+    sv.value = text;
+    const saved = api._srcMeasureLineWidth;
+    api._srcMeasureLineWidth = (s) => s.length * 9;
+    try {
+      api._srcStartSearch('ZZ', false, false, false);
+      const o = await waitRender();
+      const baseLeft = parseFloat(o.querySelector('.src-mark-current').style.left);
+
+      // 真实编辑链：标题行尾插 '1'（标题 11→12 字符，CAP=10 下都占 2 行——行结构不变）
+      const nl = text.indexOf('\n');
+      sv.value = text.slice(0, nl) + '1' + text.slice(nl);
+      api._srcOnSourceEdit();
+      await new Promise(r => setTimeout(r, 0));
+
+      const span2 = ov.querySelector('.src-mark-current');
+      expect(span2).toBeTruthy();   // 近似路径必须渲染（不是空窗）
+      const afterLeft = parseFloat(span2.style.left);
+      expect(afterLeft).toBe(baseLeft);
+    } finally {
+      api._srcMeasureLineWidth = saved;
+    }
+  });
+
+  it('单点删除：同款平移（delta 为负）', async () => {
+    const api = window.editorApi;
+    const sv = document.getElementById('source-view');
+    const ov = document.getElementById('source-overlay');
+    const text = '## 二、超长超宽色块11\n标签先行替换为 ZZ 前缀占位符加以保护';
+    sv.value = text;
+    const saved = api._srcMeasureLineWidth;
+    api._srcMeasureLineWidth = (s) => s.length * 9;
+    try {
+      api._srcStartSearch('ZZ', false, false, false);
+      const o = await waitRender();
+      const baseLeft = parseFloat(o.querySelector('.src-mark-current').style.left);
+
+      // 删标题行尾两个 '1'
+      const nl = text.indexOf('\n');
+      sv.value = text.slice(0, nl - 2) + text.slice(nl);
+      api._srcOnSourceEdit();
+      await new Promise(r => setTimeout(r, 0));
+      const afterLeft = parseFloat(ov.querySelector('.src-mark-current').style.left);
+      expect(afterLeft).toBe(baseLeft);
+    } finally {
+      api._srcMeasureLineWidth = saved;
+    }
+  });
+
+  it('多点编辑（不可单点平移）：退化为现状近似（不劣化、不崩溃）', async () => {
+    const api = window.editorApi;
+    const sv = document.getElementById('source-view');
+    const text = '## 标题甲\n标签先行替换为 ZZ 前缀占位符加以保护';
+    sv.value = text;
+    const saved = api._srcMeasureLineWidth;
+    api._srcMeasureLineWidth = (s) => s.length * 9;
+    try {
+      api._srcStartSearch('ZZ', false, false, false);
+      let guard = 0;
+      const ov = document.getElementById('source-overlay');
+      while (!ov.querySelector('.src-mark-current') && guard++ < 5000)
+        await new Promise(r => setTimeout(r, 0));
+      // 两处独立编辑（标题+1、正文另一处+2）→ diff 非单区间
+      const nl = text.indexOf('\n');
+      sv.value = '## 标题甲1' + text.slice(nl, nl + 3) + 'xx' + text.slice(nl + 3);
+      api._srcOnSourceEdit();
+      await new Promise(r => setTimeout(r, 0));
+      // 不崩溃且仍渲染（偏移可容忍，150ms 后重测自愈）
+      expect(ov.querySelector('.src-mark-current')).toBeTruthy();
+    } finally {
+      api._srcMeasureLineWidth = saved;
+    }
+  });
+});
+
+describe('编辑后局部增量重测（二层：行结构变化场景，2026-10-05）', () => {
+  // 平移近似只对「行结构不变」精确；编辑使行跨折行阈值（如 10 字标题加 1
+  // 字变 11 字 → 2 行）时行号/行首变化无法用平移表达——局部增量重测从编辑
+  // 行续测至最远匹配终点，几行测量内修正（替代全文档分钟级窗口）。
+  async function waitPending() {
+    const api = window.editorApi;
+    let guard = 0;
+    while (api._srcWrapPending !== null && guard++ < 5000)
+      await new Promise(r => setTimeout(r, 0));
+  }
+
+  it('标题加 1 字跨折行阈值（1 行→2 行）：局部重测后色块 top 落正确行', async () => {
+    const api = window.editorApi;
+    const sv = document.getElementById('source-view');
+    const ov = document.getElementById('source-overlay');
+    // CAP=10：标题恰 10 字（1 行）；ZZ 在正文行（编辑前行 2）
+    const text1 = '0123456789\nZZ 正文测试';
+    sv.value = text1;
+    const saved = api._srcMeasureLineWidth;
+    api._srcMeasureLineWidth = (s) => s.length * 9;
+    try {
+      api._srcStartSearch('ZZ', false, false, false);
+      let guard = 0;
+      while (!ov.querySelector('.src-mark-current') && guard++ < 5000)
+        await new Promise(r => setTimeout(r, 0));
+      expect(parseFloat(ov.querySelector('.src-mark-current').style.top)).toBeCloseTo(PADTOP + LH, 5); // 行 2（含 padTop）
+
+      // 标题加 'x' → 11 字跨阈值 → 标题 2 行 → ZZ 行 3
+      sv.value = '0123456789x\nZZ 正文测试';
+      api._srcOnSourceEdit();
+      await waitPending();          // 局部增量重测完成
+      await new Promise(r => setTimeout(r, 0));
+      const top = parseFloat(ov.querySelector('.src-mark-current').style.top);
+      expect(top).toBeCloseTo(PADTOP + 2 * LH, 5);   // 行 3（真值对照：全量重测同值）
+    } finally {
+      api._srcMeasureLineWidth = saved;
+    }
+  });
+
+  it('同段内编辑（ZZ 与编辑点同行群）：left 同样局部修正', async () => {
+    const api = window.editorApi;
+    const sv = document.getElementById('source-view');
+    const ov = document.getElementById('source-overlay');
+    // 'aaaaZZbbbb' 恰 10 字 1 行；ZZ 列偏移 4
+    const text1 = 'aaaaZZbbbb\n尾巴';
+    sv.value = text1;
+    const saved = api._srcMeasureLineWidth;
+    api._srcMeasureLineWidth = (s) => s.length * 9;
+    try {
+      api._srcStartSearch('ZZ', false, false, false);
+      let guard = 0;
+      while (!ov.querySelector('.src-mark-current') && guard++ < 5000)
+        await new Promise(r => setTimeout(r, 0));
+      expect(parseFloat(ov.querySelector('.src-mark-current').style.left)).toBeCloseTo(PADH + 4 * 9, 5);
+
+      // 段首插 1 字 → 11 字跨阈值 → 'b' 溢出行 2；ZZ 仍在行 1 列 5
+      sv.value = 'xaaaaZZbbbb\n尾巴';
+      api._srcOnSourceEdit();
+      await waitPending();
+      await new Promise(r => setTimeout(r, 0));
+      const span = ov.querySelector('.src-mark-current');
+      expect(parseFloat(span.style.top)).toBeCloseTo(PADTOP, 5);          // 仍行 1（含 padTop）
+      expect(parseFloat(span.style.left)).toBeCloseTo(PADH + 5 * 9, 5); // 列 5（含 padLeft）
+    } finally {
+      api._srcMeasureLineWidth = saved;
+    }
   });
 });
