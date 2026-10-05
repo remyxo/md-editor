@@ -442,6 +442,10 @@ void MainWindow::connectSignals()
                 for (int i = 0; i < m_tabWidget->count(); ++i) {
                     EditorTab *tab = m_tabWidget->tabAt(i);
                     if (tab && tab->webView()->property("filePath").toString() == path) {
+                        // 惰性恢复标签（尚未读盘）：本地无内容可丢，激活时本就
+                        // 读最新盘面——「是否重新加载」提示无意义，直接吞掉
+                        if (tab->hasPendingRead())
+                            break;
                         // 本页有未保存修改时明确警告丢弃后果（曾无差别「是否重
                         // 新加载」，用户确认即静默覆盖本地编辑）
                         const bool dirty = m_tabWidget->tabText(i).startsWith("● ");
@@ -1211,6 +1215,17 @@ void MainWindow::writeTabToFile(EditorTab *tab, const QString &path, bool setPat
 {
     if (!tab)
         return;
+    // 空快照防御（I1）：未读盘的惰性标签（hasPendingRead）或内容在途的标签
+    // （isContentInFlight——读盘/打开后 toHtml 转换、setContent 落地之前），
+    // 编辑器里没有目标内容，保存快照必为空——照常保存会把空串写盘清空原文件
+    // （与「读失败不开空标签页」同一危害）。跳过并提示，cb(false) 维持调用方
+    // （关闭保存队列）的失败语义
+    if (tab->hasPendingRead() || tab->isContentInFlight()) {
+        m_statusBar->showMessage(tr("文档尚未加载完成，已跳过保存"), 3000);
+        if (cb)
+            cb(false);
+        return;
+    }
     // 异步获取内容 → 转换（worker 线程）→ 写入。快照携带文档版本：落盘后
     // markCleanIfUnchanged 比对，保存窗口（getContent→writeFile 异步间隙）内
     // 再编辑则不清脏标记——旧 markClean 无条件清，窗口内的击键静默失去未
@@ -1521,6 +1536,9 @@ void MainWindow::saveSession()
 
 void MainWindow::restoreSession()
 {
+    QElapsedTimer restoreTimer;
+    restoreTimer.start();
+    int eagerReads = 0;   // 启动期同步读盘次数（活动标签 1 次；惰性标签激活时另计）
     QSettings settings("md-editor", "md-editor");
 
     // 仅在设置中启用「启动时恢复上次会话」时恢复
@@ -1528,7 +1546,7 @@ void MainWindow::restoreSession()
         return;
 
     const QStringList openFiles = settings.value("session/openFiles").toStringList();
-    // 两段式恢复：先筛出存在的文件，再按活动标签位置决定立即/惰性加载
+    // 两段式恢复：先筛出存在的文件，再按活动标签位置决定立即/延迟读盘
     QStringList restoreList;
     for (const QString &path : openFiles) {
         if (!path.isEmpty() && QFile::exists(path))
@@ -1539,8 +1557,9 @@ void MainWindow::restoreSession()
         return;
     }
 
-    // 非活动标签页惰性加载：启动只加载当前要看的标签页内容，其余标签页登记
-    // 待载内容、切到时才加载（重文档会话免多页并行 setContent 的启动停顿）
+    // 延迟读盘（W4-2）：启动只读活动标签（1 次读盘，恢复即所见），非活动
+    // 标签只登记路径——标题/图标即时显示，激活时才读内容。多 tab 会话的
+    // 启动期同步读盘从 N 次降为 1 次（读+编码检测是启动阻塞主线程的大头）
     // 活动标签按路径定位（而非下标）：读失败条目跳过后标签下标会整体前移，
     // 按下标会激活错位的标签页
     const QString activePath = openFiles.value(
@@ -1554,18 +1573,25 @@ void MainWindow::restoreSession()
         // 大文件软警告与会话恢复一致：拒绝则跳过该文件（不开标签/不 watch/不进最近）
         if (!confirmLargeFile(path))
             continue;
-        QString encoding;
-        QString content = m_fileManager->readFile(path, &encoding);
-        if (content.isNull())
-            continue;
-        const bool isActive = (path == activePath);
-        EditorTab *tab = m_tabWidget->openFileTab(path, isActive ? content : QString(),
-                                                  !isActive);
-        tab->setFilePath(path);
-        tab->setEncoding(encoding);
+        if (path == activePath) {
+            QString encoding;
+            QString content = m_fileManager->readFile(path, &encoding);
+            ++eagerReads;
+            if (content.isNull())
+                continue;
+            EditorTab *tab = m_tabWidget->openFileTab(path, content);
+            tab->setFilePath(path);
+            tab->setEncoding(encoding);
+        } else {
+            EditorTab *tab = m_tabWidget->openFileTab(path, QString(), /*lazy=*/true);
+            // 激活读盘委托：FileManager 所有权与失败关标签的编排都在 MainWindow
+            connect(tab, &EditorTab::pendingPathReadRequested, this,
+                    [this, tab](const QString &p) { loadPendingRestoredTab(tab, p); });
+            lazyTabs.append(qMakePair(tab, path));
+            tab->setFilePath(path);
+        }
         m_fileManager->watchFile(path);
         m_menuBar->addRecentFile(path);
-        if (!isActive) lazyTabs.append(qMakePair(tab, content));
     }
     m_suppressReadErrors = false;
 
@@ -1575,7 +1601,8 @@ void MainWindow::restoreSession()
         return;
     }
 
-    // 恢复活动标签页，随后登记惰性内容（避免 openFileTab 过程中的临时激活误触发加载）
+    // 恢复活动标签页，随后登记惰性路径（登记延后到活动标签定位完成：恢复
+    // 循环中 openFileTab 的临时激活不会经 flush 误触发读盘）
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         if (m_tabWidget->tabAt(i)->webView()->property("filePath").toString() == activePath) {
             m_tabWidget->setCurrentIndex(i);
@@ -1583,11 +1610,30 @@ void MainWindow::restoreSession()
         }
     }
     for (const auto &p : lazyTabs)
-        p.first->setPendingContent(p.second);
+        p.first->setPendingPath(p.second);
 
     // 恢复窗口几何信息
     QByteArray geometry = settings.value("session/geometry").toByteArray();
     if (!geometry.isEmpty()) {
         restoreGeometry(geometry);
     }
+    // 启动耗时观测（与 selftest 计时日志同风格）：scripts/measure-session-restore.sh
+    // 以此行为完成标志做 A/B 计时
+    qWarning("session-restore: tabs=%d eager_reads=%d sync=%lldms",
+             m_tabWidget->count(), eagerReads, restoreTimer.elapsed());
+}
+
+// 惰性恢复标签激活读盘（W4-2）：此刻才第一次读该文件。读失败（恢复后文件被
+// 删/损坏/超限）→ 直接关闭标签页：留着空内容标签有「误保存清空原文件」风险
+// （与启动期读失败不开标签同语义；失败详情已由 fileReadError 统一弹窗给出）
+void MainWindow::loadPendingRestoredTab(EditorTab *tab, const QString &path)
+{
+    QString encoding;
+    QString content = m_fileManager->readFile(path, &encoding);
+    if (content.isNull()) {
+        m_tabWidget->closeTabDirect(tab);
+        return;
+    }
+    tab->setEncoding(encoding);
+    tab->loadFile(path, content);
 }

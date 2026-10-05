@@ -27,6 +27,10 @@ public:
     void setTabDirty(int index, bool dirty);
     void markTabSaved(int index, const QString &filePath);
     void retranslateUi();
+    // 程序化直接关闭标签页（无脏检查/保存弹窗——调用方须确保非脏）。收尾走
+    // onTabCloseRequested 同款路径（tabClosed 信号→MainWindow 的 unwatch 等
+    // 联动依赖它）。用于惰性恢复标签激活读盘失败（文件在恢复后被删/损坏）
+    void closeTabDirect(EditorTab *tab);
 
 signals:
     void currentTabChanged(int tabId);
@@ -42,6 +46,8 @@ private slots:
     void onCurrentChanged(int index);
 
 private:
+    // 关闭收尾公共段：发 tabClosed、清理登记、移除并销毁（下标须有效）
+    void closeTabAt(int index);
     int m_nextTabId;
     QPointer<EditorTab> m_pendingCloseTab;    // 待关闭 tab（记指针防下标漂移；QPointer 防 tab 已销毁的悬垂解引用）
     QMap<int, EditorTab *> m_tabs;

@@ -40,9 +40,15 @@ public:
     void loadFile(const QString &path, const QString &content);
     void setFilePath(const QString &path);
     void setEncoding(const QString &encoding);
-    // 惰性加载：会话恢复时非活动标签页只登记内容，激活（成为当前标签页）时才加载
-    void setPendingContent(const QString &md);
-    bool flushPendingContent();
+    // 惰性读盘（W4-2 会话恢复）：非活动标签页只登记路径不读盘，激活（成为
+    // 当前标签页且页面就绪）时经 pendingPathReadRequested 交 MainWindow 读盘
+    void setPendingPath(const QString &path);
+    bool flushPendingLoad();
+    // 仍有未读盘的惰性路径（保存/外部变更提示等需规避的窗口期）
+    bool hasPendingRead() const;
+    // 内容在途（I1）：loadFile 已入队转换、setContent 尚未在页面落地——此窗口
+    // 内编辑器仍是空文档，保存快照必为空（writeTabToFile 据此跳过防空串写盘）
+    bool isContentInFlight() const;
     QString encoding() const;
     void setEditorTheme(const QString &theme);
     void setEditorLanguage(const QString &lang);
@@ -65,6 +71,9 @@ public:
 
 signals:
     void pageLoadFinished(bool ok);
+    // 惰性读盘触发（本 tab 已成为当前标签页且页面加载完成）：FileManager 与
+    // 失败关标签的编排都在 MainWindow，读盘经此信号委托（同线程直连）
+    void pendingPathReadRequested(const QString &path);
 
 private slots:
     void onPageLoadFinished(bool ok);
@@ -77,7 +86,8 @@ private:
     QWebChannel *m_webChannel;
     EditorBridge *m_bridge;
     bool m_pageLoaded;
-    QString m_pendingContent;   // 惰性加载的待载内容（非活动标签页，激活时 flush）
+    QString m_pendingPath;      // 惰性读盘的待读路径（非活动标签页，激活时 flush）
+    bool m_contentInFlight = false;   // 内容在途标志（I1，见 isContentInFlight）
     bool m_permanentReadOnly = false;
     bool m_sourceMode = false;
     // 本 tab 的 MD↔HTML 异步转换队列（loadFile/保存/切源码模式共用；随本

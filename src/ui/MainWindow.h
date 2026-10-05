@@ -100,6 +100,8 @@ private:
     // 会话恢复
     void saveSession();
     void restoreSession();
+    // 惰性恢复标签激活读盘（W4-2）：EditorTab::pendingPathReadRequested 的落地端
+    void loadPendingRestoredTab(EditorTab *tab, const QString &path);
 
     // ≥2MB 大文件软警告（手动打开与会话恢复共用）：true = 继续打开，false = 用户拒绝
     bool confirmLargeFile(const QString &path);

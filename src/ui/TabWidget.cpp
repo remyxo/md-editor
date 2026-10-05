@@ -71,12 +71,12 @@ EditorTab *TabWidget::openFileTab(const QString &path, const QString &content, b
     setCurrentIndex(index);
     setTabToolTip(index, path);
     if (lazy) {
-        // 惰性加载：页面就绪且本 tab 已是当前标签页时才加载登记的待载内容
-        // （内容随后由调用方 setPendingContent 登记；激活切换在 onCurrentChanged flush）
+        // 惰性读盘：页面就绪且本 tab 已是当前标签页时才读登记的待读文件
+        // （路径随后由调用方 setPendingPath 登记；激活切换在 onCurrentChanged flush）
         connect(tab, &EditorTab::pageLoadFinished, this,
                 [this, tab](bool ok) {
                     if (ok && indexOf(tab) == currentIndex())
-                        tab->flushPendingContent();
+                        tab->flushPendingLoad();
                 });
     } else {
         connect(tab, &EditorTab::pageLoadFinished, this,
@@ -155,11 +155,30 @@ void TabWidget::onTabCloseRequested(int index)
             return; // 保存由 MainWindow 异步处理，完成后调用 completePendingTabClose()
         }
     }
+    closeTabAt(index);
+}
+
+// 关闭收尾公共段（onTabCloseRequested 非 Save 路径与 closeTabDirect 共用）：
+// tabClosed 先于移除发出，MainWindow 按下标做 unwatch/末标签清场等联动
+void TabWidget::closeTabAt(int index)
+{
+    EditorTab *tab = tabAt(index);
+    if (!tab)
+        return;
     emit tabClosed(index);
     m_tabs.remove(tab->bridge()->tabId());
     m_untitledTabs.remove(tab);
     removeTab(index);
     tab->deleteLater();
+}
+
+// 程序化直接关闭（无脏检查/弹窗）：仅限确知非脏的标签页，如惰性恢复标签
+// 激活读盘失败——其从未载入内容，不可能有未保存修改
+void TabWidget::closeTabDirect(EditorTab *tab)
+{
+    const int idx = indexOf(tab);
+    if (idx >= 0)
+        closeTabAt(idx);
 }
 
 void TabWidget::completePendingTabClose()
@@ -183,8 +202,16 @@ void TabWidget::onCurrentChanged(int index)
     if (index >= 0) {
         EditorTab *tab = tabAt(index);
         if (tab) {
-            // 惰性加载 flush：切换到尚未加载内容的标签页时在此加载
-            tab->flushPendingContent();
+            // 惰性读盘 flush：切换到尚未读盘的标签页时在此触发读盘。
+            // ⚠ flush 链内可能同步关掉本 tab（激活读盘失败 → closeTabDirect）：
+            // removeTab 会先重入本槽处理接任的新当前标签，控制流返回后本帧
+            // 的 tab 已被移除（deleteLater 尚未析构，bridge() 仍解引用得到），
+            // 照发 currentTabChanged 即是「已关标签的幽灵通知」——今日消费方
+            // 都只读 tabId 无碍，日后若有按 tabId 寻址的消费方即踩雷。indexOf
+            // 失守则早退不发，新当前标签的通知已由重入帧发出
+            tab->flushPendingLoad();
+            if (indexOf(tab) < 0)
+                return;   // 本 tab 在 flush 链内已被关闭
             emit currentTabChanged(tab->bridge()->tabId());
         }
     }

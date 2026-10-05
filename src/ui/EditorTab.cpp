@@ -16,6 +16,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFileInfo>
+#include <QTabWidget>   // setPendingPath 尾部补 flush 的当前标签判定（parent 即 TabWidget）
 
 // ===== EditorWebPage — 过滤 Mermaid SVG 引擎级报错 =====
 
@@ -212,12 +213,16 @@ QWebEngineView *EditorTab::webView() const { return m_webView; }
 void EditorTab::loadFile(const QString &path, const QString &content)
 {
     Q_UNUSED(path)
-    // 立即加载：作废未决的惰性内容（如外部变更重载先于激活发生，防止陈旧覆盖）
-    m_pendingContent.clear();
+    // 立即加载：作废未决的惰性读盘（如外部变更重载先于激活发生，此刻读到的
+    // 已是最新盘面，激活时不得再读旧路径覆盖）
+    m_pendingPath.clear();
     if (m_pageLoaded) {
         // 新加载作废旧：在途/排队的加载类转换完成后被代次护栏丢弃——快速
         // 连续重载（外部变更风暴）不会把旧内容 setContent 进编辑器
         m_convQueue.bumpLoadEpoch();
+        // 内容在途置位（I1）：从此刻到 setContent 在页面真正落地之间，编辑器
+        // 仍是旧/空文档——保存快照会取到空内容，writeTabToFile 据此跳过保存
+        m_contentInFlight = true;
         const qint64 contentSize = content.size();
         // MD → HTML（含 body 提取）移至 worker 线程：4k 级文档 toHtml 达
         // 数百毫秒，同步执行期间 GUI 线程冻结（窗口不可拖动、菜单无响应）。
@@ -239,7 +244,13 @@ void EditorTab::loadFile(const QString &path, const QString &content)
                 // 转义后嵌入模板字面量（\ ` $，单一来源见 core/JsEscape.h）
                 QString js = QString("window.editorApi.setContent(`%1`);")
                                  .arg(JsEscape::forTemplateLiteral(html));
-                m_webView->page()->runJavaScript(js);
+                // 清位挂在 setContent 脚本执行回调上（I1）：fire-and-forget 改带
+                // 回调——脚本执行完毕 = TipTap 文档已同步更新（setContent 内联
+                // 完成解析），此刻起保存快照不再为空。被代次护栏丢弃的加载不
+                // 走到这里（其 done 不被调用），清位由触发作废的那次新加载完成
+                m_webView->page()->runJavaScript(js, [this](const QVariant &) {
+                    m_contentInFlight = false;
+                });
                 // 大文档冷 JIT 预热：内容就绪 1.5 秒后空闲跑一次丢弃式
                 // getHTML，消除首次切换源码模式 ~1s 的冷 JIT 停顿（编辑器
                 // 聚焦时 JS 侧自动推迟重试）
@@ -308,20 +319,42 @@ void EditorTab::setFilePath(const QString &path)
     pushDocDir();   // 页面已就绪则立即推送；否则由 onPageLoadFinished 补推
 }
 
-void EditorTab::setPendingContent(const QString &md)
+void EditorTab::setPendingPath(const QString &path)
 {
-    m_pendingContent = md;
+    m_pendingPath = path;
+    // 登记即补一次 flush（M1 根治登记竞态）：openFileTab(lazy) 返回到本调用
+    // 之间若发生过 flush（本 tab 已是当前标签页且页面就绪），那次 flush 因
+    // 路径尚未登记而扑空，且之后不会再有新触发——currentChanged 不重发、
+    // pageLoadFinished 只发一次。此处若条件仍成立则立即读盘，窗口彻底闭合。
+    // （本 tab 的 parent 恒为 TabWidget——构造事实，见 TabWidget 的 new EditorTab）
+    if (m_pageLoaded) {
+        if (QTabWidget *host = qobject_cast<QTabWidget *>(parentWidget())) {
+            if (host->currentWidget() == this)
+                flushPendingLoad();
+        }
+    }
 }
 
-// 加载未决的惰性内容（仅当页面就绪；由 TabWidget 在本 tab 成为当前标签页时调用）
-bool EditorTab::flushPendingContent()
+// 惰性读盘 flush（仅当页面就绪；由 TabWidget 在本 tab 成为当前标签页、或页面
+// 就绪时本 tab 已是当前标签页的两种时机调用）：读盘动作经信号委托 MainWindow
+bool EditorTab::flushPendingLoad()
 {
-    if (m_pendingContent.isNull() || !m_pageLoaded)
+    if (m_pendingPath.isEmpty() || !m_pageLoaded)
         return false;
-    QString content = m_pendingContent;
-    m_pendingContent.clear();
-    loadFile(QString(), content);
+    const QString path = m_pendingPath;
+    m_pendingPath.clear();
+    emit pendingPathReadRequested(path);
     return true;
+}
+
+bool EditorTab::hasPendingRead() const
+{
+    return !m_pendingPath.isEmpty();
+}
+
+bool EditorTab::isContentInFlight() const
+{
+    return m_contentInFlight;
 }
 
 void EditorTab::setEncoding(const QString &encoding)
