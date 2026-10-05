@@ -16,6 +16,18 @@ void ExportCoordinator::exportPdf(EditorTab *tab, const QString &path,
     if (!tab || !tab->webView() || path.isEmpty())
         return;
 
+    // 在途加载守卫（终审 I-1 兜底层）：内容未落地时 ExportHtmlAsync::get 会
+    // 拿到载入前文档，导出静默产出错误内容。GUI 入口（MainWindow::onExportPdf）
+    // 已先行拒绝并提示；此处兜底直调方（无头 selftest 等非 GUI 入口）——
+    // 不走 ExportHtmlAsync::get，直接以失败结算。本类无翻译上下文（见头文件
+    // 「i18n 留调用方」契约），err 为错误详情数据，非呈现文案
+    if (tab->hasPendingRead() || tab->isContentInFlight()) {
+        const QString err = QStringLiteral("文档尚未加载完成，导出已取消");
+        if (hooks.failed) hooks.failed(err);
+        if (done) done(false, err);
+        return;
+    }
+
     // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），
     // 空 filePath 回退 CWD 亦无影响——口径与下沉前 MainWindow::onExportPdf 同源
     const QString filePath = tab->webView()->property("filePath").toString();

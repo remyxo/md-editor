@@ -4,6 +4,7 @@
 #include "ui/EditorTab.h"
 #include "ui/ExportCoordinator.h"
 #include "ui/ExportHtmlAsync.h"
+#include "ui/TabWidget.h"
 #include "core/DocxExporter.h"
 #include "core/ExportCommon.h"
 #include "core/HtmlExporter.h"
@@ -23,7 +24,9 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QStatusBar>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QVariant>
 #include <QVariantMap>
@@ -194,6 +197,48 @@ private:
     QElapsedTimer m_sent;
     bool m_running = false;
 };
+
+// 轮询 C++ 谓词直到为真 / 超时（泵事件循环等 worker/IPC 回调送达）。与
+// waitJsTrue 的分工：isContentInFlight/hasPendingRead 等 C++ 侧标志没有对应
+// JS 表达式，只能在此轮询（inflight 子命令在途窗口断言专用）
+bool waitCond(const std::function<bool()> &pred, int timeoutMs)
+{
+    QElapsedTimer t;
+    t.start();
+    while (!pred()) {
+        if (t.elapsed() > timeoutMs) return false;
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        QThread::msleep(5);
+    }
+    return true;
+}
+
+// 对指定 tab 跑 JS 表达式并同步取值（waitJsTrue/evalJsValue 恒打当前 tab，
+// inflight 需要对非当前 tab 断言；alive 守卫同 waitJsTrue：超时退出后迟到
+// 回调不触碰已析构的 loop）
+QVariant evalOnTab(EditorTab *tab, const QString &expr, int timeoutMs = 30000)
+{
+    QVariant out;
+    bool got = false;
+    QEventLoop loop;
+    const std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, [&]() { loop.quit(); });
+    timeout.start(timeoutMs);
+    tab->webView()->page()->runJavaScript(expr, [&, alive](const QVariant &v) {
+        if (!*alive) return;
+        out = v;
+        got = true;
+        loop.quit();
+    });
+    loop.exec();
+    *alive = false;
+    if (!got)
+        qWarning("evalOnTab %dms 未返回（渲染进程疑似崩溃）: %s",
+                 timeoutMs, qPrintable(expr));
+    return out;
+}
 
 // —— export 子命令（无头三格式导出 + 计时）——
 
@@ -479,7 +524,7 @@ int SelfTestRunner::run(Application &app)
 {
     QCommandLineParser parser;
     parser.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsOptions);
-    parser.addPositionalArgument("subcommand", "roundtrip | export | perf");
+    parser.addPositionalArgument("subcommand", "roundtrip | export | perf | inflight");
     QCommandLineOption fileOpt("file", "输入 md 文件", "path");
     QCommandLineOption roundsOpt("rounds", "切换轮数", "n", "3");
     QCommandLineOption outOpt("out", "结果 JSON 输出路径", "path");
@@ -883,6 +928,178 @@ int SelfTestRunner::run(Application &app)
                  qint64(suite.timings.value("pdf").toDouble()),
                  suite.docxNormalized,
                  ok ? "-" : qPrintable(suite.errors.join(QStringLiteral("; "))));
+        return ok ? 0 : 1;
+    }
+    if (sub == "inflight") {
+        // 终审 C-1 数据丢失链回归（fix 波固化）：在途加载窗口的内容消费入口
+        // 守卫。场景对齐终审 a1-driver：
+        //   S1  loadFile 在途（worker toHtml 秒级）切源码 → 守卫拒绝（修复前
+        //       此链把载入前空快照写盘，实测 397 492 → 6 字节清空原文件）；
+        //       落地后再切 → 完整内容可见（对照面）→ 保存探针盘面不被清空
+        //   S3  惰性标签激活读盘在途切源码 → 同款拒绝；落地后恢复完整
+        // 全部操作在临时副本上进行，输入文件零触碰（保存探针会写盘）。
+        const QString file = parser.value(fileOpt);
+        if (file.isEmpty()) { qWarning("inflight 需要 --file"); return 1; }
+        QFile src(file);
+        if (!src.open(QIODevice::ReadOnly)) {
+            qWarning("读不到 %s", qPrintable(file)); return 1;
+        }
+        const QByteArray raw = src.readAll();
+        const QString big = QString::fromUtf8(raw);
+
+        QTemporaryDir work;
+        const QString f1 = work.filePath(QStringLiteral("f1-big.md"));
+        const QString f2 = work.filePath(QStringLiteral("f2-big.md"));
+        for (const QString &p : { f1, f2 }) {
+            QFile c(p);
+            if (!c.open(QIODevice::WriteOnly) || c.write(raw) != raw.size()) {
+                qWarning("副本创建失败: %s", qPrintable(p)); return 1;
+            }
+        }
+
+        MainWindow w{QString()};          // 空构造：初始标签不预载内容
+        if (!waitJsTrue(w, QStringLiteral(
+                "!!(window.editorApi && window.editorApi.editor)"), 60000)) {
+            qWarning("inflight: 编辑器 60s 未就绪"); return 1;
+        }
+        TabWidget *tabs = w.findChild<TabWidget *>();
+        if (!tabs) { qWarning("inflight: 找不到 TabWidget"); return 1; }
+
+        const QString svLenExpr = QStringLiteral(
+            "(function(){var sv=document.getElementById('source-view');"
+            "return sv?sv.value.length:-1;})()");
+
+        int fail = 0;
+        QElapsedTimer wall;
+        wall.start();
+
+        // ── S1：loadFile 在途切源码 → 拒绝 ─────────────────────────────
+        EditorTab *t0 = tabs->currentEditorTab();
+        const qint64 beforeBytes = QFileInfo(f1).size();
+        if (beforeBytes < 1000) { qWarning("inflight: 输入文件过小"); return 1; }
+        // 前置：页面真正加载完成（m_pageLoaded）——editorApi JS 就绪早于
+        // Qt 侧 loadFinished 槽派发，此前 loadFile 是 no-op（首跑实测踩坑：
+        // 切换拿到的是未加载空文档而非在途窗口，保存写 6 字节为 no-op 链
+        // 而非守卫旁路）
+        if (!waitCond([&]() { return t0->pageLoaded(); }, 30000)) {
+            qWarning("inflight: 初始页面 30s 未加载完成"); return 1;
+        }
+        t0->setFilePath(f1);
+        t0->loadFile(f1, big);              // 同步置位在途（EditorTab loadFile 段）
+        // 在途置位可见后再切：此刻切换必被守卫拒绝（修复前此链把载入前空
+        // 快照写盘，实测 397 492 → 6 字节清空原文件）
+        const bool s1Queued = t0->isContentInFlight();
+        if (!s1Queued) ++fail;
+        w.selfTestToggleSourceMode();       // 同线程紧随 → 守卫必须拒绝
+        const bool s1Rejected = !t0->isSourceMode();
+        const bool s1Hint = w.statusBar()->currentMessage()
+                                == QStringLiteral("文档加载中，请稍候");
+        if (!s1Rejected) ++fail;
+        if (!s1Hint) ++fail;
+        // 落地后对照面（终审 S1c）：再切应成功且内容完整
+        const bool s1Landed = waitCond([&]() {
+            return !t0->isContentInFlight(); }, 120000);
+        w.selfTestToggleSourceMode();
+        const bool s1Enter = waitCond([&]() {
+            return t0->isSourceMode(); }, 120000);
+        const qint64 sv1 = s1Enter
+            ? evalOnTab(t0, svLenExpr).toLongLong() : -1;
+        const bool s1Full = sv1 > big.size() * 9 / 10;
+        if (!s1Landed) ++fail;
+        if (!s1Enter) ++fail;
+        if (!s1Full) ++fail;
+        // 保存探针：源码视图完整可见时保存——盘面不得被清空（主断言；
+        // round-trip 逐字节等价性不作断言，序列化器对非规范文档可能归一化，
+        // 尺寸入账供目检）。写入在源码模式走 getSourceSnapshot 全量内容
+        QMetaObject::invokeMethod(&w, "onSaveFile");
+        QElapsedTimer pump;
+        pump.start();
+        while (pump.elapsed() < 1500) {
+            QCoreApplication::processEvents();
+            QThread::msleep(25);
+        }
+        const qint64 afterBytes = QFileInfo(f1).size();
+        const bool s1DiskSafe = afterBytes > beforeBytes * 9 / 10;
+        if (!s1DiskSafe) ++fail;
+        // 还原：退出源码模式（S3 用新标签，此步只为终态整洁）
+        w.selfTestToggleSourceMode();
+        waitCond([&]() { return !t0->isSourceMode(); }, 60000);
+
+        // ── S3：惰性标签激活读盘在途切源码 → 拒绝 ─────────────────────
+        EditorTab *t1 = tabs->openFileTab(f2, QString(), /*lazy=*/true);
+        // 复刻 MainWindow::loadPendingRestoredTab 的读盘+载入编排（flush 由
+        // 激活 + pendingPath 触发 pendingPathReadRequested 信号）
+        const QMetaObject::Connection s3Conn = QObject::connect(
+            t1, &EditorTab::pendingPathReadRequested, &w,
+            [t1](const QString &p) {
+                QFile f(p);
+                if (!f.open(QIODevice::ReadOnly)) return;
+                t1->loadFile(p, QString::fromUtf8(f.readAll()));
+            });
+        t1->setFilePath(f2);
+        t1->setPendingPath(f2);
+        const bool s3InFlight = waitCond([&]() {
+            return t1->isContentInFlight(); }, 90000);
+        w.selfTestToggleSourceMode();
+        const bool s3Rejected = !t1->isSourceMode();
+        const bool s3Hint = w.statusBar()->currentMessage()
+                                == QStringLiteral("文档加载中，请稍候");
+        // 落地后恢复路径：内容完整可见（与 S1 对照面同构）
+        const bool s3Landed = s3InFlight && waitCond([&]() {
+            return !t1->isContentInFlight(); }, 120000);
+        w.selfTestToggleSourceMode();
+        const bool s3Enter = waitCond([&]() {
+            return t1->isSourceMode(); }, 120000);
+        const qint64 sv3 = s3Enter
+            ? evalOnTab(t1, svLenExpr).toLongLong() : -1;
+        const bool s3Full = sv3 > big.size() * 9 / 10;
+        QObject::disconnect(s3Conn);
+        if (!s3InFlight) ++fail;
+        if (!s3Rejected) ++fail;
+        if (!s3Hint) ++fail;
+        if (!s3Landed) ++fail;
+        if (!s3Enter) ++fail;
+        if (!s3Full) ++fail;
+
+        const bool ok = fail == 0;
+        QJsonObject result{
+            { "ok", ok },
+            { "wall_ms", wall.elapsed() },
+            { "input_bytes", qint64(raw.size()) },
+            { "s1", QJsonObject{
+                { "queued_inflight", s1Queued },
+                { "rejected_inflight", s1Rejected },
+                { "status_hint", s1Hint },
+                { "landed", s1Landed },
+                { "enter_after_land", s1Enter },
+                { "sv_len", sv1 },
+                { "sv_full", s1Full },
+                { "disk_bytes_before", beforeBytes },
+                { "disk_bytes_after", afterBytes },
+                { "disk_safe", s1DiskSafe } } },
+            { "s3", QJsonObject{
+                { "inflight_seen", s3InFlight },
+                { "rejected_inflight", s3Rejected },
+                { "status_hint", s3Hint },
+                { "landed", s3Landed },
+                { "enter_after_land", s3Enter },
+                { "sv_len", sv3 },
+                { "sv_full", s3Full } } },
+            { "fail", fail },
+            { "error", ok ? QJsonValue()
+                          : QJsonValue(QStringLiteral("inflight 有 %1 项断言失败").arg(fail)) }};
+        const QString outPath = parser.value(outOpt);
+        if (!outPath.isEmpty()) {
+            QDir().mkpath(QFileInfo(outPath).absolutePath());
+            QFile o(outPath);
+            o.open(QIODevice::WriteOnly);
+            o.write(QJsonDocument(result).toJson());
+        }
+        qWarning("selftest inflight: ok=%d S1(reject=%d hint=%d land=%d full=%d "
+                 "disk %lld→%lld) S3(reject=%d hint=%d land=%d full=%d) %lldms",
+                 ok, s1Rejected, s1Hint, s1Landed, s1Full,
+                 beforeBytes, afterBytes, s3Rejected, s3Hint, s3Landed, s3Full,
+                 wall.elapsed());
         return ok ? 0 : 1;
     }
     qWarning("未知子命令: %s", qPrintable(sub));

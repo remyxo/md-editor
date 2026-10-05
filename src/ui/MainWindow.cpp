@@ -775,6 +775,16 @@ void MainWindow::onToggleSourceMode()
 {
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (!tab || m_sourceModeToggling) return;
+    // 在途加载守卫（终审 C-1 数据丢失链）：loadFile/惰性激活的读盘+toHtml+
+    // setContent 落地窗口内（8k 文档实测 ~3.7s），编辑器仍是载入前文档——
+    // 此刻进入源码会用旧快照覆写 textarea，随后保存即把 `&nbsp;` 写盘清空
+    // 原文件（实测 397 492 → 6 字节）。拒绝切换并提示，落地后可再切；
+    // 本函数是进入/退出两侧唯一分派点，守卫在闸检查之后、任何
+    // getContent/runJavaScript 之前，两侧一并覆盖
+    if (tab->hasPendingRead() || tab->isContentInFlight()) {
+        m_statusBar->showMessage(tr("文档加载中，请稍候"), 3000);
+        return;
+    }
     m_sourceModeToggling = true;
 
     if (!tab->isSourceMode()) {
@@ -951,6 +961,12 @@ void MainWindow::onExportPdf()
 {
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (!tab) return;
+    // 在途加载守卫（终审 C-1 同根 / I-1）：内容未落地时内容获取会拿到载入前
+    // 文档，导出静默产出错误内容——对话框弹出前拒绝并提示
+    if (tab->hasPendingRead() || tab->isContentInFlight()) {
+        m_statusBar->showMessage(tr("导出已取消：文档加载中"), 3000);
+        return;
+    }
 
     // 先弹出保存对话框
     QString filePath = tab->webView()->property("filePath").toString();
@@ -1024,6 +1040,11 @@ void MainWindow::onExportDocx()
 {
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (!tab) return;
+    // 在途加载守卫（同 onExportPdf）：内容未落地时导出静默产出载入前内容
+    if (tab->hasPendingRead() || tab->isContentInFlight()) {
+        m_statusBar->showMessage(tr("导出已取消：文档加载中"), 3000);
+        return;
+    }
 
     QString filePath = tab->webView()->property("filePath").toString();
     QString path = QFileDialog::getSaveFileName(this, tr("导出 DOCX"),
@@ -1091,6 +1112,11 @@ void MainWindow::onExportHtml()
 {
     EditorTab *tab = m_tabWidget->currentEditorTab();
     if (!tab) return;
+    // 在途加载守卫（同 onExportPdf）：内容未落地时导出静默产出载入前内容
+    if (tab->hasPendingRead() || tab->isContentInFlight()) {
+        m_statusBar->showMessage(tr("导出已取消：文档加载中"), 3000);
+        return;
+    }
 
     QString filePath = tab->webView()->property("filePath").toString();
     QString path = QFileDialog::getSaveFileName(this, tr("导出 HTML"),

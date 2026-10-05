@@ -40,6 +40,9 @@ public:
     void loadFile(const QString &path, const QString &content);
     void setFilePath(const QString &path);
     void setEncoding(const QString &encoding);
+    // 编辑器页面已加载完成（onPageLoadFinished 置位）。页面未就绪时 loadFile
+    // 等内容接口是 no-op——调用方（含 selftest 工装）须先等本标志再推内容
+    bool pageLoaded() const { return m_pageLoaded; }
     // 惰性读盘（W4-2 会话恢复）：非活动标签页只登记路径不读盘，激活（成为
     // 当前标签页且页面就绪）时经 pendingPathReadRequested 交 MainWindow 读盘
     void setPendingPath(const QString &path);
