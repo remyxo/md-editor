@@ -2,6 +2,7 @@
 #include "Application.h"
 #include "ui/MainWindow.h"
 #include "ui/EditorTab.h"
+#include "ui/ExportCoordinator.h"
 #include "ui/ExportHtmlAsync.h"
 #include "core/DocxExporter.h"
 #include "core/ExportCommon.h"
@@ -158,6 +159,42 @@ bool waitEditorDocReady(MainWindow &w)
         ".replace(/\\s/g,'').length > 0)"));
 }
 
+// 事件循环响应探针（fix I-2：切源码模式退出侧冻结护栏；与
+// tests/test_conversionqueue.cpp 的 EventLoopPing 同构——selftest 非 QtTest
+// 工程，测试文件内类型不可复用，此处独立实现，且无 Q_OBJECT：invokeMethod
+// functor 版不需要元对象，免 moc）。queued 自调用连发，测「投递 → 派发」
+// 最大时延——GUI 线程被长任务占死时 queued 调用只能排队，最大时延 ≈ 占死
+// 时长。arm/stop 圈定测量窗口（退出转换期间），stop 后 bounce 不再续投
+class FreezeProbe : public QObject {
+public:
+    qint64 maxLatencyMs = 0;
+    int dispatched = 0;
+
+    void arm()
+    {
+        m_running = true;
+        maxLatencyMs = 0;
+        dispatched = 0;
+        m_sent.restart();
+        QMetaObject::invokeMethod(this, [this]() { bounce(); }, Qt::QueuedConnection);
+    }
+
+    void stop() { m_running = false; }
+
+private:
+    void bounce()
+    {
+        if (!m_running) return;
+        maxLatencyMs = qMax<qint64>(maxLatencyMs, m_sent.elapsed());
+        ++dispatched;
+        m_sent.restart();
+        QMetaObject::invokeMethod(this, [this]() { bounce(); }, Qt::QueuedConnection);
+    }
+
+    QElapsedTimer m_sent;
+    bool m_running = false;
+};
+
 // —— export 子命令（无头三格式导出 + 计时）——
 
 // 单格式导出结果：finished=收到终态信号；timedOut=超时兜底触发
@@ -169,19 +206,25 @@ struct ExportOutcome {
     qint64 ms = 0;
 };
 
-// 导出完成回执（launch 内部把导出器的 exportFinished/exportError 翻译成它）
+// 导出完成回执（launch/Coordinator 内部把导出器的 exportFinished/exportError
+// 翻译成它）
 using ExportDone = std::function<void(bool ok, const QString &error)>;
 // 启动导出器（收到 ExportHtmlAsync 的 HTML 后调用；须在收到终态时调 done）
 using ExportLaunch = std::function<void(const QString &html, const ExportDone &done)>;
 
-// 单格式无头导出：ExportHtmlAsync::get（含高亮步，本身异步）→ launch 启动
-// 导出器 → QEventLoop 等终态信号。渲染进程挂死/崩溃时信号永不到达——
-// timeoutMs 兜底返回而非永挂（PDF 大文档分页以十秒计，上限远大于其余两格式）。
-// alive 守卫同 waitJsTrue：迟到回调不触碰已析构 loop；首个终态信号生效
-//（o.finished 防其后第二信号覆盖结果）。计时从进入本函数起（含 HTML
-// 获取 + 高亮 + 导出器全程），返回后调用方负责 delete 导出器
-ExportOutcome runExport(EditorTab *tab, ExportHtmlAsync::Mode mode,
-                        int timeoutMs, const ExportLaunch &launch)
+// 通用终态等待框架（W4-4 自 runExport 的超时骨架泛化；HTML/DOCX 经 runExport
+// 复用，PDF 直接消费）：start 在当前轮次发起异步导出，终态时须调 done（恰
+// 一次）。渲染进程挂死/崩溃时终态永不到达——timeoutMs 兜底返回而非永挂。
+// alive 守卫同 waitJsTrue（[&, alive] 范式：按值捕获副本）：start 把它**按
+// 值**捕获进在途异步回调——shared_ptr 副本与帧上原件同控制块，runAwait 返回
+// （超时或终态）后 *alive=false 对副本可见，迟到回调据此不再触碰已析构 loop /
+// 不再启动导出。**不得**按引用捕获：alive 形参锚定本函数栈帧，超时返回后帧
+// 销毁，迟到回调经悬垂引用读死帧（UB，W4-4 评审 I-1）；
+// 首个终态生效（o.finished 防其后第二信号覆盖结果）。计时从进入本函数起
+//（含内容获取 + 高亮 + 导出器全程）
+ExportOutcome runAwait(int timeoutMs,
+                       const std::function<void(const std::shared_ptr<bool> &alive,
+                                                const ExportDone &done)> &start)
 {
     ExportOutcome o;
     QElapsedTimer t;
@@ -197,20 +240,40 @@ ExportOutcome runExport(EditorTab *tab, ExportHtmlAsync::Mode mode,
         loop.quit();
     });
     timeout.start(timeoutMs);
-    ExportHtmlAsync::get(tab, [&, alive](const QString &html) {
-        if (!*alive) return;
-        launch(html, [&, alive](bool ok, const QString &err) {
-            if (!*alive || o.finished) return;
-            o.finished = true;
-            o.ok = ok;
-            o.error = err;
-            loop.quit();
-        });
-    }, mode);
+    start(alive, [&loop, &o, alive](bool ok, const QString &err) {
+        if (!*alive || o.finished) return;
+        o.finished = true;
+        o.ok = ok;
+        o.error = err;
+        loop.quit();
+    });
     loop.exec();
     *alive = false;
     o.ms = t.elapsed();
     return o;
+}
+
+// 单格式无头导出（HTML/DOCX 用；PDF 自 W4-4 起改走 ExportCoordinator，见
+// runExportSuite PDF 分支注释）：ExportHtmlAsync::get（含高亮步，本身异步）→
+// launch 启动导出器 → runAwait 等终态。返回后调用方负责 delete 导出器
+ExportOutcome runExport(EditorTab *tab, ExportHtmlAsync::Mode mode,
+                        int timeoutMs, const ExportLaunch &launch)
+{
+    return runAwait(timeoutMs, [&](const std::shared_ptr<bool> &alive,
+                                   const ExportDone &done) {
+        // done/alive/launch 全部**按值**捕获：三者的按引用捕获都会被迟到的
+        // get 闭包读取——done 是 runAwait 传入的临时 std::function（本 start
+        // 表达式结束后即析构，HtmlExporter 同步 emit 终态时调用悬垂 function
+        // 曾实测 SIGSEGV）；alive 是 runAwait 栈帧形参的引用（超时返回后帧
+        // 销毁）；launch 绑定调用方实参（runExport 返回后未必存活）。拷贝
+        // 发生在本表达式内（临时存活期），随 get 闭包按值传递覆盖整个异步期。
+        // alive 副本与帧上原件同控制块，runAwait 复位 *alive 对副本可见，
+        // 守卫语义不变（W4-4 评审 I-1）
+        ExportHtmlAsync::get(tab, [alive, launch, done](const QString &html) {
+            if (!*alive) return;   // runAwait 已返回（超时）：不再启动导出器
+            launch(html, done);
+        }, mode);
+    });
 }
 
 // 单格式结果入账：计时、产物路径、失败/超时/缺文件原因汇总。
@@ -373,22 +436,38 @@ ExportSuiteOut runExportSuite(EditorTab *tab, const QString &file,
     // PDF（Pdf 模式：高亮；页眉页脚开 → 分页路径，大文档以十秒计，超时上限
     // 420s——W3-3 B 起导出器轮询预算按规模自适应（max(30s, 估页数×1.5s+10s)，
     // 185 页档 ≈288s），工装上限须覆盖导出器自身预算 + 回退页打印，否则大档
-    // 验收在导出器正常回退前就被工装截杀）。fallbackUsed：paged.js 失败/超时
-    // 回退原生分页仍产出 PDF（无页眉页脚）——不算失败，只记 paged_fallback
-    // 供 golden 判读
+    // 验收在导出器正常回退前就被工装截杀）。W4-4 起本分支经 ExportCoordinator::
+    // exportPdf——与 GUI onExportPdf 同一编排源（内容获取 + 源码 toHtml + 高亮
+    // + 导出器启动/回收全链同构），差异仅在呈现钩子为空（无头无声）。
+    // fallbackUsed：paged.js 失败/超时回退原生分页仍产出 PDF（无页眉页脚）——
+    // 不算失败，只记 paged_fallback 供 golden 判读；由终态钩子带回（原实现
+    // 超时兜底返回后直读 exporter——超时场景无终态时该标志不再记账，语义
+    // 窄化在预期内：超时本就记入 errors，golden 判读以 errors 优先）
     {
-        auto *ex = new PdfExporter();
-        const ExportOutcome o = runExport(
-            tab, ExportHtmlAsync::Mode::Pdf, 420000,
-            [ex, &docDir, &pdfPath](const QString &html, const ExportDone &done) {
-                QObject::connect(ex, &PdfExporter::exportFinished, ex,
-                    [done](bool ok, const QString &) { done(ok, QString()); });
-                QObject::connect(ex, &PdfExporter::exportError, ex,
-                    [done](const QString &err) { done(false, err); });
-                ex->exportToPdf(html, docDir, pdfPath);
+        auto fallbackBox = std::make_shared<bool>(false);
+        const ExportOutcome o = runAwait(420000,
+            [&tab, &pdfPath, &fallbackBox](const std::shared_ptr<bool> &alive,
+                                           const ExportDone &done) {
+                ExportCoordinator::PdfHooks hooks;
+                // done/alive/fallbackBox **按值**捕获（同 runExport 注释）：
+                // hooks 连同其成员 std::function 被 Coordinator 拷进内容回调
+                // 与终态 lambda，异步期调用——按引用捕获即挂悬垂临时/死帧
+                //（超时返回后迟到终态经悬垂 alive 读 runAwait 已销毁栈帧，
+                // W4-4 评审 I-1）。fallbackBox 副本与下方读数原件同控制块，
+                // 迟到钩子写入对主流程可见
+                hooks.finished = [alive, fallbackBox, done](
+                        bool ok, const QString &, qint64, bool fb) {
+                    if (!*alive) return;   // 迟到终态：runAwait 已结算/返回
+                    *fallbackBox = fb;
+                    done(ok, QString());
+                };
+                hooks.failed = [alive, done](const QString &err) {
+                    if (!*alive) return;
+                    done(false, err);
+                };
+                ExportCoordinator::exportPdf(tab, pdfPath, nullptr, hooks, done);
             });
-        out.pagedFallback = ex->fallbackUsed();
-        delete ex;
+        out.pagedFallback = *fallbackBox;
         recordOutcome("pdf", pdfPath, o, &out.timings, &out.files, &out.errors);
     }
     return out;
@@ -426,6 +505,21 @@ int SelfTestRunner::run(Application &app)
         }
         const qint64 loadMs = loadTimer.elapsed();
 
+        // 冻结探针（fix I-2）区分度基线：对输入文档同步跑一次 toHtml——即
+        // 「慢路径还原为同步」（改前形态）时退出窗口的冻结量级。仅当基线
+        // 足够长（≥200ms；短文档同步转换本就不可感知，断言无区分度且易受
+        // 调度噪声误报）才对探针设阈值断言，否则只记录数据
+        QElapsedTimer syncT;
+        syncT.start();
+        const QString syncProbeHtml = MarkdownHandler::toHtml(md0);
+        Q_UNUSED(syncProbeHtml);
+        const qint64 exitSyncMs = syncT.elapsed();
+        const bool freezeAssert = exitSyncMs >= 200;
+        const qint64 freezeThreshold = qMax<qint64>(150, exitSyncMs / 4);
+        FreezeProbe freezeProbe;
+        qint64 freezeMaxMs = 0;
+        int freezeDispatched = 0;
+
         QJsonArray roundArr;
         QString prevMd;
         int convergedAt = -1;
@@ -442,10 +536,14 @@ int SelfTestRunner::run(Application &app)
                     "sv.dispatchEvent(new Event('input'));return 'ok';})()"));
                 injected = true;
             }
+            freezeProbe.arm();                                  // 测量窗口=退出转换期间
             w.selfTestToggleSourceMode();                       // → WYSIWYG（慢路径）
             if (!waitJsTrue(w, QStringLiteral("!window.editorApi.isSourceMode"))) {
                 qWarning("第 %d 轮退出源码超时", i); return 1;
             }
+            freezeProbe.stop();
+            freezeMaxMs = qMax<qint64>(freezeMaxMs, freezeProbe.maxLatencyMs);
+            freezeDispatched += freezeProbe.dispatched;
             const QString md = mdOfCurrentDoc(w);
             roundArr.append(md.size());
             // 注意用 QStringLiteral 而非 QLatin1String：QLatin1String 把字面量
@@ -456,10 +554,22 @@ int SelfTestRunner::run(Application &app)
             prevMd = md;
         }
 
-        // 判定：收敛 + 注入内容存活 + 无占位符泄漏
+        // 判定：收敛 + 注入内容存活 + 无占位符泄漏 + 冻结探针
         const bool converged = convergedAt >= 0;
         const bool leaked = prevMd.contains(QRegularExpression("ZZ[A-Z]+[0-9]+"));
-        const bool ok = converged && sawInjection && !leaked;
+        // 冻结判定（fix I-2）：退出转换期间 posted-event 最大派发时延须远小于
+        // 同步基线（还原同步即红：toHtml 占死窗口全额计入探针时延）；派发
+        // 次数下限证明探针在窗口内确实存活轮转
+        const bool freezePass = !freezeAssert
+            || (freezeMaxMs <= freezeThreshold && freezeDispatched >= 3);
+        const bool ok = converged && sawInjection && !leaked && freezePass;
+
+        QStringList rtErrors;
+        if (!converged) rtErrors << QStringLiteral("未在轮次内收敛");
+        if (freezeAssert && !freezePass)
+            rtErrors << QStringLiteral(
+                            "冻结探针超阈: max=%1ms threshold=%2ms dispatched=%3（退出侧同步冻结回归？）")
+                            .arg(freezeMaxMs).arg(freezeThreshold).arg(freezeDispatched);
 
         QJsonObject result{
             { "ok", ok }, { "rounds", rounds }, { "converged_at", convergedAt },
@@ -467,7 +577,16 @@ int SelfTestRunner::run(Application &app)
             { "source_md_size", md0.size() },   // 输入 md_0 字符量（原死变量改为入账）
             { "final_md_size", prevMd.size() },
             { "md_sizes", roundArr },
-            { "error", converged ? QJsonValue() : QJsonValue("未在轮次内收敛") }};
+            { "freeze", QJsonObject{
+                { "sync_to_html_ms", exitSyncMs },
+                { "probe_max_latency_ms", freezeMaxMs },
+                { "threshold_ms", freezeThreshold },
+                { "dispatched", freezeDispatched },
+                { "asserted", freezeAssert },
+                { "pass", freezePass } } },
+            { "error", rtErrors.isEmpty()
+                           ? QJsonValue()
+                           : QJsonValue(rtErrors.join(QStringLiteral("; "))) }};
         const QString outPath = parser.value(outOpt);
         if (!outPath.isEmpty()) {
             QDir().mkpath(QFileInfo(outPath).absolutePath());   // --out 深路径先建目录
@@ -477,6 +596,10 @@ int SelfTestRunner::run(Application &app)
         }
         qWarning("selftest roundtrip: ok=%d converged_at=%d load=%lldms size=%d",
                  ok, convergedAt, loadMs, int(prevMd.size()));
+        qWarning("selftest roundtrip: 冻结探针 sync_to_html=%lldms asserted=%d "
+                 "probe_max=%lldms threshold=%lldms dispatched=%d pass=%d",
+                 exitSyncMs, freezeAssert, freezeMaxMs, freezeThreshold,
+                 freezeDispatched, freezePass);
         return ok ? 0 : 1;
     }
     if (sub == "export") {
@@ -497,7 +620,70 @@ int SelfTestRunner::run(Application &app)
         const QString docDir = QFileInfo(
             tab->webView()->property("filePath").toString()).absolutePath();
 
-        const ExportSuiteOut suite = runExportSuite(tab, file, docDir, outdir);
+        ExportSuiteOut suite = runExportSuite(tab, file, docDir, outdir);
+
+        // 源码模式导出冒烟（fix I-2）：ExportHtmlAsync src 分支此前零自动化
+        // 覆盖（export 全程 WYSIWYG，src 仅手测兜底）。切源码后按 GUI 源码
+        // HTML 导出同款 Mode::Plain 导出一次（src 判定 → getSourceContent →
+        // toHtml worker → HtmlExporter 全链），断言产物完整（含 <body）且与
+        // WYSIWYG 导出同量级——worker 化链路端到端走通。失败入 errors
+        {
+            const QString srcPath = QDir(outdir).filePath(
+                QFileInfo(file).completeBaseName() + QStringLiteral("-srcsmoke.html"));
+            const QFileInfo wysInfo(suite.files.value(QStringLiteral("html")).toString());
+            bool switched = false, backed = false;
+            ExportOutcome so;
+            auto *ex = new HtmlExporter();
+            if (wysInfo.exists()) {
+                w.selfTestToggleSourceMode();                   // → 源码
+                switched = waitJsTrue(w, QStringLiteral("window.editorApi.isSourceMode"));
+                if (switched) {
+                    QFile::remove(srcPath);
+                    so = runExport(
+                        tab, ExportHtmlAsync::Mode::Plain, 120000,
+                        [ex, &docDir, &srcPath](const QString &html, const ExportDone &done) {
+                            QObject::connect(ex, &HtmlExporter::exportFinished, ex,
+                                [done](bool ok, const QString &) { done(ok, QString()); });
+                            QObject::connect(ex, &HtmlExporter::exportError, ex,
+                                [done](const QString &err) { done(false, err); });
+                            ex->exportToHtml(html, docDir, srcPath, QStringLiteral("light"));
+                        });
+                    w.selfTestToggleSourceMode();               // → WYSIWYG（未编辑，快速路径）
+                    backed = waitJsTrue(w, QStringLiteral("!window.editorApi.isSourceMode"));
+                }
+            }
+            delete ex;   // 导出器持有隐藏渲染视图，结算后立即回收（滞留即泄漏）
+
+            QString err;
+            if (!wysInfo.exists())
+                err = QStringLiteral("WYSIWYG html 产物缺失，冒烟无从对照");
+            else if (!switched)
+                err = QStringLiteral("切源码超时");
+            else if (!so.finished)
+                err = QStringLiteral("导出超时（120s）");
+            else if (!so.ok)
+                err = so.error.isEmpty() ? QStringLiteral("exportFinished(false)")
+                                         : so.error;
+            else if (!backed)
+                err = QStringLiteral("切回 WYSIWYG 超时");
+            else if (!QFileInfo::exists(srcPath))
+                err = QStringLiteral("成功信号但产物缺失 ") + srcPath;
+            else {
+                const qint64 srcSize = QFileInfo(srcPath).size();
+                if (srcSize * 2 < wysInfo.size())
+                    err = QStringLiteral("src 产物量级异常（不足 WYSIWYG 一半）");
+                else {
+                    QFile rf(srcPath);
+                    rf.open(QIODevice::ReadOnly);
+                    if (!rf.readAll().contains("<body"))
+                        err = QStringLiteral("产物缺 <body（非完整 HTML 文档）");
+                }
+            }
+            const bool pass = err.isEmpty();
+            suite.timings.insert(QStringLiteral("src_html_smoke"), double(so.ms));
+            suite.files.insert(QStringLiteral("src_smoke"), srcPath);
+            if (!pass) suite.errors.append(QStringLiteral("src_smoke: ") + err);
+        }
 
         const bool ok = suite.errors.isEmpty();
         QJsonObject result{

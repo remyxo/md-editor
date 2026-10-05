@@ -12,6 +12,7 @@
 #include "TableGridPopup.h"
 #include "AboutDialog.h"
 #include "ExportProgressDialog.h"
+#include "ExportCoordinator.h"
 #include "ExportHtmlAsync.h"
 #include "../core/EditorBridge.h"
 #include "../core/FileManager.h"
@@ -849,14 +850,35 @@ void MainWindow::onToggleSourceMode()
         //   未编辑：JS 直接复用内存文档完成切换（免 C++ toHtml 与 HTML 传输）；
         //   已编辑：返回 MD → C++ toHtml → exitSourceMode(html) 全量重建
         // 模式切换计时（快速路径总计 / 慢路径 JS读取→toHtml→JS重建），状态栏反馈用
+        //
+        // W4-4：gateGuard 与进入侧对齐——慢路径 toHtml worker 化后退出链更长
+        //（toHtml 排队 + worker 执行 + runJavaScript 等待窗口），中途 tab 被关闭
+        // 时后续回调不再执行、m_sourceModeToggling（单实例闸）将永久卡死，全部
+        // 模式切换从此失效。挂 tab destroyed 兜底释放闸，正常完成时显式断开
         QElapsedTimer perfTotal;
         perfTotal.start();
+        const QMetaObject::Connection gateGuard =
+            connect(tab, &QObject::destroyed, this, [this]() {
+                m_sourceModeToggling = false;
+            });
         tab->webView()->page()->runJavaScript(
             QStringLiteral("window.editorApi.exitSourceModeOrGetMd()"),
-            [this, tab, perfTotal](const QVariant &result) {
+            [this, tab, perfTotal, gateGuard](const QVariant &result) {
+                // tab 已被移除（removed-but-not-yet-destroyed 窗口，destroyed
+                // 兜底不触发）：释放闸退出——与进入侧双保险同款
+                if (m_tabWidget->indexOf(tab) < 0) {
+                    disconnect(gateGuard);
+                    m_sourceModeToggling = false;
+                    return;
+                }
                 // QVariant 类型区分：JS true（快速路径完成）vs string（待转换 MD）
                 const bool fastPath = result.userType() == QMetaType::Bool && result.toBool();
-                auto finishExit = [this, tab](const QString &msg) {
+                auto finishExit = [this, tab, gateGuard](const QString &msg) {
+                    if (m_tabWidget->indexOf(tab) < 0) {
+                        disconnect(gateGuard);
+                        m_sourceModeToggling = false;
+                        return;
+                    }
                     tab->setSourceMode(false);
                     m_toolBar->setSourceMode(false);
                     m_statusBar->setSourceMode(false);
@@ -865,6 +887,7 @@ void MainWindow::onToggleSourceMode()
                         act->setChecked(false);
                     qWarning() << msg;
                     m_statusBar->showMessage(msg, 6000);
+                    disconnect(gateGuard);
                     m_sourceModeToggling = false;
                 };
                 if (fastPath) {
@@ -874,21 +897,36 @@ void MainWindow::onToggleSourceMode()
                 }
                 QString md = result.toString();
                 const qint64 jsReadMs = perfTotal.elapsed();
-                QElapsedTimer conv;
-                conv.start();
-                QString html = MarkdownHandler::toHtml(md);
-                const qint64 convMs = conv.elapsed();
-                QString escaped = JsEscape::forTemplateLiteral(html);
-                QElapsedTimer jsBuild;
-                jsBuild.start();
-                tab->webView()->page()->runJavaScript(
-                    QString("window.editorApi.exitSourceMode(`%1`);").arg(escaped),
-                    [this, tab, jsReadMs, convMs, jsBuild, perfTotal, finishExit](const QVariant &) {
-                        const qint64 buildMs = jsBuild.elapsed() - 15; // 减去经验 IPC 开销
-                        finishExit(QStringLiteral(
-                                       "【计时】退出源码: JS读取 %1ms · toHtml %2ms · JS重建 %3ms · 总计 %4ms")
-                                       .arg(jsReadMs).arg(convMs).arg(qMax<qint64>(buildMs, 0))
-                                       .arg(perfTotal.elapsed()));
+                // toHtml 移至 worker 线程（W4-4）：与进入侧 fromHtml 同款，大文档
+                // 数百毫秒的转换不再冻结 GUI（convMs 为 worker 实测耗时，不含排
+                // 队），完成回调回 GUI 线程继续 IPC 链
+                //
+                // 不对称登记（T3 N-2 评估结论，不改）：此处灌入编辑器的是 toHtml
+                // 的**整文档 HTML**，而 loadFile 灌 toBodyHtml 的 body 片段。两
+                // 形态语义收敛（exitSourceMode(html) 内部即 setContent(html)，
+                // 与 loadFile 同一 JS 消费端），差异仅在 C++ 灌入形态；统一属行
+                // 为变化——整文档 vs body 的 TipTap 解析等价面须独立等价验证，
+                // 超出 worker 化范围（只挪执行线程不改转换内容，保真第一）
+                tab->enqueueConversion(
+                    [md]() { return MarkdownHandler::toHtml(md); },
+                    [this, tab, jsReadMs, perfTotal, gateGuard, finishExit](const QString &html, qint64 convMs) {
+                        if (m_tabWidget->indexOf(tab) < 0) {
+                            disconnect(gateGuard);
+                            m_sourceModeToggling = false;
+                            return;
+                        }
+                        QString escaped = JsEscape::forTemplateLiteral(html);
+                        QElapsedTimer jsBuild;
+                        jsBuild.start();
+                        tab->webView()->page()->runJavaScript(
+                            QString("window.editorApi.exitSourceMode(`%1`);").arg(escaped),
+                            [this, tab, jsReadMs, convMs, jsBuild, perfTotal, gateGuard, finishExit](const QVariant &) {
+                                const qint64 buildMs = jsBuild.elapsed() - 15; // 减去经验 IPC 开销
+                                finishExit(QStringLiteral(
+                                               "【计时】退出源码: JS读取 %1ms · toHtml %2ms · JS重建 %3ms · 总计 %4ms")
+                                               .arg(jsReadMs).arg(convMs).arg(qMax<qint64>(buildMs, 0))
+                                               .arg(perfTotal.elapsed()));
+                            });
                     });
             });
     }
@@ -925,72 +963,65 @@ void MainWindow::onExportPdf()
                                                 tr("PDF 文件 (*.pdf)"));
     if (path.isEmpty()) return;
 
-    // 文档目录（解析相对图片路径）；未保存文档无相对图片（插入图片须先保存），空 filePath 回退 CWD 亦无影响
-    QString docDir = QFileInfo(filePath).absolutePath();
+    // W4-4：导出编排（内容获取→导出器→终态结算）下沉 ExportCoordinator，
+    // 本函数只剩呈现——进度对话框 + 状态栏文案（i18n 拼装留在本文件，翻译
+    // 上下文不变）。对话框指针用 shared_ptr<QPointer> 在钩子间共享：started
+    // 钩子里才创建（内容就绪时刻，与下沉前一致——源码模式转换期间不弹框），
+    // QPointer 防对话框自销毁后迟到钩子触空（WA_DeleteOnClose）
+    auto dlgBox = std::make_shared<QPointer<ExportProgressDialog>>();
 
-    // 异步获取编辑器 HTML 内容（源码模式下取 source-view 当前内容经 toHtml，
-    // 否则导出的是进入源码前的旧快照）
-    ExportHtmlAsync::get(tab, [this, path, docDir](const QString &html) {
-            // 用时从内容就绪（进度对话框出现）起算，到 exportFinished
-            auto start = std::make_shared<QElapsedTimer>();
-            start->start();
-            // 进度对话框（2026-09-21）：paged.js 大文档导出以十秒计，静默等待
-            // 会让用户误以为卡死而随手关程序——模态展示「正在导出」，导出完成
-            // 前不可关闭；成功自动关闭，失败转错误态等用户确认。QPointer 防
-            // 对话框自销毁后迟到信号触空（WA_DeleteOnClose）
-            QPointer<ExportProgressDialog> dlg(new ExportProgressDialog(this));
-            dlg->show();
-            auto *exporter = new PdfExporter(this);
-            // 失败路径（空内容/引擎故障）须有反馈且回收导出器（其持有隐藏
-            // 渲染视图，滞留即整个渲染进程泄漏到窗口关闭）
-            connect(exporter, &PdfExporter::exportError, this,
-                    [this, exporter, dlg](const QString &err) {
-                m_statusBar->showMessage(tr("导出失败: %1").arg(err), 5000);
-                if (dlg) dlg->showError(err);
-                exporter->deleteLater();
-            });
-            connect(exporter, &PdfExporter::exportFinished, this,
-                    [this, exporter, dlg, start](bool ok, const QString &out) {
-                // 本条是状态栏最后一条消息：走回退时并入回退说明并延长展示——
-                // pagedFallbackUsed 的独立提示早于 printToPdf 触发，1-3s 后即被
-                // 本条覆盖，用户须从这里得知产物无页眉页脚
-                if (ok && exporter->fallbackUsed())
-                    m_statusBar->showMessage(
-                        tr("已导出: %1（分页引擎回退，本次无页眉页脚）, 用时 %2")
-                            .arg(out, exportTimeSuffix(start->elapsed())), 6000);
-                else
-                    m_statusBar->showMessage(
-                        ok ? tr("已导出: %1, 用时 %2").arg(out, exportTimeSuffix(start->elapsed()))
-                           : tr("导出失败"), 3000);
-                if (dlg) {
-                    if (ok)
-                        dlg->showFinished();
-                    else
-                        dlg->showError(tr("PDF 生成失败"));
-                }
-                exporter->deleteLater();
-            });
-            // paged.js 失败/超时回退原生分页——打印进行中的过渡提示（最终说明
-            // 见上方 exportFinished 的组合消息）
-            connect(exporter, &PdfExporter::pagedFallbackUsed, this, [this]() {
-                m_statusBar->showMessage(
-                    tr("页眉页脚引擎失败，正在按普通版式导出（无页眉页脚）"), 6000);
-            });
-            // 分页进度：大文档分页以十秒计（2026-09-15 取证 ~0.8s/页），静默
-            // 等待体感差——页数增长即刷新提示，导出完成后被结果消息覆盖
-            connect(exporter, &PdfExporter::pagedProgress, this,
-                    [this, dlg](int pages) {
-                m_statusBar->showMessage(
-                    tr("正在分页：已生成 %1 页…").arg(pages), 3000);
-                if (dlg) dlg->showPagedProgress(pages);
-            });
-            // 写盘阶段（printToPdf 前）：total>0 展示总页数，0 表示页数未知
-            connect(exporter, &PdfExporter::writingPdf, this,
-                    [dlg](int total) {
-                if (dlg) dlg->showWriting(total);
-            });
-            exporter->exportToPdf(html, docDir, path);
-        }, ExportHtmlAsync::Mode::Pdf);
+    ExportCoordinator::PdfHooks hooks;
+    hooks.started = [this, dlgBox]() {
+        // 进度对话框（2026-09-21）：paged.js 大文档导出以十秒计，静默等待
+        // 会让用户误以为卡死而随手关程序——模态展示「正在导出」，导出完成
+        // 前不可关闭；成功自动关闭，失败转错误态等用户确认
+        *dlgBox = new ExportProgressDialog(this);
+        (*dlgBox)->show();
+    };
+    hooks.failed = [this, dlgBox](const QString &err) {
+        m_statusBar->showMessage(tr("导出失败: %1").arg(err), 5000);
+        if (*dlgBox) (*dlgBox)->showError(err);
+    };
+    hooks.finished = [this, dlgBox](bool ok, const QString &out, qint64 elapsedMs,
+                                    bool fallbackUsed) {
+        // 本条是状态栏最后一条消息：走回退时并入回退说明并延长展示——
+        // pagedFallbackUsed 的独立提示早于 printToPdf 触发，1-3s 后即被
+        // 本条覆盖，用户须从这里得知产物无页眉页脚
+        if (ok && fallbackUsed)
+            m_statusBar->showMessage(
+                tr("已导出: %1（分页引擎回退，本次无页眉页脚）, 用时 %2")
+                    .arg(out, exportTimeSuffix(elapsedMs)), 6000);
+        else
+            m_statusBar->showMessage(
+                ok ? tr("已导出: %1, 用时 %2").arg(out, exportTimeSuffix(elapsedMs))
+                   : tr("导出失败"), 3000);
+        if (*dlgBox) {
+            if (ok)
+                (*dlgBox)->showFinished();
+            else
+                (*dlgBox)->showError(tr("PDF 生成失败"));
+        }
+    };
+    // paged.js 失败/超时回退原生分页——打印进行中的过渡提示（最终说明
+    // 见上方 finished 的组合消息）
+    hooks.pagedFallback = [this]() {
+        m_statusBar->showMessage(
+            tr("页眉页脚引擎失败，正在按普通版式导出（无页眉页脚）"), 6000);
+    };
+    // 分页进度：大文档分页以十秒计（2026-09-15 取证 ~0.8s/页），静默
+    // 等待体感差——页数增长即刷新提示，导出完成后被结果消息覆盖
+    hooks.pagedProgress = [this, dlgBox](int pages) {
+        m_statusBar->showMessage(
+            tr("正在分页：已生成 %1 页…").arg(pages), 3000);
+        if (*dlgBox) (*dlgBox)->showPagedProgress(pages);
+    };
+    // 写盘阶段（printToPdf 前）：total>0 展示总页数，0 表示页数未知
+    hooks.writing = [dlgBox](int total) {
+        if (*dlgBox) (*dlgBox)->showWriting(total);
+    };
+    // 导出器挂窗口（exporterParent=this）：失败/中途关窗时滞留的隐藏渲染
+    // 视图随窗口销毁兜底回收
+    ExportCoordinator::exportPdf(tab, path, this, hooks);
 }
 
 void MainWindow::onExportDocx()

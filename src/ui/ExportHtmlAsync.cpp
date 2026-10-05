@@ -43,12 +43,30 @@ void get(EditorTab *tab, std::function<void(const QString &)> cb, Mode mode)
     tab->webView()->page()->runJavaScript(call,
         [tab, src, mode, cb](const QVariant &result) {
             QString s = result.toString();
-            const QString html = src ? MarkdownHandler::toHtml(s) : s;
-            if (mode == Mode::Plain) {
-                cb(html);
+            if (!src) {
+                // 非 src 分支直通（原文即 HTML，无转换）：语义不变
+                if (mode == Mode::Plain) {
+                    cb(s);
+                    return;
+                }
+                highlightForExportAsync(tab, s, cb);
                 return;
             }
-            highlightForExportAsync(tab, html, cb);
+            // src 分支 toHtml 移 worker 线程（W4-4）：大文档数百毫秒的同步
+            // 转换不再冻结 GUI，基建与 MainWindow 切源码模式同款（ConversionQueue
+            // 同 tab 串行、完成回调 GUI 线程）。tab 中途销毁则在途结果被队列
+            // 丢弃、cb 不再触发——导出静默取消（与「页面销毁后 IPC 回调不执
+            // 行」既有语义一致，呈现层无终态即无提示）。只挪执行线程不改转
+            // 换内容：toHtml 输入输出与改造前逐字节一致（保真第一）
+            tab->enqueueConversion(
+                [s]() { return MarkdownHandler::toHtml(s); },
+                [tab, mode, cb](const QString &html, qint64) {
+                    if (mode == Mode::Plain) {
+                        cb(html);
+                        return;
+                    }
+                    highlightForExportAsync(tab, html, cb);
+                });
         });
 }
 
