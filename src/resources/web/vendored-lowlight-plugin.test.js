@@ -7,6 +7,8 @@
 //   5. 普通文本击键走 DecorationSet.map 快路径（epoch 不变 + 装饰保位）
 //   6. 视口优先 + 时间预算：可视块先于视口外块着色、片间停顿与 isInputPending
 //      让路、总预算超限降级纯文档顺序 2 块/片、无 scheduling API 静默降级
+//   7. 排干复位：批次排干（remain=0）后轮状态复位——新一轮首片经空闲回调
+//      起步（而非沿用上轮的片间停顿通道）
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -261,6 +263,43 @@ describe('vendored 异步代码块高亮', () => {
     } finally {
       window.__setViewportProbe(null);
       setScheduling(null);
+      vi.useRealTimers();
+      await sleep(50);   // 回真时钟：残余批次按真实调度排干，不泄漏到后续用例
+    }
+  });
+
+  // ---- 用例 7：排干复位（fake timer 驱动，确定性断言） ----
+  // 契约：轮 = pending 从出现到排干；排干（batch merge remain=0）必须收轮
+  //（_endRound）——scheduleTick 以 _roundActive 分通道：轮首片经空闲回调起步
+  //（jsdom 降级 setTimeout(16)），轮内后续片走片间停顿（CHUNK_GAP_MS=100）。
+  // 排干不复位会让「下一轮首片」误走片间停顿通道（轮状态残留 + 视口判定缓存
+  // 不清）。轮状态是模块私有，经 __highlightRoundState 只读探针断言。
+  // 文档 = 3 块 < BATCH_SIZE=6：首片即排干，正中 batch merge remain=0 分支
+  it('排干复位：pending 排干后轮状态复位（新一轮首片可经空闲回调起步）', async () => {
+    expect(typeof window.__highlightRoundState).toBe('function');
+    expect(typeof window.__setViewportProbe).toBe('function');
+
+    vi.useFakeTimers();
+    try {
+      window.__setViewportProbe(() => false);   // 全部视口外：纯文档序，无缓存噪声
+      window.editorApi.setContent(DOC());       // 3 块，init 收集 pending + 收轮
+
+      // 首片未跑：轮尚未开启，空闲回调降级 setTimeout(16) 尚未触发
+      expect(window.__highlightRoundState().roundActive).toBe(false);
+
+      // 首片（=末片，3 < 6）执行：runChunk dispatch → apply batch merge
+      // remain=0 → 必须收轮
+      vi.advanceTimersByTime(20);
+      const plugin = findAsyncPlugin();
+      const ed = window.editorApi.editor;
+      expect(plugin.getState(ed.state).pending.length).toBe(0);
+
+      const rs = window.__highlightRoundState();
+      expect(rs.roundActive).toBe(false);       // 排干即收轮（本用例核心断言）
+      expect(rs.verdicts).toBe(0);              // 视口判定缓存一并清空（新轮重探）
+      expect(rs.roundEpoch).toBe(-1);           // 轮代次复位
+    } finally {
+      window.__setViewportProbe(null);
       vi.useRealTimers();
       await sleep(50);   // 回真时钟：残余批次按真实调度排干，不泄漏到后续用例
     }

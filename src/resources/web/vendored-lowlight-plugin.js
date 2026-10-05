@@ -11,7 +11,8 @@
 //   1. init 不同步高亮：块收集入 pending，空闲分批补算；分批调度为
 //      「视口优先 + CM6 Work 风格时间预算」：可视区内块 → 光标邻域块 →
 //      其余按文档顺序，单片时间预算 + 片间停顿让路输入/渲染，单轮总预算
-//      超限降级为纯文档顺序 2 块/片保底推进（对症切源码后「空→高亮渐显」）
+//      超限降级为纯文档顺序 2 块/片保底推进（对症切源码后「空→高亮渐显」）；
+//      轮排干即复位（batch merge remain=0 收轮，下一轮首片仍经空闲回调起步）
 //   2. apply 增量化：docChanged 只同步重算「与 step 相交」的块，其余块经
 //      高亮结果缓存（语言+文本 → token 序列）命中复用；未算过的块异步补；
 //      零块相交且无待算块的编辑（普通文字击键）走 DecorationSet.map 快路径
@@ -293,6 +294,16 @@
         _viewportProbe = (typeof fn === 'function') ? fn : null;
     };
 
+    // 测试钩子：只读轮状态（排干复位契约断言用；_roundActive 是模块私有，
+    // 生产路径外部不可见——见 vendored-lowlight-plugin.test.js 用例 7）
+    window.__highlightRoundState = function() {
+        return {
+            roundActive: _roundActive,
+            roundEpoch: _roundEpoch,
+            verdicts: _viewVerdicts.size
+        };
+    };
+
     window.AsyncLowlightPlugin = function(options) {
         var name = options.name;
         var lowlight = options.lowlight;
@@ -347,6 +358,7 @@
                             defaultLanguage: state.defaultLanguage
                         };
                         if (remain.length) scheduleTick(pluginKey);
+                        else _endRound();   // 排干即收轮：scheduleTick 以 _roundActive 分通道（轮首片空闲回调 / 轮内片间停顿），不复位则下一轮首片误走片间停顿
                         return next;
                     }
 

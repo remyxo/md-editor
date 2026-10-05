@@ -208,6 +208,7 @@
 | Mermaid 后台渲染 | MermaidRenderer 隐藏页 | `__mermaidResults` |
 | MathML / 表格列宽归一 | MathMlRenderer / TableColumnNormalizer 隐藏页 | 各自 IIFE 内部协议 |
 | 折行点缓存探针 | 编辑器页（探针脚本用） | `window.__wrapCacheState`（scripts/mode-switch-probe.js） |
+| 高亮轮状态探针 | 编辑器页（vitest 用） | `window.__highlightRoundState`（vendored-lowlight-plugin，只读轮状态）+ `window.__setViewportProbe`（同文件，mock 视口判定） |
 | 搜索插件实例 | 编辑器页 | `window.searchPlugin`（editor-page 内部，startSearch 系列的实际实现方） |
 
 这些面的稳定性约束记录在各自专题文档（pdf-header-footer-layout.md 等），不在本文展开。
