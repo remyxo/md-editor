@@ -2894,12 +2894,15 @@ window.editorApi = {
         }
     },
     // === 源码模式搜索高亮（测量式） ===
-    // textarea 与普通元素（div/pre）的折行算法存在引擎级差异：同一文本、同宽同字体下，
-    // 折行点偶有 1 字符偏差（Windows 字体回退时更大）。因此「overlay 渲染全文 + <mark>」
-    // 的高亮底色会在部分匹配处与 textarea 可见文字错位（同行横向偏、跨行竖向偏）。
-    // 改为：用隐藏的真实 <textarea> 复刻 #source-view 排版（同一引擎、同一字体回退，
-    // 折行必然一致），测量每个匹配的矩形，再在 overlay 里画绝对定位的底色块。
-    // 底色与可见文字同源，任何平台都不会脱节；current 橙、其余淡黄对齐 WYSIWYG。
+    // 高亮底色若在 overlay 里复刻排版渲染 <mark>，与 textarea 可见文字有错位风险
+    // （同行横向偏、跨行竖向偏）。改为：用隐藏的真实 <textarea> 复刻 #source-view
+    // 排版（同一引擎、同一字体回退，折行必然一致），测量每个匹配的矩形，再在
+    // overlay 里画绝对定位的底色块。底色与可见文字同源，任何平台都不会脱节；
+    // current 橙、其余淡黄对齐 WYSIWYG。（Wave 4 Task 8 取证修正：历史上
+    // 「textarea 与 div 折行存在 1 字符引擎差异」的说法不成立——跨折行匹配
+    // 「围 + 1 空格」实为折行点二分把溢出字符记入上一行的差一错误，已在
+    // _srcEnsureAsyncWrapPoints 修正行首语义；测量层保真度经 fidelity 探针
+    // 逐属性比对确认与可见 textarea 一致。）
     _srcEnsureMeasureTa: function() {
         var sv = document.getElementById('source-view');
         if (!sv) return null;
@@ -3060,7 +3063,7 @@ window.editorApi = {
             this._srcWrapPending = null;
             return;
         }
-        var pts = [0], line = 1, prevLineLen = 0;
+        var pts = [0], line = 2, prevLineLen = 0;
         var BUDGET = 16;
         function nextChunk() {
             if (gen !== self._srcWrapGen) return;   // 已被更新的测量取代，作废
@@ -3078,8 +3081,15 @@ window.editorApi = {
                     var mid = (lo + hi) >> 1;
                     if (linesOf(text.slice(0, mid)) >= line) hi = mid; else lo = mid + 1;
                 }
-                pts.push(lo);
-                prevLineLen = lo - prev;
+                // lo 是「前缀占满 ≥ line 行」的最小长度：软折行时第 lo 个字符正是
+                // 把行数撑到 line 的溢出字符（落在上一行行尾之外），真实行首是
+                // lo−1；仅当 lo−1 处是硬换行（前缀恰以 \n 结尾、行首就是 lo）时
+                // 保持 lo。行 1 行首恒为 0（pts 初值），故自 line=2 起搜索。
+                // （Wave 4 Task 8 取证修正：旧实现直接记 lo，软折行行首整体右移
+                // 1 字符——跨折行匹配的本行底色多画一格，用户所见「围 + 1 空格」。）
+                var start = (lo > 0 && text.charAt(lo - 1) !== '\n') ? lo - 1 : lo;
+                pts.push(start);
+                prevLineLen = start - prev;
                 line++;
                 if (performance.now() - t0 > BUDGET) break;
             }
@@ -3189,7 +3199,13 @@ window.editorApi = {
         var m = this._srcEnsureMeasureTa();
         if (!sv || !m) return;
         var wrapPoints = this._srcGetWrapPoints();
-        if (!wrapPoints) return;   // 异步测量未完成：保持现状（textarea 正常显示），完成后回填刷新
+        if (!wrapPoints) {
+            // 异步测量未完成：先进入激活态再等（有匹配即激活——textarea 背景转透明，
+            // 匹配处的原生选区不会以灰底透出）；底色块由测量完成回填缓存后的自动
+            // 重渲染补上，消除「先灰后橘」两态跳变（大文档测量窗秒级，可感知）
+            document.body.classList.add('src-search-active');
+            return;
+        }
         var rects = this._srcMeasureMatchRects(wrapPoints, sv.value);
         var html = '';
         for (var i = 0; i < rects.length; i++) {
