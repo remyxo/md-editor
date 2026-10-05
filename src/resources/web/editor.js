@@ -2368,8 +2368,10 @@ window.editorApi = {
         if (pos !== null) this.editor.view.dispatch(this.editor.state.tr.delete(pos, pos + size));
     },
 
-    // C++ 回调：成功替换占位图 src；失败删除占位图
-    _onImageSaveResult: function(requestId, result) {
+    // C++ 回调端口（图片落盘完成，MainWindow::onImageSaveRequested 经
+    // runJavaScript 回调）：成功替换占位图 src；失败删除占位图。
+    // 跨边界回调通道，公共命名（W4-5 收口，原 _onImageSaveResult）
+    onImageSaveResult: function(requestId, result) {
         var marker = this._imagePending[requestId];
         delete this._imagePending[requestId];
         if (!this.editor || !marker) return;
@@ -2706,6 +2708,17 @@ window.editorApi = {
 
         var sv = document.getElementById('source-view');
         return sv ? sv.value : '';
+    },
+    // 源码模式下外部内容同步（加载/外部文件变更，C++ EditorTab::loadFile 调）：
+    // textarea 与 _sourceValue 快照一并刷新；已有源码搜索则手动补一次编辑处理
+    // （程序化赋值不触发 input 事件，搜索高亮需显式刷新）。
+    // W4-5 收口：原为 C++ 内联直调 _sourceValue/_srcSearch/_srcOnSourceEdit
+    syncSourceViewContent: function(md) {
+        var sv = document.getElementById('source-view');
+        if (!sv) return;
+        sv.value = md;
+        this._sourceValue = md;
+        if (this._srcSearch) this._srcOnSourceEdit();
     },
     scrollToPos: function(pos) {
         if (!this.editor) return;
@@ -3879,6 +3892,18 @@ window.editorApi = {
     // 打开 emoji 选择器浮层（C++ 侧传入定位坐标）
     openEmojiPicker: function(x, y) {
         window.editorApi._emojiPicker.open(x, y);
+    },
+
+    // 关闭全部模态编辑面板（C++ Esc 快捷键统一入口，分流机制见
+    // docs/modal-dialog-esc-handling.md）。逐面板 close 的顺序与收口前的
+    // C++ 直调批次一致（link→mermaid→math→emoji→codeLang→footnote）
+    closeModalDialogs: function() {
+        this._linkEditor.close();
+        this._mermaidEditor.close();
+        this._mathEditor.close();
+        this._emojiPicker.close();
+        this._codeLangPicker.close();
+        this._footnoteEditor.close();
     },
 
     // 数学公式编辑面板

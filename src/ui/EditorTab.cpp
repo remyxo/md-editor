@@ -107,7 +107,9 @@ void EditorWebView::setupContextMenu()
         QAction *createLink = m_contextMenu->addAction(
             tr("编辑超链接..."));
         connect(createLink, &QAction::triggered, [this]() {
-            page()->runJavaScript("window.editorApi._linkEditor.open();");
+            // insertLink 即 _linkEditor.open() 的公共入口（工具栏/菜单「插入链接」
+            // 与双击编辑链接共用同一对话框；editor 未就绪时两路径各自空退，行为一致）
+            page()->runJavaScript("window.editorApi.insertLink();");
         });
     }
 
@@ -268,10 +270,7 @@ void EditorTab::loadFile(const QString &path, const QString &content)
                         "(function(){"
                         "var a=window.editorApi;"
                         "if(!a||!a.isSourceMode)return;"
-                        "var sv=document.getElementById('source-view');"
-                        "if(!sv)return;"
-                        "sv.value=`%1`;a._sourceValue=`%1`;"
-                        "if(a._srcSearch)a._srcOnSourceEdit();"   // 外部同步不触发 input，手动刷新搜索高亮
+                        "a.syncSourceViewContent(`%1`);"
                         "})()").arg(mdEscaped));
                 }
             },
