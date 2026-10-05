@@ -1202,6 +1202,11 @@ static QString buildFootnoteDefHtml(const QString &id, const QString &contentMd)
         inner = QStringLiteral("<p></p>");   // 空定义：block+ schema 最小内容
     } else {
         QString h = MarkdownHandler::toHtml(contentMd, false);
+        // 此处 body 提取不走 toBodyHtml（语义不同源，保留各自实现）：
+        // DotMatchesEverything 正则捕获 + 剥 <!--StartFragment/EndFragment-->
+        // 注释 + 失败回退 trim 整串，均为脚注定义容器嵌套转换特有。
+        // 与 buildMdListContainer 的 bodyRe 为两处重复正则字面量（互相指认）——
+        // 抽公共常量须动正则、过 653 铁闸，暂不抽（另行评估）
         static const QRegularExpression bodyRe(
             QStringLiteral("<body[^>]*>(.*)</body>"),
             QRegularExpression::DotMatchesEverythingOption);
@@ -1358,6 +1363,12 @@ static QString buildMdListContainer(const QList<MdListItem> &items, int &idx,
                                             collisions));
             QString h = d.toHtml();
             // static：列表每项都构造一次（10k 项 = 10k 次编译）
+            // 此处 body 提取不走 toBodyHtml（语义不同源，保留各自实现，W4-3 评审
+            // I-1 补注）：① 未命中回退空串再兜底 <p></p>（toBodyHtml 回退整串不
+            // trim）；② 无 <!--StartFragment/EndFragment--> 注释剥离；③ 输入为
+            // 裸 QTextDocument 行内转换（d.toHtml()），非完整 toHtml 管线。
+            // 与 buildFootnoteDefHtml 的 bodyRe 为两处重复正则字面量（互相指认）——
+            // 抽公共常量须动正则、过 653 铁闸，暂不抽（另行评估）
             static const QRegularExpression bodyRe(
                 "<body[^>]*>(.*)</body>",
                 QRegularExpression::DotMatchesEverythingOption);
@@ -2009,6 +2020,8 @@ static void wrapDiscardedEmphCode(QString &html, const QString &processed)
 
     // --- html 侧：收集 mono span（动态字体族名，跨平台见 monoSpanFamilyPattern）---
     // 必须从 <body> 后开始扫：QTextDocument 输出的 <head><style> 可能含字体 CSS。
+    // 注意：这里只求扫描起点 offset，不是 body 提取——无闭合标签定位、无 trim、
+    // 未命中置 0 继续扫全文，与 toBodyHtml 的「取内部子串」语义不同，故不走上收
     static const QRegularExpression monoRe(
         QStringLiteral("<span[^>]*font-family:\\s*'(?:%1)'[^>]*>(.*?)</span>")
             .arg(monoSpanFamilyPattern()));
@@ -2128,7 +2141,11 @@ static void protectComplexQuoteBlocks(QStringList &lines, QSet<QString> &collisi
             ++j;
         }
         if (complex) {
-            // 递归转换内层（footnotes 标志透传，嵌套引用在递归内再抽再递归）
+            // 递归转换内层（footnotes 标志透传，嵌套引用在递归内再抽再递归）。
+            // 此处 body 提取不走 toBodyHtml（语义不同源，保留各自实现）：
+            // ① 闭合标签用 lastIndexOf（toBodyHtml 用 indexOf）；② 失败回退
+            // trim 整串（toBodyHtml 回退整串不 trim）；③ `<body` 命中而 `>`
+            // 未命中时经 `b0 > 0` 门走回退（toBodyHtml 该场景 mid(0,…)）
             const QString innerHtml = MarkdownHandler::toHtml(
                 inner.join('\n'), extractFootnotes);
             int b0 = innerHtml.indexOf(QLatin1String("<body"));
@@ -3880,6 +3897,24 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
 #endif
 
     return html;
+}
+
+// toHtml + body 提取一体（body 提取单一来源，W4-3 上收）：编辑器加载只需 body
+// 内容，toHtml 返回的完整 HTML 文档（<html><body> 包装）在此去壳。提取段逐字
+// 搬运自 EditorTab::loadFile worker 的旧内联实现（行为零变化铁闸，等价断言见
+// testToBodyHtmlByteEqualsLegacyLoadFileExtraction）：命中 <body…>…</body> →
+// 取内部并去首尾空白；未命中（Qt 恒输出完整文档，此为防御回退）→ 原样返回
+// 整串不 trim。
+QString MarkdownHandler::toBodyHtml(const QString &markdown, bool extractFootnotes)
+{
+    const QString fullHtml = toHtml(markdown, extractFootnotes);
+    int bodyStart = fullHtml.indexOf(QStringLiteral("<body"));
+    int bodyEnd = fullHtml.indexOf(QStringLiteral("</body>"));
+    if (bodyStart >= 0 && bodyEnd > bodyStart) {
+        bodyStart = fullHtml.indexOf(QLatin1Char('>'), bodyStart) + 1;
+        return fullHtml.mid(bodyStart, bodyEnd - bodyStart).trimmed();
+    }
+    return fullHtml;
 }
 
 QString MarkdownHandler::toPlainText(const QString &markdown)

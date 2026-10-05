@@ -313,6 +313,65 @@ private slots:
         QVERIFY(html.contains("World"));
     }
 
+    void testToBodyHtmlByteEqualsLegacyLoadFileExtraction() {
+        // 等价断言（W4-3 上收）：toBodyHtml 收编 EditorTab::loadFile 的内联 body
+        // 提取，本测试复刻该旧内联逻辑作为对照组（旧逻辑复刻，防上收走样），
+        // 断言两路输出逐字节一致（QByteArray 比较，零行为变化铁闸）。
+        auto legacyLoadFileExtract = [](const QString &md, bool extractFootnotes) {
+            QString fullHtml = MarkdownHandler::toHtml(md, extractFootnotes);
+            // ↓ 逐字复刻自 EditorTab::loadFile worker（旧内联提取）
+            int bodyStart = fullHtml.indexOf("<body");
+            int bodyEnd = fullHtml.indexOf("</body>");
+            if (bodyStart >= 0 && bodyEnd > bodyStart) {
+                bodyStart = fullHtml.indexOf('>', bodyStart) + 1;
+                return fullHtml.mid(bodyStart, bodyEnd - bodyStart).trimmed();
+            }
+            return fullHtml;
+        };
+
+        // 双输入：guide（真实全特性文档）+ bench 最小档（确定性混合内容），
+        // 外加定向边界（空串/脚注/围栏/表格/嵌套引用——覆盖 trim 与回退分支）
+        QStringList inputs;
+        {
+            QFile gf(GUIDE_MD_PATH);
+            if (!gf.open(QIODevice::ReadOnly | QIODevice::Text))
+                QSKIP("找不到 markdown-guide.md");
+            inputs << QString::fromUtf8(gf.readAll());
+        }
+        {
+            QFile bf(BENCH_MD_PATH);
+            if (!bf.open(QIODevice::ReadOnly | QIODevice::Text))
+                QSKIP("找不到 bench-500lines.md");
+            inputs << QString::fromUtf8(bf.readAll());
+        }
+        inputs << QString()
+               << QStringLiteral("# 单段\n\n正文一行。")
+               << QStringLiteral("```cpp\nint x;\n```\n\n[^1]: 脚注定义\n\n正文[^1]。")
+               << QStringLiteral("| A | B |\n|---|---|\n| 1 | 2 |")
+               << QStringLiteral("> 嵌套引用\n>\n> > 内层");
+
+        for (int i = 0; i < inputs.size(); ++i) {
+            for (int fn = 0; fn <= 1; ++fn) {
+                const bool extractFootnotes = (fn == 1);
+                const QString viaNew =
+                    MarkdownHandler::toBodyHtml(inputs[i], extractFootnotes);
+                const QString viaLegacy =
+                    legacyLoadFileExtract(inputs[i], extractFootnotes);
+                QVERIFY2(viaNew.toUtf8() == viaLegacy.toUtf8(),
+                         qPrintable(QStringLiteral("输入 #%1（extractFootnotes=%2）"
+                                                   "toBodyHtml 与旧内联提取不一致")
+                                        .arg(i)
+                                        .arg(extractFootnotes)));
+            }
+        }
+
+        // 冒烟：产物确为去壳后的 body 内容（不再含文档级包装）
+        const QString body = MarkdownHandler::toBodyHtml("# Hello\n\nWorld");
+        QVERIFY(!body.contains("<body"));
+        QVERIFY(!body.contains("<!DOCTYPE"));
+        QVERIFY(body.contains("Hello"));
+    }
+
     void testPlainText() {
         QString md = "# Hello\n\nWorld";
         QString text = MarkdownHandler::toPlainText(md);

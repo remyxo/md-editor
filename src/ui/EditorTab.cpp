@@ -229,16 +229,10 @@ void EditorTab::loadFile(const QString &path, const QString &content)
         // worker lambda 只捕获纯数据；IPC 调用与定时器留在 GUI 线程完成回调
         m_convQueue.enqueue(
             [content]() {
-                QString fullHtml = MarkdownHandler::toHtml(content);
-
-                // 提取 <body> 内容（QTextDocument::toHtml 返回完整 HTML 文档）
-                int bodyStart = fullHtml.indexOf("<body");
-                int bodyEnd = fullHtml.indexOf("</body>");
-                if (bodyStart >= 0 && bodyEnd > bodyStart) {
-                    bodyStart = fullHtml.indexOf('>', bodyStart) + 1;
-                    return fullHtml.mid(bodyStart, bodyEnd - bodyStart).trimmed();
-                }
-                return fullHtml;
+                // toBodyHtml：toHtml + body 提取一体（W4-3 上收的单一来源，
+                // 提取逻辑原内联于此，等价断言见
+                // testToBodyHtmlByteEqualsLegacyLoadFileExtraction）
+                return MarkdownHandler::toBodyHtml(content);
             },
             [this, content, contentSize](const QString &html, qint64) {
                 // 转义后嵌入模板字面量（\ ` $，单一来源见 core/JsEscape.h）
