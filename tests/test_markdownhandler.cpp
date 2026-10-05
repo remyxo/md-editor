@@ -17,6 +17,22 @@ static QString longSpacedText(int words)
 
 // 模拟 TipTap 序列化的辅助见 tiptap_serialize.h（与 test_roundtrip_matrix 共用）
 
+// ===== 占位符家族契约断言辅助（家族清单见 docs/placeholder-families.md §8）=====
+// 泄漏断言：输出不得含任何 ZZ<前缀><n>ZZ 形态 token。本组用例输入均不含字面
+// ZZ 文本，输出出现该形态即为本批家族占位符未还原（或误还原为字面）。
+static const QRegularExpression contractTokenRe(QStringLiteral("ZZ[A-Z]+[0-9]+ZZ"));
+static void assertNoPlaceholderToken(const QString &s, const char *ctx)
+{
+    QVERIFY2(!s.contains(contractTokenRe),
+             qPrintable(QString("[%1] 占位符 token 泄漏: %2").arg(QLatin1String(ctx), s)));
+}
+// 哨兵断言：输出不得含 \x01 控制字符（CODE/EUT/EUI 三族暂存哨兵，见清单 §5）。
+static void assertNoControlSentinel(const QString &s, const char *ctx)
+{
+    QVERIFY2(!s.contains(QChar(0x01)),
+             qPrintable(QString("[%1] \\x01 哨兵泄漏: %2").arg(QLatin1String(ctx), s)));
+}
+
 // 端到端往返：MD → toHtml → [TipTap 序列化] → fromHtml
 static QString e2eRoundTrip(const QString &md)
 {
@@ -5194,6 +5210,498 @@ private slots:
                  QStringLiteral("文字[^a\"b]\n\n[^a\"b]: 定义"));
         QCOMPARE(e2eRoundTrip(QStringLiteral("```c\"x\ncode\n```")),
                  QStringLiteral("```c\"x\ncode\n```"));
+    }
+
+    // ==================== 占位符家族契约断言 ====================
+    // 依据 docs/placeholder-families.md（§2 toHtml 19 家族 / §3 fromHtml 37 家族
+    // / §5 哨兵与标记）。断言形式按家族性质分形（见清单 §8 设计原则）：
+    // 内容备份型断言还原产物；边界标记型断言结构语义；转义保护型以负向断言为主；
+    // 收敛容忍型不断言字节级形态。所有用例输入不含字面 ZZ 形态文本，故
+    // 「token 零泄漏」成立即本家族占位符铸造→还原闭环成立。
+
+    void testContractToHtmlZZCB_BQ()
+    {
+        // ZZCB（:2404→:3160）：围栏代码块 → <pre><code>，语言入 class
+        const QString cb = MarkdownHandler::toHtml(QStringLiteral("```js\n代码乙\n```"));
+        QVERIFY2(cb.contains(QStringLiteral("<pre")) && cb.contains(QStringLiteral("代码乙"))
+                 && cb.contains(QStringLiteral("language-js")),
+                 qPrintable(QString("ZZCB 应产出代码块，HTML=[%1]").arg(cb)));
+        assertNoPlaceholderToken(cb, "ZZCB");
+        // ZZBQ（toHtml :2493→:3165）：引用内围栏 → <blockquote> 内 <pre>。
+        // 注：自 8b55a63 起该铸造路径不可达——含围栏引用经 protectComplexQuoteBlocks
+        // (ZZDV) 整段预抽取（清单 §2 注 ①）；本断言作为行为回归保留，不锁定 BQ 家族链
+        const QString bq = MarkdownHandler::toHtml(QStringLiteral("> ```\n> 代码甲\n> ```"));
+        QVERIFY2(bq.contains(QStringLiteral("<blockquote>")) && bq.contains(QStringLiteral("<pre"))
+                 && bq.contains(QStringLiteral("代码甲")),
+                 qPrintable(QString("ZZBQ 应产出引用内代码块，HTML=[%1]").arg(bq)));
+        assertNoPlaceholderToken(bq, "ZZBQ");
+        // ZZBQ（fromHtml :5027 侧）：引用往返，`> ` 前缀化还原
+        const QString bqBack = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(QStringLiteral("> 引用甲")));
+        QVERIFY2(bqBack.contains(QStringLiteral("> 引用甲")),
+                 qPrintable(QString("ZZBQ(fromHtml) 应还原引用，实际=[%1]").arg(bqBack)));
+        assertNoPlaceholderToken(bqBack, "ZZBQ-fromHtml");
+    }
+
+    void testContractToHtmlZZBQSEP()
+    {
+        // ZZBQSEP（:2501→:3359-3367）：边界标记型——无备份内容，其「还原」是
+        // <p>token</p> 整段移除，语义效果 = 打破 Qt 对相邻引用/段落的合并。
+        // 注：自 8b55a63 起该铸造路径不可达（引用经 ZZDV 整段预抽取，清单 §2
+        // 注 ①）；断言经 DV 路径成立，作为行为回归保留，不锁定 BQSEP 家族链。
+        // 断言的是结构：后续段落必须在 </blockquote> 之外，且 token 不残留。
+        const QString html = MarkdownHandler::toHtml(
+            QStringLiteral("> ```\n> 码\n> ```\n\n后续段落"));
+        QVERIFY2(html.contains(QStringLiteral("</blockquote>")),
+                 qPrintable(QString("应存在引用闭合，HTML=[%1]").arg(html)));
+        const int close = html.indexOf(QStringLiteral("</blockquote>"));
+        const int after = html.indexOf(QStringLiteral("后续段落"));
+        QVERIFY2(after > close,
+                 qPrintable(QString("后续段落应在引用之外：close=%1 after=%2 HTML=[%3]")
+                                .arg(close).arg(after).arg(html)));
+        assertNoPlaceholderToken(html, "ZZBQSEP");
+    }
+
+    void testContractToHtmlZZHR_LB()
+    {
+        // ZZHR（:2777→:3170）：水平线占位防 setext 误解析 → <hr/>
+        const QString hr = MarkdownHandler::toHtml(QStringLiteral("前段\n\n---\n\n后段"));
+        QVERIFY2(hr.contains(QStringLiteral("<hr/>")),
+                 qPrintable(QString("ZZHR 应产出 <hr/>，HTML=[%1]").arg(hr)));
+        assertNoPlaceholderToken(hr, "ZZHR");
+        // ZZHR（fromHtml :4398 侧）：<hr> → ---
+        const QString hrBack = MarkdownHandler::fromHtml(
+            QStringLiteral("<p>甲</p>\n<hr>\n<p>乙</p>"));
+        QVERIFY2(hrBack.contains(QStringLiteral("---")) && hrBack.contains(QStringLiteral("甲")),
+                 qPrintable(QString("ZZHR(fromHtml) 应还原 ---，实际=[%1]").arg(hrBack)));
+        assertNoPlaceholderToken(hrBack, "ZZHR-fromHtml");
+        // ZZBL（toHtml :2609→:3182）：连续空行 → 空段落占位（折叠语义）
+        const QString bl = MarkdownHandler::toHtml(QStringLiteral("甲\n\n\n\n乙"));
+        QVERIFY2(bl.contains(QStringLiteral("<p></p>")),
+                 qPrintable(QString("ZZBL 应产出空段落，HTML=[%1]").arg(bl)));
+        assertNoPlaceholderToken(bl, "ZZBL");
+        // ZZLB（:2630，HTML 注释标记，不走 collisionFreePlaceholder）：
+        // 列表项间空行 → 注释被 Qt setMarkdown 丢弃 → 列表拆分
+        const QString lb = MarkdownHandler::toHtml(QStringLiteral("- 甲项\n\n- 乙项"));
+        QVERIFY2(lb.count(QStringLiteral("<ul")) >= 2,
+                 qPrintable(QString("ZZLB 应拆分为两个列表，HTML=[%1]").arg(lb)));
+        assertNoPlaceholderToken(lb, "ZZLB");
+    }
+
+    void testContractToHtmlZZBR_BK()
+    {
+        // ZZBR（toHtml :2761→:3210）：段落内软换行 → <br data-brk>
+        const QString br = MarkdownHandler::toHtml(QStringLiteral("行甲\n行乙"));
+        QVERIFY2(br.contains(QStringLiteral("data-brk")),
+                 qPrintable(QString("ZZBR 应产出 data-brk，HTML=[%1]").arg(br)));
+        assertNoPlaceholderToken(br, "ZZBR");
+        // ZZBK（fromHtml :5342，副线容器）：列表项内软换行按行上下文还原缩进。
+        // 断言收敛容忍形态：两行内容存活 + 换行结构存在（列表续行不并段）
+        const QString bk = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(QStringLiteral("- 项甲\n  项乙续行")));
+        QVERIFY2(bk.contains(QStringLiteral("项甲")) && bk.contains(QStringLiteral("项乙续行"))
+                 && bk.contains(QLatin1Char('\n')),
+                 qPrintable(QString("ZZBK 应保真列表软换行，实际=[%1]").arg(bk)));
+        assertNoPlaceholderToken(bk, "ZZBK");
+    }
+
+    void testContractToHtmlZZTC()
+    {
+        // ZZTC 双向：toHtml（:380/:389→:3868）空单元格防 Qt 合并 → <td></td>；
+        // fromHtml（:5153）表格整体占位 → 规范化直接产出。空单元格须在数据行
+        // （还原正则只匹配 <td>）
+        const QString html = MarkdownHandler::toHtml(
+            QStringLiteral("| 甲 | 乙 |\n| --- | --- |\n| 1 |  |"));
+        QVERIFY2(html.contains(QStringLiteral("<td></td>")),
+                 qPrintable(QString("ZZTC 空单元格应还原为 <td></td>，HTML=[%1]").arg(html)));
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains(QStringLiteral("甲")) && back.count(QLatin1Char('|')) >= 6,
+                 qPrintable(QString("ZZTC(fromHtml) 应还原表格管道，实际=[%1]").arg(back)));
+        assertNoPlaceholderToken(back, "ZZTC");
+    }
+
+    void testContractToHtmlZZDV_A()
+    {
+        // ZZDV（toHtml :594→:3497）：手写 div 块级容器原样保留（不得被 <p> 包裹）
+        const QString dv = MarkdownHandler::toHtml(
+            QStringLiteral("<div align=\"right\">右对齐文本</div>"));
+        QVERIFY2(dv.contains(QStringLiteral("<div align=\"right\">"))
+                 && !dv.contains(QStringLiteral("<p><div")),
+                 qPrintable(QString("ZZDV 应保真 div 且不被 <p> 包裹，HTML=[%1]").arg(dv)));
+        assertNoPlaceholderToken(dv, "ZZDV");
+        // ZZDV（fromHtml :5074 侧）：div 往返保真（ZZA 协同）
+        const QString dvBack = MarkdownHandler::fromHtml(dv);
+        QVERIFY2(dvBack.contains(QStringLiteral("<div align=\"right\">"))
+                 && dvBack.contains(QStringLiteral("右对齐文本")),
+                 qPrintable(QString("ZZDV(fromHtml) 应还原 div，实际=[%1]").arg(dvBack)));
+        assertNoPlaceholderToken(dvBack, "ZZDV-fromHtml");
+        // 复杂引用（protectComplexQuoteBlocks :2157，递归 toHtml 产物整块占位）
+        const QString cq = MarkdownHandler::toHtml(QStringLiteral("> - 甲项\n> - 乙项"));
+        QVERIFY2(cq.contains(QStringLiteral("<blockquote>")) && cq.contains(QStringLiteral("<li")),
+                 qPrintable(QString("复杂引用应整体保真，HTML=[%1]").arg(cq)));
+        assertNoPlaceholderToken(cq, "ZZDV-complexquote");
+        // ZZA（fromHtml :5231，alignRe :5212-5215）：text-align 段落 → <div align>。
+        // 输出形态经 mdconv 实测（2026-10-05）：整段 div 包装、无 <p> 残留
+        const QString za = MarkdownHandler::fromHtml(
+            QStringLiteral("<p style=\"text-align:center\">居中文字</p>"));
+        QVERIFY2(za.contains(QStringLiteral("<div align=\"center\">"))
+                 && za.contains(QStringLiteral("居中文字</div>")),
+                 qPrintable(QString("ZZA 应还原 text-align 为 div align，实际=[%1]").arg(za)));
+        assertNoPlaceholderToken(za, "ZZA");
+    }
+
+    void testContractToHtmlZZIA_IB()
+    {
+        // ZZIA（:631→:3140）：空 alt 图片占位（EUI 暂存路径 :623 先行）
+        const QString ia = MarkdownHandler::toHtml(QStringLiteral("![](图.png)"));
+        QVERIFY2(ia.contains(QStringLiteral("alt=\"\"")) && ia.contains(QStringLiteral("图.png")),
+                 qPrintable(QString("ZZIA 应保真空 alt 图片，HTML=[%1]").arg(ia)));
+        assertNoControlSentinel(ia, "EUI");
+        // ZZIB（fromHtml :672 铸→:6050 还原）：alt 位 token → ![](src)
+        const QString ib = MarkdownHandler::fromHtml(ia);
+        QVERIFY2(ib.contains(QStringLiteral("![](图.png)")),
+                 qPrintable(QString("ZZIB 应还原 ![](src)，实际=[%1]").arg(ib)));
+        assertNoPlaceholderToken(ib, "ZZIB");
+        assertNoControlSentinel(ib, "ZZIB");
+    }
+
+    void testContractToHtmlZZSB_SP()
+    {
+        // ZZSB（toHtml :905→:3818）：下标 ~x~ → <sub>（不得残留波浪定界符）
+        const QString sb = MarkdownHandler::toHtml(QStringLiteral("水H~2~O示例"));
+        QVERIFY2(sb.contains(QStringLiteral("<sub>2</sub>"))
+                 && !sb.contains(QStringLiteral("~2~")),
+                 qPrintable(QString("ZZSB 应产出 <sub>，HTML=[%1]").arg(sb)));
+        assertNoPlaceholderToken(sb, "ZZSB");
+        // ZZSB（fromHtml :4576 侧）：<sub> → ~x~
+        const QString sbBack = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(QStringLiteral("水H<sub>2</sub>O示例")));
+        QVERIFY2(sbBack.contains(QStringLiteral("~2~")),
+                 qPrintable(QString("ZZSB(fromHtml) 应还原 ~x~，实际=[%1]").arg(sbBack)));
+        assertNoPlaceholderToken(sbBack, "ZZSB-fromHtml");
+        // ZZSP（fromHtml :4596）：<sup>（非脚注）→ ^x^（触发须字面 sup 标签）
+        const QString sp = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(QStringLiteral("敏<sup>甲</sup>感")));
+        QVERIFY2(sp.contains(QStringLiteral("^甲^")),
+                 qPrintable(QString("ZZSP 应还原 ^x^，实际=[%1]").arg(sp)));
+        assertNoPlaceholderToken(sp, "ZZSP");
+    }
+
+    void testContractToHtmlZZES_ED()
+    {
+        // ZZES（:930→:3475）：转义 == 不得转成 <mark>
+        const QString es = MarkdownHandler::toHtml(QStringLiteral("\\=\\=字面等\\=\\="));
+        QVERIFY2(es.contains(QStringLiteral("==字面等==")) && !es.contains(QStringLiteral("<mark")),
+                 qPrintable(QString("ZZES 应保字面 ==，HTML=[%1]").arg(es)));
+        assertNoPlaceholderToken(es, "ZZES");
+        // ZZED（:980→:3889，toHtml 最后一步）：转义扩展定界符保字面
+        const struct { const char *in; const char *lit; const char *tag; const char *name; } cases[] = {
+            {"\\~字面波\\~",     "~字面波~",     "<sub", "ZZED(~)"},
+            {"\\~\\~字面双波\\~\\~", "~~字面双波~~", "<s>",  "ZZED(~~)"},
+            {"\\^字面幂\\^",     "^字面幂^",     "<sup", "ZZED(^)"},
+        };
+        for (const auto &c : cases) {
+            const QString html = MarkdownHandler::toHtml(QString::fromUtf8(c.in));
+            QVERIFY2(html.contains(QString::fromUtf8(c.lit))
+                     && !html.contains(QString::fromUtf8(c.tag)),
+                     qPrintable(QString("%1 应保字面 %2，HTML=[%3]")
+                                    .arg(c.name, QString::fromUtf8(c.lit), html)));
+            assertNoPlaceholderToken(html, c.name);
+        }
+    }
+
+    void testContractToHtmlZZHI()
+    {
+        // ZZHI（:1050-:1141→:3734-:3739，多趟还原 ≤8）：8 类行内 HTML 标签逐一
+        // 「铸造→还原」：标签原样存活 + 零泄漏 + 无哨兵残留（各路径 code 暂存）
+        const QString tags[] = {
+            QStringLiteral("<span style=\"color:red\">红</span>"),
+            QStringLiteral("<u>下划</u>"),
+            QStringLiteral("<kbd>按键</kbd>"),
+            QStringLiteral("<small>小字</small>"),
+            QStringLiteral("<mark>标记</mark>"),
+            QStringLiteral("<sub>下标</sub>"),
+            QStringLiteral("<sup>上标</sup>"),
+            QStringLiteral("<br>"),
+        };
+        for (const QString &tag : tags) {
+            const QString html = MarkdownHandler::toHtml(QStringLiteral("甲") + tag
+                                                         + QStringLiteral("乙"));
+            QVERIFY2(html.contains(tag),
+                     qPrintable(QString("ZZHI 应还原标签 %1，HTML=[%2]").arg(tag, html)));
+            assertNoPlaceholderToken(html, "ZZHI");
+            assertNoControlSentinel(html, "ZZHI");
+        }
+        // \x01CODE 哨兵（:888 等多路径共用暂存表）：code 与行内标签共存还原
+        const QString mixed = MarkdownHandler::toHtml(
+            QStringLiteral("甲`码`乙<u>下划</u>丙"));
+        QVERIFY2(mixed.contains(QStringLiteral("<code>码</code>"))
+                 && mixed.contains(QStringLiteral("<u>下划</u>")),
+                 qPrintable(QString("code 暂存应与行内标签共存，HTML=[%1]").arg(mixed)));
+        assertNoPlaceholderToken(mixed, "CODE-sentinel");
+        assertNoControlSentinel(mixed, "CODE-sentinel");
+    }
+
+    void testContractToHtmlZZFR_FD()
+    {
+        // ZZFR（:1184→:3741）：脚注引用 → <sup data-type="footnoteRef">
+        const QString html = MarkdownHandler::toHtml(
+            QStringLiteral("正文[^9]注\n\n[^9]: 契约定义"));
+        QVERIFY2(html.contains(QStringLiteral("data-type=\"footnoteRef\""))
+                 && html.contains(QStringLiteral("data-type=\"footnoteDef\"")),
+                 qPrintable(QString("ZZFR 应产出脚注引用/定义，HTML=[%1]").arg(html)));
+        assertNoPlaceholderToken(html, "ZZFR");
+        // ZZFR（fromHtml :4556 侧）：脚注整链往返
+        const QString fr = MarkdownHandler::fromHtml(html);
+        QVERIFY2(fr.contains(QStringLiteral("[^9]")) && fr.contains(QStringLiteral("[^9]: 契约定义")),
+                 qPrintable(QString("ZZFR(fromHtml) 应还原脚注，实际=[%1]").arg(fr)));
+        assertNoPlaceholderToken(fr, "ZZFR-fromHtml");
+        // ZZFD（fromHtml :4721，expandPlaceholdersInPlace 递归 :4708）：定义容器独立铸造
+        const QString fd = MarkdownHandler::fromHtml(QStringLiteral(
+            "<div data-type=\"footnoteContainer\"><div data-type=\"footnoteDef\" data-id=\"7\">"
+            "<span class=\"footnote-marker\">7</span>"
+            "<span class=\"footnote-content\">嵌套定义</span></div></div>"));
+        QVERIFY2(fd.contains(QStringLiteral("[^7]: 嵌套定义")),
+                 qPrintable(QString("ZZFD 应还原定义，实际=[%1]").arg(fd)));
+        assertNoPlaceholderToken(fd, "ZZFD");
+    }
+
+    void testContractToHtmlZZMB_BM_IM()
+    {
+        // ZZMB（:2322/:2335→:3821）：块级公式（含 EOF 兜底）→ block-math div
+        const QString mb = MarkdownHandler::toHtml(QStringLiteral("$$E=mc^{2}$$"));
+        QVERIFY2(mb.contains(QStringLiteral("block-math"))
+                 && mb.contains(QStringLiteral("E=mc^{2}")),
+                 qPrintable(QString("ZZMB 应产出块级公式，HTML=[%1]").arg(mb)));
+        assertNoPlaceholderToken(mb, "ZZMB");
+        // ZZBM（fromHtml :4287）：block-math div → $$ 围栏
+        const QString bm = MarkdownHandler::fromHtml(mb);
+        QVERIFY2(bm.contains(QStringLiteral("$$")) && bm.contains(QStringLiteral("E=mc^{2}")),
+                 qPrintable(QString("ZZBM 应还原 $$，实际=[%1]").arg(bm)));
+        assertNoPlaceholderToken(bm, "ZZBM");
+        // ZZIM（fromHtml :4301）：inline-math 空 span + data-latex → $latex$
+        const QString im = MarkdownHandler::fromHtml(QStringLiteral(
+            "<p>式前<span data-type=\"inline-math\" data-latex=\"a+b\"></span>式后</p>"));
+        QVERIFY2(im.contains(QStringLiteral("$a+b$")) && im.contains(QStringLiteral("式前")),
+                 qPrintable(QString("ZZIM 应还原 $…$，实际=[%1]").arg(im)));
+        assertNoPlaceholderToken(im, "ZZIM");
+    }
+
+    void testContractToHtmlZZEC_EM_SC()
+    {
+        // ZZEC/ZZEM（protectEmphCode :3053，prefix 参数两态）/ZZSC（:3106）：
+        // 强调包裹行内代码三族——断言强调标记与 <code> 同时存活（多趟还原）
+        const struct { const char *in; const char *wrap; const char *name; } cases[] = {
+            {"**甲 `码` 乙**",  "<strong>", "ZZEC"},
+            {"*甲 `码`*",      "<em>",     "ZZEM"},
+            {"~~甲 `码`~~",     "<s>",      "ZZSC"},
+        };
+        for (const auto &c : cases) {
+            const QString html = MarkdownHandler::toHtml(QString::fromUtf8(c.in));
+            QVERIFY2(html.contains(QString::fromUtf8(c.wrap))
+                     && html.contains(QStringLiteral("<code>码</code>")),
+                     qPrintable(QString("%1 应保真强调包裹代码，HTML=[%2]")
+                                    .arg(c.name, html)));
+            assertNoPlaceholderToken(html, c.name);
+        }
+    }
+
+    void testContractToHtmlZZTL()
+    {
+        // ZZTL 双向：toHtml（:2667/:2691→:3223）任务列表 → taskList ul；
+        // fromHtml（:4632）→ - [x]
+        const QString html = MarkdownHandler::toHtml(QStringLiteral("- [ ] 甲任\n- [x] 乙任"));
+        QVERIFY2(html.contains(QStringLiteral("<ul data-type=\"taskList\">"))
+                 && html.contains(QStringLiteral("checked")),
+                 qPrintable(QString("ZZTL 应产出任务列表，HTML=[%1]").arg(html)));
+        assertNoPlaceholderToken(html, "ZZTL");
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains(QStringLiteral("- [ ] 甲任"))
+                 && back.contains(QStringLiteral("- [x] 乙任")),
+                 qPrintable(QString("ZZTL(fromHtml) 应还原勾选态，实际=[%1]").arg(back)));
+        assertNoPlaceholderToken(back, "ZZTL-fromHtml");
+    }
+
+    void testContractFromHtmlZZMK()
+    {
+        // ZZMK（:4526）：<mark> → ==x==（md 语法，非 HTML——断言 md 形态）
+        const QString md = MarkdownHandler::fromHtml(QStringLiteral("<p>前<mark>高亮</mark>后</p>"));
+        QVERIFY2(md.contains(QStringLiteral("==高亮==")) && md.contains(QStringLiteral("前"))
+                 && md.contains(QStringLiteral("后")),
+                 qPrintable(QString("ZZMK 应还原 ==高亮==，实际=[%1]").arg(md)));
+        assertNoPlaceholderToken(md, "ZZMK");
+    }
+
+    void testContractFromHtmlZZCD_IC()
+    {
+        // ZZCD（:4489）：<code> 防丢弃 → `x`。铸造点在 toHtml 输出进入 fromHtml
+        // 时触发，故经 toHtml 链路（含 __CODE__ 瞬态 token，见清单 §5）
+        const QString cd = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(QStringLiteral("用 `码` 内联")));
+        QVERIFY2(cd.contains(QStringLiteral("`码`")),
+                 qPrintable(QString("ZZCD 应还原行内代码，实际=[%1]").arg(cd)));
+        assertNoPlaceholderToken(cd, "ZZCD");
+        // ZZIC（:4507）：mono span（font-family 匹配 monoSpanFamilyPattern）→ `x`
+        const QString ic = MarkdownHandler::fromHtml(
+            QStringLiteral("<p>前<span style=\" font-family:'Courier New';\">等宽</span>后</p>"));
+        QVERIFY2(ic.contains(QStringLiteral("`等宽`")) && ic.contains(QStringLiteral("前"))
+                 && ic.contains(QStringLiteral("后")),
+                 qPrintable(QString("ZZIC 应还原 mono span，实际=[%1]").arg(ic)));
+        assertNoPlaceholderToken(ic, "ZZIC");
+    }
+
+    void testContractFromHtmlZZST_NS()
+    {
+        // ZZST 义一（:4863/:4878）：<s>/<del> 非互嵌 → ~~x~~
+        const QString st = MarkdownHandler::fromHtml(QStringLiteral("<p><s>删除线</s></p>"));
+        QVERIFY2(st.contains(QStringLiteral("~~删除线~~")),
+                 qPrintable(QString("ZZST(义一) 应还原 ~~x~~，实际=[%1]").arg(st)));
+        assertNoPlaceholderToken(st, "ZZST");
+        // ZZNS（:4783/:4799）：删除线⚡强调互嵌无合法 MD 组合 → 字面 HTML 兜底。
+        // 收敛容忍型：断言双方语义存活 + 零泄漏，不断言字节级形态
+        const QString ns = MarkdownHandler::fromHtml(QStringLiteral("<p><s>删<em>斜</em></s></p>"));
+        QVERIFY2(ns.contains(QStringLiteral("删")) && ns.contains(QStringLiteral("斜")),
+                 qPrintable(QString("ZZNS 应保真互嵌双方内容，实际=[%1]").arg(ns)));
+        assertNoPlaceholderToken(ns, "ZZNS");
+    }
+
+    void testContractFromHtmlZZHE()
+    {
+        // ZZHE（:4840）：标题内强调——Qt toMarkdown 丢弃 <hN> 内强调标记，
+        // 处理器先抽取备份再还原（字节级不配对尾形态由 testHeadingEmphasisRoundTrip
+        // 与矩阵用例所有，此处断言用户可见契约：<h1> 内 <strong> 存活）
+        const QString he = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(QStringLiteral("# **粗体标题**")));
+        QVERIFY2(he.contains(QStringLiteral("#")) && he.contains(QStringLiteral("**粗体标题**")),
+                 qPrintable(QString("ZZHE 应还原标题内强调（md 形态），实际=[%1]").arg(he)));
+        assertNoPlaceholderToken(he, "ZZHE");
+    }
+
+    void testContractFromHtmlZZUL_KD_SM_HS()
+    {
+        // ZZUL/ZZKD/ZZSM（:4944/:4956/:4968）：Qt toMarkdown 丢弃 u/kbd/small，
+        // 备份还原后标签存活即参与证据
+        const struct { const char *html; const char *expect; const char *name; } cases[] = {
+            {"<p>甲<u>下划</u>乙</p>",     "<u>下划</u>",     "ZZUL"},
+            {"<p>甲<kbd>按键</kbd>乙</p>", "<kbd>按键</kbd>", "ZZKD"},
+            {"<p>甲<small>小字</small>乙</p>", "<small>小字</small>", "ZZSM"},
+        };
+        for (const auto &c : cases) {
+            const QString md = MarkdownHandler::fromHtml(QString::fromUtf8(c.html));
+            QVERIFY2(md.contains(QString::fromUtf8(c.expect)),
+                     qPrintable(QString("%1 应保真标签，实际=[%2]")
+                                    .arg(c.name, md)));
+            assertNoPlaceholderToken(md, c.name);
+        }
+        // ZZHS（:4927）：通用 style span 经 span 栈配对提取，原样保留
+        const QString hs = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(
+            QStringLiteral("甲<span style=\"color:red\">红字</span>乙")));
+        QVERIFY2(hs.contains(QStringLiteral("color:red")) && hs.contains(QStringLiteral("红字")),
+                 qPrintable(QString("ZZHS 应保真 style span，实际=[%1]").arg(hs)));
+        assertNoPlaceholderToken(hs, "ZZHS");
+    }
+
+    void testContractFromHtmlZZGL_NB()
+    {
+        // ZZGL（:5387）：通用列表自绘缩进——嵌套结构往返保真
+        const QString gl = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(QStringLiteral("- 甲项\n  - 乙项")));
+        QVERIFY2(gl.contains(QStringLiteral("甲项")) && gl.contains(QStringLiteral("乙项"))
+                 && gl.count(QStringLiteral("- ")) >= 2,
+                 qPrintable(QString("ZZGL 应保真嵌套列表，实际=[%1]").arg(gl)));
+        assertNoPlaceholderToken(gl, "ZZGL");
+        // ZZNB（:5312）：连续 &nbsp;（实体或 U+00A0 均 ≥2 个）整段备份，
+        // 还原产物为字面 &nbsp; 串
+        const QString nb = MarkdownHandler::fromHtml(
+            QStringLiteral("<p>甲&nbsp;&nbsp;&nbsp;乙</p>"));
+        QVERIFY2(nb.contains(QStringLiteral("甲&nbsp;")) && nb.contains(QStringLiteral("乙")),
+                 qPrintable(QString("ZZNB 应保真连续 &nbsp;，实际=[%1]").arg(nb)));
+        assertNoPlaceholderToken(nb, "ZZNB");
+    }
+
+    void testContractFromHtmlZZBL()
+    {
+        // ZZBL 双向闭环：toHtml 空行标记 → <p></p>（:2609/:3182）；
+        // fromHtml 空段落 → &nbsp; 独占行（:5289 铸 / :5700 整行还原）
+        const QString html = MarkdownHandler::toHtml(QStringLiteral("甲\n\n\n\n乙"));
+        QVERIFY2(html.contains(QStringLiteral("<p></p>")),
+                 qPrintable(QString("ZZBL(toHtml) 应产出空段落，HTML=[%1]").arg(html)));
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(back.contains(QStringLiteral("&nbsp;")),
+                 qPrintable(QString("ZZBL(fromHtml) 应还原 &nbsp; 空行，实际=[%1]").arg(back)));
+        assertNoPlaceholderToken(back, "ZZBL");
+    }
+
+    void testContractFromHtmlZZBR()
+    {
+        // ZZBR 义（fromHtml :5326）：手写 <br>（无 data-brk）字面备份，与软换行
+        // data-brk 形态严格区分（三层分离契约，见 br-and-softbreak-roundtrip.md）
+        const QString br = MarkdownHandler::fromHtml(
+            MarkdownHandler::toHtml(QStringLiteral("甲<br>乙")));
+        QVERIFY2(br.contains(QStringLiteral("<br>")) && !br.contains(QStringLiteral("data-brk")),
+                 qPrintable(QString("ZZBR 应还原字面 <br> 且不带 data-brk，实际=[%1]").arg(br)));
+        assertNoPlaceholderToken(br, "ZZBR");
+    }
+
+    void testContractFromHtmlLiteralStateMachine()
+    {
+        // 字面符号状态机 D 九家族聚合（:5462-:5615）：正文中的字面 MD 语法字符
+        // 须以占位符+转义备份穿越 Qt 序列化。断言：字面符号存活（含转义形态，
+        // contains 为子串匹配天然覆盖）+ token 零泄漏；字节级精确归一方向由
+        // 转义保护专测与矩阵用例所有，此处不重复
+        const struct { const char *html; const char *expect; const char *name; } cases[] = {
+            {"<p>甲 ** 乙</p>",  "**", "ZZDS"},
+            {"<p>甲 * 乙</p>",   "*",  "ZZST(义二)"},
+            {"<p>甲 == 乙</p>",  "==", "ZZEQ"},
+            {"<p>甲 ~~ 乙</p>",  "~~", "ZZTT"},
+            {"<p>甲 ~ 乙</p>",   "~",  "ZZTD"},
+            {"<p>甲 ^ 乙</p>",   "^",  "ZZCR"},
+            {"<p>甲 &lt; 乙</p>", "<", "ZZLT"},
+            {"<p>甲 &gt; 乙</p>", ">", "ZZGT"},
+        };
+        for (const auto &c : cases) {
+            const QString md = MarkdownHandler::fromHtml(QString::fromUtf8(c.html));
+            // 剥离转义反斜杠后须含符号本体——兼容「裸形式保留」与「转义形式
+            // （如 == → \=\=，防误渲染为 mark）」两种归一方向
+            QString stripped = md;
+            stripped.remove(QLatin1Char('\\'));
+            QVERIFY2(stripped.contains(QString::fromUtf8(c.expect)),
+                     qPrintable(QString("%1 应保真字面符号，实际=[%2]")
+                                    .arg(c.name, md)));
+            assertNoPlaceholderToken(md, c.name);
+        }
+        // ZZLM（:5615）：段落行首列表标记转义，防误判为列表
+        const QString lm = MarkdownHandler::fromHtml(QStringLiteral("<p>- 不是列表项</p>"));
+        QVERIFY2(lm.contains(QStringLiteral("\\-")) && lm.contains(QStringLiteral("不是列表项")),
+                 qPrintable(QString("ZZLM 应转义行首列表标记，实际=[%1]").arg(lm)));
+        assertNoPlaceholderToken(lm, "ZZLM");
+        const QString lmOrdered = MarkdownHandler::fromHtml(QStringLiteral("<p>1. 不是列表</p>"));
+        QVERIFY2(lmOrdered.contains(QStringLiteral("1\\.")) && lmOrdered.contains(QStringLiteral("不是列表")),
+                 qPrintable(QString("ZZLM 应转义行首有序标记，实际=[%1]").arg(lmOrdered)));
+        assertNoPlaceholderToken(lmOrdered, "ZZLM-ordered");
+        // ZZDS 裸形态既有定论：`**` 后随空格保持裸形式（参与证据，e2e 精确断言）
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(QStringLiteral("x** y 与 z"))),
+                 QStringLiteral("x** y 与 z"));
+    }
+
+    void testContractSentinels()
+    {
+        // \x01EUT（escapeUnclosedHtmlTags :782，code 先暂存 :803）：未闭合 HTML
+        // 标签转义。无 EUT 时 Qt 会把 <script> 后全文吞噬——「后文存活」即参与证据
+        const QString eut = MarkdownHandler::toHtml(QStringLiteral("正文 <script> 未闭合标签"));
+        QVERIFY2(eut.contains(QStringLiteral("&lt;script")) && eut.contains(QStringLiteral("未闭合标签")),
+                 qPrintable(QString("EUT 应转义未闭合标签且不吞噬后文，HTML=[%1]").arg(eut)));
+        assertNoControlSentinel(eut, "EUT");
+        assertNoPlaceholderToken(eut, "EUT");
+        // \x01CODE 下标路径（:888 下标铸造前暂存 code，还原后双语义共存）；
+        // u 路径见 testContractToHtmlZZHI 的共存断言
+        const QString code = MarkdownHandler::toHtml(QStringLiteral("甲`码`乙H~2~O"));
+        QVERIFY2(code.contains(QStringLiteral("<code>码</code>"))
+                 && code.contains(QStringLiteral("<sub>2</sub>")),
+                 qPrintable(QString("CODE 哨兵应随下标路径正确还原，HTML=[%1]").arg(code)));
+        assertNoControlSentinel(code, "CODE");
+        assertNoPlaceholderToken(code, "CODE");
+        // \x01EUI 断言见 testContractToHtmlZZIA_IB（空 alt 图片路径）
     }
 
 };
