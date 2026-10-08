@@ -52,24 +52,45 @@ $fs.Close()
 if ($subsys -ne 2) { throw "md-editor.exe PE 子系统为 $subsys（应为 2/GUI）——add_executable 是否漏了 WIN32 标志？" }
 Write-Host "PE 子系统校验: GUI (2) 通过"
 
-# 3. windeployqt 部署 Qt DLL / WebEngine 资源（不部署 VC 运行库安装器——
-#    NSIS 从不执行它，装完只是 $INSTDIR 里 24.4MB 死重；安装器（md-editor.nsi）
-#    既不安装也不检测 VC 运行库，缺运行库的机器需用户自行安装 VC++
-#    Redistributable（基线既有状况：旧版 vc_redist.x64.exe 同样只是死重、
-#    从未被安装器执行）。--no-translations 维持）
-& windeployqt --release --no-translations (Join-Path $dist "md-editor.exe")
+# 3. windeployqt 部署 Qt DLL / WebEngine 资源。--no-compiler-runtime 显式关闭
+#    VC 运行库安装器部署：Qt 6.8 的 windeployqt **默认即部署** vc_redist.x64.exe
+#    （~25.6MB；2026-10-08 VM 内带 VS DevShell 环境实测确认——此前"去掉
+#    --compiler-runtime 就不再部署"的判断是错的，该开关只是强制开，不带则
+#    走默认开）。NSIS 从不执行它，装完只是 $INSTDIR 死重；缺运行库的机器需
+#    用户自行安装 VC++ Redistributable（基线既有状况）。--no-translations 维持
+& windeployqt --release --no-compiler-runtime --no-translations (Join-Path $dist "md-editor.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败 (exit $LASTEXITCODE)" }
 
 # 3.5 安全瘦身：DevTools 前端资源（编辑器不用；CDP 取证走 WebSocket 不需要
-#     前端）与 QML 调试工具（非 QML 应用）；vc_redist 残留（windeployqt 部署
-#     目录不清场，历史上带 --compiler-runtime 的构建留下的死重会被 NSIS
-#     目录打包一直带进安装器——2026-09-29 全链对账实测 ~25.6MB 残留）
+#     前端）与 QML 调试工具（非 QML 应用）；vc_redist 行为回归护栏——
+#     上方 --no-compiler-runtime 已从源头关闭部署，此处兜底防止该开关被
+#     误删后 25.6MB 死重回装进安装器
 $devtools = Join-Path $dist "resources\qtwebengine_devtools_resources.pak"
 if (Test-Path $devtools) { Remove-Item -Force $devtools; Write-Host "已删 devtools pak (~9.2MB)" }
 $qmltooling = Join-Path $dist "qmltooling"
 if (Test-Path $qmltooling) { Remove-Item -Recurse -Force $qmltooling; Write-Host "已删 qmltooling (~1MB)" }
 $vcRedist = Join-Path $dist "vc_redist.x64.exe"
 if (Test-Path $vcRedist) { Remove-Item -Force $vcRedist; Write-Host "已删 vc_redist 残留 (~25.6MB)" }
+
+# 3.6 virtiofs 删除传播确认（2026-10-08 实锤）：删除到目录枚举消失之间有
+#     毫秒级窗口，紧随其后的 NSIS File /r 会枚举到尚未传播完的条目并在打开
+#     时报 "failed opening file …" 中止打包（vc_redist.x64.exe 实测中招；
+#     同批删得早两行的 devtools pak 无恙——时序窗口而非锁）。此处以目录
+#     枚举（与 NSIS File /r 同用 FindFirstFile/FindNextFile 系）轮询到条目
+#     真正消失再进入打包；超时硬错，不把问题推给 makensis
+foreach ($p in @($devtools, $qmltooling, $vcRedist)) {
+    $parent = Split-Path -Parent $p
+    $leaf   = Split-Path -Leaf $p
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-ChildItem -Force -ErrorAction SilentlyContinue $parent |
+            Where-Object { $_.Name -eq $leaf }) -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 150
+    }
+    if (Get-ChildItem -Force -ErrorAction SilentlyContinue $parent |
+        Where-Object { $_.Name -eq $leaf }) {
+        throw "删除未传播完成：$p 仍在目录枚举中（virtiofs 滞后超 15s）"
+    }
+}
 
 # 4. 便携 zip（与 NSIS 安装器统一落 dist\，不散在仓库根；-SkipZip 跳过）
 if (-not $SkipZip) {
