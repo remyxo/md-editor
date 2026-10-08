@@ -2,6 +2,29 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.21.0] — 2026-10-08
+
+插入菜单公式入口拆分与导出快捷键补齐批次：菜单层拆分「行内公式/块级公式」，
+导出家族补 DOCX/HTML 快捷键，新增菜单契约单元测试。
+
+### 新增 — 插入菜单拆分公式入口（行内/块级）
+- 「公式(&M)」更名「行内公式(&M)」（Ctrl+M 不变），其下新增「块级公式(&B)」
+  菜单项，快捷键 Ctrl+Shift+M；块级公式能力（`editorApi.insertMath('block')`）
+  此前已存在，本次补菜单入口
+- 原 MainWindow 的 Ctrl+Shift+M QShortcut 迁至菜单 QAction 携带（双注册报
+  "Ambiguous shortcut"，与 Ctrl+M 同一先例），MainWindow 改连接新增的
+  `MenuBar::insertMathBlock` 信号 → `insertMath('block')`
+
+### 新增 — 导出 DOCX / HTML 快捷键
+- 导出 DOCX `Ctrl+Shift+D`、导出 HTML `Ctrl+Shift+H`（导出 PDF `Ctrl+P` 不变）
+- 工具栏 ∑ 提示同步改为「插入行内公式 (Ctrl+M)」；en_US.ts 新增
+  行内公式/块级公式/插入行内公式三条译文；帮助文档快捷键表补导出三行
+
+### 测试 — 菜单契约回归
+- 新增 tests/test_menubar.cpp：插入菜单文案/快捷键/邻接次序/信号 + 导出
+  DOCX/HTML 快捷键（先红后绿）；无头 Xvfb+XTEST 真按键取证 Ctrl+Shift+M →
+  块级公式面板（mathType=block），编辑器 stderr 零 Ambiguous 告警
+
 ## [0.20.0] — 2026-09-27
 
 导出代码块语法高亮批次：PDF/DOCX 导出的代码块从纯色升级为与编辑器亮色主题
