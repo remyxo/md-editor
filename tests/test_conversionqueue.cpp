@@ -340,10 +340,15 @@ void TestConversionQueue::testDrainedSignal()
 
 void TestConversionQueue::testEventLoopNotBlockedDuringConversion()
 {
-    // 文档规模校准：同步基线需 ≥300ms 才有区分度（不足则加大文档）
-    QString md = bigMd(600);
+    // 文档规模自校准：同步基线需 ≥300ms 才有区分度，且机器越快基线越短
+    // （2026-10-08 ubuntu-26.04/Qt 6.10.2 基准 CI 实测 bigMd(600) 基线不足
+    // 300ms、前置断言失败）——倍增文档直到基线达标，上限 9600 节防失控
+    QString md;
     qint64 syncMs = 0;
-    {
+    qint64 syncMax = 0;
+    int blocks = 600;
+    for (;;) {
+        md = bigMd(blocks);
         EventLoopPing ping;
         ping.arm();
         QElapsedTimer t;
@@ -352,12 +357,16 @@ void TestConversionQueue::testEventLoopNotBlockedDuringConversion()
         Q_UNUSED(html);
         syncMs = t.elapsed();
         QTest::qWait(200);                                   // 排队中的 ping 派发
-        const qint64 syncMax = ping.maxLatencyMs;
-        QVERIFY2(syncMax >= 300,
-                 qPrintable(QStringLiteral("同步基线过短（%1ms），加大文档后重跑").arg(syncMax)));
-        qWarning("冻结量化: 同步基线 toHtml=%lldms posted-event 最大派发时延=%lldms",
-                 syncMs, syncMax);
+        syncMax = ping.maxLatencyMs;
+        if (syncMax >= 300 || blocks >= 9600)
+            break;
+        blocks *= 2;
     }
+    QVERIFY2(syncMax >= 300,
+             qPrintable(QStringLiteral("同步基线过短（%1ms，文档已加大至上限仍不足），"
+                                       "测量口径需再议").arg(syncMax)));
+    qWarning("冻结量化: 校准文档 %d 节；同步基线 toHtml=%lldms posted-event 最大派发时延=%lldms",
+             blocks, syncMs, syncMax);
 
     // 改后路径：worker 转换期间事件循环持续派发
     ConversionQueue q;
