@@ -685,3 +685,6 @@ quadrantChart
 | 保存 | `Ctrl+S` |
 | 撤销 / 重做 | `Ctrl+Z` / `Ctrl+Shift+Z` |
 | 加粗 / 斜体 | `Ctrl+B` / `Ctrl+I` |
+| 导出 PDF | `Ctrl+P` |
+| 导出 DOCX | `Ctrl+Shift+D` |
+| 导出 HTML | `Ctrl+Shift+H` |

@@ -166,12 +166,9 @@ void MainWindow::setupUi()
         }
     });
 
-    // Ctrl+Shift+M 插入块级公式（Ctrl+M 行内公式由菜单「插入公式」QAction 携带，
-    // 此处不再重复注册 QShortcut，否则与菜单快捷键冲突报 "Ambiguous shortcut"）
-    QShortcut *mathBlockShortcut = new QShortcut(QKeySequence("Ctrl+Shift+M"), this);
-    connect(mathBlockShortcut, &QShortcut::activated, this, [this]() {
-        runEditorCommand("window.editorApi.insertMath('block');");
-    });
+    // Ctrl+M 行内公式 / Ctrl+Shift+M 块级公式均由插入菜单 QAction 携带快捷键
+    // （见 MenuBar），此处不再注册 QShortcut，否则与菜单快捷键冲突报
+    // "Ambiguous shortcut"。
 
     // 系统主题监听（无 portal 环境自动降级恒 light）
     m_systemThemeWatcher = SystemThemeWatcher::createForProduction(this);
@@ -259,6 +256,9 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::insertTable, this, &MainWindow::onInsertTable);
     connect(m_menuBar, &MenuBar::insertMath, this, [this]() {
         runEditorCommand("window.editorApi.insertMath('inline');");
+    });
+    connect(m_menuBar, &MenuBar::insertMathBlock, this, [this]() {
+        runEditorCommand("window.editorApi.insertMath('block');");
     });
     connect(m_menuBar, &MenuBar::insertCode, this, [this]() {
         runEditorCommand("window.editorApi.toggleCode();");

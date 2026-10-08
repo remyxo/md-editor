@@ -231,7 +231,7 @@ void ToolBar::setupUi()
     makeAction(this, &m_iconPaths, "hrAction",
         tr("分割线"), ":/icons/light/horizontal-rule.svg");
     makeAction(this, &m_iconPaths, "mathAction",
-        tr("插入公式 (Ctrl+M)"), ":/icons/light/math.svg");
+        tr("插入行内公式 (Ctrl+M)"), ":/icons/light/math.svg");
     makeAction(this, &m_iconPaths, "diagramAction",
         tr("插入 Mermaid 图表"), ":/icons/light/diagram.svg");
     makeAction(this, &m_iconPaths, "emojiAction",
@@ -362,7 +362,7 @@ void ToolBar::retranslateUi()
     m_codeAction->setToolTip(tr("行内代码"));
     m_codeBlockAction->setToolTip(tr("代码块"));
     findChild<QAction*>("hrAction")->setToolTip(tr("分割线"));
-    findChild<QAction*>("mathAction")->setToolTip(tr("插入公式 (Ctrl+M)"));
+    findChild<QAction*>("mathAction")->setToolTip(tr("插入行内公式 (Ctrl+M)"));
     findChild<QAction*>("diagramAction")->setToolTip(tr("插入 Mermaid 图表"));
     findChild<QAction*>("emojiAction")->setToolTip(tr("插入表情"));
     findChild<QAction*>("footnoteAction")->setToolTip(tr("插入脚注"));

@@ -46,8 +46,10 @@ void MenuBar::setupUi()
     m_exportPdfAct->setShortcut(QKeySequence("Ctrl+P"));
     connect(m_exportPdfAct, &QAction::triggered, this, &MenuBar::exportPdf);
     m_exportDocxAct = m_exportMenu->addAction(tr("导出 DOCX..."));
+    m_exportDocxAct->setShortcut(QKeySequence("Ctrl+Shift+D"));
     connect(m_exportDocxAct, &QAction::triggered, this, &MenuBar::exportDocx);
     m_exportHtmlAct = m_exportMenu->addAction(tr("导出 HTML..."));
+    m_exportHtmlAct->setShortcut(QKeySequence("Ctrl+Shift+H"));
     connect(m_exportHtmlAct, &QAction::triggered, this, &MenuBar::exportHtml);
 
     m_fileMenu->addSeparator();
@@ -138,9 +140,15 @@ void MenuBar::setupUi()
     m_tableAct = m_insertMenu->addAction(tr("表格..."));
     connect(m_tableAct, &QAction::triggered, this, &MenuBar::insertTable);
 
-    m_mathAct = m_insertMenu->addAction(tr("公式(&M)"));
+    m_mathAct = m_insertMenu->addAction(tr("行内公式(&M)"));
     m_mathAct->setShortcut(QKeySequence("Ctrl+M"));
     connect(m_mathAct, &QAction::triggered, this, &MenuBar::insertMath);
+
+    // 块级公式：Ctrl+Shift+M 由本 QAction 携带（原 MainWindow QShortcut 已随之
+    // 删除——双注册报 "Ambiguous shortcut"，与 Ctrl+M 同一先例）
+    m_mathBlockAct = m_insertMenu->addAction(tr("块级公式(&B)"));
+    m_mathBlockAct->setShortcut(QKeySequence("Ctrl+Shift+M"));
+    connect(m_mathBlockAct, &QAction::triggered, this, &MenuBar::insertMathBlock);
 
     m_codeAct = m_insertMenu->addAction(tr("行内代码"));
     connect(m_codeAct, &QAction::triggered, this, &MenuBar::insertCode);
@@ -219,7 +227,8 @@ void MenuBar::retranslateUi()
     m_linkAct->setText(tr("链接..."));
     m_imageAct->setText(tr("图片..."));
     m_tableAct->setText(tr("表格..."));
-    m_mathAct->setText(tr("公式(&M)"));
+    m_mathAct->setText(tr("行内公式(&M)"));
+    m_mathBlockAct->setText(tr("块级公式(&B)"));
     m_codeAct->setText(tr("行内代码"));
     m_codeBlockAct->setText(tr("代码块"));
     m_hrAct->setText(tr("分割线"));

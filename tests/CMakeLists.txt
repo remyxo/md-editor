@@ -93,6 +93,12 @@ target_include_directories(test_collapsiblesection PRIVATE ../src)
 target_link_libraries(test_collapsiblesection PRIVATE Qt6::Test Qt6::Widgets)
 add_test(NAME test_collapsiblesection COMMAND test_collapsiblesection)
 
+# 菜单契约回归：插入菜单公式改名（行内/块级入口）+ 导出 DOCX/HTML 快捷键
+add_executable(test_menubar test_menubar.cpp ../src/ui/MenuBar.cpp)
+target_include_directories(test_menubar PRIVATE ../src)
+target_link_libraries(test_menubar PRIVATE Qt6::Test Qt6::Widgets)
+add_test(NAME test_menubar COMMAND test_menubar)
+
 # 往返保真矩阵回归（全元素覆盖/嵌套矩阵/多轮收敛/失真链诊断，
 # 见 tests/test_roundtrip_matrix.cpp 文件头说明）
 add_executable(test_roundtrip_matrix test_roundtrip_matrix.cpp

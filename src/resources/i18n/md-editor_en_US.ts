@@ -418,8 +418,12 @@ Save before closing?</translation>
         <translation>Table...</translation>
     </message>
     <message>
-        <source>公式(&amp;M)</source>
-        <translation>&amp;Formula</translation>
+        <source>行内公式(&amp;M)</source>
+        <translation>Inline &amp;Formula</translation>
+    </message>
+    <message>
+        <source>块级公式(&amp;B)</source>
+        <translation>&amp;Block Formula</translation>
     </message>
     <message>
         <source>行内代码</source>
@@ -837,8 +841,8 @@ Save?</translation>
         <translation>Horizontal Rule</translation>
     </message>
     <message>
-        <source>插入公式 (Ctrl+M)</source>
-        <translation>Insert Formula (Ctrl+M)</translation>
+        <source>插入行内公式 (Ctrl+M)</source>
+        <translation>Insert Inline Formula (Ctrl+M)</translation>
     </message>
     <message>
         <source>插入 Mermaid 图表</source>

@@ -42,6 +42,7 @@ signals:
     void insertImage();
     void insertTable();
     void insertMath();
+    void insertMathBlock();
     void insertCode();
     void insertCodeBlock();
     void insertHorizontalRule();
@@ -78,8 +79,8 @@ private:
     QMenu *m_themeMenu;
 
     // === 插入菜单动作 ===
-    QAction *m_linkAct, *m_imageAct, *m_tableAct, *m_mathAct, *m_codeAct,
-            *m_codeBlockAct, *m_hrAct, *m_emojiAct, *m_footnoteAct;
+    QAction *m_linkAct, *m_imageAct, *m_tableAct, *m_mathAct, *m_mathBlockAct,
+            *m_codeAct, *m_codeBlockAct, *m_hrAct, *m_emojiAct, *m_footnoteAct;
 
     // === 帮助菜单动作 ===
     QAction *m_guideAct, *m_settingsAct, *m_aboutAct;
