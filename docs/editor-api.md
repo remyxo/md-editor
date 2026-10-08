@@ -166,7 +166,7 @@
 | 类别 | 代表成员 | 说明 |
 |------|---------|------|
 | 加载/脏状态 | `_loading`、`_dirty`、`_docVersion`、`_forceDirty`、`_restoreDirtyIfUnchanged`、`_markDirty`、`_readOnly` | 脏状态机制见 CLAUDE.md；`_loading` 锁抑制 setContent 内的 onUpdate |
-| 源码模式状态 | `_sourceValue`、`_srcSearch`、`_srcOnSourceEdit`、`_srcWrapCache`、`_srcStop` | textarea 快照与源码搜索；`_sourceValue` 是快速路径退出的比对基准 |
+| 源码模式状态 | `_sourceValue`、`_srcSearch`、`_srcOnSourceEdit`、`_srcRectGen`、`_srcStop` | textarea 快照与源码搜索；`_sourceValue` 是快速路径退出的比对基准；高亮为按需局部测量（无折行缓存） |
 | 模态面板对象（7 个） | `_linkEditor`、`_mermaidEditor`、`_mathEditor`、`_emojiPicker`、`_codeLangPicker`、`_footnoteEditor` + `_mathEditing` | 面板清单的唯一直调入口是 `closeModalDialogs()`（W4-5 起） |
 | 图片摄取 | `_imagePending`、`_ingestImageFile` | 占位符标记 `__pending_<requestId>__`，落盘完成走公共 `onImageSaveResult` |
 | 布局/行号 | `_lineStarts`、`_lineColAt`、`_lineGutterOn/_lineGutterRO/_lineGutterEl` | 光标行列换算与行号 gutter |
@@ -207,7 +207,7 @@
 | PDF 导出隐藏渲染页 | PdfExporter 注入的独立 HTML | `__preparePrint` / `__printState` / `__stampPageNumbers` / `__pagedBoxH` / `__pagedFnH` / `__ppDbg` / `__hfPagTall` / `__measureH`；CSS 选择器 `.pagedjs_page` |
 | Mermaid 后台渲染 | MermaidRenderer 隐藏页 | `__mermaidResults` |
 | MathML / 表格列宽归一 | MathMlRenderer / TableColumnNormalizer 隐藏页 | 各自 IIFE 内部协议 |
-| 折行点缓存探针 | 编辑器页（探针脚本用） | `window.__wrapCacheState`（scripts/mode-switch-probe.js） |
+| 高亮可渲染性探针 | 编辑器页（探针脚本用） | `window.__wrapCacheState`（scripts/mode-switch-probe.js；2026-10-08 后为兼容垫片：无缓存机制，恒 `{entries:0,hit:true}`）|
 | 高亮轮状态探针 | 编辑器页（vitest 用） | `window.__highlightRoundState`（vendored-lowlight-plugin，只读轮状态）+ `window.__setViewportProbe`（同文件，mock 视口判定） |
 | 搜索插件实例 | 编辑器页 | `window.searchPlugin`（editor-page 内部，startSearch 系列的实际实现方） |
 
