@@ -1,0 +1,18 @@
+#!/bin/sh
+# md-editor DEB postrm：卸载/升级后刷新缓存，让已删除的 mimetype 图标立即失效。
+# $1 为 remove/purge/upgrade 等情形，刷新操作对任一情形均安全；
+# 卸载后目录可能已被 dpkg 清除，目录/命令双 guard 直接跳过。
+
+set -e
+
+PREFIX="/usr/local"
+
+if [ -d "$PREFIX/share/applications" ] && command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$PREFIX/share/applications" >/dev/null 2>&1 || true
+fi
+
+if [ -d "$PREFIX/share/icons/hicolor" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -f -t "$PREFIX/share/icons/hicolor" || true
+fi
+
+exit 0

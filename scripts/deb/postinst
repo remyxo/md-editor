@@ -1,0 +1,22 @@
+#!/bin/sh
+# md-editor DEB postinst：安装后刷新 desktop 数据库与 hicolor 图标缓存。
+# 本包装在 /usr/local 前缀，dpkg 的桌面数据库/图标缓存触发器只覆盖 /usr/share，
+# 须自行刷新，否则新装的 mimetype 图标（text-markdown）可能不被文件管理器识别，
+# .md 文件将继续回退显示 x-office-document（形似 Word 文档）图标。
+# 所有步骤失败不致命（|| true + 目录/命令双 guard），不阻断 dpkg 事务。
+
+set -e
+
+PREFIX="/usr/local"
+
+if [ -d "$PREFIX/share/applications" ] && command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$PREFIX/share/applications" >/dev/null 2>&1 || true
+fi
+
+if [ -d "$PREFIX/share/icons/hicolor" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    # -t：/usr/local 下通常没有 hicolor 的 index.theme（属主是系统
+    # hicolor-icon-theme 包），须跳过存在性检查
+    gtk-update-icon-cache -q -f -t "$PREFIX/share/icons/hicolor" || true
+fi
+
+exit 0

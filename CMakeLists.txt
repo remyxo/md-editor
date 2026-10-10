@@ -60,6 +60,19 @@ PDF/DOCX 导出和亮色/暗色主题。")
         RENAME md-editor.svg)
     install(FILES src/resources/md-editor.desktop
         DESTINATION share/applications)
+    # 文件类型图标（mimetypes 上下文）：文件管理器按 mimetype 图标名
+    # （text-markdown）在主题链中查找，主题链缺失时回退 x-office-document
+    # （形似 Word 文档图标）。装入 hicolor 兜底主题后任何主题下均不再回退
+    # （用户主题自带同名图标时主题优先，属规范预期行为）。
+    # 对齐 macOS CFBundleTypeIconFile 与 Windows NSIS DefaultIcon 的注册。
+    install(FILES src/resources/icons/text-markdown.svg
+        DESTINATION share/icons/hicolor/scalable/mimetypes)
+
+    # /usr/local 前缀下 dpkg 的桌面数据库/图标缓存触发器不覆盖（只管 /usr/share），
+    # 须自带维护脚本刷新（CPack DEB 不会自动执行）
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+        "${CMAKE_SOURCE_DIR}/scripts/deb/postinst"
+        "${CMAKE_SOURCE_DIR}/scripts/deb/postrm")
 
     include(CPack)
 endif()
