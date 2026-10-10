@@ -161,8 +161,8 @@ void MainWindow::setupUi()
             // 关闭 JS 侧的模态面板（超链接/Mermaid/数学公式/emoji/语言选择器/
             // 脚注改名）——统一公共入口，面板清单收口在 JS 侧（W4-5）
             runEditorCommand("window.editorApi.closeModalDialogs();");
-        } else {
-            m_searchBar->setVisible(false);
+        } else if (m_searchBar->isVisible()) {
+            closeSearchBar();
         }
     });
 
@@ -274,7 +274,7 @@ void MainWindow::connectSignals()
     connect(m_menuBar, &MenuBar::findRequested, this, [this]() {
         // 仅查找模式下 Ctrl+F 切换显隐；替换模式时切回仅查找
         if (m_searchBar->isVisible() && !m_searchBar->replaceModeActive())
-            m_searchBar->setVisible(false);
+            closeSearchBar();
         else
             showSearchBar(false);
     });
@@ -512,9 +512,8 @@ void MainWindow::connectSignals()
     connect(m_searchBar, &SearchBar::replaceAllRequested, this, [this, runSearchJs](const QString &rep) {
         runSearchJs(QStringLiteral("ed.replaceAll('%1');").arg(JsEscape::jsSingleQuoted(rep)));
     });
-    connect(m_searchBar, &SearchBar::closeRequested, this, [this, runSearchJs]() {
-        m_searchBar->setVisible(false);
-        runSearchJs("ed.stopSearch();");
+    connect(m_searchBar, &SearchBar::closeRequested, this, [this]() {
+        closeSearchBar();
     });
 }
 
@@ -660,6 +659,22 @@ void MainWindow::showSearchBar(bool withReplace)
     m_searchBar->setVisible(true);
     m_searchBar->setReplaceMode(withReplace);
     m_searchBar->focusFindField();
+    // 重开即按框内内容恢复搜索（对齐文本编辑器惯例）：上次关闭已 stopSearch 清空
+    // 状态 → resumeSearch 检测参数不一致重新搜索并跳回第一处；参数一致（搜索栏
+    // 未关闭过的显隐切换）仅刷新计数不跳转。与切 tab 恢复同一机制。
+    m_searchBar->emitResumeNow();
+}
+
+// 关闭路径单一收口（✕ / Esc / Ctrl+F 切换）：隐藏 + stopSearch 清高亮与计数，
+// 保证重开时 resumeSearch 一定走重搜分支（状态已空），三条路径行为一致。
+void MainWindow::closeSearchBar()
+{
+    m_searchBar->setVisible(false);
+    EditorTab *tab = m_tabWidget->currentEditorTab();
+    if (tab) {
+        tab->runJsCommand("(function(){var ed=window.editorApi;if(!ed||!ed.editor)return;"
+                          "ed.stopSearch();})();");
+    }
 }
 
 void MainWindow::runEditorCommand(const QString &js)

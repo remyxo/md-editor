@@ -78,6 +78,7 @@ private:
     void connectSignals();
     void runEditorCommand(const QString &js);
     void showSearchBar(bool withReplace);   // 显示搜索栏（withReplace: 展开替换行）
+    void closeSearchBar();                  // 关闭搜索栏：隐藏 + 清高亮（stopSearch 单一收口）
     void refreshEncodingLabel();   // 读取当前标签页编码 → 状态栏
     void onImageSaveRequested(EditorTab *tab, const QString &requestId,
                               const QString &base64, const QString &ext,
