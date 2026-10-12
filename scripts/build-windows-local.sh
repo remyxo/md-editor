@@ -59,10 +59,18 @@ done
 say "ssh 就绪"
 
 # ---- 3. 触发构建（透传输出与退出码）----
-say "触发远程构建（首次冷构建约 10-15 分钟）"
+# VM 是精简 LTSB（无 Windows PowerShell），优先 pwsh 7；有 powershell 的环境自动回退
+if ssh -o BatchMode=yes "$SSH_TARGET" "where pwsh" >/dev/null 2>&1; then
+    PWSH=pwsh
+elif ssh -o BatchMode=yes "$SSH_TARGET" "where powershell" >/dev/null 2>&1; then
+    PWSH=powershell
+else
+    die_precheck "VM 里无 pwsh/powershell——guest 侧补装（见 docs/windows-build-vm.md guest 侧一节）"
+fi
+say "触发远程构建（$PWSH，首次冷构建约 10-15 分钟）"
 EXTRA_ARGS=""
 [ "$COMPILE_ONLY" -eq 1 ] && EXTRA_ARGS=" -CompileOnly"
-ssh -o BatchMode=yes "$SSH_TARGET" "powershell -NoProfile -ExecutionPolicy Bypass -File $LAUNCH$EXTRA_ARGS"
+ssh -o BatchMode=yes "$SSH_TARGET" "$PWSH -NoProfile -ExecutionPolicy Bypass -File $LAUNCH$EXTRA_ARGS"
 rc=$?
 
 # ---- 4. 列出产物 ----

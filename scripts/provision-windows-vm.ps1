@@ -3,10 +3,10 @@
 # 完整流程见 docs/windows-build-vm.md。宿主侧先跑 scripts/setup-windows-vm-host.sh。
 #
 # 步骤：
-#   1. D: 数据盘（NTFS）
-#   2. 第二个 virtiofs 共享实例（挂宿主仓库，卷标 md-editor-src）
-#   3. VS 2022 Build Tools → D:\BuildTools（MSVC v143 + Win11 SDK + CMake + Ninja）
-#   4. Python + aqtinstall → Qt 6.8.2 msvc2022_64 + webengine/webchannel/positioning → D:\Qt
+#   1. 数据盘（按卷标 build-data 定位，尽力钉 D:，全脚本经 $DataRoot 引用——防盘符漂移）
+#   2. 第二个 virtiofs 共享实例（挂宿主仓库，卷标 md-editor-src，盘符钉 W:）
+#   3. VS 2022 Build Tools → <数据盘>:\BuildTools（MSVC v143 + Win11 SDK + CMake + Ninja）
+#   4. Python + aqtinstall → Qt 6.8.2 msvc2022_64 + webengine/webchannel/positioning → <数据盘>:\Qt
 #   5. NSIS + ImageMagick
 #   6. OpenSSH Server + builder 用户 + 公钥
 #   7. 生成 C:\md-editor-build-launch.ps1（宿主 ssh 的固定入口）
@@ -30,13 +30,11 @@ function Refresh-Path {
 }
 # 本机没有 winget（App Installer 缺失），所有工具改直连官方安装包静默安装
 $ProgressPreference = 'SilentlyContinue'   # 关进度条：PS5.1 下 Invoke-WebRequest 提速一个数量级
-$InstallerDir = 'D:\installers'            # 落数据盘：断点复用，也避开 C: 的 TEMP（曾出过损坏文件）
-New-Item -ItemType Directory -Path $InstallerDir -Force | Out-Null
 function Get-Installer([string]$name, [string]$uri, [string]$file) {
     $out = Join-Path $InstallerDir $file
     if (Test-Path $out) { Write-Host "    $name 已就位，复用"; return $out }
     # 优先从宿主 Downloads 共享拷（宿主预下好的最稳；guest 直连镜像站曾拿到坏内容）
-    $share = (Get-CimInstance Win32_LogicalDisk -Filter "VolumeName='daijd-shared'" -ErrorAction SilentlyContinue |
+    $share = (Get-CimInstance Win32_LogicalDisk -Filter "VolumeName='daijd-shared' AND FileSystem='VirtIO-FS'" -ErrorAction SilentlyContinue |
         Select-Object -First 1).DeviceID
     if ($share -and (Test-Path "$share\$file")) {
         Copy-Item "$share\$file" $out
@@ -62,18 +60,54 @@ function Get-Installer([string]$name, [string]$uri, [string]$file) {
     return $out
 }
 
-# ---------- 1. D: 数据盘 ----------
-Step "1/8 D: 数据盘"
-if (Get-Volume -DriveLetter D -ErrorAction SilentlyContinue) {
-    Ok "D: 已存在"
-} else {
-    $raw = Get-Disk | Where-Object { $_.PartitionStyle -eq 'RAW' } | Select-Object -First 1
-    if (-not $raw) { throw "D: 不存在且找不到未初始化磁盘——宿主侧 setup-windows-vm-host.sh 是否已加数据盘？" }
-    Initialize-Disk -Number $raw.Number -PartitionStyle GPT
-    New-Partition -DiskNumber $raw.Number -UseMaximumSize -DriveLetter D |
-        Format-Volume -FileSystem NTFS -NewFileSystemLabel build-data
-    Ok "已初始化磁盘 $($raw.Number) 为 D: (NTFS)"
+# ---------- 1. 数据盘（按卷标 build-data 定位，防盘符漂移） ----------
+# 坑：数据盘盘符由「当前系统」的挂载管理器分配（持久化在本系统注册表），重装/换 VM 后
+#     不保证还是 D:（CD-ROM 或其他卷可能抢 D:）。两层防御：
+#   a) 本脚本所有数据盘路径经 $DataRoot（按卷标解析，盘符无关）——脚本层
+#   b) 解析出非 D: 且 D: 空闲时钉回 D:——工具链层（VS/Qt 注册表内嵌 D:\BuildTools、
+#      D:\Qt 绝对路径，盘符漂移直接失效，钉回可复用旧数据盘上已装好的工具链）
+# 实现通道：WMI Win32_LogicalDisk + diskpart/label（系统核心组件）。不用 Get-Volume 等
+#     Storage 管理模块——它们属 Windows PowerShell 系统模块，精简 LTSB 会整个删掉（2026-10-12
+#     实测 Get-Volume 不存在）；Win32_LogicalDisk 走 WMI 服务，任何系统都在
+Step "1/8 数据盘（卷标 build-data）"
+function Get-DataDisk {
+    Get-CimInstance Win32_LogicalDisk -Filter "VolumeName='build-data' AND FileSystem='NTFS'" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
 }
+$data = Get-DataDisk
+if (-not $data) {
+    # 兼容无卷标的既有数据盘：D: 存在且 NTFS 就收编并补卷标（label.exe 为系统组件）
+    $dvol = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='D:' AND FileSystem='NTFS'" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($dvol) {
+        label D: build-data
+        $data = Get-DataDisk
+        Ok "收编既有 D:（NTFS），补卷标 build-data"
+    }
+}
+if ($data) {
+    $letter = $data.DeviceID.TrimEnd(':')
+    if ($letter -ne 'D') {
+        $dUsed = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='D:'" -ErrorAction SilentlyContinue
+        if (-not $dUsed) {
+            # diskpart 钉回 D:（remove 再 assign，避免「盘符已指派」冲突）
+            $dp = "$env:TEMP\dp-fixletter.txt"
+            Set-Content -Path $dp -Value "select volume $letter`r`nremove letter=$letter`r`nassign letter=D" -Encoding ASCII
+            diskpart /s $dp | Out-Null
+            $data = Get-DataDisk
+            Ok "数据盘钉回 D:（原 ${letter}:，卷标 build-data）"
+        } else {
+            Warn "数据盘在 ${letter}: 而 D: 被其他卷占用——D:\BuildTools/D:\Qt 的注册表路径可能失效，建议磁盘管理手动改回 D:"
+        }
+    } else { Ok "D: 已存在（卷标 build-data）" }
+} else {
+    # 全新未初始化盘：本机用不到（旧盘已带工具链），留明确指引不自动化
+    throw "找不到数据盘（无卷标 build-data、无 NTFS 的 D:）。若是全新盘：磁盘管理手动初始化 GPT → 新建简单卷(NTFS, 卷标 build-data, 盘符 D:) 后重跑"
+}
+if (-not $data) { throw "数据盘定位后意外为空（diskpart 钉盘符后未出现？）" }
+$DataRoot = $data.DeviceID          # 如 'D:'（DeviceID 自带冒号）
+$InstallerDir = "$DataRoot\installers"      # 落数据盘：断点复用，也避开 C: 的 TEMP（曾出过损坏文件）
+New-Item -ItemType Directory -Path $InstallerDir -Force | Out-Null
 
 # ---------- 2. virtiofs 双共享（两个服务都必须带明确 tag）----------
 Step "2/8 virtiofs 共享 '$ShareTag'"
@@ -90,7 +124,7 @@ function Get-ShareDrive([string]$label) {
 }
 function Ensure-VirtioFsService([string]$name, [string]$tag, [string]$mount = '*') {
     # 坑 3：-m '*' 自动找空盘符（WinFsp 从 Z: 倒序扫），两个服务开机顺序不定会互换
-    #        盘符——D:\build 的 CMake 缓存内嵌绝对源路径，盘符一漂（实测 Z:→Y:）即报
+    #        盘符——数据盘 build 目录的 CMake 缓存内嵌绝对源路径，盘符一漂（实测 Z:→Y:）即报
     #        「does not match the source used to generate cache」。仓库共享钉死 W:
     #        （在自动扫号区 Z:/Y: 之外，永不冲突）；Downloads 共享无路径依赖，保持自动
     $want = "`"$exe`" -t $tag -m $mount"
@@ -132,36 +166,35 @@ catch { throw "共享 $drive 不可写——宿主侧 setfacl 是否给 libvirt-
 Ok "仓库共享已挂载为 $drive（卷标 $ShareTag，可写）"
 
 # ---------- 3. VS Build Tools（官方引导器直装，与 winget 同一安装器同一参数）----------
-Step "3/8 VS 2022 Build Tools → D:\BuildTools（约 10-25 分钟）"
-if (Test-Path 'D:\BuildTools\VC\Tools\MSVC') {
+Step "3/8 VS 2022 Build Tools → $DataRoot\BuildTools（约 10-25 分钟）"
+if (Test-Path "$DataRoot\BuildTools\VC\Tools\MSVC") {
     Ok "已安装，跳过"
 } else {
     $exe = Get-Installer 'VS BuildTools 引导器' 'https://aka.ms/vs/17/release/vs_BuildTools.exe' 'vs_BuildTools.exe'
     Write-Host "    静默安装中（无窗口，耐心等）..."
     $p = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList `
-        '--quiet','--wait','--norestart','--add','Microsoft.VisualStudio.Workload.VCTools','--includeRecommended','--installPath','D:\BuildTools'
+        '--quiet','--wait','--norestart','--add','Microsoft.VisualStudio.Workload.VCTools','--includeRecommended','--installPath',"$DataRoot\BuildTools"
     if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "VS Build Tools 安装失败 (exit $($p.ExitCode))" }
     Refresh-Path
     Ok "安装完成（exit $($p.ExitCode)；3010=需重启，可忽略）"
 }
 
 # ---------- 4. Python + Qt 6.8.2 ----------
-Step "4/8 Qt 6.8.2 msvc2022_64 → D:\Qt（下载约 2G）"
-if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
-    $exe = Get-Installer 'Python 3.12.10' 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe' 'python-3.12.10-amd64.exe'
-    $p = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList '/quiet','InstallAllUsers=1','PrependPath=1'
-    if ($p.ExitCode -ne 0) { throw "Python 安装失败 (exit $($p.ExitCode))" }
-    Refresh-Path
-    Ok "Python 已安装"
-} else { Ok "Python 已存在" }
-
-if (Test-Path 'D:\Qt\6.8.2\msvc2022_64\bin\windeployqt.exe') {
-    Ok "Qt 已安装，跳过"
+Step "4/8 Qt 6.8.2 msvc2022_64 → $DataRoot\Qt（下载约 2G）"
+if (Test-Path "$DataRoot\Qt\6.8.2\msvc2022_64\bin\windeployqt.exe") {
+    Ok "Qt 已安装，跳过（Python 仅作 aqtinstall 下载通道，Qt 既在则一并跳过）"
 } else {
+    if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
+        $exe = Get-Installer 'Python 3.12.10' 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe' 'python-3.12.10-amd64.exe'
+        $p = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList '/quiet','InstallAllUsers=1','PrependPath=1'
+        if ($p.ExitCode -ne 0) { throw "Python 安装失败 (exit $($p.ExitCode))" }
+        Refresh-Path
+        Ok "Python 已安装"
+    } else { Ok "Python 已存在" }
     py -3 -m pip install --quiet --upgrade aqtinstall
     if ($LASTEXITCODE -ne 0) { throw "aqtinstall 安装失败 (exit $LASTEXITCODE)" }
     py -3 -m aqt install-qt windows desktop 6.8.2 win64_msvc2022_64 `
-        -O D:\Qt -m qtwebengine qtwebchannel qtpositioning qtpdf
+        -O $DataRoot\Qt -m qtwebengine qtwebchannel qtpositioning qtpdf
     if ($LASTEXITCODE -ne 0) { throw "Qt 安装失败 (exit $LASTEXITCODE)" }
     Ok "Qt 6.8.2 安装完成"
 }
@@ -203,28 +236,29 @@ Step "6/8 OpenSSH Server + builder 用户"
 if (Get-Service sshd -ErrorAction SilentlyContinue) {
     Ok "OpenSSH Server 已存在"
 } else {
-    $installed = $false
-    # 首选 Windows 功能（走 Windows Update，可能被策略/网络挡：0x8024002e）
-    try {
-        $cap = Get-WindowsCapability -Online | Where-Object { $_.Name -like 'OpenSSH.Server*' }
-        if ($cap.State -ne 'Installed') { Add-WindowsCapability -Online -Name $cap.Name | Out-Null }
-        $installed = $true
-        Ok "OpenSSH Server（Windows 功能）已安装"
-    } catch {
-        Warn "Add-WindowsCapability 失败（0x8024002e?）——改用 GitHub Win32-OpenSSH 离线包"
-    }
-    if (-not $installed) {
-        # 离线包：宿主预下的 OpenSSH-Win64.zip（经 daijd-shared 共享）
-        $share = (Get-CimInstance Win32_LogicalDisk -Filter "VolumeName='daijd-shared'" -ErrorAction SilentlyContinue |
+    # 统一走 GitHub Win32-OpenSSH 离线包（不走 Add-WindowsCapability：精简 LTSB 无 DISM
+    # 模块且 Windows Update 通道常被挡）。查找顺序：C:\ 预下 → daijd-shared 共享 → 直连 GitHub
+    $zip = $null
+    if (Test-Path 'C:\OpenSSH-Win64.zip') { $zip = 'C:\OpenSSH-Win64.zip' }
+    if (-not $zip) {
+        $share = (Get-CimInstance Win32_LogicalDisk -Filter "VolumeName='daijd-shared' AND FileSystem='VirtIO-FS'" -ErrorAction SilentlyContinue |
             Select-Object -First 1).DeviceID
-        $zip = if ($share) { "$share\OpenSSH-Win64.zip" } else { $null }
-        if (-not ($zip -and (Test-Path $zip))) {
-            throw "共享无 OpenSSH-Win64.zip。宿主执行：gh release download 10.0.0.0p2-Preview -R PowerShell/Win32-OpenSSH -p OpenSSH-Win64.zip -o ~/Downloads/ 后重跑"
-        }
-        Expand-Archive $zip 'C:\Program Files\OpenSSH' -Force
-        & 'C:\Program Files\OpenSSH\OpenSSH-Win64\install-sshd.ps1' | Out-Null
-        Ok "OpenSSH Server（Win32-OpenSSH 离线包）已安装"
+        if ($share -and (Test-Path "$share\OpenSSH-Win64.zip")) { $zip = "$share\OpenSSH-Win64.zip" }
     }
+    if (-not $zip) {
+        try {
+            $out = "$env:TEMP\OpenSSH-Win64.zip"
+            Invoke-WebRequest -Uri 'https://github.com/PowerShell/Win32-OpenSSH/releases/latest/download/OpenSSH-Win64.zip' -OutFile $out -UseBasicParsing
+            $zip = $out
+            Write-Host "    已直连 GitHub 下载离线包"
+        } catch { }
+    }
+    if (-not $zip) {
+        throw "OpenSSH-Win64.zip 无处获取。宿主执行：curl -L -o ~/Downloads/OpenSSH-Win64.zip https://github.com/PowerShell/Win32-OpenSSH/releases/latest/download/OpenSSH-Win64.zip 后重跑"
+    }
+    Expand-Archive $zip 'C:\Program Files\OpenSSH' -Force
+    & 'C:\Program Files\OpenSSH\OpenSSH-Win64\install-sshd.ps1' | Out-Null
+    Ok "OpenSSH Server（Win32-OpenSSH 离线包）已安装"
 }
 Set-Service sshd -StartupType Automatic
 if ((Get-Service sshd).Status -ne 'Running') { Start-Service sshd }
@@ -233,9 +267,9 @@ Ok "sshd 运行中（开机自启）"
 if (-not (Get-LocalUser -Name 'builder' -ErrorAction SilentlyContinue)) {
     # 登录走 ssh 公钥，密码仅是账户占位（Windows 禁止空密码账户网络登录）；
     # 随机生成、存档到 VM 本地文件，无需人工输入
-    $rng = New-Object Security.Cryptography.RNGCryptoServiceProvider
+    # （Create().GetBytes() 是 PS5.1/.NET Framework 与 pwsh7/.NET 两者共有的 API）
     $bytes = New-Object byte[] 24
-    $rng.GetBytes($bytes)
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
     $pw = [Convert]::ToBase64String($bytes)
     New-LocalUser -Name 'builder' -Password ($pw | ConvertTo-SecureString -AsPlainText -Force) `
         -PasswordNeverExpires -FullName 'md-editor builder'
@@ -272,7 +306,10 @@ if (-not $dev) {
 }
 . ($dev + '\scripts\build-windows-vm.ps1') -CompileOnly:$CompileOnly
 '@
-Set-Content -Path 'C:\md-editor-build-launch.ps1' -Value $launch -Encoding UTF8
+# 带 BOM 写出：内容含中文注释，pwsh7 的 Set-Content -Encoding UTF8 无 BOM，万一以后
+# 被 PowerShell 5.1 读会按 GBK 行粘连（见 docs/windows-build-vm.md 对应坑条目）
+$utf8bom = New-Object System.Text.UTF8Encoding $true
+[IO.File]::WriteAllText('C:\md-editor-build-launch.ps1', $launch, $utf8bom)
 Ok "已生成"
 
 # ---------- 8. 自检 ----------
@@ -282,11 +319,11 @@ function Check($name, $ok) {
 }
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $msvcPath = if (Test-Path $vswhere) { & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath } else { '' }
-Check "MSVC v143（D:\BuildTools）"        ($msvcPath -like 'D:\BuildTools*')
-Check "CMake（VS 自带）"                  (Test-Path 'D:\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe')
-Check "Ninja（VS 自带）"                  (Test-Path 'D:\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe')
-Check "Qt 6.8.2 windeployqt"              (Test-Path 'D:\Qt\6.8.2\msvc2022_64\bin\windeployqt.exe')
-Check "Qt6WebEngineCore.dll"              (Test-Path 'D:\Qt\6.8.2\msvc2022_64\bin\Qt6WebEngineCore.dll')
+Check "MSVC v143（$DataRoot\BuildTools）"  ($msvcPath -like "$DataRoot\BuildTools*")
+Check "CMake（VS 自带）"                  (Test-Path "$DataRoot\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe")
+Check "Ninja（VS 自带）"                  (Test-Path "$DataRoot\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe")
+Check "Qt 6.8.2 windeployqt"              (Test-Path "$DataRoot\Qt\6.8.2\msvc2022_64\bin\windeployqt.exe")
+Check "Qt6WebEngineCore.dll"              (Test-Path "$DataRoot\Qt\6.8.2\msvc2022_64\bin\Qt6WebEngineCore.dll")
 Check "makensis"                          ([bool]($makensisCandidates | Where-Object { Test-Path $_ }))
 Check "magick"                            ([bool](Get-ChildItem "$env:ProgramFiles\ImageMagick-*\magick.exe" -ErrorAction SilentlyContinue))
 Check "sshd 运行中"                       ((Get-Service sshd).Status -eq 'Running')
