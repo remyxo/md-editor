@@ -5,6 +5,7 @@
 #include <QWebEngineView>
 #include <QPageLayout>
 #include <QPageSize>
+#include <QElapsedTimer>
 #include <QTimer>
 
 // PDF 分页规格（buildRenderHtml 纯字符串路径的参数载体，exportToPdf 从 QSettings 组装）
@@ -117,7 +118,17 @@ private:
     qreal m_hfH1Px = 0;       // 页码首片高（= 打印片段高）
     qreal m_hfHcPx = 0;       // 页码后续片高（分段堆叠后与首片恒等，分列保留）
     qreal m_hfTotalPx = 0;    // numhost 总高（n 片和 = n 页）
-    void stampAndPrintHf();   // 注入页码覆盖层标记并打成品
+    // —— 脚注快路径（2026-10-13）：含脚注文档也走 nativeHf，脚注逐页算术规划
+    // + __stampHf 盖进覆盖层；paged.js 降级为回退兜底 ——
+    bool m_srcHasFn = false;  // 源 HTML 含脚注引用（规划失败兜底判据）
+    bool m_hfFnReady = false; // __planFootnotes 成功跑完（false → 回退 paged）
+    int m_hfFnTall = 0;       // 无解脚注数（单条+分隔线超整页）→ 提前回退
+    int m_hfFnStraddle = 0;   // 不可断跨页块×脚注区同页数（重叠/归属不可靠）→ 回退
+    int m_hfPlanPages = 0;    // 模拟页数 __hfPages（脚注页格对账用）
+    int m_hfFnCount = 0;      // 已规划脚注条数（>0 → 必两遍打印）
+    QElapsedTimer m_dbgClock; // 分段计时（HF_DEBUG 门控）
+    void dbgMark(const char *what);              // 计时打点（仅 HF_DEBUG 输出）
+    void stampAndPrintHf();   // 注入页码/脚注覆盖层标记并打成品
     QPageLayout m_pendingLayout;   // paged 版式（0.1mm 微量边距——@page 已承载页边距，见 pagedPrintMargins）
     QPageLayout m_legacyLayout;    // 原生版式（用户边距）——legacy/回退共用
     QPageLayout m_nativeHfLayout;  // nativeHf 版式（整纸打印区——页边距由流内结构模拟）

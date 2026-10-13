@@ -129,8 +129,18 @@ private slots:
         QVERIFY(paged.indexOf("__preText=") < paged.indexOf("__floatFootnotes();"));
         QVERIFY(paged.indexOf("__floatFootnotes();")
                 < paged.indexOf("PagedPolyfill.preview()"));
+        // 浮动还原（2026-10-13 回退链修复）：paged.js 异常回退打印前必须把
+        // def 还回文末容器，否则 def 以行内形态紧跟引用渲染（用户实测脚注
+        // 贴着编号、无分隔线无页码的劣化成品）。还原在 restoreBody 之后
+        //（先找回 body 再挪 def）
+        QVERIFY(paged.contains("window.__unfloatFootnotes=function(){"));
+        QVERIFY(paged.indexOf("window.__restoreBody();")
+                < paged.indexOf("window.__unfloatFootnotes();"));
         QVERIFY(paged.contains(".footnote-marker{float:left"));
         QVERIFY(paged.contains(".footnote-content>*:first-child{margin-top:0;}"));
+        // 正文脚注引用编号染蓝（2026-10-13）：与编辑器/HTML 导出/脚注区
+        // marker 同色 #1967d2——三路径共用的基础 CSS，一处断言锁形
+        QVERIFY(paged.contains("[data-type=\"footnoteRef\"]{color:#1967d2;}"));
 
         const QString legacy = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "");
         QVERIFY(!legacy.contains("float:footnote"));      // 浮动指令仅 paged 注入
@@ -143,6 +153,7 @@ private slots:
         QVERIFY(legacy.indexOf("__floatFootnotes();")
                 > legacy.indexOf("if(!window.PagedPolyfill)"));
         QVERIFY(legacy.contains(".footnote-marker{float:left"));
+        QVERIFY(legacy.contains("[data-type=\"footnoteRef\"]{color:#1967d2;}"));
     }
 
     void testBuildRenderHtmlNativeHf() {
@@ -161,7 +172,7 @@ private slots:
         QVERIFY(out.contains("window.__NATIVE_HF=true;"));
         QVERIFY(out.contains("<table class=\"hf\"><thead>"));        // 页眉重复带
         QVERIFY(out.contains("我的文档"));                             // 标题
-        QVERIFY(out.contains("__stampPageNumbers=function(n,h1,hc,totalPx){"));   // 页码注入器
+        QVERIFY(out.contains("__stampHf=function(n,h1,hc,totalPx){"));   // 盖章器（页码+脚注）
         // 页眉带：高 = 用户上边距（此处 18mm = 12mm 带高 + 3mm 底部净空），
         // 文字底对齐压向正文顶线（Word 式贴页边距；居中悬在页边距带中央的
         // 旧式让墨迹离纸边仅 ~8mm，打印机不可打印边距 4-6mm 时太薄）
@@ -190,18 +201,23 @@ private slots:
         QVERIFY(out.contains("if(totalPx>0)host.style.height=totalPx+'px';"));   // 宿主总高
         // 页高分段：每片恰一页高（新版式页眉带已移出片段内位移，首片不再扣 thead）
         QVERIFY(out.contains("d.style.height=(k===1?h1:hc)+'px';"));
-        // 轻量分页：切页器 + 页内容高预算 + 单块超页高计数（C++ 据此提前回退）
-        QVERIFY(out.contains("window.__paginateNativeHf=function(Hpx,MbPx){"));
+        // 轻量分页已迁至共享资源 pdf-native-paginate.js（vitest 覆盖规划器行为，
+        // 含脚注快路径），渲染页只承载 script 标签接线 + 页内容高预算注入
+        QVERIFY(out.contains("<script src=\"pdf-native-paginate.js\"></script>"));
         QVERIFY(out.contains("window.__hfPageContentPx="));
         QVERIFY(out.contains("window.__hfPageMarginBottomPx="));
-        // 安全断点：li 上任意层级可断（探针实测），li 内部的非 li 元素不可断
-        // （同探针实测会失效、内容错位）；不可断单元按自然页格同步 pageTop
-        QVERIFY(out.contains("if(t==='LI'){desc(el,el,true);return;}"));
-        QVERIFY(out.contains("var natCap=Hpx+MbPx;"));
-        QVERIFY(out.contains("window.__hfPagTall=tall;"));
-        // 断点经 breakAt 落位：li 上直接打，li 内部走就地拆 li（拆分手术当前
-        // 暂缓 → 判为不可断，故 li 内部单元不会进断点分支）
-        QVERIFY(out.contains("breakAt(u[0]);"));
+        // 迁出实现的行为锁（改资源文件时此处守护）：切页器入口签名不变、
+        // li 任意层级可断、natCap 自然页容量、tall 计数（C++ 据此提前回退）
+        const QString paginateJs = ExportCommon::readResource(
+            QStringLiteral(":/web/pdf-native-paginate.js"));
+        QVERIFY(!paginateJs.isEmpty());   // qrc 打包存在性锁（误删即此处失败）
+        QVERIFY(paginateJs.contains(
+            "globalThis.__paginateNativeHf = function (Hpx, MbPx) {"));
+        QVERIFY(paginateJs.contains("if (t === 'LI') { desc(el, el, true); return; }"));
+        QVERIFY(paginateJs.contains("var natCap = Hpx + MbPx;"));
+        QVERIFY(paginateJs.contains("window.__hfPagTall = r.tall;"));
+        // 断点经 breakAt 落位（规划完成后统一动 DOM——测量坐标取自变异前的流）
+        QVERIFY(paginateJs.contains("breakAt(r.breakUnits[b]);"));
         // 包装表必须被列宽归一跳过：它的 querySelectorAll 覆盖全文档，会给
         // 每个单元格写下"本表格列宽"（100%）污染内层测量
         QVERIFY(out.contains("if(table.classList.contains('hf'))return;"));
@@ -226,13 +242,98 @@ private slots:
         f.nativeHf = true; f.headerEnabled = false;
         QString fo = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", f);
         QVERIFY(fo.contains("<table class=\"hf\"><thead><tr><td></td>"));
-        QVERIFY(fo.contains("__stampPageNumbers=function(n,h1,hc,totalPx){"));
-        // 仅页眉（无页脚）：table 在、无页码注入器（免数页数单遍直出）
+        QVERIFY(fo.contains("__stampHf=function(n,h1,hc,totalPx){"));
+        // 仅页眉（无页脚、无脚注）：table 在、无盖章器（免数页数单遍直出）
         PdfPageSpec h = specWithHeader();
         h.nativeHf = true; h.footerEnabled = false;
         QString ho = PdfExporter::buildRenderHtml("<p>x</p>", "/tmp", "", "", h);
         QVERIFY(ho.contains("<table class=\"hf\"><thead>"));
-        QVERIFY(!ho.contains("__stampPageNumbers"));
+        QVERIFY(!ho.contains("__stampHf"));
+        // 无页脚但有脚注：仍需切片承载脚注块 → 盖章器照注入（仅无页码 span）
+        const QString fnHtml =
+            "<p>正文<sup data-type=\"footnoteRef\" data-id=\"1\">1</sup></p>";
+        QString hfn = PdfExporter::buildRenderHtml(fnHtml, "/tmp", "", "", h);
+        QVERIFY(hfn.contains("__stampHf=function(n,h1,hc,totalPx){"));
+        QVERIFY(!hfn.contains("sp.textContent="));   // 无页脚 ⇒ 无页码 span
+    }
+
+    void testNativeHfFootnoteFastPath() {
+        // 脚注快路径（2026-10-13）：含脚注文档改走 nativeHf——分页器算术规划
+        //（__planFootnotes + __planPages，pdf-native-paginate.js）+ __stampHf
+        // 盖进覆盖层；paged.js 降级为回退兜底（float:footnote 链路原样保留）
+        PdfPageSpec s = specWithHeader();
+        s.nativeHf = true;
+        s.marginsMm = QMarginsF(18, 18, 18, 18);
+        const QString fnHtml =
+            "<p>正文<sup data-type=\"footnoteRef\" data-id=\"1\">1</sup></p>"
+            "<div data-type=\"footnoteContainer\">"
+            "<div data-type=\"footnoteDef\" data-id=\"1\">"
+            "<span class=\"footnote-marker\">1</span>"
+            "<div class=\"footnote-content\"><p>脚注内容</p></div></div></div>";
+        QString out = PdfExporter::buildRenderHtml(fnHtml, "/tmp", "", "", s);
+        // nativeHf 不注入 paged 专属浮动指令（那是回退路径的机制）
+        QVERIFY(!out.contains("float:footnote"));
+        QVERIFY(!out.contains("paged.polyfill.js"));
+        // 脚注覆盖层 CSS：与 paged 脚注区同版式（#999 分隔线 / .25em 内垫 /
+        // .8em / 1.5 行高）；探针宿主同款排版 + 隐藏
+        QVERIFY(out.contains(".hf-fn{position:absolute;border-top:1px solid #999;"
+                             "padding-top:.25em;font-size:.8em;line-height:1.5;"));
+        QVERIFY(out.contains(".hf-fn-probe{"));
+        QVERIFY(out.contains("visibility:hidden;"));
+        // def 间距仅 margin-top（不塌陷、逐页求和可加——paged 侧 .2em 上下
+        // 塌陷后视觉等值）
+        QVERIFY(out.contains(".hf-fn div[data-type=\"footnoteDef\"],"
+                             ".hf-fn-probe div[data-type=\"footnoteDef\"]{margin:.2em 0 0;}"));
+        // 盖章器：脚注块显式内缩左右边距 + 钉内容区底（#numhost 包含块是初始
+        // 包含块，片宽=整纸宽，不能靠片宽内缩）；含 def 字符袋自检
+        QVERIFY(out.contains("w.className='hf-fn';"));
+        QVERIFY(out.contains("w.style.left='18.00mm';"));
+        QVERIFY(out.contains("w.style.right='18.00mm';"));
+        QVERIFY(out.contains("w.style.bottom='18.00mm';"));
+        QVERIFY(out.contains("!==window.__hfFnSig)return false;"));
+        // 页码 span 与脚注块并存（页脚启用时）
+        QVERIFY(out.contains("sp.textContent='第 '+k+' 页 / 共 '+n+' 页';"));
+        // 规划接线：__planFootnotes 在 __fixTableColumns 之后（def 内表格也要
+        // 列宽归一）、__paginateNativeHf 之前（分页预算依赖 def 高度）
+        QVERIFY(out.contains("window.__planFootnotes()"));
+        QVERIFY(out.indexOf("window.__fixTableColumns();")
+                < out.indexOf("window.__planFootnotes()"));
+        QVERIFY(out.indexOf("window.__planFootnotes()")
+                < out.indexOf("window.__paginateNativeHf("));
+        // 规划失败可观测（fnReady=false → C++ 回退 paged）
+        QVERIFY(out.contains("window.__hfFnReady=false;"));
+        // 规划器资源在位（qrc 锁 + 关键产物：fnPlan/防线计数/模拟页数——
+        // 行为由 vitest pdf-native-paginate.test.js 覆盖）
+        const QString paginateJs = ExportCommon::readResource(
+            QStringLiteral(":/web/pdf-native-paginate.js"));
+        QVERIFY(paginateJs.contains("globalThis.__planPages = planPages;"));
+        QVERIFY(paginateJs.contains("globalThis.__planFootnotes = function () {"));
+        QVERIFY(paginateJs.contains("window.__hfFnPlan = r.fnPlan;"));
+        QVERIFY(paginateJs.contains("window.__hfFnTall = r.fnTall;"));
+        QVERIFY(paginateJs.contains("window.__hfFnStraddle = r.fnStraddle;"));
+        QVERIFY(paginateJs.contains("window.__hfPages = r.pages.length;"));
+        QVERIFY(paginateJs.contains("window.__hfNatSteps = r.natSteps;"));
+        // 回退面锁：nativeHf=false（含脚注）时仍走 paged 完整链路——含
+        // float:footnote 与 paged.polyfill.js（脚注文档的兜底路径零改动）
+        PdfPageSpec p = specWithHeader();   // nativeHf 默认 false
+        QString paged = PdfExporter::buildRenderHtml(fnHtml, "/tmp", "", "", p);
+        QVERIFY(paged.contains("paged.polyfill.js"));
+        QVERIFY(paged.contains("float:footnote"));
+        // 资源文件整体语法校验（QJSEngine 包函数体不执行，同内联脚本先例）：
+        // 一处语法错即 IIFE 整体解析失败，__paginateNativeHf 未定义 → 分页
+        // 跳过 → C++ 侧回退，无报错指向真因
+        {
+            static int argc = 1;
+            static char arg0[] = "test";
+            static char *argv[] = {arg0, nullptr};
+            static QCoreApplication app(argc, argv);
+            QJSEngine engine;
+            QJSValue r = engine.evaluate(
+                QStringLiteral("(function(){\n%1\n})").arg(paginateJs));
+            QVERIFY2(!r.isError(),
+                     qPrintable(QStringLiteral("pdf-native-paginate.js 语法错误: %1")
+                                    .arg(r.toString())));
+        }
     }
 
     void testBuildRenderHtmlPrintCssSplittable() {

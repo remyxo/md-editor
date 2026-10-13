@@ -107,7 +107,8 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 | `src/core/ExportCommon.{h,cpp}` | 三导出器共用：资源读取、属性转义、`</style>` 剥离、图片围栏+内容嗅探、页码文案单一来源（见 docs/export-visual-spec.md） |
 | `src/core/HtmlExporter.cpp` | 自包含 HTML 导出（资源 base64 内联）；表格列宽归一脚本（`tableColumnNormalizeScript`）与 PDF 导出共用 |
 | `src/core/PdfExporter.cpp` | PDF 导出：nativeHf 快路径（thead 页眉带 + 轻量分页 + 页脚覆盖层）与 paged.js 路径的版式对齐，见 docs/pdf-header-footer-layout.md |
-| `src/resources/web/paged.polyfill.js` | vendored paged.js 分页引擎（PDF 页眉页脚/页码，见 docs/vendor-pagedjs.md） |
+| `src/resources/web/paged.polyfill.js` | vendored paged.js 分页引擎（PDF 页眉页脚/页码，见 docs/vendor-pagedjs.md；2026-10-13 起仅作 nativeHf 失守的回退兜底） |
+| `src/resources/web/pdf-native-paginate.js` | nativeHf 轻量分页器 + 逐页脚注规划（含脚注文档的快路径核心；纯规划器 vitest 可测；模型见 docs/pdf-header-footer-layout.md「脚注快路径」节） |
 
 ## 环境要求
 

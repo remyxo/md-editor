@@ -2,6 +2,82 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.22.0] — 2026-10-13
+
+含脚注文档 PDF 导出提速批次：脚注文档从 paged.js 慢路径（~0.93s/页，几十页
+文档以十秒计）迁入 nativeHf 快路径——分页器算术规划逐页脚注 + 覆盖层盖章，
+版式与 paged 产出对齐（分隔线/字号/贴内容区底），paged.js 降级为回退兜底；
+脚注引用编号四面统一染蓝。
+
+### 新增 — 脚注快路径（nativeHf 接管逐页脚注）
+- `src/resources/web/pdf-native-paginate.js`（新，vitest 可测）：轻量分页器
+  （breakAt/pinOl/单元收集自 PdfExporter.cpp 原样迁出）+ 纯规划器
+  `__planPages`（单遍前向贪心：放置单元先并入其首现 def 再判容量，放不下
+  撤回 def 随单元推下页——文档序单调零振荡）+ `__planFootnotes`（探针语境
+  测 def 高——与盖章 `.hf-fn` 同款 CSS 单一来源；只摘被引用 def，无引用
+  def 留文末容器）
+- 逐页预算 = 版心高 − 表续页重复表头高 − 该页脚注区高；引用归属页 =
+  ref.top 对页顶边界表二分（覆盖被推单元与 natCap 跨页单元）；同 def 多
+  引用只随首引页（一脚注一锚点，Word 同款）
+- `__stampPageNumbers` 重写为 `__stampHf`：页码与脚注块同覆盖层盖章；
+  脚注块显式内缩左右边距、`bottom=下边距` 钉内容区底；末尾 def 文本字符袋
+  自检（失守即回退，绝不打印丢脚注的成品）
+- 门控反转：`nativeHf = pagedActive()`（此前 `&& !htmlHasFootnoteRef` 把
+  脚注文档全部门控到 paged 慢路径）；`HF_FORCE_PAGED=1` 强制 paged（A/B
+  对照取证用）
+
+### 新增 — 五道防线（失守即回退 paged，绝不交错稿）
+- `__hfFnTall`：无解脚注（单条+分隔线超整页 / 页首单元连同自身 def 超整页）
+  ——超长脚注跨页拆分不做（边界决策），回退 paged（它支持拆分）
+- `__hfFnStraddle`：natCap 跨页不可断块（墨迹越内容线）与脚注区同页——
+  重叠与归属都只能近似，整类回退不赌边界
+- `fnReady=false`：规划没跑成（资源缺席/异常）
+- `n != __hfPages`：实际页数与模拟页数不符（pass1 盖章前拦截，脚注错页
+  风险防护——现有页码校验只保证「第 k 页文本在 k 页」不保证内容对齐）
+- 盖章字符袋自检：def 文本多重集守恒（丢/重即回退）
+
+### 修复 — paged.js 异常回退打印前还原脚注浮动（用户实测取证）
+- 症状：不可分巨段文档（tall>0）走回退链，paged.js 抛
+  `node.getAttribute is not a function`（上游缺陷）→ fallback 原生打印，
+  但 `__floatFootnotes` 已把 def 挪到引用旁，成品里脚注文字行内紧跟编号、
+  无分隔线无页码
+- 修复：新增 `__unfloatFootnotes()`（def 移回文末容器，清空容器按契约
+  重建），在 fallback(e) 的 `__restoreBody()` 之后调用；回退产物恢复文末
+  列表形态（210 条全在、前部正文页零行内残留，2.2s 全链）
+- `fallbackFromNativeHf` 的 `QFile::remove(m_nativeHfTemp)` 加空名守卫
+  （提前拦截路径无临时文件，空名 remove 刷告警）
+- pass2 页码断言族按 footerEnabled 门控：无页脚（可有脚注）文档此前会
+  全页判失败假回退
+
+### 优化 — 脚注引用编号四面统一染蓝 #1967D2
+- PDF：基础 CSS 补 `[data-type="footnoteRef"]` 颜色规则（三路径共用一处
+  生效）——此前正文上标为黑色而脚注区 marker 已是蓝色，观感割裂；像素级
+  验证通过，页码色锚定校验不受影响（签名色 rgb(102,102,103) 专属）
+- DOCX：`FootnoteReference` 样式补 `w:color 1967D2`（正文引用与脚注区
+  footnoteRef 共用；rPr 元素序 color→vertAlign），放弃 Word 原生正文色
+  惯例，与编辑器/HTML/PDF 四面同色（用户定案）
+
+### 优化 — 快路径进一步提速取证（数据先行）
+- 分段计时插桩（HF_DEBUG）：装载/前置链/两遍打印/盖章/校验各阶段耗时
+- 66 页含 210 脚注基准（tests/fixtures/fn-bench.md 新增）：**4.2s 全链
+  （含全部校验）**，对照 paged.js 同规模 ~46s（~11×）；13 页含脚注文档
+  1.4s vs 强制 paged 12.1s（~8.7×）；210/210 脚注与引用同页、每条恰一次
+- 单遍直出（模拟页数直供盖章省一遍临时打印）**试错否决并留档**：覆盖层
+  在场时首次打印必多产一页（67 vs 66 实测，小数片高对齐亦然），两遍流程
+  因 pass1 已定型分片而免疫——片高只能取自成品实测，见
+  docs/pdf-header-footer-layout.md「打印遍数」节
+
+### 测试
+- vitest 新增 pdf-native-paginate.test.js（9 例：预算/推页/多引用/tall/
+  straddle/悬空引用/thH 同扣/贪心兼容/回归计数）
+- test_pdfexporter 新增 testNativeHfFootnoteFastPath（CSS/接线时序/内缩
+  几何/字符袋自检/回退面锁/资源文件 QJSEngine 语法校验）；迁移断言改读
+  qrc 资源实内容；testFootnotePerPageFloatWiring 补浮动还原锁与编号色锁
+- test_docxexporter 补 FootnoteReference 样式色锁
+- E2E：脚注同页全量验收（def 采样点 ↔ 引用段落逐页比对 210/210）、
+  强制 paged A/B 计时、超长脚注回退演练（fnTall 正确触发）、像素级视觉
+  抽查（分隔线/字号/页码无重叠/编号色）
+
 ## [0.21.0] — 2026-10-08
 
 插入菜单公式入口拆分与导出快捷键补齐批次：菜单层拆分「行内公式/块级公式」，

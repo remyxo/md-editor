@@ -1803,9 +1803,11 @@ static QString makeStylesXml()
         "  <w:style w:type=\"character\" w:styleId=\"DefaultParagraphFont\" w:default=\"1\"><w:name w:val=\"Default Paragraph Font\"/></w:style>\n"
         "  <w:style w:type=\"character\" w:styleId=\"Hyperlink\"><w:name w:val=\"Hyperlink\"/><w:basedOn w:val=\"DefaultParagraphFont\"/><w:rPr><w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/></w:rPr></w:style>\n"
         // 脚注真导出：Word 内置样式名（footnote text / footnote reference），
-        // 页脚区 9pt + 编号上标；引用处另带显式 vertAlign 兜底（样式缺失时不丢上标）
+        // 页脚区 9pt + 编号上标；引用处另带显式 vertAlign 兜底（样式缺失时不丢上标）。
+        // 编号染蓝 #1967D2（2026-10-13 四面统一）：正文引用与脚注区 footnoteRef
+        // 共用本样式，一处生效；OOXML rPr 元素序 color 先于 vertAlign
         "  <w:style w:type=\"paragraph\" w:styleId=\"FootnoteText\"><w:name w:val=\"footnote text\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:rPr><w:sz w:val=\"18\"/></w:rPr></w:style>\n"
-        "  <w:style w:type=\"character\" w:styleId=\"FootnoteReference\"><w:name w:val=\"footnote reference\"/><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr></w:style>\n"
+        "  <w:style w:type=\"character\" w:styleId=\"FootnoteReference\"><w:name w:val=\"footnote reference\"/><w:rPr><w:color w:val=\"1967D2\"/><w:vertAlign w:val=\"superscript\"/></w:rPr></w:style>\n"
         "</w:styles>\n");
 }
 

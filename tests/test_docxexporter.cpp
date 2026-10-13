@@ -336,7 +336,7 @@ private slots:
             "</div></div>";
         auto parts = exportParts(html, {"word/document.xml", "word/footnotes.xml",
                                         "word/_rels/document.xml.rels",
-                                        "[Content_Types].xml"});
+                                        "[Content_Types].xml", "word/styles.xml"});
         const QString &xml = parts["word/document.xml"];
         // 引用侧：原生脚注引用（0/1 为内置分隔符，正文脚注从 2 起）
         QVERIFY(xml.contains("<w:footnoteReference w:id=\"2\"/>"));
@@ -359,6 +359,12 @@ private slots:
         // 包声明：Content-Types Override + document.xml.rels 关系
         QVERIFY(parts["[Content_Types].xml"].contains("/word/footnotes.xml"));
         QVERIFY(parts["word/_rels/document.xml.rels"].contains("footnotes.xml"));
+        // 编号染蓝（2026-10-13 四面统一）：FootnoteReference 样式带 #1967D2
+        //（正文引用与脚注区 footnoteRef 共用本样式；rPr 元素序 color→vertAlign）
+        QVERIFY(parts["word/styles.xml"].contains(
+            "<w:style w:type=\"character\" w:styleId=\"FootnoteReference\">"
+            "<w:name w:val=\"footnote reference\"/><w:rPr><w:color w:val=\"1967D2\"/>"
+            "<w:vertAlign w:val=\"superscript\"/></w:rPr></w:style>"));
     }
 
     void testFootnoteMultipleAndRepeatedRefs() {
