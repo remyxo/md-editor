@@ -2731,8 +2731,14 @@ window.editorApi = {
         var target = Math.min(pos + 1, this.editor.state.doc.content.size);
         // 先移动光标到该标题内部（标题节点位置 pos，内容从 pos+1 起）：光标变化
         // 触发 onSelectionUpdate → cursorChanged → C++ 大纲高亮随之跟随。
-        this.editor.commands.setTextSelection(target);
-        var dom = this.editor.view.domAtPos(target);
+        // Selection.near 取就近合法文本位（发版前审查小修）：footnoteReference
+        // 原子节点的后一位常落在段末块边界，TextSelection 直接取该点会抛
+        // "endpoint not pointing into inline content" 控制台噪音；本就合法的
+        // 目标（标题内部）near 取值不变
+        var state = this.editor.state;
+        var near = state.selection.constructor.near(state.doc.resolve(target));
+        this.editor.view.dispatch(state.tr.setSelection(near));
+        var dom = this.editor.view.domAtPos(near.from);
         if (dom && dom.node) {
             var el = dom.node.nodeType === 3 ? dom.node.parentElement : dom.node;
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3792,6 +3798,16 @@ window.editorApi = {
         this._footnoteEditor.close();
     },
 
+    // 是否有模态面板打开（发版前审查小修）：面板清单与 closeModalDialogs
+    // 同源，判据 = overlay 非空（close→cleanupDom 恒置 null）。切标签页时
+    // C++ 侧用它复核 m_modalDialogOpen——单标志此前会被后台标签页的开关
+    // 改写、切页后卡在旧值（Esc 次序错乱）
+    hasOpenModalDialog: function() {
+        return !!(this._linkEditor.overlay || this._mermaidEditor.overlay
+            || this._mathEditor.overlay || this._emojiPicker.overlay
+            || this._codeLangPicker.overlay || this._footnoteEditor.overlay);
+    },
+
     // 数学公式编辑面板
     _mathEditor: {
         overlay: null,
@@ -3924,6 +3940,9 @@ window.editorApi = {
             input.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape') { self.close(); return; }
                 if (e.key === 'Enter') {
+                    // IME 组词中的 Enter 是「上屏候选词」不是确认（发版前审查
+                    // 小修：此前组词回车连带提交弹层，中文输入高频误触）
+                    if (e.isComposing || e.keyCode === 229) return;
                     if (isBlock && !e.ctrlKey && !e.metaKey) return; // 块级 Enter 换行
                     e.preventDefault();
                     self.confirm();
@@ -4476,7 +4495,12 @@ window.editorApi = {
             // 键盘处理
             var inputKeydown = function(e) {
                 if (e.key === 'Escape') { e.preventDefault(); self.close(); return; }
-                if (e.key === 'Enter') { e.preventDefault(); self.confirm(); }
+                if (e.key === 'Enter') {
+                    // IME 组词中的 Enter 是上屏候选词不是确认（同数学弹层注释）
+                    if (e.isComposing || e.keyCode === 229) return;
+                    e.preventDefault();
+                    self.confirm();
+                }
             };
             this.textInput.addEventListener('keydown', inputKeydown);
             this.urlInput.addEventListener('keydown', inputKeydown);
@@ -4640,7 +4664,12 @@ window.editorApi = {
             this.input.className = 'math-editor-input';
             this.input.spellcheck = false;
             this.input.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter') { e.preventDefault(); self.confirm(); }
+                if (e.key === 'Enter') {
+                    // IME 组词中的 Enter 是上屏候选词不是确认（同数学弹层注释）
+                    if (e.isComposing || e.keyCode === 229) return;
+                    e.preventDefault();
+                    self.confirm();
+                }
             });
             this.input.addEventListener('input', function() { self.clearError(); });
             this.popover.appendChild(this.input);

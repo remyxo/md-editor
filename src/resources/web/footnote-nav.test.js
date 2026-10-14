@@ -87,4 +87,37 @@ describe('脚注改名校验', () => {
     expect(api._footnoteValidateId('注A', '1').ok).toBe(true);
     expect(api._footnoteValidateId('1', '1').ok).toBe(true);       // 原名直过
   });
+
+  it('jumpToFootnoteDef/Ref：块边界目标不再产生非法 selection（Selection.near）', () => {
+    // jsdom 无 scrollIntoView/CSS.escape 实现——stub/polyfill（跳转链用到）
+    Element.prototype.scrollIntoView = Element.prototype.scrollIntoView || function () {};
+    if (!window.CSS) window.CSS = {};
+    if (!CSS.escape)
+      CSS.escape = (s) => String(s).replace(/[^a-zA-Z0-9_ -￿-]/g, (c) => '\\' + c);
+    const api = window.editorApi;
+    api.setContent(
+      '<p>首段文字<sup data-type="footnoteRef" data-id="f1">f1</sup></p>' +
+      '<div data-type="footnoteContainer">' +
+      '<div data-type="footnoteDef" data-id="f1"><div class="footnote-content"><p>脚注内容文字</p></div></div>' +
+      '</div>');
+    api.markClean();
+    // PM 对非法 selection 端点会在 console.error（"endpoint not pointing into
+    // inline content"）——Selection.near 修复后应为零噪音。捕获 console.error
+    const errs = [];
+    const orig = console.error;
+    console.error = (...a) => errs.push(String(a[0]));
+    try {
+      expect(api.jumpToFootnoteDef('f1')).toBe(true);   // 定义是块级容器（边界目标）
+      // 跳定义：光标落进 def 内容（> def 节点位）
+      const defPos = api.findFootnoteDefPos('f1');
+      expect(api.editor.state.selection.from).toBeGreaterThan(defPos);
+      expect(api.jumpToFootnoteRef('f1')).toBe(true);   // 引用是原子节点（后一位常是块界）
+      // 跳引用：光标移回引用附近（≤ 引用节点位 + 1）
+      const refPos = api.findFootnoteRefPos('f1');
+      expect(api.editor.state.selection.from).toBeLessThanOrEqual(refPos + 1);
+    } finally {
+      console.error = orig;
+    }
+    expect(errs.filter(e => e.indexOf('endpoint') >= 0)).toEqual([]);
+  });
 });

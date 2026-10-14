@@ -3756,7 +3756,10 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     //   ① 内容中用户手写的 <u> 等标签被转成 &lt;u&gt; 字面文本，语义丢失；
     //   ② fromHtml 侧按原文回传 sub 内容，已实体化的 & 每轮再转义翻倍
     //     （~a&lt;b~ → ~a&amp;lt;b~ → ~a&amp;amp;lt;b~ → …）无界累积，永不收敛。
-    // 注意：必须在脚注容器追加之后执行——脚注定义内容可能含 ZZSB 占位符。
+    // 次序约定：容器追加先于本还原步。实证（2026-10-14 mdconv 探针）：定义
+    // 内容经 buildFootnoteDefHtml 的**嵌套 toHtml 全管线**处理，其 ZZSB 在嵌套
+    // 层已自产自还——到达此处的定义 HTML 不含 ZZSB，本次序对定义内容已无
+    // 实际作用（旧架构描述曾称"定义可能含 ZZSB"），维持既有次序以免回归。
     // 下标内容含行内代码（~`code`~，extractSubscripts 已把代码反引号原样还原进
     // 内容）：code span 须包成 <sub><code>…</code></sub>，否则按字面文本存入
     // <sub>`code`</sub>——WYSIWYG 显示字面反引号，且 code 内容含 < 时转义成

@@ -571,10 +571,14 @@ void MainWindow::onEditorBridgeCreated(EditorBridge *bridge)
                     m_searchBar->setCount(total, current);
             });
 
-    // 跟踪模态编辑面板（Mermaid/数学公式）打开/关闭状态 → Esc 快捷键优先级
+    // 跟踪模态编辑面板（Mermaid/数学公式等）打开/关闭状态 → Esc 快捷键优先级。
+    // 当前标签页守卫（发版前审查小修）：后台标签页的面板开关不得改写本页的
+    // 标志（与上方 searchCount 连接同款守卫；切页复核见 onTabChanged）
     connect(bridge, &EditorBridge::modalDialogStateChanged, this,
-            [this](bool open, int /*tabId*/) {
-                m_modalDialogOpen = open;
+            [this, bridge](bool open, int /*tabId*/) {
+                EditorTab *cur = m_tabWidget->currentEditorTab();
+                if (cur && cur->bridge() == bridge)
+                    m_modalDialogOpen = open;
             });
 
     // 图片落盘请求（粘贴/拖拽）：落盘后回调 JS 把占位图 src 替换为相对路径
@@ -633,6 +637,18 @@ void MainWindow::onTabChanged(int tabId)
         tab->setInTable(false);
         // 同步新标签页的格式状态到工具栏
         tab->runJsCommand("if(window.editorApi && window.editorApi.syncFormatState) window.editorApi.syncFormatState();");
+        // 复核模态面板标志（发版前审查小修）：m_modalDialogOpen 是单标志，
+        // 此前切页不复核会卡在旧标签页的值——新页有面板开着时 Esc 次序
+        // 错乱。异步回传，回执仍指认本页才写入（快速连切的迟到回执丢弃）
+        EditorTab *tabAtSwitch = tab;
+        tab->webView()->page()->runJavaScript(
+            QStringLiteral(
+                "!!(window.editorApi && window.editorApi.hasOpenModalDialog "
+                "&& window.editorApi.hasOpenModalDialog())"),
+            [this, tabAtSwitch](const QVariant &v) {
+                if (m_tabWidget->currentEditorTab() == tabAtSwitch)
+                    m_modalDialogOpen = v.toBool();
+            });
     }
     // 切 tab：恢复搜索（查询词会话级、匹配与位置文档级——插件 state 逐 tab 独立，
     // 参数未变时保留当前匹配位置，参数变了才重新搜索）

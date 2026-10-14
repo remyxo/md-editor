@@ -71,4 +71,19 @@ describe('模态对话框脏状态恢复（版本守卫）', () => {
     expect(window.editorApi._mathEditing).toBe(false);
     expect(window.editorApi._dirty).toBe(false);    // 无变更 → 恢复干净
   });
+
+  it('hasOpenModalDialog：面板清单判据 = overlay 非空（切标签复核用）', () => {
+    freshEditor();
+    // 全关：false
+    expect(window.editorApi.hasOpenModalDialog()).toBe(false);
+    // 任一面板打开（判据=overlay 非空，模拟 _linkEditor.open 后的状态）
+    window.editorApi._linkEditor.overlay = {};
+    expect(window.editorApi.hasOpenModalDialog()).toBe(true);
+    // 换一个面板也应命中（清单覆盖六个面板）
+    window.editorApi._linkEditor.overlay = null;
+    window.editorApi._footnoteEditor.overlay = {};
+    expect(window.editorApi.hasOpenModalDialog()).toBe(true);
+    window.editorApi._footnoteEditor.overlay = null;
+    expect(window.editorApi.hasOpenModalDialog()).toBe(false);
+  });
 });
