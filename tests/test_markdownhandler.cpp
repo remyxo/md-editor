@@ -1442,6 +1442,45 @@ private slots:
         QVERIFY2(back.contains("- [ ] 事项"), qPrintable(back));
     }
 
+    void testTaskListFootnoteRefToHtml() {
+        // 任务列表项内脚注引用 [^id]（含嵌套项）：任务列表自绘路径曾缺
+        // extractFootnoteRefs，字面 ^ 漏进后处理被跨条目误配对成上标
+        // （[^注1]^ / [注2]，sup 内容带 []），此处锁三个引用均正确转 sup
+        QString md = "- [ ] 任务列表1[^注1]\n"
+                     "- [x] 任务列表2[^注2]\n"
+                     "  - [ ] 嵌套任务列表2-1[^注3]\n";
+        QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.count("data-type=\"footnoteRef\"") == 3,
+                 qPrintable("三个任务项的引用均应转为 sup，实际: " + html));
+        QVERIFY2(!html.contains("ZZFR"), qPrintable("残留 ZZFR 占位符: " + html));
+    }
+
+    void testTaskListFootnoteRefRoundTrip() {
+        // 用户实测缺陷场景：任务列表项脚注引用往返失真（多 ^ / 丢 ^ / 泄漏
+        // HTML 片段）。toHtml 侧补 extractFootnoteRefs 后应逐行保真
+        QString md = "- [ ] 任务列表1[^注1]\n"
+                     "- [x] 任务列表2[^注2]\n"
+                     "  - [ ] 嵌套任务列表2-1[^注3]\n"
+                     "\n"
+                     "[^注1]: 脚注一\n"
+                     "[^注2]: 脚注二\n"
+                     "[^注3]: 脚注三\n";
+        QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(back.contains("- [ ] 任务列表1[^注1]"),
+                 qPrintable("任务项引用往返失真，实际: " + back));
+        QVERIFY2(back.contains("- [x] 任务列表2[^注2]"),
+                 qPrintable("任务项引用往返失真，实际: " + back));
+        QVERIFY2(back.contains("  - [ ] 嵌套任务列表2-1[^注3]"),
+                 qPrintable("嵌套任务项引用往返失真，实际: " + back));
+        // 曾经的失真形态不得再出现：跨条目误配对上标产生的 ]^ 尾巴与脱字 [注2]
+        QVERIFY2(!back.contains("]^"), qPrintable("引用后多余 ^ 残迹: " + back));
+        QVERIFY2(!back.contains("[注2]"), qPrintable("脱字 ^ 残迹: " + back));
+        // 不再泄漏 Qt HTML 片段（旧缺陷伴随形态）
+        QVERIFY2(!back.contains("taskItem"), qPrintable("泄漏 HTML 片段: " + back));
+        QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back));
+        QCOMPARE(back2, back);   // 二次往返稳定
+    }
+
     void testFootnoteDefSpanContentBackwardCompat() {
         // 旧内联形态（span.footnote-content，编辑器同会话旧 HTML/单测构造）仍可解析
         QString html = "<div data-type=\"footnoteContainer\">"

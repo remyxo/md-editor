@@ -1332,6 +1332,9 @@ static bool parseMdListLine(const QString &line, MdListItem &out)
 static QString buildMdListContainer(const QList<MdListItem> &items, int &idx,
                                     int depth, QStringList &subContents,
                                     QStringList &subPhs,
+                                    QStringList &footnoteRefs,
+                                    QStringList &footnoteRefPhs,
+                                    bool extractFootnotes,
                                     QSet<QString> &collisions)
 {
     const MdListItem &first = items[idx];
@@ -1353,14 +1356,20 @@ static QString buildMdListContainer(const QList<MdListItem> &items, int &idx,
            && (isTask || items[idx].listType == listType)) {
         const MdListItem &it = items[idx++];
         // 条目行内内容借嵌套 QTextDocument 转换（保留粗体/斜体/链接等）；
-        // 下标 ~x~ 先占位（Qt 会误判为删除线），由 toHtml 后处理统一还原
+        // 下标 ~x~ 先占位（Qt 会误判为删除线），脚注引用 [^id] 同样先占位
+        // （与主管线行级提取同一不变式：脚注先于上标 ^x^ 后处理——字面 ^
+        // 漏进后处理会被跨条目误配对成上标，任务列表脚注引用曾因此往返失真
+        // 成 [^注1]^ / [注2]），均由 toHtml 后处理统一还原
         QString inner;
         if (it.text.isEmpty()) {
             inner = QStringLiteral("<p></p>");
         } else {
             QTextDocument d;
-            d.setMarkdown(extractSubscripts(it.text, subContents, subPhs,
-                                            collisions));
+            QString itemMd = extractSubscripts(it.text, subContents, subPhs,
+                                               collisions);
+            itemMd = extractFootnoteRefs(itemMd, footnoteRefs, footnoteRefPhs,
+                                         collisions, extractFootnotes);
+            d.setMarkdown(itemMd);
             QString h = d.toHtml();
             // static：列表每项都构造一次（10k 项 = 10k 次编译）
             // 此处 body 提取不走 toBodyHtml（语义不同源，保留各自实现，W4-3 评审
@@ -1391,7 +1400,8 @@ static QString buildMdListContainer(const QList<MdListItem> &items, int &idx,
             while (idx < items.size() && items[idx].depth > depth) {
                 const int childDepth = items[idx].depth;
                 html += buildMdListContainer(items, idx, childDepth, subContents,
-                                             subPhs, collisions);
+                                             subPhs, footnoteRefs, footnoteRefPhs,
+                                             extractFootnotes, collisions);
             }
         }
         if (isTask)
@@ -1410,6 +1420,9 @@ static QString buildMdListContainer(const QList<MdListItem> &items, int &idx,
 // 格式 TipTap 不认，且任务项内嵌通用列表 Qt setMarkdown 无法产出。
 static QString buildTaskListHtml(const QStringList &taskLines,
                                  QStringList &subContents, QStringList &subPhs,
+                                 QStringList &footnoteRefs,
+                                 QStringList &footnoteRefPhs,
+                                 bool extractFootnotes,
                                  QSet<QString> &collisions)
 {
     QList<MdListItem> items;
@@ -1426,7 +1439,8 @@ static QString buildTaskListHtml(const QStringList &taskLines,
     QString html;
     while (idx < items.size())   // 顶层可能含多个独立容器（任务后跟通用列表等）
         html += buildMdListContainer(items, idx, items[idx].depth, subContents,
-                                     subPhs, collisions);
+                                     subPhs, footnoteRefs, footnoteRefPhs,
+                                     extractFootnotes, collisions);
     return html;
 }
 
@@ -2663,7 +2677,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             if (!processed.isEmpty() && !processed.endsWith("\n\n"))
                 processed += '\n';
             taskLists << buildTaskListHtml(taskLines, subContents, subPhs,
-                                           collisions);
+                                           footnoteRefs, footnoteRefPhs,
+                                           extractFootnotes, collisions);
             taskListPhs << collisionFreePlaceholder(collisions, 
                 "TL", taskLists.size() - 1);
             processed += taskListPhs.last() + "\n";
@@ -2687,7 +2702,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                 if (!processed.isEmpty() && !processed.endsWith("\n\n"))
                     processed += '\n';
                 taskLists << buildTaskListHtml(listLines, subContents, subPhs,
-                                               collisions);
+                                               footnoteRefs, footnoteRefPhs,
+                                               extractFootnotes, collisions);
                 taskListPhs << collisionFreePlaceholder(collisions, 
                     "TL", taskLists.size() - 1);
                 processed += taskListPhs.last() + "\n";
