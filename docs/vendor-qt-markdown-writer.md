@@ -18,7 +18,7 @@ vendor 该 writer 后可从源头去除折行（后续独立提交），并使�
 | vendored 位置 | `src/core/qt/QtMarkdownWriter.{h,cpp}` |
 | 当前状态 | **已接入**：`MarkdownHandler::fromHtml` 两处序列化点均走 vendored writer 且 `setWrapEnabled(false)`，80 列折行已从源头移除 |
 
-## 相对原版的改动（共 6 项）
+## 相对原版的改动（共 7 项）
 
 1. 类名 `QTextMarkdownWriter` → `QtMarkdownWriter`（避免与 Qt 内部符号冲突）
 2. 删除 4 个私有头依赖（前三个全文零使用；`qtextmarkdownimporter_p.h` 仅用其 `FeatureFrontMatter` 枚举值，以 `.cpp` 内常量 `kFrontMatterFeature = 0x100000` 替换，值已与上游核对）
@@ -26,6 +26,7 @@ vendor 该 writer 后可从源头去除折行（后续独立提交），并使�
 4. 删除 `QT_BEGIN_NAMESPACE` / `QT_END_NAMESPACE` / `Q_GUI_EXPORT` 等 Qt 构建体系宏；私有头 include 改为等价公共头（`<QtGui/QTextList>` 等）
 5. `.cpp` 顶部定义 `QT_USE_QSTRINGBUILDER`——上游文件在 Qt 自身构建体系下启用该宏编译，其 `QChar + QChar` 表达式依赖它（QStringBuilder 语义与普通 `+` 一致，无行为差异）
 6. **`setWrapEnabled(bool)`**：`writeFrame` 传给 `writeBlock` 的 wrap 参数追加 `m_wrapEnabled` 与运算（默认 `true`，与上游完全等价——等价性测试即回归防线；`false` 时全部块单行输出）
+7. **删除自动链接 `<url>` 输出分支（2026-10-14）**：上游在「链接文本==地址且有 scheme」时输出 `<url>` 尖括号自动链接，vendored 一律输出显式 `[text](href)`。原因：本项目 toHtml 管线按字面 HTML 保护 `<…>`（不转链接），`<url>` 形式再载入即丢链接性（gfm 语料 hr-links 族两趟发散的根源），且编辑器 TipTap link mark 只存 href+文本、经 HTML 后两种写法不可区分——显式形式是项目链接规范，用户所写 `[url](url)` 往返不得退化。与上游的**有意分歧**由 `test_qtmarkdownwriter` 的 `testIntentionalDivergenceAutolink` 固化（其余语料等价性不受影响：`testEquivalenceInline` 探针已将自动链接语料移出等价面，分歧范围单独锁定）
 
 除上述外，功能主体与上游**逐字节一致**（验证方法见下）。
 
@@ -41,7 +42,7 @@ vendor 该 writer 后可从源头去除折行（后续独立提交），并使�
 
 ## 上游同步维护
 
-与新版 Qt 对照时，对上游文件施加同样 6 项机械改动后 diff（脚本思路：`sed` 替换类名/include/类别/常量 → `diff -u`），任何非机械差异即为上游行为变更点，逐项评估是否吸收。等价性测试以 `setWrapEnabled` 默认值 `true` 运行，即上游行为回归防线。
+与新版 Qt 对照时，对上游文件施加同样 6 项机械改动后 diff（脚本思路：`sed` 替换类名/include/类别/常量 → `diff -u`），任何非机械差异即为上游行为变更点，逐项评估是否吸收（改动 7 为有意功能分歧，diff 中表现为链接序列化一处计划内差异，不吸收）。等价性测试以 `setWrapEnabled` 默认值 `true` 运行，即上游行为回归防线（改动 7 的分歧范围由 `testIntentionalDivergenceAutolink` 单独锁定）。
 
 ## LGPL 合规
 

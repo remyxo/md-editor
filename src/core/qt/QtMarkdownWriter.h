@@ -24,6 +24,12 @@
 //   6. 【功能改动】新增 setWrapEnabled(bool)：false 时关闭 80 列折行，
 //      每块输出单行（vendor 的根本目的）。默认 true，与上游行为完全等价
 //      （等价性由 tests/test_qtmarkdownwriter.cpp 回归验证）
+//   7. 【功能改动】删除「链接文本==地址且有 scheme → 输出 <url> 自动链接」
+//      分支，一律输出显式 [text](href)。原因：本项目 toHtml 管线按字面
+//      HTML 保护 <…>（不转链接），<url> 形式再载入即丢链接性，且编辑器
+//      TipTap link mark 只存 href+文本、经 HTML 后两种写法不可区分——
+//      显式形式是项目链接规范，用户所写 [url](url) 往返不得退化（分歧由
+//      test_qtmarkdownwriter 的 testIntentionalDivergenceAutolink 固化）
 //
 // 【许可证合规】本文件为 Qt Company 的 LGPL 作品副本，修改处以上方注释
 // 标注。LGPL-3.0 第 4 条允许修改与再分发，须保留本版权与许可声明并标注

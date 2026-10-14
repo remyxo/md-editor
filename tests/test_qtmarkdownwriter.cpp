@@ -89,9 +89,42 @@ private slots:
     void testEquivalenceInline() {
         checkEquiv("**bold** *it* ~~s~~ _u_ `code` **b *i* b**");
         checkEquiv("``a`b`` and `code`");
-        checkEquiv("[t](url) [t2](url \"title with \\\"q\\\"\") <https://auto.link>");
+        // 注：<url> 自动链接语料已移出等价探针——其锚点天然文本==地址，
+        // 序列化落在 vendor 改动 7 的有意分歧分支（见下方
+        // testIntentionalDivergenceAutolink，两侧解析等价、仅序列化形式分歧）
+        checkEquiv("[t](url) [t2](url \"title with \\\"q\\\"\") [t3](https://auto.link)");
         checkEquiv("![alt](img.png) ![alt2](img.png \"img title\")");
         checkEquiv("text \\* not em, <b>html</b>, a<b, 5<6, & amp");
+    }
+
+    // vendor 改动 7 的有意分歧固化：链接文本==地址的锚点，上游产出 <url>
+    // 尖括号自动链接，vendored 一律写显式 [url](url)（Qt setMarkdown 不识别
+    // <url> 语法，再载入即丢链接性；项目链接规范为显式形式，见
+    // docs/vendor-qt-markdown-writer.md 改动清单第 7 条）。Qt 升级同步时若
+    // 上侧行为变化，本用例失败即为重估信号
+    void testIntentionalDivergenceAutolink() {
+        {
+            // 裸 URL：setMarkdown 自动转链接 → 文本==地址锚点
+            QTextDocument doc;
+            doc.setMarkdown("https://example.com/plain");
+            QCOMPARE(vendoredSerialize(doc),
+                     QStringLiteral("[https://example.com/plain](https://example.com/plain)\n\n"));
+            QCOMPARE(doc.toMarkdown(), QStringLiteral("<https://example.com/plain>\n\n"));
+        }
+        {
+            // 显式 [url](url)：同样命中改动 7 分支
+            QTextDocument doc;
+            doc.setMarkdown("[https://a.b/c](https://a.b/c)");
+            QCOMPARE(vendoredSerialize(doc),
+                     QStringLiteral("[https://a.b/c](https://a.b/c)\n\n"));
+            QCOMPARE(doc.toMarkdown(), QStringLiteral("<https://a.b/c>\n\n"));
+        }
+        {
+            // 文本≠地址 / 带 title：不在分支内，两侧保持等价
+            QTextDocument doc;
+            doc.setMarkdown("[t](https://example.com) [t2](https://example.com \"提示\")");
+            QCOMPARE(vendoredSerialize(doc), doc.toMarkdown());
+        }
     }
 
     // front matter：MarkdownDialectGitHub 特性位含 0x100000（kFrontMatterFeature

@@ -1481,6 +1481,33 @@ private slots:
         QCOMPARE(back2, back);   // 二次往返稳定
     }
 
+    void testLinkExplicitUrlRoundTrip() {
+        // 用户实测缺陷：显式链接 [url](url)（文本==地址）往返曾退化为
+        // <url> 尖括号自动链接——Qt 序列化器的 autolink 分支（vendored
+        // writer 改动 7 已移除；<url> 经本项目 toHtml 按字面 HTML 保护、
+        // 不再是链接）
+        QString md = "请访问[https://api.deepseek.com](https://api.deepseek.com)获取 API KEY。\n";
+        QString back = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        // 内容逐字节保真（末尾换行：fromHtml 全局既有行为为缺 EOF 换行）
+        QCOMPARE(back, md.chopped(1));
+        QString back2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back));
+        QCOMPARE(back2, back);   // 二次往返稳定
+        QVERIFY2(!back.contains("<https://"),
+                 qPrintable("不得退化为尖括号自动链接，实际: " + back));
+    }
+
+    void testLinkBareUrlNormalizeToExplicit() {
+        // 裸 URL（无任何标记）一趟归一为显式 [url](url)（gfm 语料 hr-links
+        // 族原两趟发散：一趟 <url>、二趟转义字面丢链接性——归一后可再解析、
+        // 两趟收敛，链接形态守卫同测）
+        QString md = "自动转换文本 https://example.com/plain\n";
+        QString r1 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md));
+        QVERIFY2(r1.contains("[https://example.com/plain](https://example.com/plain)"),
+                 qPrintable("裸 URL 应归一为显式链接形式，实际: " + r1));
+        QString r2 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(r1));
+        QCOMPARE(r2, r1);   // 二趟收敛（不再退化为转义字面）
+    }
+
     void testFootnoteDefSpanContentBackwardCompat() {
         // 旧内联形态（span.footnote-content，编辑器同会话旧 HTML/单测构造）仍可解析
         QString html = "<div data-type=\"footnoteContainer\">"

@@ -602,17 +602,17 @@ int QtMarkdownWriter::writeBlock(const QTextBlock &block, bool wrap, bool ignore
         } else if (fmt.hasProperty(QTextFormat::AnchorHref)) {
             const auto href = fmt.property(QTextFormat::AnchorHref).toString();
             const bool hasToolTip = fmt.hasProperty(QTextFormat::TextToolTip);
-            QString s;
-            if (!hasToolTip && href == fragmentText && !QUrl(href, QUrl::StrictMode).scheme().isEmpty()) {
-                s = u'<' + href + u'>';
-            } else {
-                s = u'[' + fragmentText + "]("_L1 + href;
-                if (hasToolTip) {
-                    s += qtmw_Space;
-                    s += createLinkTitle(fmt.property(QTextFormat::TextToolTip).toString());
-                }
-                s += u')';
+            // vendor 改动 7（见 .h 改动清单）：不产出尖括号自动链接 <url>，
+            // 文本==地址时同样写显式 [text](href)——本项目 toHtml 管线按字面
+            // HTML 保护 <…>（不转链接），<url> 再载入即丢链接性；且编辑器
+            // TipTap link mark 只存 href+文本，无法区分两种写法；显式形式是
+            // 项目链接规范（用户所写 [url](url) 往返不得退化为 <url>）
+            QString s = u'[' + fragmentText + "]("_L1 + href;
+            if (hasToolTip) {
+                s += qtmw_Space;
+                s += createLinkTitle(fmt.property(QTextFormat::TextToolTip).toString());
             }
+            s += u')';
             if (wrap && col + s.size() > ColumnLimit) {
                 m_stream << qtmw_Newline << wrapIndentString;
                 col = m_wrappedLineIndent;
