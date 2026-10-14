@@ -515,6 +515,12 @@ ExportSuiteOut runExportSuite(EditorTab *tab, const QString &file,
         out.pagedFallback = *fallbackBox;
         recordOutcome("pdf", pdfPath, o, &out.timings, &out.files, &out.errors);
     }
+    // PDF 分支经 ExportCoordinator 回收导出器用的是 deleteLater（终态信号
+    // 钩子排队），runAwait 的 QEventLoop 在 done() 后立即退出——悬挂的延迟
+    // 删除若不冲刷，QApplication 析构时 default profile 先于隐藏渲染页销毁
+    // （stderr 刷「Release of profile requested but WebEnginePage still not
+    // deleted」）。显式冲刷延迟删除（发版前审查 B1）
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     return out;
 }
 

@@ -37,11 +37,6 @@ void FileTree::setRootPath(const QString &path)
     setRootIndex(m_model->setRootPath(path));
 }
 
-QString FileTree::rootPath() const
-{
-    return m_rootPath;
-}
-
 void FileTree::onDoubleClicked(const QModelIndex &index)
 {
     QFileInfo fileInfo = m_model->fileInfo(index);

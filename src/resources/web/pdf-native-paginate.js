@@ -328,14 +328,13 @@
         var sepH = fnReady ? (window.__hfFnSepH || 0) : 0;
         var refs = (fnReady && window.__hfRefs) ? window.__hfRefs : [];
 
-        var units = [], base = null;
+        var units = [];
         // 单元 = {node 断点节点, top, h, thH 重复表头高, canBreak, refs 引用 id 集}。
         // 探针实测 break-before:page 只在块边界被可靠执行：顶层块、表格行、
         // **li（任意层级）**；li 内部的非 li 元素会被忽略。故 li 内部的断点
         // 一律"就地拆 li"（见 breakAt）。refs 挂在**被测元素**（refsEl）上——
         // keepNode 分支的断点节点是容器，其引用集会捞到不属于本单元的引用
         var add = function (node, top, h, thH, canBreak, refsEl) {
-            if (base === null) base = top;
             var ids = [];
             if (refsEl && refsEl.querySelectorAll) {
                 var ss = refsEl.querySelectorAll('sup[data-type="footnoteRef"]');

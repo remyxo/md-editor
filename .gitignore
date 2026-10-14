@@ -27,3 +27,4 @@ qt6-base*
 $QAXHoneypot/
 /QAXDownload/
 /src/resources/web/node_modules
+.codegraph/

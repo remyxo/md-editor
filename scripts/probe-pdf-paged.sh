@@ -13,7 +13,7 @@
 # 用法: probe-pdf-paged.sh <HF_DUMP_HTML产物> <输出目录> [maxSec] [teardownSec]
 #   渲染 HTML 抓取（输入）：
 #     HF_DUMP_HTML=1 xvfb-run -a build-release/src/md-editor --selftest export \
-#       --file X.md --outdir DIR --out DIR/x.json   # 跑完取 /tmp/hf-full.html
+#       --file X.md --outdir DIR --out DIR/x.json   # 跑完取 /tmp/hf-full-<pid>.html
 #   注意：nativeHf 档（无脚注文档）抓到的是 nativeHf 版 HTML，本探针只吃
 #   paged 版（脚注文档、或 nativeHf 各防线回退后的第二次构建会覆盖同一文件）
 #

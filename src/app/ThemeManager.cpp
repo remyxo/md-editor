@@ -13,11 +13,6 @@ QString ThemeManager::currentTheme() const
     return m_currentTheme;
 }
 
-QStringList ThemeManager::availableThemes() const
-{
-    return {"light", "dark"};
-}
-
 void ThemeManager::switchTheme(const QString &name)
 {
     if (name == m_currentTheme)

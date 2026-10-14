@@ -136,6 +136,12 @@ private slots:
         QVERIFY(paged.contains("window.__unfloatFootnotes=function(){"));
         QVERIFY(paged.indexOf("window.__restoreBody();")
                 < paged.indexOf("window.__unfloatFootnotes();"));
+        // 指纹校验失败分支同样先还原 body 再还原浮动（发版前审查 B4：该
+        // 分支此前漏调 __unfloatFootnotes，劣化形态与 fallback(e) 同源）
+        const qsizetype vcFail = paged.indexOf("分页内容校验失败");
+        QVERIFY(vcFail >= 0);
+        QVERIFY(paged.indexOf("window.__restoreBody();", vcFail)
+                < paged.indexOf("window.__unfloatFootnotes();", vcFail));
         QVERIFY(paged.contains(".footnote-marker{float:left"));
         QVERIFY(paged.contains(".footnote-content>*:first-child{margin-top:0;}"));
         // 正文脚注引用编号染蓝（2026-10-13）：与编辑器/HTML 导出/脚注区
@@ -867,6 +873,11 @@ private slots:
         QVERIFY(!PdfExporter::htmlHasFootnoteRef("说明 data-type=\"footnoteRef\" 的语义"));
         QVERIFY(!PdfExporter::htmlHasFootnoteRef("<sup xdata-type=\"footnoteRef\">"));
         QVERIFY(!PdfExporter::htmlHasFootnoteRef("<p>无脚注文档</p>"));
+        // 单引号属性形态（手写 HTML 粘贴）一并认（发版前审查 B4：漏认时
+        // 盖章器不注入而分页器仍规划 → 两遍流程调不存在的 __stampHf 失败
+        // 回退，fail-safe 但白付一遍打印）
+        QVERIFY(PdfExporter::htmlHasFootnoteRef(
+            "<p>正文<sup data-type='footnoteRef' data-id='1'>1</sup></p>"));
     }
 
     void testBuildRenderHtmlPagedTimeoutWiring() {

@@ -642,12 +642,6 @@ void MainWindow::onTabChanged(int tabId)
     }
 }
 
-EditorBridge *MainWindow::currentBridge() const
-{
-    EditorTab *tab = m_tabWidget->currentEditorTab();
-    return tab ? tab->bridge() : nullptr;
-}
-
 void MainWindow::refreshEncodingLabel()
 {
     EditorTab *tab = m_tabWidget->currentEditorTab();

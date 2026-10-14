@@ -10,7 +10,6 @@ public:
     explicit ThemeManager(QObject *parent = nullptr);
 
     QString currentTheme() const;
-    QStringList availableThemes() const;
 
 public slots:
     void switchTheme(const QString &name);

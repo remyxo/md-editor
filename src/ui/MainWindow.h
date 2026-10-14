@@ -83,7 +83,6 @@ private:
     void onImageSaveRequested(EditorTab *tab, const QString &requestId,
                               const QString &base64, const QString &ext,
                               const QString &suggestedName);
-    EditorBridge *currentBridge() const;
 
     // 保存共享核：异步取内容（源码模式取 source-view）→ 写盘 → markClean/
     // markTabSaved → cb(true/false)。onSaveFile/onSaveFileAs 与关闭时的逐 tab

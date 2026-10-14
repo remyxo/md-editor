@@ -757,6 +757,9 @@ QString PdfExporter::buildRenderHtml(const QString &html, const QString &docDir,
         "if(ok!==true){"
         "console.warn('分页内容校验失败，回退原生分页: '+ok);"
         "try{window.__restoreBody();}catch(x){}"
+        // 还原脚注浮动（发版前审查 B4）：与 fallback(e) 同款——restoreBody
+        // 找回的是浮动后的 body，不还原则 def 行内紧跟引用打印
+        "try{window.__unfloatFootnotes();}catch(x){}"
         "window.__printState='fallback';return 'fallback';"
         "}"
         "window.__printState='paged';return 'paged';"
@@ -1171,9 +1174,12 @@ bool PdfExporter::htmlHasFootnoteRef(const QString &html)
     // 序列化后 < 已成 &lt;（文本节点转义是两条路径的恒定行为），不可能
     // 匹配 <标签 开头。旧全文子串 contains("data-type=\"footnoteRef\"")
     // 对字面含该串的开发文档假阳性，无脚注文档被无辜降级慢路径
-    // （W3-3 取证报告二节遗留观察）
+    // （W3-3 取证报告二节遗留观察）。单引号属性形态（手写 HTML 粘贴）一并
+    // 认（发版前审查 B4：漏认时盖章器不注入而分页器仍规划 → 两遍流程调
+    // 不存在的 __stampHf 失败回退，fail-safe 但白付一遍打印）
     static const QRegularExpression re(
-        QStringLiteral("<[a-zA-Z][a-zA-Z0-9-]*\\b[^>]*\\bdata-type=\"footnoteRef\""));
+        QStringLiteral(
+            "<[a-zA-Z][a-zA-Z0-9-]*\\b[^>]*\\bdata-type=[\"']footnoteRef[\"']"));
     return re.match(html).hasMatch();
 }
 
@@ -1259,7 +1265,9 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     m_lastPagedPages = 0;
     m_estPages = 0;
     m_timeoutFallbackUsed = false;
-    m_renderGen = 0;
+    // m_renderGen 不复位只递增（发版前审查 B3）：复位为 0 会击穿换载守卫
+    //——上一导出的在途轮询回调携带 gen==0 时与新导出的 gen==0 相等，旧页
+    // 回调不再被丢弃。当前每导出新建实例难触发，守卫语义按只递增归正
     // 分段计时（HF_DEBUG 门控，2026-10-13 快路径提速取证：装载/前置链/打印
     // 两遍/成品校验各自耗时，数据说话再砍）
     m_dbgClock.start();
@@ -1317,7 +1325,10 @@ void PdfExporter::exportToPdf(const QString &html, const QString &docDir, const 
     }
 
     if (qEnvironmentVariableIsSet("HF_DUMP_HTML")) {
-        QFile d("/tmp/hf-full.html");
+        // 带 pid（发版前审查 B2）：固定路径在多用户机器上可预测，可被符号
+        // 链接抢占/跨用户覆盖
+        QFile d(QStringLiteral("/tmp/hf-full-%1.html")
+                    .arg(QCoreApplication::applicationPid()));
         if (d.open(QIODevice::WriteOnly)) { d.write(fullHtml.toUtf8()); d.close(); }
     }
     // 记下本次渲染 HTML：若 paged 路径先跑了"测量遍"（只排第一页量页内容盒
@@ -1838,13 +1849,18 @@ void PdfExporter::stampAndPrintHf()
 {
     // 第一遍已数出页数：成品写盘阶段进度带上总页数
     emit writingPdf(m_hfTotal);
+    // 在途回调按代号丢弃（发版前审查 B3，与 pollPrintState 同款）：盖章
+    // 期间若发生换载（回退重载/超时换载），旧页的 stamp 结果不得触发打印
+    const int gen = m_renderGen;
     m_renderView->page()->runJavaScript(
         QStringLiteral("window.__stampHf(%1,%2,%3,%4)")
             .arg(m_hfTotal)
             .arg(qRound(m_hfH1Px))
             .arg(qRound(m_hfHcPx))
             .arg(qRound(m_hfTotalPx)),
-        [this](const QVariant &v) {
+        [this, gen](const QVariant &v) {
+            if (gen != m_renderGen)
+                return;
             if (!v.toBool()) {
                 fallbackFromNativeHf(QStringLiteral("页码/脚注注入失败"));
                 return;
@@ -1857,8 +1873,12 @@ void PdfExporter::stampAndPrintHf()
 void PdfExporter::fallbackFromNativeHf(const QString &reason)
 {
     qWarning() << "[PdfExport] 原生页眉页脚路径失败，回退 paged.js:" << reason;
-    if (qEnvironmentVariableIsSet("HF_NO_FALLBACK")) {
-        // 取证逃生门：保留现场成品供内容流分析，不进回退链
+    if (qEnvironmentVariableIsSet("HF_NO_FALLBACK")
+        && QFileInfo::exists(m_pendingOutputPath)) {
+        // 取证逃生门：保留现场成品供内容流分析，不进回退链。仅当成品**已
+        // 落盘**（pass2 校验失守场景）才生效——早期拦截分支（tall/fnTall/
+        // straddle/规划失败/第一遍失败）成品尚未打印，报成功即假成功出货
+        //（发版前审查 B4：此前对不存在的文件 emit exportFinished(true)）
         emit exportFinished(true, m_pendingOutputPath);
         return;
     }
