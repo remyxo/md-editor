@@ -2,6 +2,8 @@
 
 基于 **Qt6 + TipTap/ProseMirror** 的桌面端 Markdown 所见即所得（WYSIWYG）编辑器。
 
+![md-editor 界面（暗色主题：文件树 + 大纲导航 + WYSIWYG 编辑区）](docs/images/screenshot.png)
+
 ## 功能
 
 - **WYSIWYG 编辑** — 实时渲染，所见即所得，支持源码模式切换
