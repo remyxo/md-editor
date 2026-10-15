@@ -114,7 +114,7 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 
 - **开发环境**：Debian 13，Qt6 系统安装 (`apt install qt6-base-dev qt6-webengine-dev qt6-webchannel-dev qt6-tools-dev qt6-tools-dev-tools`)，本地为 Qt 6.8.x。`qt6-tools-dev` 提供 Qt6LinguistTools（`qt6_add_translations`），`qt6-tools-dev-tools` 提供 `lupdate`/`lrelease` 二进制
 - **运行方式**：`./scripts/run-editor.sh` 或直接 `build/src/md-editor`
-- **CI 构建策略（2026-09-18 起，500MB 制品配额）**：日常 CI 只构建 macOS DMG（`build-macos.yml`，手动 dispatch，制品保留 2 天）。DEB 本地构建测试（`./scripts/build-deb.sh`），EXE 本地 win11 VM 构建（`./scripts/build-windows-local.sh`）。`build-deb.yml` 转手动触发，**发版前手动跑一次**——`ubuntu-26.04`/Qt 6.10.2 兼容基准（本地 6.8.x 通过不等于出厂正确，差异见 `docs/qt-642-escaping-compat.md`）在 CI 自动构建取消后仅存此把关点；发版 Release 的 deb/exe 由本地构建后 `gh release upload` 手动挂载
+- **CI 构建策略（2026-09-18 起，500MB 制品配额）**：日常 CI 只构建 macOS DMG（`build-macos.yml`，手动 dispatch，制品保留 2 天）。DEB 本地构建测试（`./scripts/build-deb.sh`），EXE 本地 win11 VM 构建（`./scripts/build-windows-local.sh`）。`build-deb.yml` 转手动触发，**发版前手动跑一次**——`ubuntu-26.04`/Qt 6.10.2 兼容基准（本地 6.8.x 通过不等于出厂正确，差异见 `docs/qt-642-escaping-compat.md`）在 CI 自动构建取消后仅存此把关点；发版 Release 三资产的挂载方式：deb/exe 由本地构建后 `gh release upload` 上传；**DMG 在 tag ref 上 dispatch**（`gh workflow run build-macos.yml --ref <tag>`），workflow 的 Release 步骤按 `refs/tags/v*` 门控自动创建 Release 并直接挂载 DMG——不经本地下载中转（master 上 dispatch 只出制品不发 Release，仅用于真机验证）
 
 ## 构建命令
 
