@@ -3,6 +3,7 @@
 #include "app/SelfTestRunner.h"
 #include "app/SingleInstanceGuard.h"
 #include "ui/MainWindow.h"
+#include "core/PdfExporter.h"
 #include "core/LocalImageSchemeHandler.h"
 #include <QLocale>
 #include <QStringList>
@@ -75,8 +76,11 @@ int main(int argc, char *argv[])
     profile->setHttpAcceptLanguage("zh-CN,zh;q=0.9");
 
     // 无头自测试入口（--selftest）：见 app/SelfTestRunner.cpp；正常路径零影响
-    if (SelfTestRunner::isSelfTestInvocation())
-        return SelfTestRunner::run(app);
+    if (SelfTestRunner::isSelfTestInvocation()) {
+        const int r = SelfTestRunner::run(app);
+        PdfExporter::shutdownSharedRenderView();   // 须早于 app 析构（页面滞留告警）
+        return r;
+    }
 
     // Linux/Windows 单实例：文件管理器双击 .md 再拉进程时，把路径转发给
     // 既有实例（开标签/置前）后自退。macOS 由 Launch Services 天然单实例，
@@ -96,5 +100,7 @@ int main(int argc, char *argv[])
                          &SingleInstanceGuard::instanceFileOpenRequested,
                          &window, &MainWindow::openExternalFile);
 
-    return app.exec();
+    const int ret = app.exec();
+    PdfExporter::shutdownSharedRenderView();   // 须早于 app 析构（页面滞留告警）
+    return ret;
 }

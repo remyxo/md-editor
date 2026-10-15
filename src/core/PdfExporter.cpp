@@ -18,21 +18,77 @@
 #include <algorithm>
 #include <limits>
 #include <QPdfDocument>
+#include <QtConcurrent/QtConcurrentRun>
+#include <QPointer>
+
+// 渲染视图共享池（进程级，GUI 线程访问——导出器仅在 GUI 线程构造/析构）。
+// 串行导出复用同一隐藏视图，省去每次导出的 Chromium 页面创建 + 首载
+// ~200ms；在途导出占用时后来者退化为私有视图（用后即毁），并发安全
+namespace {
+QPointer<QWebEngineView> g_sharedRenderView;
+bool g_renderViewBusy = false;
+} // namespace
+
+static void configureRenderView(QWebEngineView *view)
+{
+    view->setVisible(false);
+    view->settings()->setAttribute(
+        QWebEngineSettings::LocalContentCanAccessFileUrls, true);
+}
+
+QWebEngineView *PdfExporter::acquireRenderView(bool &owned)
+{
+    if (!g_renderViewBusy) {
+        if (g_sharedRenderView.isNull()) {
+            // 顶层无父隐藏 widget；进程收尾由 main 统一调
+            // shutdownSharedRenderView()（须早于 QApplication 析构——届时
+            // WebEngineProfile 释放，页面仍在会告警 "WebEnginePage still
+            // not deleted"。不能用 aboutToQuit：selftest 直 return 不经
+            // 事件循环退出，该信号不触发）
+            g_sharedRenderView = new QWebEngineView();
+            configureRenderView(g_sharedRenderView);
+        }
+        g_renderViewBusy = true;
+        owned = false;
+        return g_sharedRenderView;
+    }
+    owned = true;
+    auto *view = new QWebEngineView();
+    configureRenderView(view);
+    return view;
+}
+
+void PdfExporter::shutdownSharedRenderView()
+{
+    // 在途导出（理论上 aboutToQuit 阶段不可能有）下不动：析构链自行归还
+    if (g_renderViewBusy)
+        return;
+    delete g_sharedRenderView.data();
+    g_sharedRenderView = nullptr;
+}
+
+void PdfExporter::releaseRenderView(QWebEngineView *view, bool owned)
+{
+    if (owned) {
+        delete view;
+        return;
+    }
+    // 共享视图：本实例挂上去的信号随 receiver（this）析构自动断连，
+    // 上份文档随下次导出 load() 整体替换，无状态残留——仅复位占用标记
+    g_renderViewBusy = false;
+}
 
 PdfExporter::PdfExporter(QObject *parent)
     : QObject(parent)
-    , m_renderView(new QWebEngineView())
+    , m_renderView(acquireRenderView(m_ownsRenderView))
 {
-    m_renderView->setVisible(false);
-    m_renderView->settings()->setAttribute(
-        QWebEngineSettings::LocalContentCanAccessFileUrls, true);
     m_printPoll.setInterval(100);
     connect(&m_printPoll, &QTimer::timeout, this, &PdfExporter::pollPrintState);
 }
 
 PdfExporter::~PdfExporter()
 {
-    delete m_renderView;
+    releaseRenderView(m_renderView, m_ownsRenderView);
 }
 
 // 页眉/页脚与正文的净空（mm）：两条路径同源——页眉底贴正文顶线之上、页脚顶
@@ -1676,35 +1732,39 @@ void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
             if (f2.open(QIODevice::ReadOnly))
                 pdfBytes2 = f2.readAll();
         }
-        const QVector<PdfPageGeometry::PageBottom> geo2
-            = PdfPageGeometry::measure(pdfBytes2);
-        dbgMark("校验：内容流几何测量完成");
+        // 双线程并行：几何测量（measure 为纯字节解析，无共享可变状态）丢
+        // QtConcurrent 跑，主线程同时做逐页 QPdf 文本/多边形提取——两者
+        // 各占成品校验约一半耗时，并行后取 max 而非求和（66 页文档约省
+        // 0.4s）。geo 依赖项（页脚本尊排除的溢出判定、pageY 兜底）延到
+        // 下方合并阶段
+        QFuture<QVector<PdfPageGeometry::PageBottom>> geoFuture
+            = QtConcurrent::run(
+                [pdfBytes2]() { return PdfPageGeometry::measure(pdfBytes2); });
         QVector<int> hitPage(stamped + 1, -1);   // 页码 k → 落页（0 基）
         QVector<qreal> stripBottom(n2, -1.0);
         QVector<bool> pageOk(n2, false);
+        // 逐页提取产物：页码命中、多边形包围盒（合并阶段溢出判定复扫）、
+        // 页高与溢出窗口常量（不依赖 geo，主线程循环内即可算定）
+        struct PageScan {
+            QStringList hits;
+            QVector<QRectF> polyRects;
+            qreal pageHpt = 0, spillLoPt = 0, spillHiPt = 0;
+        };
+        QVector<PageScan> scans(n2);
         QString dbg;
-        bool spillFound = false;   // 正文墨迹落入纸底留白带（轻量分页失守）
         bool allOk = (n2 == stamped);
         // 页码断言族仅在页脚启用时参与校验：无页脚（可能有脚注）的文档没有
         // 页码可验，不门控会全页判失败 → 假回退。保留恒定项：页数一致 +
         // spill 溢出带（脚注块底=内容区底与（若有）页码行盒天然 3mm 净空，
         // 脚注墨迹不会落入带内——带窗只拦正文越线墨迹）
         const bool withFooter = m_spec.footerEnabled;
-        // 预收集各页标记 y（色锚定基线优先），水位 = 页间中位数——校正只
-        // 追平页间偏差，不追绝对目标（放置公式的系统性落点差 ~20pt 曾把
-        // 全套标记推出页界，24 页文档实测错位 22 页）
-        const auto pageY = [&](int p) -> qreal {
-            return (p < geo2.size() && geo2[p].footerBasePt >= 0)
-                ? geo2[p].footerBasePt
-                : (p < stripBottom.size() ? stripBottom[p] : -1.0);
-        };
         for (int p = 0; p < n2; ++p) {
             const auto sel = doc.getAllText(p);
             const auto polys = sel.bounds();
+            PageScan &s = scans[p];
             // 页码文本提取与命中（仅页脚启用——见 withFooter 注释）
-            QString t;
-            QStringList hits;
             if (withFooter) {
+                QString t;
                 // 幽灵文本防线（2026-09-21 像素取证教训）：越片段末绘制的页码
                 // 内容流矩阵在而像素无——QPdf 对其 bounds 报全零。匹配文本只取
                 // bounds 非退化的字符，不可见页码不得通过验证（矩阵基的色锚定
@@ -1719,14 +1779,14 @@ void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
                     const auto m = it.next();
                     const int k = m.captured(1).toInt();
                     const int tot = m.captured(2).toInt();
-                    hits << QStringLiteral("%1/%2").arg(k).arg(tot);
+                    s.hits << QStringLiteral("%1/%2").arg(k).arg(tot);
                     if (tot == stamped && k >= 1 && k <= stamped && hitPage[k] < 0)
                         hitPage[k] = p;
                 }
             }
-            const qreal pageHpt = doc.pagePointSize(p).height();
+            s.pageHpt = doc.pagePointSize(p).height();
             const qreal bandBottomPt
-                = pageHpt - m_spec.marginsMm.bottom() / 25.4 * 72.0 - 2.0;
+                = s.pageHpt - m_spec.marginsMm.bottom() / 25.4 * 72.0 - 2.0;
             // 内容溢出拦截（2026-09-21 版式重做新增）：可断单元按版心高切页，
             // 不可断内容（深层嵌套列表内部等）交给 Chromium 自然分页——它会
             // 一路流到自然上限（片段末 = 纸底 − Qt 微量边距），比版心底多出
@@ -1734,41 +1794,62 @@ void PdfExporter::onPdfPrintingFinished(const QString &filePath, bool success)
             // 行盒下探）」到「页脚行盒顶」之间那条带：正文墨迹落进带内即判
             // 失败——宁可回退 paged（慢但正确），也不出压住页脚的成品
             const qreal natBottomPt
-                = pageHpt - (nativeHfPrintMargins().top() + m_spec.marginsMm.top())
-                                / 25.4 * 72.0;
-            const qreal spillLoPt = natBottomPt + 2.5 / 25.4 * 72.0;
-            const qreal spillHiPt
-                = pageHpt - (m_spec.marginsMm.bottom() - kHfHugGapMm) / 25.4 * 72.0;
+                = s.pageHpt
+                  - (nativeHfPrintMargins().top() + m_spec.marginsMm.top())
+                        / 25.4 * 72.0;
+            s.spillLoPt = natBottomPt + 2.5 / 25.4 * 72.0;
+            s.spillHiPt
+                = s.pageHpt
+                  - (m_spec.marginsMm.bottom() - kHfHugGapMm) / 25.4 * 72.0;
+            s.polyRects.reserve(polys.size());
             for (const auto &poly : polys) {
                 const QRectF pr = poly.boundingRect();
                 const qreal b = pr.bottom();
+                s.polyRects.append(pr);
                 // 兜底窗口下界放宽到近页底：页脚已画进下边距带（内容区底
                 // 之下），色锚定漏检时的几何兜底须覆盖新落点
-                if (b > bandBottomPt - 45.0 && b < pageHpt - 8.0
+                if (b > bandBottomPt - 45.0 && b < s.pageHpt - 8.0
                     && b > stripBottom[p])
                     stripBottom[p] = b;
-                // 页脚自身排除：字体 em 盒比字形高，页脚文本的多边形上缘会
-                // 探进净空带造成误判（实测 281.8mm 处无墨迹却有字形盒）。
-                // 几何模块已按专属色锚定页脚基线 footerBasePt，±6pt 内的
-                // 多边形即页脚本尊，不计入溢出判据
-                const qreal fb = (p < geo2.size() && geo2[p].footerBasePt >= 0)
-                                     ? geo2[p].footerBasePt : -1000.0;
-                if (pr.width() > 0.1 && b > spillLoPt && pr.top() < spillHiPt
+            }
+            dbg += QStringLiteral(" p%1→[%2]").arg(p + 1).arg(s.hits.join(","));
+            // 判据 = 命中列表含本页页码：白名单剥离会把相邻内容数字与页码
+            // 粘连出假匹配（实测「第96页/共1810页」），首匹配判据误伤本页
+            const QString want = QStringLiteral("%1/%2").arg(p + 1).arg(stamped);
+            pageOk[p] = withFooter && s.hits.contains(want);
+        }
+        const QVector<PdfPageGeometry::PageBottom> geo2 = geoFuture.result();
+        dbgMark("校验：文本提取与几何测量（双线程并行）完成");
+        // 合并阶段（geo 依赖判定）：正文墨迹落入纸底留白带即轻量分页失守。
+        // 页脚自身排除：字体 em 盒比字形高，页脚文本的多边形上缘会探进
+        // 净空带造成误判（实测 281.8mm 处无墨迹却有字形盒）。几何模块已按
+        // 专属色锚定页脚基线 footerBasePt，±6pt 内的多边形即页脚本尊，
+        // 不计入溢出判据
+        bool spillFound = false;
+        for (int p = 0; p < n2; ++p) {
+            const PageScan &s = scans[p];
+            const qreal fb = (p < geo2.size() && geo2[p].footerBasePt >= 0)
+                                 ? geo2[p].footerBasePt : -1000.0;
+            for (const QRectF &pr : s.polyRects) {
+                const qreal b = pr.bottom();
+                if (pr.width() > 0.1 && b > s.spillLoPt && pr.top() < s.spillHiPt
                     && qAbs(b - fb) > 6.0) {
                     spillFound = true;
                     if (qEnvironmentVariableIsSet("HF_DEBUG"))
                         qWarning("[hf-spill] p%d poly=%.1f..%.1f x=%.1f..%.1f fb=%.1f 窗=%.1f..%.1f",
                                  p + 1, pr.top(), b, pr.left(), pr.right(), fb,
-                                 spillLoPt, spillHiPt);
+                                 s.spillLoPt, s.spillHiPt);
                 }
             }
-            dbg += QStringLiteral(" p%1→[%2]").arg(p + 1).arg(hits.join(","));
-            // 判据 = 命中列表含本页页码：白名单剥离会把相邻内容数字与页码
-            // 粘连出假匹配（实测「第96页/共1810页」），首匹配判据误伤本页
-            const QString want = QStringLiteral("%1/%2").arg(p + 1).arg(stamped);
-            pageOk[p] = withFooter && hits.contains(want);
         }
-        dbgMark("校验：逐页文本+溢出扫描完成");
+        // 预收集各页标记 y（色锚定基线优先），水位 = 页间中位数——校正只
+        // 追平页间偏差，不追绝对目标（放置公式的系统性落点差 ~20pt 曾把
+        // 全套标记推出页界，24 页文档实测错位 22 页）
+        const auto pageY = [&](int p) -> qreal {
+            return (p < geo2.size() && geo2[p].footerBasePt >= 0)
+                ? geo2[p].footerBasePt
+                : (p < stripBottom.size() ? stripBottom[p] : -1.0);
+        };
         // 粘连页消元兜底：提取流可能把内容数字交织进页码字形序列（值不可
         // 辨），该页按「有页脚墨迹（色锚定）+ 该页码未被别页认领」判真——
         // 页码按序生成，他页全对时本页只可能是自己

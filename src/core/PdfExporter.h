@@ -62,6 +62,11 @@ public:
     // ~32 页含脚注档）
     static int pagedPollLimit(int estimatedPages, bool progressSeen);
 
+    // 进程收口销毁共享渲染视图：main 在 app.exec() 返回后（及 selftest
+    // 直 return 前）调用——须早于 QApplication 析构，晚则 WebEngineProfile
+    // 释放时页面仍在（"WebEnginePage still not deleted" 告警）
+    static void shutdownSharedRenderView();
+
     // 脚注引用检测（nativeHf 门控判据，W3-3 顺手项）：标签形态匹配——真脚注
     // 引用是文档里的实际元素（TipTap 与 MarkdownHandler 都产
     // <sup data-type="footnoteRef" ...>）。旧实现为全文子串
@@ -94,6 +99,13 @@ private slots:
     void onPdfPrintingFinished(const QString &filePath, bool success);
 
 private:
+    // 渲染视图获取/归还：进程级共享池（隐藏 QWebEngineView 挂 qApp）——
+    // 串行导出复用同一视图，省去每次导出的页面创建 + 首载 ~200ms；共享
+    // 视图被在途导出占用时退化为私有视图（用后即毁，行为同旧路径）。
+    // owned 出参标记归属，归还时据此决定复位占用标记还是销毁
+    static QWebEngineView *acquireRenderView(bool &owned);
+    static void releaseRenderView(QWebEngineView *view, bool owned);
+
     void pollPrintState();
     // paged 版渲染 HTML 装载（paged 主路径与 nativeHf 回退共用：重连信号+复位）
     void startPagedExport(const QString &pagedFullHtml);
@@ -104,6 +116,7 @@ private:
     void fallbackFromPagedTimeout();
 
     QWebEngineView *m_renderView;
+    bool m_ownsRenderView = false;   // 共享池租用 false / 私有自建 true（析构据此归还）
     QString m_pendingOutputPath;
     // 本次导出的输入与规格（nativeHf 回退时重建 paged 版 HTML 用）
     PdfPageSpec m_spec;
