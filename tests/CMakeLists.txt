@@ -87,6 +87,13 @@ target_include_directories(test_sidebar PRIVATE ../src)
 target_link_libraries(test_sidebar PRIVATE Qt6::Test Qt6::Widgets)
 add_test(NAME test_sidebar COMMAND test_sidebar)
 
+# 大纲树层级构建回归（跳级文档同级对齐，见 test_outlinetree.cpp 文件头）
+add_executable(test_outlinetree test_outlinetree.cpp
+    ../src/ui/OutlineTree.cpp)
+target_include_directories(test_outlinetree PRIVATE ../src)
+target_link_libraries(test_outlinetree PRIVATE Qt6::Test Qt6::Widgets)
+add_test(NAME test_outlinetree COMMAND test_outlinetree)
+
 add_executable(test_collapsiblesection test_collapsiblesection.cpp
     ../src/ui/CollapsibleSection.cpp)
 target_include_directories(test_collapsiblesection PRIVATE ../src)
