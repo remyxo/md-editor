@@ -2484,6 +2484,74 @@ private slots:
                  qPrintable("h3 残留 font span，body=[" + bodyH3 + "]"));
     }
 
+    void testHeadingBaselineStrippedAllLevels()
+    {
+        // h4-h6 标题基线伪影根治（stripHeadingBaselineFormats）：
+        // md4c 把标题字号档位+粗体写进文本 fragment，toHtml 曾对 h4（medium）
+        // / h5（small）产出伪影 font span、被「纯字体 span→语义标签」转为
+        // <strong>——`#### T` 往返成 `#### **T**`；h6 字号=正文默认，伪影
+        // span 仅含 font-weight:700，与用户真加粗 HTML 层同形，只能在文档层
+        // 区分（用户加粗的 fragment 无字号档位）。全层级验证不残留、往返
+        // 无 ** 污染。
+        const struct {
+            const char *md;
+            const char *level;   // 预期的 hN 标签
+        } cases[] = {
+            { "# 标题一", "h1" },
+            { "## 标题二", "h2" },
+            { "### 标题三", "h3" },
+            { "#### 标题四", "h4" },
+            { "##### 标题五", "h5" },
+            { "###### 标题六", "h6" },
+        };
+        for (const auto &c : cases) {
+            const QString md = QString::fromUtf8(c.md);
+            QString html = MarkdownHandler::toHtml(md);
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            QVERIFY2(body.contains(QString::fromLatin1(c.level)),
+                     qPrintable("标题层级丢失，body=[" + body + "]"));
+            QVERIFY2(!body.contains("font-weight:700") && !body.contains("<strong>"),
+                     qPrintable("标题基线伪影未清除，body=[" + body + "]"));
+            // 完整往返不产生 ** 污染
+            QString md2 = MarkdownHandler::fromHtml(body);
+            QVERIFY2(md2 == md,
+                     qPrintable("标题往返被污染，期望=[" + md + "] 实际=[" + md2 + "]"));
+        }
+
+        // 标题内用户真加粗保留（基线清除不触碰无字号档位的 fragment）
+        {
+            QString html = MarkdownHandler::toHtml(
+                QStringLiteral("#### plain **bold** tail"));
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            QVERIFY2(body.contains("<strong>bold</strong>") && body.contains("plain"),
+                     qPrintable("标题内用户加粗丢失，body=[" + body + "]"));
+            QString md2 = MarkdownHandler::fromHtml(body);
+            QVERIFY2(md2 == QStringLiteral("#### plain **bold** tail"),
+                     qPrintable("标题加粗往返失真，md=[" + md2 + "]"));
+        }
+
+        // h6 用户全粗标题：真加粗保留为 <strong>（回归保护——不能因 h6
+        // 伪影治理而误伤）
+        {
+            QString html = MarkdownHandler::toHtml(QStringLiteral("###### **全粗**"));
+            int bsi = html.indexOf("<body");
+            int bei = html.indexOf("</body>");
+            bsi = html.indexOf('>', bsi) + 1;
+            QString body = html.mid(bsi, bei - bsi).trimmed();
+            QVERIFY2(body.contains("<strong>全粗</strong>"),
+                     qPrintable("h6 用户加粗被误剥，body=[" + body + "]"));
+            QString md2 = MarkdownHandler::fromHtml(body);
+            QVERIFY2(md2 == QStringLiteral("###### **全粗**"),
+                     qPrintable("h6 加粗往返丢失，md=[" + md2 + "]"));
+        }
+    }
+
     void testDivHeadingSpanDefensivePrefixed()
     {
         // 模拟用户反复操作后的降解输出：

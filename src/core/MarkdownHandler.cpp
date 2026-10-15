@@ -1,5 +1,8 @@
 #include "MarkdownHandler.h"
 #include <QTextDocument>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextFragment>
 #include <QRegularExpression>
 #include <QSet>
 #include <QVector>
@@ -46,6 +49,51 @@ static QString monoSpanFamilyPattern()
         return escaped.join(QLatin1Char('|'));
     }();
     return cached;
+}
+
+// 清除 md4c 导入标题时注入文本 fragment 的基线字号/粗体格式。
+//
+// QTextMarkdownImporter 对 ATX/Setext 标题的字号档位（FontSizeAdjustment：
+// h1=+3 … h4=0、h5=-1、h6=-2）与粗体（FontWeight:700）不是记在块级格式上，
+// 而是直接写进标题文本的 fragment charFormat。toHtml 导出时这些属性相对
+// body 默认格式 diff 出伪影 span：
+//   - h1-h3（font-size:xx-large/x-large/large + font-weight:700）：被下方
+//     「兜底剥离标题内 font span」的字号关键字正则移除，从未泄漏；
+//   - h4（medium）/h5（small）：字号关键字不在正则内，伪影 span 泄漏，
+//     被「纯字体 span → 语义标签」步骤转为 <strong>，TipTap 解析成 Bold
+//     mark——`#### T` 往返成 `#### **T**`，且后续往返持续污染；
+//   - h6（字号=正文默认）：toHtml 不输出 font-size，伪影 span 仅含
+//     font-weight:700，与用户真加粗（**x** 的 fragment 同样只有 FontWeight）
+//     在 HTML 层完全同形，事后正则无法区分。
+//
+// 文档层则可精确区分：带 FontSizeAdjustment 的 fragment 必为标题基线
+// （Markdown 语法没有字号语法；用户字面 <font>/<span style> 已被 ZZHI 等
+// 占位符保护，不会进入 QTextDocument），用户加粗的 fragment 只带 FontWeight
+// 无字号档位。在此层清除后 toHtml 不再产出标题伪影 span，h1-h6 一并根治，
+// 且不依赖 toHtml 的 CSS 关键字输出形态（Qt 6.8.2 → 6.10.2 行为一致，
+// FontSizeAdjustment 是文档层稳定属性）。标题在浏览器/TipTap 端由 hN 标签
+// 默认样式渲染层级字号与粗体，视觉无损；heading level 存于 blockFormat
+// （QTextFormat::HeadingLevel），不受影响。
+static void stripHeadingBaselineFormats(QTextDocument &doc)
+{
+    for (QTextBlock b = doc.firstBlock(); b.isValid(); b = b.next()) {
+        for (auto it = b.begin(); !it.atEnd(); ++it) {
+            const QTextFragment f = it.fragment();
+            QTextCharFormat cf = f.charFormat();
+            if (!cf.hasProperty(QTextFormat::FontSizeAdjustment))
+                continue;
+            cf.clearProperty(QTextFormat::FontSizeAdjustment);
+            // 粗体档位（>=600，兼容 700/800 等）随基线一并清除；仅当与字号
+            // 档位共存于同一 fragment 时才清——用户加粗的 fragment 无字号
+            // 档位，不会被此处触碰
+            if (cf.intProperty(QTextFormat::FontWeight) >= 600)
+                cf.clearProperty(QTextFormat::FontWeight);
+            QTextCursor cur(&doc);
+            cur.setPosition(f.position());
+            cur.setPosition(f.position() + f.length(), QTextCursor::KeepAnchor);
+            cur.setCharFormat(cf);
+        }
+    }
 }
 
 // 反引号感知的表格单元格拆分：行内代码内的 | 不是分隔符（GFM code span 由
@@ -3146,6 +3194,9 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
 
     QTextDocument doc;
     doc.setMarkdown(processed);
+    // 标题基线格式清除（见 stripHeadingBaselineFormats）：必须在 toHtml 之前，
+    // 伪影 span 从导出源头不产生，后续「重组/兜底剥离」正则不再承担此责
+    stripHeadingBaselineFormats(doc);
     QString html = doc.toHtml();
 
     // 后处理 -1: 清空空 alt 图片的占位 alt（见 protectEmptyAltImages）。
@@ -3512,14 +3563,17 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     // （与块级图片解包同类问题，见下方 <p><img/></p> 解包注释）。
     batchRestorePlaceholders(html, divPhs, divBackups);
 
-    // 修复 <hN><span font-size:xx-large><div align="X">text</div></span></hN>
-    // → <hN style="text-align:X">text</hN>
-    // QTextDocument 把 <div> 放在标题内，但 TipTap divBlock 是 block 节点不
-    // 能嵌套在标题中。此处提取 <div align> → <hN style="text-align:">，
+    // 修复 <hN ...><div align="X">text</div></hN> → <hN style="text-align:X">text</hN>
+    // 标题内的字面 <div align>（ZZDV 还原产物）不能进 TipTap——divBlock 是
+    // block 节点不能嵌套在标题中。此处提取 <div align> → <hN style="text-align:">，
     // 利用已有 TextAlign 扩展渲染居中标题，fromHtml 的 ZZA 机制负责往返还原。
+    // 旧形态 <hN><span font-size:xx-large><div align>…</div></span></hN> 中的
+    // span 壳是 Qt 标题基线伪影，已由 stripHeadingBaselineFormats 在文档层
+    // 根除（toHtml 不再产出），此处只匹配无壳形态；覆盖 h1-h6 全层级
+    // （fromHtml 的 ZZA 还原正则同为 <(p|h[1-6])>，层级对称）。
     {
         QRegularExpression re(
-            R"re(<(h[1-6])\b[^>]*>\s*<span\b[^>]*\bfont-size\s*:\s*xx-large[^>]*>\s*<div\b[^>]*\balign\s*=\s*"([^"]*)"[^>]*>(.*?)</div>\s*</span>\s*</\1>)re",
+            R"re(<(h[1-6])\b[^>]*>\s*<div\b[^>]*\balign\s*=\s*"([^"]*)"[^>]*>(.*?)</div>\s*</\1>)re",
             QRegularExpression::DotMatchesEverythingOption);
         globalReplaceWith(html, re,
             [](const QRegularExpressionMatch &m) {
@@ -3529,10 +3583,14 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     }
 
     // 兜底：剥离标题内 QTextDocument 注入的 font span（font-size + font-weight）
-    // 上面重组 regex 只处理含 <div align> 的标题且限于 h1（xx-large），工具栏
-    // 反复操作后 TipTap getHTML() 可能产生非常规格式导致重组不匹配，未剥离的
-    // font span（font-weight:700）被 TipTap Bold parseHTML 解析为 <strong> mark，
-    // 后续往返持续污染。此处兜底剥离所有 h1-h6 标题内的标题级 font span。
+    // 兜底：剥离标题内 QTextDocument 注入的 font span（font-size + font-weight）。
+    // 常规路径下标题基线伪影已由 stripHeadingBaselineFormats 在文档层根除，
+    // toHtml 不再产出；此处为防御层——工具栏反复操作后 TipTap getHTML() 可能
+    // 产生非常规格式，未剥离的 font span（font-weight:700）被 TipTap Bold
+    // parseHTML 解析为 <strong> mark，后续往返持续污染。关键字集覆盖
+    // h1-h6 全部层级字号（xx-large/x-large/large/medium/small；h6 字号=
+    // 正文默认不输出 font-size，其伪影 span 与用户真加粗在 HTML 层同形，
+    // 只能由文档层清除处理，正则无法区分）。
     //
     // 只删该 span 的**开闭标签**、保留内容与其间其余内联标记（平衡扫描配对）。
     // 早前用单正则 <hN…><span font-size…>(.*?)</span></hN> 整体重组，惰性捕获组
@@ -3541,14 +3599,14 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     // 惰性组只能扩张到末尾的 </span> 才能满足末尾的 </hN>，于是产出
     // <h1 …>a </span><span style=" font-weight:700;">c</h1>——**悬空 </span> 的
     // 畸形 HTML**（TipTap 仅靠 DOMParser 容错），且 `**c**` 的强调信息在后续
-    // 保存中丢失。仅当 font-size 为标题级关键字（xx-large/x-large/large）才剥离，
+    // 保存中丢失。仅当 font-size 为标题级关键字才剥离，
     // 用户手写的其它 font-size span 不受影响。
     {
         static const QRegularExpression headingRe(
             R"re(<(h[1-6])\b[^>]*>.*?</\1>)re",
             QRegularExpression::DotMatchesEverythingOption);
         static const QRegularExpression headingFontSpanRe(
-            R"re(<span\b[^>]*\bfont-size\s*:\s*(?:xx-large|x-large|large)\b[^>]*>)re");
+            R"re(<span\b[^>]*\bfont-size\s*:\s*(?:xx-large|x-large|large|medium|small)\b[^>]*>)re");
         globalReplaceWith(html, headingRe,
             [](const QRegularExpressionMatch &hm) {
                 const QString h = hm.captured();
