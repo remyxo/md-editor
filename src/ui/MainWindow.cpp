@@ -1246,6 +1246,19 @@ bool MainWindow::confirmLargeFile(const QString &path)
     return box.exec() == QMessageBox::Yes;
 }
 
+// 外部进程请求打开文件（Linux/Windows 单实例转发）：开标签/聚焦复用文件树
+// 双击逻辑，再把窗口带回前台（新实例被唤起时用户预期主窗口出现）。空路径
+// 仅置前聚焦。Wayland 下 activateWindow 多为 no-op（xdg-activation 未普遍
+// 支持），任务栏提示由系统处理——置前失败不影响开标签
+void MainWindow::openExternalFile(const QString &path)
+{
+    if (!path.isEmpty())
+        onFileDoubleClicked(path);
+    showNormal();
+    raise();
+    activateWindow();
+}
+
 void MainWindow::onFileDoubleClicked(const QString &path)
 {
     // 已打开的文件：聚焦既有标签页即可（同一路径一标签，与主流编辑器一致）

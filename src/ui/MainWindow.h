@@ -29,6 +29,10 @@ public:
     EditorTab *selfTestCurrentTab();
     void selfTestToggleSourceMode();
 
+    // 外部进程请求打开文件（Linux/Windows 单实例转发）：复用文件树双击的
+    // 打开逻辑并尝试把窗口带到前台（Wayland 下置前受限是已知边界）
+    void openExternalFile(const QString &path);
+
 private slots:
     void onEditorBridgeCreated(EditorBridge *bridge);
     void onTabChanged(int tabId);

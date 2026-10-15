@@ -4,6 +4,7 @@ set(SOURCES
     app/LanguageManager.cpp
     app/MacInstallCheck.cpp
     app/SelfTestRunner.cpp
+    app/SingleInstanceGuard.cpp
     app/SystemThemeWatcher.cpp
     app/ThemeManager.cpp
     core/EditorBridge.cpp
@@ -144,6 +145,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::WebChannel
     Qt6::Pdf
     Qt6::Concurrent
+    Qt6::Network
 )
 
 # 编译翻译资源并打入 qrc：生成 :/i18n/md-editor_en_US.qm

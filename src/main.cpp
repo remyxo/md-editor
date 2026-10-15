@@ -1,6 +1,7 @@
 #include "app/Application.h"
 #include "app/MacInstallCheck.h"
 #include "app/SelfTestRunner.h"
+#include "app/SingleInstanceGuard.h"
 #include "ui/MainWindow.h"
 #include "core/LocalImageSchemeHandler.h"
 #include <QLocale>
@@ -77,8 +78,23 @@ int main(int argc, char *argv[])
     if (SelfTestRunner::isSelfTestInvocation())
         return SelfTestRunner::run(app);
 
+    // Linux/Windows 单实例：文件管理器双击 .md 再拉进程时，把路径转发给
+    // 既有实例（开标签/置前）后自退。macOS 由 Launch Services 天然单实例，
+    // 再开文件经 QFileOpenEvent 进既有实例（Application），不经此守卫；
+    // selftest 无头进程在上方早退，CI 可并发不受影响
+    SingleInstanceGuard instanceGuard;
+    const bool singleInstanceEnabled =
+        QSysInfo::productType() != QStringLiteral("macos");
+    if (singleInstanceEnabled && !instanceGuard.acquire(initialFile))
+        return 0;
+
     MainWindow window(initialFile);
     window.show();
+
+    if (singleInstanceEnabled)
+        QObject::connect(&instanceGuard,
+                         &SingleInstanceGuard::instanceFileOpenRequested,
+                         &window, &MainWindow::openExternalFile);
 
     return app.exec();
 }
