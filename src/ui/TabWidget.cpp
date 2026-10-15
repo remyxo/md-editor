@@ -7,6 +7,9 @@
 #include <QMessageBox>
 #include <QAbstractButton>
 #include <QFileInfo>
+#include <QShortcut>
+#include <QMenu>
+#include <QMouseEvent>
 
 TabWidget::TabWidget(QWidget *parent)
     : QTabWidget(parent), m_nextTabId(1)
@@ -22,6 +25,23 @@ TabWidget::TabWidget(QWidget *parent)
     connect(this, &QTabWidget::currentChanged, this, &TabWidget::onCurrentChanged);
     // 双击标签页关闭（复用 onTabCloseRequested 的脏检查/保存流程）
     connect(tabBar(), &QTabBar::tabBarDoubleClicked, this, &TabWidget::onTabCloseRequested);
+    // 中键点击关闭（eventFilter 内转发到同款脏检查流程）
+    tabBar()->installEventFilter(this);
+    // 标签栏右键菜单：关闭 / 关闭其他 / 关闭右侧 / 关闭全部
+    tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tabBar(), &QTabBar::customContextMenuRequested,
+            this, &TabWidget::onTabBarContextMenu);
+    // Ctrl+1~8 跳转对应序号标签、Ctrl+9 跳转最后一个（浏览器/VS Code 惯例）。
+    // 挂本组件（WindowShortcut 上下文），WebEngine 焦点下同样生效（同侧栏
+    // Ctrl+B）；Ctrl+数字无既有绑定，无 Ambiguous 冲突
+    for (int n = 1; n <= 9; ++n) {
+        auto *sc = new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(n)), this);
+        connect(sc, &QShortcut::activated, this, [this, n]() {
+            const int target = (n == 9) ? count() - 1 : n - 1;
+            if (target >= 0 && target < count())
+                setCurrentIndex(target);
+        });
+    }
 }
 
 EditorTab *TabWidget::openNewTab()
@@ -135,8 +155,15 @@ void TabWidget::markTabSaved(int index, const QString &filePath)
 
 void TabWidget::onTabCloseRequested(int index)
 {
+    requestCloseTab(index);
+}
+
+// 单个标签关闭请求全流程（onTabCloseRequested 与批量队列共用）。
+// 批量队列依赖返回值区分：同步关闭 / 保存异步挂起 / 用户取消
+TabWidget::CloseResult TabWidget::requestCloseTab(int index)
+{
     EditorTab *tab = tabAt(index);
-    if (!tab) return;
+    if (!tab) return CloseResult::Closed;
     bool isDirty = tabText(index).startsWith("● ");
     if (isDirty) {
         QMessageBox box(QMessageBox::Question, tr("未保存的更改"),
@@ -146,16 +173,17 @@ void TabWidget::onTabCloseRequested(int index)
         box.button(QMessageBox::Discard)->setText(tr("不保存并关闭"));
         box.button(QMessageBox::Cancel)->setText(tr("取消"));
         auto r = box.exec();
-        if (r == QMessageBox::Cancel) return;
+        if (r == QMessageBox::Cancel) return CloseResult::Cancelled;
         if (r == QMessageBox::Save) {
             // 记 tab 指针而非下标：保存窗口期（异步 JS 往返期间 UI 可交互）
             // 用户拖动标签或开关其他 tab 会使下标漂移，按陈旧下标会关错页
             m_pendingCloseTab = tab;
             emit tabSaveRequested(index);
-            return; // 保存由 MainWindow 异步处理，完成后调用 completePendingTabClose()
+            return CloseResult::SavePending; // 保存由 MainWindow 异步处理，完成后调用 completePendingTabClose()
         }
     }
     closeTabAt(index);
+    return CloseResult::Closed;
 }
 
 // 关闭收尾公共段（onTabCloseRequested 非 Save 路径与 closeTabDirect 共用）：
@@ -185,16 +213,104 @@ void TabWidget::completePendingTabClose()
 {
     EditorTab *tab = m_pendingCloseTab;
     m_pendingCloseTab = nullptr;
-    if (!tab)
-        return;
-    const int idx = indexOf(tab);
+    if (tab) {
+        const int idx = indexOf(tab);
+        if (idx >= 0) {
+            emit tabClosed(idx);
+            m_tabs.remove(tab->bridge()->tabId());
+            m_untitledTabs.remove(tab);
+            removeTab(idx);
+            tab->deleteLater();
+        }
+        // idx < 0：保存期间该 tab 已被其他路径关闭——无需收尾
+    }
+    // 批量关闭挂起在保存链上：保存收尾（或该 tab 已被别路关闭）后继续队列
+    if (!m_batchCloseQueue.isEmpty())
+        processBatchCloseQueue();
+}
+
+// 批量关闭：入队后驱动处理。顺序即关闭顺序（右键菜单自左向右收集）
+void TabWidget::closeTabs(const QVector<EditorTab *> &tabs)
+{
+    for (EditorTab *t : tabs)
+        m_batchCloseQueue.append(t);
+    processBatchCloseQueue();
+}
+
+// 驱动批量队列：队首失效/已被别路关闭则弹出续走；非脏同步关闭续走；
+// 脏标签的三键弹窗——「不保存」同步关闭续走，「保存」挂起等
+// completePendingTabClose 回灌，「取消」清空中止（已关的不恢复）
+void TabWidget::processBatchCloseQueue()
+{
+    while (!m_batchCloseQueue.isEmpty()) {
+        EditorTab *tab = m_batchCloseQueue.first();
+        if (!tab || indexOf(tab) < 0) {
+            m_batchCloseQueue.removeFirst();
+            continue;
+        }
+        switch (requestCloseTab(indexOf(tab))) {
+        case CloseResult::Closed:
+            m_batchCloseQueue.removeFirst();
+            break;
+        case CloseResult::SavePending:
+            return;   // 保存链收尾后由 completePendingTabClose 继续
+        case CloseResult::Cancelled:
+            m_batchCloseQueue.clear();
+            return;
+        }
+    }
+}
+
+// 标签栏右键菜单（空白区不弹）：单项关闭走原流程，批量项走 closeTabs
+void TabWidget::onTabBarContextMenu(const QPoint &pos)
+{
+    const int idx = tabBar()->tabAt(pos);
     if (idx < 0)
-        return;   // 保存期间该 tab 已被其他路径关闭
-    emit tabClosed(idx);
-    m_tabs.remove(tab->bridge()->tabId());
-    m_untitledTabs.remove(tab);
-    removeTab(idx);
-    tab->deleteLater();
+        return;
+    QMenu menu(this);
+    QAction *closeAct = menu.addAction(tr("关闭标签页(&C)"));
+    QAction *closeOthersAct = menu.addAction(tr("关闭其他标签页(&O)"));
+    QAction *closeRightAct = menu.addAction(tr("关闭右侧标签页(&R)"));
+    QAction *closeAllAct = menu.addAction(tr("关闭全部标签页(&A)"));
+    closeOthersAct->setEnabled(count() > 1);
+    closeRightAct->setEnabled(idx < count() - 1);
+    QAction *chosen = menu.exec(tabBar()->mapToGlobal(pos));
+    if (chosen == closeAct) {
+        onTabCloseRequested(idx);
+    } else if (chosen == closeOthersAct) {
+        QVector<EditorTab *> tabs;
+        for (int i = 0; i < count(); ++i)
+            if (i != idx)
+                tabs.append(tabAt(i));
+        closeTabs(tabs);
+    } else if (chosen == closeRightAct) {
+        QVector<EditorTab *> tabs;
+        for (int i = idx + 1; i < count(); ++i)
+            tabs.append(tabAt(i));
+        closeTabs(tabs);
+    } else if (chosen == closeAllAct) {
+        QVector<EditorTab *> tabs;
+        for (int i = 0; i < count(); ++i)
+            tabs.append(tabAt(i));
+        closeTabs(tabs);
+    }
+}
+
+// 标签栏事件过滤：中键按下即关（Firefox 风格；Chromium 为松开触发）。
+// 复用关闭请求的脏检查流程，吞掉事件不落入默认处理
+bool TabWidget::eventFilter(QObject *obj, QEvent *ev)
+{
+    if (obj == tabBar() && ev->type() == QEvent::MouseButtonPress) {
+        auto *me = static_cast<QMouseEvent *>(ev);
+        if (me->button() == Qt::MiddleButton) {
+            const int idx = tabBar()->tabAt(me->pos());
+            if (idx >= 0) {
+                onTabCloseRequested(idx);
+                return true;
+            }
+        }
+    }
+    return QTabWidget::eventFilter(obj, ev);
 }
 
 void TabWidget::onCurrentChanged(int index)
