@@ -683,16 +683,16 @@ ls -la build/src/md-editor && find src -newer build/src/md-editor -name "*.cpp" 
 
 ### Task 7: 用户验证 + 提交（验证通过后才执行）
 
-- [ ] **Step 1: 用户真机目检**（`./scripts/run-editor.sh`）
+- [x] **Step 1: 用户真机目检**（`./scripts/run-editor.sh`）——2026-10-14 用户验证通过
 
 1. `~/Desktop/复杂场景综合测试.md` 导出 DOCX：1.1 表「001」「已完成」等短列不折行；1.2 表列07 让宽、其余列不拥挤；与 PDF 导出目测一致。
 2. 同文档导出 PDF/HTML：状态栏显示「已导出: XXX, 用时 N 毫秒」（小文档）或「X.Y 秒」（大 PDF 文档）；PDF 回退路径（如触发）组合消息同样带用时。
 3. 源码模式导出 DOCX：表格列宽与所见即所得模式一致。
 4. 无表格文档导出 DOCX：秒回（快速路径）。
 
-- [ ] **Step 2: macOS Word 双击验证**（既定流程：WPS/LibreOffice 宽容测不出 schema 违规；重点看 tblCellMar/tblGrid/tcW 的 Word 兼容性）
+- [x] **Step 2: macOS Word 双击验证**（既定流程：WPS/LibreOffice 宽容测不出 schema 违规；重点看 tblCellMar/tblGrid/tcW 的 Word 兼容性）——2026-10-14 用户确认通过
 
-- [ ] **Step 3: 用户确认后分两个 commit 提交**
+- [x] **Step 3: 用户确认后分两个 commit 提交**（已执行：`45fbc37` 列宽重分配、`b44c0ee` 用时消息；2026-10-14 验收收口）
 
 ```bash
 git add src/core/HtmlExporter.cpp src/core/ExportCommon.h src/core/ExportCommon.cpp \
