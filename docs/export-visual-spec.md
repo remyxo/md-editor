@@ -71,7 +71,7 @@ PDF 的紧凑阶梯可解释为打印密度取舍，但**编辑器与 HTML 一�
 | 代码块内边距 | — | 12px 16px | 10px 14px | 段缩进 | 媒介差异（打印更紧） |
 | 代码块字号 | 继承正文 | 0.9em | 9.5pt | **继承正文（22 半磅）** | **疑似漂移**（DOCX 代码块不比正文小） |
 | 圆角 | — | 6px | 4px | Word 无圆角概念 | 媒介差异 |
-| **语法高亮** | 有（lowlight） | 有（hljs 现场着色） | **无** | **无** | 功能缺口，见 CLAUDE.md「已知问题」 |
+| **语法高亮** | 有（lowlight） | 有（hljs 现场着色） | **无** | **无** | 功能缺口，见 AGENTS.md「已知问题」 |
 
 ### 表格
 
@@ -109,7 +109,7 @@ PDF 的紧凑阶梯可解释为打印密度取舍，但**编辑器与 HTML 一�
    `PdfExporter` 成品校验自动拦截，但页数与落点需人工对照
    [`pdf-header-footer-layout.md`](pdf-header-footer-layout.md) 的实测表）；字号/
    行距改动会直接改变分页，可能引起页数变化。
-2. **DOCX**：必须按 [`CLAUDE.md`](../CLAUDE.md) 与项目记忆的既定流程做 **macOS
+2. **DOCX**：必须按 [`AGENTS.md`](../AGENTS.md) 与项目记忆的既定流程做 **macOS
    Word 双击验证**（WPS/LibreOffice 宽容，测不出 schema 违规）。
 3. **HTML**：改 `bodyCss` 后重载产物截图对照；列宽归一脚本的测量样式跟随单元
    字号，改字号须重跑表格列宽核对（见 `HtmlExporter::tableColumnNormalizeScript`）。

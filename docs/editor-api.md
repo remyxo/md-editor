@@ -165,7 +165,7 @@
 
 | 类别 | 代表成员 | 说明 |
 |------|---------|------|
-| 加载/脏状态 | `_loading`、`_dirty`、`_docVersion`、`_forceDirty`、`_restoreDirtyIfUnchanged`、`_markDirty`、`_readOnly` | 脏状态机制见 CLAUDE.md；`_loading` 锁抑制 setContent 内的 onUpdate |
+| 加载/脏状态 | `_loading`、`_dirty`、`_docVersion`、`_forceDirty`、`_restoreDirtyIfUnchanged`、`_markDirty`、`_readOnly` | 脏状态机制见 AGENTS.md；`_loading` 锁抑制 setContent 内的 onUpdate |
 | 源码模式状态 | `_sourceValue`、`_srcSearch`、`_srcOnSourceEdit`、`_srcRectGen`、`_srcStop` | textarea 快照与源码搜索；`_sourceValue` 是快速路径退出的比对基准；高亮为按需局部测量（无折行缓存） |
 | 模态面板对象（7 个） | `_linkEditor`、`_mermaidEditor`、`_mathEditor`、`_emojiPicker`、`_codeLangPicker`、`_footnoteEditor` + `_mathEditing` | 面板清单的唯一直调入口是 `closeModalDialogs()`（W4-5 起） |
 | 图片摄取 | `_imagePending`、`_ingestImageFile` | 占位符标记 `__pending_<requestId>__`，落盘完成走公共 `onImageSaveResult` |
@@ -231,4 +231,4 @@
    # runJavaScript 调用点对账（本轮 HEAD 实测 51，历史锚点见「总量对账」）
    grep -rn 'runJavaScript' src/ | wc -l
    ```
-4. 涉及 editor.js 改动后必须重编译（qrc 打进二进制，见 CLAUDE.md 关键原则 9）。
+4. 涉及 editor.js 改动后必须重编译（qrc 打进二进制，见 AGENTS.md 关键原则 9）。
