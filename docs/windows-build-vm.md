@@ -72,6 +72,8 @@ virsh -c qemu:///system shutdown win10   # 若在运行
 
 `dist/` 出现 `md-editor-<版本>-win64.exe` 即成功（不散在仓库根）。可在 VM 里装一次 exe 做冒烟。
 
+**冒烟前置：VC++ 运行库——先自查，缺则装**（2026-10-16 实录）。exe 与 Qt6*.dll 硬性导入 `MSVCP140/VCRUNTIME140(_1).dll`，而安装包不自带运行库（打包显式 `--no-compiler-runtime`，见 `package-windows.ps1` 注释）。官方标准 ISO（各代 Windows/LTSC 一致，Win11 24H2 亦然）**默认不带** VC++ 2015-2022 运行库——它是 Visual Studio 组件而非 OS 组件，微软的设计即由应用分发安装；但装过其他软件的系统可能已有，故先查：`reg query "HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" /v Installed`，无键或非 `0x1` 则装：`D:\BuildTools\VC\Redist\MSVC\v143\vc_redist.x64.exe /install /quiet /norestart`（本地安装器免下载，落 C: 约 25MB；当前验证机 2026-10-16 已装 14.44.35211）。**坑：自查勿用「exe 能否跑」作判据**——缺运行库时 exe 在本 VM 也能跑、不报错，机器 PATH 里 ImageMagick 目录（provision 装的）自带一套私有 CRT DLL，被 Windows DLL 搜索的 PATH 兜底偶然命中，纯属假象；干净用户机器会弹「丢失 VCRUNTIME140.dll」。装好后 exe 的 CRT 模块应来自 `C:\Windows\System32`（System32 优先于 PATH，即不再借用）。
+
 ## 重建 guest 系统（宿主重装/换 VM 后复用数据盘）
 
 **2026-10-12 实际重建记录**（宿主重装 Debian、旧 domain XML 丢失、复用 `~/qemu/win11/` 下原系统盘 + 数据盘）：
@@ -139,4 +141,4 @@ virsh -c qemu:///system shutdown win10   # 若在运行
 - **升级 Qt**（如跟进 CI 版本）：VM 里重跑 `py -3 -m aqt install-qt windows desktop <版本> win64_msvc2022_64 -O D:\Qt -m qtwebengine qtwebchannel qtpositioning`，并同步改 `scripts/build-windows-vm.ps1` 里的 `$qtDir`
 - **调整 VM 资源**：`virsh setvcpus win10 <N> --maximum --config && virsh setvcpus win10 <N> --config`；内存同理 `setmaxmem`/`setmem`（KiB），重启 VM 生效
 - **回滚到搭建前**：`virsh snapshot-revert win10 before-build-vm`（会丢数据盘上后来装的工具链，慎用）
-- **重建 guest 系统**：数据盘（工具链）在独立 qcow2 上（`~/qemu/win10/win10-data.qcow2`），系统盘重装/宿主重装后按上方「重建 guest 系统」一节操作；guest 里装 VioFS 组件 + 重跑 provision 即可复用 `D:\BuildTools`、`D:\Qt`（注意 Windows SDK 与 VS 实例注册在系统盘 C:，需按 2026-10-16 迁移记录搬运）
+- **重建 guest 系统**：数据盘（工具链）在独立 qcow2 上（`~/qemu/win10/win10-data.qcow2`），系统盘重装/宿主重装后按上方「重建 guest 系统」一节操作；guest 里装 VioFS 组件 + 重跑 provision 即可复用 `D:\BuildTools`、`D:\Qt`（注意 Windows SDK 与 VS 实例注册在系统盘 C:，需按 2026-10-16 迁移记录搬运；**系统级 VC++ 运行库同样在 C:**，重建后按「验证」一节自查、缺则装，否则 exe 靠 ImageMagick 假跑）
