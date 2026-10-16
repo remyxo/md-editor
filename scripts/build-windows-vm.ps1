@@ -32,11 +32,29 @@ Write-Host "==> 数据盘: $DataRoot（卷标 build-data）"
 if ($data.FreeSpace / 1GB -lt 5) { Write-Error "$DataRoot 剩余空间不足 5G（windeployqt/NSIS 暂存需要）"; exit 1 }
 
 # ---- 2. VS 开发环境（MSVC + VS 自带 CMake/Ninja 进 PATH）----
+# 全新系统盘复用数据盘工具链时，VS 实例注册（Setup COM + ProgramData 元数据）不在——
+# Enter-VsDevShell 报 REGDB_E_CLASSNOTREG（2026-10-16 win10 实测），回退 VsDevCmd.bat
+# 批处理导环境（两者产出同一套 dev 环境变量；win11 走原主路径行为不变）
+$vsdevcmd = "$DataRoot\BuildTools\Common7\Tools\VsDevCmd.bat"
 $devshell = "$DataRoot\BuildTools\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
-if (-not (Test-Path $devshell)) { Write-Error "未找到 VS DevShell（provision 步骤 3）"; exit 1 }
-Import-Module $devshell
-# sshd 非交互会话里 vswhere 自动探测不可靠，显式给安装路径
-Enter-VsDevShell -VsInstallPath "$DataRoot\BuildTools" -SkipAutomaticLocation -DevCmdArguments '-arch=x64' | Out-Null
+$entered = $false
+if (Test-Path $devshell) {
+    try {
+        Import-Module $devshell
+        # sshd 非交互会话里 vswhere 自动探测不可靠，显式给安装路径
+        Enter-VsDevShell -VsInstallPath "$DataRoot\BuildTools" -SkipAutomaticLocation -DevCmdArguments '-arch=x64' -ErrorAction Stop | Out-Null
+        $entered = $true
+    } catch { Write-Host "    Enter-VsDevShell 失败（$($_.Exception.Message.Trim())），回退 VsDevCmd.bat" }
+}
+if (-not $entered) {
+    if (-not (Test-Path $vsdevcmd)) { Write-Error "未找到 VS DevShell/VsDevCmd（provision 步骤 3）"; exit 1 }
+    # 批处理 set 的结果整体导回当前会话环境（仅取 KEY=VALUE 行，批处理横幅已被重定向吞掉）
+    $vars = cmd /c "$vsdevcmd -arch=x64 >nul 2>&1 && set"
+    foreach ($line in $vars) {
+        $i = $line.IndexOf('=')
+        if ($i -gt 0) { [Environment]::SetEnvironmentVariable($line.Substring(0, $i), $line.Substring($i + 1), 'Process') }
+    }
+}
 
 # ---- 3. Qt 与 ImageMagick 进 PATH ----
 $qtDir = "$DataRoot\Qt\6.8.2\msvc2022_64"

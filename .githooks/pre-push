@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# git pre-push 钩子：改动含 C++ 时做跨平台编译预检（容器 clang + win11 KVM MSVC）
+# git pre-push 钩子：改动含 C++ 时做跨平台编译预检（容器 clang + win10 KVM MSVC）
 # 一次性启用：git config core.hooksPath .githooks（本机生效，换机需重跑）
 # 逃生门：git push --no-verify 或 MD_EDITOR_SKIP_PRECHECK=1
 # 自测：MD_EDITOR_PRECHECK_DRY_RUN=1 只打印触发决策，不执行检查
@@ -62,7 +62,7 @@ elif [ "$rc" -ne 0 ]; then
     warn "clang 检查环境不可用（exit $rc），跳过该环节"
 fi
 
-# ---- 4. 检查二：win11 KVM MSVC 编译 ----
+# ---- 4. 检查二：win10 KVM MSVC 编译 ----
 say "检查 2/2：Windows MSVC 编译（VM）"
 "$REPO/scripts/build-windows-local.sh" --compile-only
 rc=$?

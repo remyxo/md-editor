@@ -1,4 +1,4 @@
-# 本地 Windows 构建虚拟机（KVM win11）
+# 本地 Windows 构建虚拟机（KVM win10）
 
 > 目标：宿主 Debian 上一条命令产出 Windows 安装包，**未提交的改动立即生效**，不再走「推送 → GitHub Actions → 下载」的往返。
 > 设计文档：[`superpowers/specs/2026-08-21-windows-build-vm-design.md`](superpowers/specs/2026-08-21-windows-build-vm-design.md)
@@ -6,19 +6,19 @@
 ## 架构
 
 ```
-宿主 Debian 13                                guest win11（libvirt system 实例，KVM，UEFI+TPM）
+宿主 Debian 13                                guest win10（libvirt system 实例，KVM，UEFI+安全启动；LTSC 2019）
 ──────────────────────                        ─────────────────────────────
 ~/claude-workspace/md-editor ←─ virtiofs ─→   卷标 md-editor-src（盘符钉 W:）
 ./scripts/build-windows-local.sh               <数据盘>:\build（本地盘构建，快）
        │                                      <数据盘>:\BuildTools、<数据盘>:\Qt（工具链，~20G）
-       └─ ssh builder@192.168.122.10 ─→ C:\md-editor-build-launch.ps1
+       └─ ssh builder@192.168.122.11 ─→ C:\md-editor-build-launch.ps1
                                               产物落共享卷 dist\ = 宿主仓库 dist/
 ```
 
 - **源码单一来源**：仓库即宿主目录，guest 经 virtiofs 直读直写；build 目录放数据盘（MSVC 在共享上大量小文件 IO 慢）
 - **与 CI 关系**：工具链与 `build-windows.yml` 逐字一致（VS 2022 MSVC、Qt 6.8.2 `win64_msvc2022_64` + webengine/webchannel/positioning、NSIS、ImageMagick）；CI 仍是正式发布通道，本地只做迭代验证
 - **剪贴板共享**：SPICE + qxl + spicevmc 通道 + guest 内 spice vdagent（已装），virt-manager 窗口宿主↔VM 双向文本复制粘贴即用
-- VM 构建后**保持开机**（省下次 40 秒启动）；长期不用 `virsh -c qemu:///system shutdown win11`
+- VM 构建后**保持开机**（省下次 40 秒启动）；长期不用 `virsh -c qemu:///system shutdown win10`
 
 ## 盘符防漂移
 
@@ -26,7 +26,7 @@
 
 | 卷 | 定位方式（脚本层，盘符无关） | 盘符（工具链层） |
 |----|------------------------------|------------------|
-| 数据盘（NTFS，文件 `~/qemu/win11/win10-data.qcow2`，文件名历史遗留） | **卷标 `build-data`**（`Win32_LogicalDisk` WMI 查询；provision 与 build 脚本均按此解析 `$DataRoot`） | provision 解析出非 D: 且 D: 空闲时用 diskpart **钉回 D:**——VS/Qt 注册表内嵌 `D:\BuildTools`、`D:\Qt` 绝对路径，钉回才能复用旧盘工具链 |
+| 数据盘（NTFS，文件 `~/qemu/win10/win10-data.qcow2`，win11 时代工具链盘的副本） | **卷标 `build-data`**（`Win32_LogicalDisk` WMI 查询；provision 与 build 脚本均按此解析 `$DataRoot`） | provision 解析出非 D: 且 D: 空闲时用 diskpart **钉回 D:**——VS/Qt 注册表内嵌 `D:\BuildTools`、`D:\Qt` 绝对路径，钉回才能复用旧盘工具链 |
 | 仓库共享（virtiofs） | 卷标 `md-editor-src`（`Win32_LogicalDisk`，virtiofs 卷不出现在 Get-Volume） | 服务 `VirtioFsSvc2` 钉 `-m W:`（自动扫号区 Z:/Y: 之外，永不冲突） |
 | Downloads 共享（virtiofs） | 卷标 `daijd-shared` | 自动盘符（无路径依赖） |
 
@@ -41,11 +41,11 @@
 前置：VM 已建好并关机、工具链数据盘已挂 `vdb`、当前用户在 `libvirt` 组。
 
 ```bash
-virsh -c qemu:///system shutdown win11   # 若在运行
+virsh -c qemu:///system shutdown win10   # 若在运行
 ./scripts/setup-windows-vm-host.sh
 ```
 
-脚本做 8 件事（幂等）：快照回滚点 `before-build-vm` → 资源调到 **6 vCPU / 6G** → 确认数据盘挂 `vdb`（缺失时按 `~/qemu/win11/win10-data.qcow2` 补挂，不自动创建）→ 补 `<memoryBacking>` 共享内存（**新 VM 默认 XML 没有，缺了 define virtiofs 段时报 `'virtiofs' requires shared memory`**）→ 追加两个 virtiofs 共享（宿主仓库 → `md-editor-src`、`~/Downloads` → `daijd-shared`）→ ACL 放行 `libvirt-qemu` 用户 → 打印 AppArmor 放行命令（需 root，复制执行）→ DHCP 固定 IP `192.168.122.10` → 生成宿主 ssh key 与 `~/.ssh/config` 别名 `win11-build`。
+脚本做 8 件事（幂等）：快照回滚点 `before-build-vm` → 资源调到 **6 vCPU / 6G** → 确认数据盘挂 `vdb`（缺失时按 `~/qemu/win10/win10-data.qcow2` 补挂，不自动创建）→ 补 `<memoryBacking>` 共享内存（**新 VM 默认 XML 没有，缺了 define virtiofs 段时报 `'virtiofs' requires shared memory`**）→ 追加两个 virtiofs 共享（宿主仓库 → `md-editor-src`、`~/Downloads` → `daijd-shared`）→ ACL 放行 `libvirt-qemu` 用户 → 打印 AppArmor 放行命令（需 root，复制执行）→ DHCP 固定 IP `192.168.122.11` → 生成宿主 ssh key 与 `~/.ssh/config` 别名 `win10-build`。
 
 结束时打印带公钥的 provision 命令，复制备用。
 
@@ -53,7 +53,7 @@ virsh -c qemu:///system shutdown win11   # 若在运行
 
 ### B. guest 侧（约 1 小时，多为下载等待）
 
-1. 宿主启动 VM：`virsh -c qemu:///system start win11`
+1. 宿主启动 VM：`virsh -c qemu:///system start win10`
 2. VM 内**管理员 PowerShell** 直接从仓库共享运行（virtiofs 直读宿主仓库，脚本改动即时生效；公钥见 setup 输出）：
 
    ```powershell
@@ -86,7 +86,16 @@ virsh -c qemu:///system shutdown win11   # 若在运行
    （输出经 base64+GBK 解码查看；guest 里 virtiofs 服务/vdagent/sshd 全部随系统盘原样自启，数据盘在旧系统里本就是 D:，无需重钉）
 5. 验证：`./scripts/build-windows-local.sh --compile-only`（增量 <1 分钟）
 
-**教训（win10 精简版 LTSB 尝试，已弃）**：深度精简镜像缺 Windows Installer（msiexec /qn 假成功 rc=0 不装东西）、Windows PowerShell 系统模块（Get-Volume/DISM 全没了）、WinFsp 只能 MSI 分发装不上——virtiofs/MSI 路线全断。guest 用**完整版** Windows，别用精简镜像。
+**2026-10-16 win11 → win10 迁移记录**（构建机换为 win10 LTSC 2019 全量版 17763，固定 IP `192.168.122.11`，win11 退役保留）：
+
+1. **virtiofs 版本配对坑（最深）**：`VirtioFsSvc/VirtioFsSvc2` 启动即停、零输出、`WIN32_EXIT_CODE=1` = 内核驱动与用户态 `virtiofs.exe` 版本不配对。ISO（文件名 0.1.285）里的 NSIS guest tools 实为 0.1.302，铺 `100.103.104.30200` 驱动；可用组合是 0.1.285 成套件：ISO `viofs\w10\amd64\` 目录的 `.28500` 驱动 + `virtiofs.exe`（md5 `39E883…`）+ WinFsp **2.1.25156 稳定版**（勿用 2026 Beta5=2.2.26286）。修复：`pnputil /delete-driver <oem30200>.inf /uninstall /force` → `pnputil /add-driver F:\viofs\w10\amd64\viofs.inf /install`。guest tools 的 NSIS exe `/S` 静默不可靠（秒退或挂死）、其 MSI 会被 LaunchConditions「已装更高版本」拒——**VioFS 组件手动从 ISO 目录装最稳**
+2. **VS 实例注册与 Windows SDK 都在系统盘 C:**（数据盘只带 `D:\BuildTools` 文件本体）。全新 guest 上 `Enter-VsDevShell` 报 `REGDB_E_CLASSNOTREG`（Setup COM 未注册）、链接报 `LNK1181 comdlg32.lib`（SDK 缺）——build-windows-vm.ps1 已加 `VsDevCmd.bat` 回退解决前者；SDK 搬运法：旧系统盘做 COW overlay 热挂到新 guest（`qemu-img create -f qcow2 -b 旧盘.qcow2 overlay.qcow2` + `virsh attach-disk --live`，原盘零风险）→ robocopy `C:\Program Files (x86)\Windows Kits` → 注册表用 `reg load` 旧 hive 导出 `Microsoft SDKs\Windows\v10.0` 与 `Windows Kits\Installed Roots` 两键（注意 reg export 会丢 hive 挂载名段，需把 `[HKEY_LOCAL_MACHINE\WOW6432Node\` 补成 `[HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\` 再 import）→ 完事 detach + 删 overlay
+3. **WinFsp 的 DLL 发现**：virtiofs.exe 按标准搜索序找 `winfsp-x64.dll`，最稳是把 `C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll` 复制到 `C:\Program Files\Virtio-Win\VioFS\` 旁边
+4. **ssh 防火墙**：`install-sshd.ps1` 在 1809 上不建防火墙规则，见上表
+5. **PS 5.1 BOM 坑**（经 qemu-ga 推 .ps1 到 guest 执行时）：无 BOM 的 UTF-8 中文脚本按 GBK 解码、多字节吞引号报离奇解析错误——推 guest 的 .ps1 必须 UTF-8 带 BOM（`[IO.File]::WriteAllText` 前加 BOM 或纯 ASCII）
+6. **qemu-ga 全程无人值守**：加 `org.qemu.guest_agent.0` 通道后，`guest-exec`（路径直接指 powershell.exe，绕开 cmd 嵌套引号坑）+ `guest-file-write/read`（base64 推拉文件）+ `guest-exec-status`（轮询，注意不是 guest-poll）可完成装机后的一切配置，无需开虚拟机 GUI
+
+**教训（win10 精简版 LTSB 尝试，已弃）**：深度精简镜像缺 Windows Installer（msiexec /qn 假成功 rc=0 不装东西）、Windows PowerShell 系统模块（Get-Volume/DISM 全没了）、WinFsp 只能 MSI 分发装不上——virtiofs/MSI 路线全断。guest 用**完整版** Windows，别用精简镜像（2026-10-16 起：win10 **LTSC 2019 全量版**实测可用，即当前构建机）。
 
 ## 日常用法
 
@@ -98,7 +107,7 @@ virsh -c qemu:///system shutdown win11   # 若在运行
   pre-push 钩子自动调用（见 `.githooks/pre-push` 与 spec
   `docs/superpowers/specs/2026-08-30-prepush-cross-compile-verify-design.md`）；
   环境故障（virsh/ssh）exit 75 放行；MSVC 编译失败日志透传、包装器统一 exit 1（预检模式下 VM 内环境故障 exit 90/255 放行为 75）
-- 构建触发前自动探测 guest 里 `pwsh`/`powershell` 哪个可用（精简系统装 pwsh 7 的场景；正常 win11 用 powershell）
+- 构建触发前自动探测 guest 里 `pwsh`/`powershell` 哪个可用（精简系统装 pwsh 7 的场景；正常 Windows 用 powershell）
 - 增量构建 <1 分钟；冷构建（改 CMake/全量）约 10-15 分钟（6 vCPU）
 - 构建期间宿主剩 ~9G 内存（另有 swap），避免同时跑本地大编译
 - 环境变量：`MD_EDITOR_WIN_SSH`（ssh 目标）、`MD_EDITOR_WIN_WAIT`（ssh 等待秒数）
@@ -108,7 +117,7 @@ virsh -c qemu:///system shutdown win11   # 若在运行
 
 | 症状 | 原因与处理 |
 |------|-----------|
-| define 共享段报 `'virtiofs' requires shared memory` | 新建 VM 的默认 XML 没有 `<memoryBacking>`。`virsh edit win11` 在 `<vcpu` 前加 `<memoryBacking><source type='memfd'/><access mode='shared'/></memoryBacking>`（setup 第 4 步已自动做） |
+| define 共享段报 `'virtiofs' requires shared memory` | 新建 VM 的默认 XML 没有 `<memoryBacking>`。`virsh edit win10` 在 `<vcpu` 前加 `<memoryBacking><source type='memfd'/><access mode='shared'/></memoryBacking>`（setup 第 4 步已自动做） |
 | 共享挂不上，宿主 `dmesg \| grep DENIED` 有 apparmor 拒绝 | 执行 setup 第 6 步打印的 AppArmor 放行命令（写 `/etc/apparmor.d/libvirt/<uuid>.files`），重启 VM |
 | 找不到卷标 `md-editor-src` | VM 里 `sc query VirtioFsSvc2`；没起则 `sc start VirtioFsSvc2`；确认宿主 XML 有 `<filesystem>` 段且 target 一致 |
 | 两个盘同卷标 `md-editor-src`（其一 FileSystem 为 NTFS）、Downloads 共享消失 | 原服务 `VirtioFsSvc` 不带 `-t` 时会抢挂开机后先枚举到的设备。重跑 provision（步骤 2 会给两个服务都写入明确 `-t <tag>`，仓库共享再 `-m W:` 钉死盘符）；脚本探测已限定 `FileSystem='VirtIO-FS'` 排除假盘 |
@@ -117,7 +126,7 @@ virsh -c qemu:///system shutdown win11   # 若在运行
 | `VirtioFsSvc` 起不来，`failed to load WinFsp DLL` | WinFsp 缺失（virtio-win guest tools 不带它）。完整 Windows 装 WinFsp MSI（winfsp releases）即可；精简系统 MSI 装不上——见「重建」一节教训，换完整版系统 |
 | 安装器下载报「不是完整可执行文件」 | guest 直连镜像站被掐断/拦截。宿主预下到 `~/Downloads` 后 provision 从共享拷入；ImageMagick 走 GitHub 最稳：`curl -L -o ~/Downloads/ImageMagick-setup.exe https://github.com/ImageMagick/ImageMagick/releases/download/7.1.2-29/ImageMagick-7.1.2-29-Q16-HDRI-x64-dll.exe` |
 | 数据盘剩余不足 5G 构建中止 | 清 `<数据盘>:\build`（可整目录删，下次重新配置）或 Windows 磁盘清理；必要时 `virsh vol-resize` 扩盘 + Windows 扩卷 |
-| ssh 超时 | `virsh domifaddr win11` 看 IP 是否 192.168.122.10；VM 里查 sshd 服务；公钥是否在 `C:\ProgramData\ssh\administrators_authorized_keys`（注意该文件 ACL 只留 Administrators/SYSTEM；宿主换 key 后可用 qemu-ga 推入，见「重建」一节） |
+| ssh 超时 | `virsh domifaddr win10` 看 IP 是否 192.168.122.11；VM 里查 sshd 服务；公钥是否在 `C:\ProgramData\ssh\administrators_authorized_keys`（注意该文件 ACL 只留 Administrators/SYSTEM；宿主换 key 后可用 qemu-ga 推入，见「重建」一节）；**全新 guest 还要查防火墙**——install-sshd.ps1 在 1809 上不建放行规则（2026-10-16 实测），手动 `New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH SSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -Profile Any` |
 | guest 覆盖宿主属主旧文件失败（如 `.ico`、`dist/`） | 构建脚本会先删 `.ico`；`dist/` 若是宿主侧建的旧目录，宿主 `rm -rf dist` 后重试 |
 | NSIS 报 `Bad text encoding` 或 makensis 打印用法退出 1 | nsi 是 UTF-8 无 BOM，中文系统（ACP=GBK）的 makensis 3.10 默认按 GBK 读会报前者。脚本已带 `/INPUTCHARSET UTF8` 修复；注意该参数值与选项**空格分隔**，写成 `/INPUTCHARSET=UTF8` 会被当未知参数直接打印用法退出 |
 | 版本号不对 | 打包脚本从 `CMakeLists.txt` 读版本，与 CI 同源 |
@@ -128,6 +137,6 @@ virsh -c qemu:///system shutdown win11   # 若在运行
 ## 维护
 
 - **升级 Qt**（如跟进 CI 版本）：VM 里重跑 `py -3 -m aqt install-qt windows desktop <版本> win64_msvc2022_64 -O D:\Qt -m qtwebengine qtwebchannel qtpositioning`，并同步改 `scripts/build-windows-vm.ps1` 里的 `$qtDir`
-- **调整 VM 资源**：`virsh setvcpus win11 <N> --maximum --config && virsh setvcpus win11 <N> --config`；内存同理 `setmaxmem`/`setmem`（KiB），重启 VM 生效
-- **回滚到搭建前**：`virsh snapshot-revert win11 before-build-vm`（会丢数据盘上后来装的工具链，慎用）
-- **重建 guest 系统**：数据盘（工具链）在独立 qcow2 上（`~/qemu/win11/win10-data.qcow2`，文件名历史遗留），系统盘重装/宿主重装后按上方「重建 guest 系统」一节操作；guest 里装 guest tools + 重跑 provision 即可复用 `D:\BuildTools`、`D:\Qt`
+- **调整 VM 资源**：`virsh setvcpus win10 <N> --maximum --config && virsh setvcpus win10 <N> --config`；内存同理 `setmaxmem`/`setmem`（KiB），重启 VM 生效
+- **回滚到搭建前**：`virsh snapshot-revert win10 before-build-vm`（会丢数据盘上后来装的工具链，慎用）
+- **重建 guest 系统**：数据盘（工具链）在独立 qcow2 上（`~/qemu/win10/win10-data.qcow2`），系统盘重装/宿主重装后按上方「重建 guest 系统」一节操作；guest 里装 VioFS 组件 + 重跑 provision 即可复用 `D:\BuildTools`、`D:\Qt`（注意 Windows SDK 与 VS 实例注册在系统盘 C:，需按 2026-10-16 迁移记录搬运）

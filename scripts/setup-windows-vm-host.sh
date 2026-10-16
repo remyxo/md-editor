@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# win11 构建机宿主侧一次性配置（在宿主 Debian 上以本用户运行，需在 libvirt 组）
+# win10 构建机宿主侧一次性配置（在宿主 Debian 上以本用户运行，需在 libvirt 组）
 # 做完这步再去 VM 里跑 scripts/provision-windows-vm.ps1（经仓库 virtiofs 共享直接运行）
 # 详见 docs/windows-build-vm.md。幂等，可重复运行。
 #
@@ -8,13 +8,13 @@
 # 仓库共享钉 W:，Downloads 共享自动盘符——见 docs/windows-build-vm.md。
 set -euo pipefail
 
-VM=win11
+VM=win10
 URI=qemu:///system
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DATA_DISK="$HOME/qemu/win11/win10-data.qcow2"   # 工具链数据盘（guest 数据盘卷，卷标 build-data）
+DATA_DISK="$HOME/qemu/win10/win10-data.qcow2"   # 工具链数据盘（guest 数据盘卷，卷标 build-data）
 SHARE_TAG=md-editor-src                          # 宿主仓库 → guest（卷标=tag，guest 钉 W:）
 DL_SHARE_TAG=daijd-shared                        # 宿主 ~/Downloads → guest（安装器预下渠道）
-VM_IP=192.168.122.10
+VM_IP=192.168.122.11
 SNAP=before-build-vm
 
 say() { printf '\033[36m==> %s\033[0m\n' "$*"; }
@@ -121,7 +121,7 @@ else
     printf '\033[33m'
     cat <<EOF
 sudo tee "$aa_file" >/dev/null <<'AAEOF'
-# md-editor win11 构建机：virtiofs 共享与 qcow2 放行（setup-windows-vm-host.sh 生成）
+# md-editor win10 构建机：virtiofs 共享与 qcow2 放行（setup-windows-vm-host.sh 生成）
 "$HOME/qemu/**" rwk,
 "$REPO_DIR/**" rwk,
 "$HOME/Downloads/**" rk,
@@ -147,14 +147,14 @@ fi
 say "8/8 宿主 ssh key / config"
 mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
 if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
-    ssh-keygen -t ed25519 -N "" -f "$HOME/.ssh/id_ed25519" -C "$USER-win11-build"
+    ssh-keygen -t ed25519 -N "" -f "$HOME/.ssh/id_ed25519" -C "$USER-win10-build"
 fi
-if ! grep -q 'win11-build' "$HOME/.ssh/config" 2>/dev/null; then
+if ! grep -q 'win10-build' "$HOME/.ssh/config" 2>/dev/null; then
     touch "$HOME/.ssh/config"
     cat >> "$HOME/.ssh/config" <<EOF
 
-# BEGIN md-editor win11 构建机（scripts/setup-windows-vm-host.sh 生成）
-Host win11-build
+# BEGIN md-editor win10 构建机（scripts/setup-windows-vm-host.sh 生成）
+Host win10-build
     HostName $VM_IP
     User builder
 # END

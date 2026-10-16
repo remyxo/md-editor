@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# 一条命令在本地 win11 KVM 虚拟机里构建 Windows 包（NSIS 安装器，2026-09-27 起不再产 zip）
+# 一条命令在本地 win10 KVM 虚拟机里构建 Windows 包（NSIS 安装器，2026-09-27 起不再产 zip）
 # 产物落在 dist/（virtiofs 共享即宿主仓库 dist/）。前置与搭建见 docs/windows-build-vm.md
 #
 # 用法: ./scripts/build-windows-local.sh [--compile-only]
 #   --compile-only  预检模式：只编译不打包；virsh/ssh 等环境故障 exit 75 放行（pre-push 钩子用）
 # 环境变量:
-#   MD_EDITOR_WIN_SSH   ssh 目标（默认 builder@192.168.122.10，setup 脚本绑定的固定 IP）
+#   MD_EDITOR_WIN_SSH   ssh 目标（默认 builder@192.168.122.11，setup 脚本绑定的固定 IP）
 #   MD_EDITOR_WIN_WAIT  等 ssh 就绪的超时秒数（默认 120）
-VM=win11
+VM=win10
 URI=qemu:///system
-SSH_TARGET="${MD_EDITOR_WIN_SSH:-builder@192.168.122.10}"
+SSH_TARGET="${MD_EDITOR_WIN_SSH:-builder@192.168.122.11}"
 WAIT_SECS="${MD_EDITOR_WIN_WAIT:-120}"
 LAUNCH='C:\md-editor-build-launch.ps1'
 
@@ -47,7 +47,7 @@ while ! ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept
     if [ "$SECONDS" -ge "$deadline" ]; then
         cat >&2 <<EOF
 ssh 到 $SSH_TARGET 超时。排查：
-  1. virsh -c $URI domaddr $VM        # 确认实际 IP（setup 绑定的是 192.168.122.10）
+  1. virsh -c $URI domaddr $VM        # 确认实际 IP（setup 绑定的是 192.168.122.11）
   2. VM 里 services.msc 查看 OpenSSH SSH Server (sshd) 是否运行
   3. VM 里 C:\\ProgramData\\ssh\\administrators_authorized_keys 是否含宿主公钥
      （provision 漏传 -SshPublicKey 时需手动补，见 docs/windows-build-vm.md）

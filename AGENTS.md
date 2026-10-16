@@ -114,7 +114,7 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 
 - **开发环境**：Debian 13，Qt6 系统安装 (`apt install qt6-base-dev qt6-webengine-dev qt6-webchannel-dev qt6-tools-dev qt6-tools-dev-tools`)，本地为 Qt 6.8.x。`qt6-tools-dev` 提供 Qt6LinguistTools（`qt6_add_translations`），`qt6-tools-dev-tools` 提供 `lupdate`/`lrelease` 二进制
 - **运行方式**：`./scripts/run-editor.sh` 或直接 `build/src/md-editor`
-- **CI 构建策略（2026-09-18 起，500MB 制品配额）**：日常 CI 只构建 macOS DMG（`build-macos.yml`，手动 dispatch，制品保留 2 天）。DEB 本地构建测试（`./scripts/build-deb.sh`），EXE 本地 win11 VM 构建（`./scripts/build-windows-local.sh`）。`build-deb.yml` 转手动触发，**发版前手动跑一次**——`ubuntu-26.04`/Qt 6.10.2 兼容基准（本地 6.8.x 通过不等于出厂正确，差异见 `docs/qt-642-escaping-compat.md`）在 CI 自动构建取消后仅存此把关点；发版 Release 三资产的挂载方式：deb/exe 由本地构建后 `gh release upload` 上传；**DMG 在 tag ref 上 dispatch**（`gh workflow run build-macos.yml --ref <tag>`），workflow 的 Release 步骤按 `refs/tags/v*` 门控自动创建 Release 并直接挂载 DMG——不经本地下载中转（master 上 dispatch 只出制品不发 Release，仅用于真机验证）
+- **CI 构建策略（2026-09-18 起，500MB 制品配额）**：日常 CI 只构建 macOS DMG（`build-macos.yml`，手动 dispatch，制品保留 2 天）。DEB 本地构建测试（`./scripts/build-deb.sh`），EXE 本地 win10 VM 构建（`./scripts/build-windows-local.sh`）。`build-deb.yml` 转手动触发，**发版前手动跑一次**——`ubuntu-26.04`/Qt 6.10.2 兼容基准（本地 6.8.x 通过不等于出厂正确，差异见 `docs/qt-642-escaping-compat.md`）在 CI 自动构建取消后仅存此把关点；发版 Release 三资产的挂载方式：deb/exe 由本地构建后 `gh release upload` 上传；**DMG 在 tag ref 上 dispatch**（`gh workflow run build-macos.yml --ref <tag>`），workflow 的 Release 步骤按 `refs/tags/v*` 门控自动创建 Release 并直接挂载 DMG——不经本地下载中转（master 上 dispatch 只出制品不发 Release，仅用于真机验证）
 
 ## 构建命令
 
@@ -128,7 +128,7 @@ ctest --output-on-failure
 ## 推送前预检（pre-push 钩子）
 
 - 一次性启用（本机生效，换机需重跑）：`git config core.hooksPath .githooks`
-- 改动含 C++（src/构建文件）时 push 前自动：容器 clang 语法检查（`scripts/verify-clang.sh`，镜像 `mdeditor-clang:trixie`）+ win11 VM MSVC 编译（`scripts/build-windows-local.sh --compile-only`）；无 C++ 改动秒过
+- 改动含 C++（src/构建文件）时 push 前自动：容器 clang 语法检查（`scripts/verify-clang.sh`，镜像 `mdeditor-clang:trixie`）+ win10 VM MSVC 编译（`scripts/build-windows-local.sh --compile-only`）；无 C++ 改动秒过
 - 编译错误硬阻断；环境故障（docker/镜像/VM/ssh）警告放行
 - 逃生门：`git push --no-verify` 或 `MD_EDITOR_SKIP_PRECHECK=1`
 - clang 镜像构建：`docker build -t mdeditor-clang:trixie -f scripts/docker/Dockerfile.mdeditor-clang scripts/docker/`
