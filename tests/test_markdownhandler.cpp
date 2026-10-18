@@ -1055,6 +1055,62 @@ private slots:
         QVERIFY(md2.contains("```js"));
     }
 
+    void testAdjacentPreElementsNotMergedFromHtml() {
+        // 相邻 <pre> 是两个独立代码块，不得合并（语言与块边界必须保留）
+        const QString html =
+            "<pre><code class=\"language-js\">a</code></pre>\n"
+            "<pre><code class=\"language-py\">b</code></pre>";
+        const QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains(QStringLiteral("```js")), qPrintable(md));
+        QVERIFY2(md.contains(QStringLiteral("```py")), qPrintable(md));
+        QCOMPARE(md.count(QStringLiteral("```")), 4);   // 两个围栏块
+    }
+
+    void testCodeBlockLeadingIndentPreserved() {
+        // 代码块首行缩进/行尾空白属于内容，不得被 trimmed
+        const QString html =
+            "<pre><code class=\"language-python\">    x = 1\n  y = 2   \n</code></pre>";
+        const QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains(QStringLiteral("    x = 1\n")), qPrintable(md));
+        QVERIFY2(md.contains(QStringLiteral("  y = 2   \n")), qPrintable(md));
+    }
+
+    void testPlaceholderLiteralExtendedTokenFromHtml() {
+        // 用户字面 ZZCB0ZZZZ 不得被当作生成占位符 ZZCB0ZZ 的前缀：
+        // 旧实现碰撞集只登记整串，还原时可自繁殖/死循环
+        const QString html = QStringLiteral("<pre><code>ZZCB0ZZZZ</code></pre>");
+        const QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains(QStringLiteral("ZZCB0ZZZZ")), qPrintable(md));
+    }
+
+    void testPlaceholderLiteralExtendedTokenToHtml() {
+        // 代码块中的字面扩展 token 不得导致代码块被复制
+        const QString md = QStringLiteral("```js\nlet x;\n```\n\nZZCB0ZZZZ\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        QCOMPARE(html.count(QStringLiteral("<pre")), 1);
+        QVERIFY2(html.contains(QStringLiteral("ZZCB0ZZZZ")), qPrintable(html));
+    }
+
+    void testTableCellLiteralPipeRoundTrip() {
+        // 单元格字面 |（用户写 \|）往返后必须仍为转义形态，列数不变
+        const QString md1 = "| a \\| b | c |\n| --- | --- |\n| d | e |\n";
+        const QString html = MarkdownHandler::toHtml(md1);
+        const QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains(QStringLiteral("| a \\| b | c |")), qPrintable(md2));
+        // 二次往返不丢列（旧实现第二轮把 c 当多余表头格丢弃）
+        const QString md3 = MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2));
+        QCOMPARE(md3, md2);
+    }
+
+    void testTableCellPipeInCodeSpanPreserved() {
+        // code span 内的 | 不转义（CommonMark 代码段不解析反斜杠）
+        const QString html =
+            "<table><tr><td><code>a|b</code></td><td>c</td></tr>"
+            "<tr><td>d</td><td>e</td></tr></table>";
+        const QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains(QStringLiteral("`a|b`")), qPrintable(md));
+    }
+
     void testMermaidRoundTrip() {
         // Mermaid 图表往返：```mermaid 围栏 ↔ <pre><code class="language-mermaid">
         // （editor.js 的 Mermaid 节点 renderHTML/parseHTML 依赖此契约）

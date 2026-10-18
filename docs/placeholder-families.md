@@ -2,7 +2,7 @@
 
 - 基准提交：`d3548fb`（行号以该版本 `src/core/MarkdownHandler.cpp` 为准，6067 行；后续提交行号会漂移，家族名与语义以 grep 复核为准）
 - 枚举方法：`grep -n collisionFreePlaceholder src/core/MarkdownHandler.cpp` 全集 + 逐点阅读归属
-- 统计口径：**ZZ 家族 46 种**（72 个铸造调用点）、`\x01` 哨兵 3 种、HTML 注释标记 1 种（ZZLB）、toHtml 后处理瞬态 token 2 种。**活路径口径 44 家族**：ZZBQ 家族的 toHtml 半边与 ZZBQSEP 全族自 8b55a63 起铸造路径不可达（遗留机制，见 §2 注 ①）
+- 统计口径：**ZZ 家族 47 种**（73 个铸造调用点；ZZPP 为 2026-10-18 新增，见 §3）、`\x01` 哨兵 3 种、HTML 注释标记 1 种（ZZLB）、toHtml 后处理瞬态 token 2 种。**活路径口径 45 家族**：ZZBQ 家族的 toHtml 半边与 ZZBQSEP 全族自 8b55a63 起铸造路径不可达（遗留机制，见 §2 注 ①）
 - 契约断言：`tests/test_markdownhandler.cpp` 的 `testContract*` 系列用例（索引见文末）
 - 关联文档：[br 与软换行往返机制](br-and-softbreak-roundtrip.md)（速查表收录早期 9 家族，本文为其全集超集）
 
@@ -64,7 +64,7 @@
 
 ## 3. fromHtml 侧家族（HTML → MD，fromHtml :4217 起）
 
-铸造于 fromHtml 的家族共 37 种（27 种仅 fromHtml + 10 种与 toHtml 同名复用）。除注明外均铸入主线 `placeholders`/`backups`，经 :5724-5754 通用多趟还原；多行备份在 :5667-5691 独占行分离。
+铸造于 fromHtml 的家族共 38 种（28 种仅 fromHtml + 10 种与 toHtml 同名复用）。除注明外均铸入主线 `placeholders`/`backups`，经 :5724-5754 通用多趟还原；多行备份在 :5667-5691 独占行分离。
 
 | 前缀 | 语义（触发形态） | 铸造点 | 备份内容 | 还原产物（md 语法） |
 |------|----------------|--------|---------|-------------------|
@@ -90,6 +90,7 @@
 | ZZBQ | `<blockquote>`（递归 :5027 / 扁平 margin p :5053；递归经 expandPlaceholdersInPlace :5012） | :5027、:5053 | `> ` 前缀化 md | `> 引用` |
 | ZZDV | 手写 `<div>` 块（跳过 taskItem 结构 div——`</label>` 判定） | :5074 | 原 `<div>` | `<div>` |
 | ZZTC | 表格（对齐提取 + 空格注入 + 合并行记录区间内整体占位） | :5153 | 备份为空串（表格由 :5548 起规范化直接产出） | `\| … \|` 表格行 |
+| ZZPP | 表格单元格文本中的字面竖线（setHtml 前按 `<td>/<th>` 结构占位；code span 内不处理） | :4369（`protectTableCellPipes`） | `\|` | `\|`（GFM 转义竖线） |
 | ZZA | 段落/标题 text-align | :5231 | `<div align="…">` | `<div align="…">` |
 | ZZBL | 空段落 | :5289 | `blankLinePhs`（副线容器） | `&nbsp;` 独占行（:5700 还原；列表/表格容器内跳过） |
 | ZZNB | 连续 `&nbsp;` | :5312 | 原 nbsp 串 | ` …` |

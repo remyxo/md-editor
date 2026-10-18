@@ -60,6 +60,9 @@ private slots:
     void onNewFile();
     void onSaveFile();
     void onSaveFileAs();
+    // 保存指定 tab（关闭-保存流程用：目标页可能不是当前页）。无路径时对该
+    // tab 走另存为对话框；完成/取消均经 cb 回传
+    void saveTab(EditorTab *tab, std::function<void(bool)> cb);
 
     // 格式同步
     void onFormatChanged(const QJsonObject &format, int tabId);

@@ -178,8 +178,8 @@ TabWidget::CloseResult TabWidget::requestCloseTab(int index)
             // 记 tab 指针而非下标：保存窗口期（异步 JS 往返期间 UI 可交互）
             // 用户拖动标签或开关其他 tab 会使下标漂移，按陈旧下标会关错页
             m_pendingCloseTab = tab;
-            emit tabSaveRequested(index);
-            return CloseResult::SavePending; // 保存由 MainWindow 异步处理，完成后调用 completePendingTabClose()
+            emit tabSaveRequested(tab);
+            return CloseResult::SavePending; // 保存由 MainWindow 异步处理，完成后调用 completePendingTabClose(tab)
         }
     }
     closeTabAt(index);
@@ -209,24 +209,36 @@ void TabWidget::closeTabDirect(EditorTab *tab)
         closeTabAt(idx);
 }
 
-void TabWidget::completePendingTabClose()
+void TabWidget::completePendingTabClose(EditorTab *savedTab)
 {
     EditorTab *tab = m_pendingCloseTab;
+    // 只有「待关闭 tab 自己」的保存完成才允许收尾。其他标签的普通保存
+    // （Ctrl+S）不得误关 pending tab（曾无条件收尾，跨标签保存会关错页）。
+    if (!tab || tab != savedTab)
+        return;
     m_pendingCloseTab = nullptr;
-    if (tab) {
-        const int idx = indexOf(tab);
-        if (idx >= 0) {
-            emit tabClosed(idx);
-            m_tabs.remove(tab->bridge()->tabId());
-            m_untitledTabs.remove(tab);
-            removeTab(idx);
-            tab->deleteLater();
-        }
-        // idx < 0：保存期间该 tab 已被其他路径关闭——无需收尾
+    const int idx = indexOf(tab);
+    if (idx >= 0) {
+        emit tabClosed(idx);
+        m_tabs.remove(tab->bridge()->tabId());
+        m_untitledTabs.remove(tab);
+        removeTab(idx);
+        tab->deleteLater();
     }
+    // idx < 0：保存期间该 tab 已被其他路径关闭——无需收尾
     // 批量关闭挂起在保存链上：保存收尾（或该 tab 已被别路关闭）后继续队列
     if (!m_batchCloseQueue.isEmpty())
         processBatchCloseQueue();
+}
+
+void TabWidget::failPendingTabClose(EditorTab *savedTab)
+{
+    if (!m_pendingCloseTab || m_pendingCloseTab != savedTab)
+        return;
+    // 保存失败/另存为取消：目标 tab 保持打开且仍脏；清掉 pending，避免
+    // 残留到之后任意一次成功保存时被误关；批量队列随之中止。
+    m_pendingCloseTab = nullptr;
+    m_batchCloseQueue.clear();
 }
 
 // 批量关闭：入队后驱动处理。顺序即关闭顺序（右键菜单自左向右收集）

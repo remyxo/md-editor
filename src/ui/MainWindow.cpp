@@ -380,8 +380,17 @@ void MainWindow::connectSignals()
             this, &MainWindow::onEditorBridgeCreated);
     connect(m_tabWidget, &TabWidget::currentTabChanged,
             this, &MainWindow::onTabChanged);
+    // 关闭-保存：保存的是发出请求的 tab（不能退化为「当前页」——否则后台
+    // 脏页选保存会保存错页并在随后被关闭，修改静默丢失）
     connect(m_tabWidget, &TabWidget::tabSaveRequested,
-            this, [this](int) { onSaveFile(); });
+            this, [this](EditorTab *tab) {
+                saveTab(tab, [this, tab](bool ok) {
+                    if (ok)
+                        m_tabWidget->completePendingTabClose(tab);
+                    else
+                        m_tabWidget->failPendingTabClose(tab);
+                });
+            });
     connect(m_tabWidget, &TabWidget::tabClosed, this,
             [this](int index) {
                 EditorTab *tab = m_tabWidget->tabAt(index);
@@ -1304,8 +1313,11 @@ void MainWindow::selfTestToggleSourceMode() { onToggleSourceMode(); }
 void MainWindow::writeTabToFile(EditorTab *tab, const QString &path, bool setPathAfter,
                                  std::function<void(bool)> cb)
 {
-    if (!tab)
+    if (!tab) {
+        if (cb)
+            cb(false);
         return;
+    }
     // 空快照防御（I1）：未读盘的惰性标签（hasPendingRead）或内容在途的标签
     // （isContentInFlight——读盘/打开后 toHtml 转换、setContent 落地之前），
     // 编辑器里没有目标内容，保存快照必为空——照常保存会把空串写盘清空原文件
@@ -1343,7 +1355,9 @@ void MainWindow::writeTabToFile(EditorTab *tab, const QString &path, bool setPat
                     if (idx >= 0) {
                         m_tabWidget->markTabSaved(idx, path);
                     }
-                    m_tabWidget->completePendingTabClose();
+                    // pending close 的收尾由「关闭-保存」调用方的 cb 负责：
+                    // 普通保存成功不得关闭任何待关闭标签（曾无条件收尾，
+                    // 跨标签保存会误关 pending tab）
                 } else {
                     m_statusBar->showMessage(tr("保存失败"), 3000);
                     // 模态警告框：状态栏 3 秒小字在真实故障（磁盘满/只读目录/权限）
@@ -1370,17 +1384,30 @@ void MainWindow::writeTabToFile(EditorTab *tab, const QString &path, bool setPat
         });
 }
 
-void MainWindow::onSaveFile()
+void MainWindow::saveTab(EditorTab *tab, std::function<void(bool)> cb)
 {
-    EditorTab *tab = m_tabWidget->currentEditorTab();
-    if (!tab) return;
-
-    QString filePath = tab->webView()->property("filePath").toString();
-    if (filePath.isEmpty() || !QFile::exists(filePath)) {
-        onSaveFileAs();
+    if (!tab) {
+        if (cb) cb(false);
         return;
     }
-    writeTabToFile(tab, filePath, false, {});
+    QString filePath = tab->webView()->property("filePath").toString();
+    if (filePath.isEmpty() || !QFile::exists(filePath)) {
+        // 另存为：目标明确为该 tab（关闭后台标签时当前页可能不同）
+        QString path = QFileDialog::getSaveFileName(this, tr("另存为"), "untitled.md",
+                                                     tr("Markdown 文件 (*.md *.markdown)"));
+        if (path.isEmpty()) {
+            if (cb) cb(false);
+            return;
+        }
+        writeTabToFile(tab, path, true, cb);
+        return;
+    }
+    writeTabToFile(tab, filePath, false, cb);
+}
+
+void MainWindow::onSaveFile()
+{
+    saveTab(m_tabWidget->currentEditorTab(), {});
 }
 
 void MainWindow::onSaveFileAs()

@@ -41,11 +41,18 @@ public:
 signals:
     void currentTabChanged(int tabId);
     void editorBridgeCreated(EditorBridge *bridge);
-    void tabSaveRequested(int index);
+    // 关闭-保存：携带目标 tab 指针（下标在异步保存窗口期会漂移；且接收方
+    // 不得把它重新解释为「当前页」——曾因此保存错页并丢失目标页修改）
+    void tabSaveRequested(EditorTab *tab);
     void tabClosed(int index);
 
 public slots:
-    void completePendingTabClose();
+    // 保存完成收尾：仅当完成保存的正是待关闭 tab 时才关闭它并推进批量队列。
+    // 其他 tab 的正常保存（Ctrl+S）不得影响 pending close。
+    void completePendingTabClose(EditorTab *savedTab);
+    // 保存失败/取消：清除对应 pending（不清会残留到下一次任意成功保存），
+    // 并中止批量关闭队列
+    void failPendingTabClose(EditorTab *savedTab);
 
 private slots:
     void onTabCloseRequested(int index);

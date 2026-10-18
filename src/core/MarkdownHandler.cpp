@@ -517,13 +517,28 @@ static QString collisionFreePlaceholder(QSet<QString> &collisions,
 // 语义等价于对每个候选占位符串做 source.contains(ph)（集合成员判断 O(1)）。
 // 占位符形如 ZZ<名><n>ZZ（名为字母数字、序号为数字），\w 覆盖之；用户文档中
 // 字面的同形态文本同样被收录，恰好用于避免与之碰撞。
+//
+// 注意：`ZZ[A-Za-z0-9_]+ZZ` 是贪婪匹配，用户文本 `ZZCB0ZZZZ` 会整串入集；
+// 而生成/还原使用的是前缀形态 `ZZCB0ZZ`——若只登记整串，碰撞检测会漏判，
+// 还原正则把用户文本的前缀当占位符替换（多趟还原还会因备份中含 token 而
+// 自繁殖，最终死循环）。故对每个贪婪匹配再登记其全部「token 形态前缀」。
 static QSet<QString> buildPlaceholderCollisionSet(const QString &source)
 {
     static const QRegularExpression zzRe("ZZ[A-Za-z0-9_]+ZZ");
+    static const QRegularExpression tokenRe(R"(ZZ[A-Z]+[0-9]+ZZ)");
     QSet<QString> set;
     auto it = zzRe.globalMatch(source);
-    while (it.hasNext())
-        set.insert(it.next().captured());
+    while (it.hasNext()) {
+        const QString m = it.next().captured();
+        set.insert(m);
+        // tokenRe 锚定在 0：贪婪串的 token 形态前缀唯一（一旦以 ZZ 收尾，
+        // 再延长就不满足名/数字结构），取最长前缀即可。匹配本身很短，成本可忽略。
+        const auto tm = tokenRe.match(
+            m, 0, QRegularExpression::NormalMatch,
+            QRegularExpression::AnchorAtOffsetMatchOption);
+        if (tm.hasMatch())
+            set.insert(m.left(tm.capturedLength()));
+    }
     return set;
 }
 
@@ -808,25 +823,6 @@ static void batchReplaceExact(QString &s, const QStringList &search,
 // 不二次处理）与 `&lt;tag&gt;`（实体文本）。负向断言 (?<![\&\\]) 排除 `<` 紧跟
 // `&`/`\` 的匹配。块级 <div> 与受支持内联标签（<span style>/<u>/<kbd>/<small>）
 // 在此前已占位保护，不经过本函数；本函数须在占位保护之后执行。
-// 从 from 起找 </name>（词边界：后随字符非字母数字/_/-）。indexOf 线性扫替代
-// 正则：一是免每标签现构造 QRegularExpression（含 JIT 编译），二是无闭合时
-// 正则 match 会扫到串尾、indexOf 的实现远快于正则引擎（曾 O(K·n) 主热点）
-static bool hasClosingTag(const QString &s, const QString &nameL, int from)
-{
-    const QString needle = QStringLiteral("</") + nameL;
-    int pos = from;
-    while ((pos = s.indexOf(needle, pos, Qt::CaseInsensitive)) >= 0) {
-        const int after = pos + needle.length();
-        const bool boundary = after >= s.length()
-            || !(s.at(after).isLetterOrNumber() || s.at(after) == QLatin1Char('_')
-                 || s.at(after) == QLatin1Char('-'));
-        if (boundary)
-            return true;
-        pos = after;
-    }
-    return false;
-}
-
 static void escapeUnclosedHtmlTags(QString &s)
 {
     // 行内代码段先暂存：code span 内是字面文本——CommonMark 规定实体不解码、
@@ -838,52 +834,73 @@ static void escapeUnclosedHtmlTags(QString &s)
     // （开/闭 run 等长、闭 run 后不紧跟反引号）：简单成对 `` `x` `` 会在
     // `` ``` ```<script> ``` `` 这类多反引号串中错配内层，把 md4c 判定为裸露
     // 正文的 <script> 暂存起来，转义循环看不见 → Qt 吞噬其后全文。
+    // 单遍重建（globalReplaceWith）：旧 while + s.replace 每段都搬移串尾移位。
     QStringList codes;
     static const QRegularExpression csRe("(`+)([^`\n]+)\\1(?!`)");
-    int csOff = 0;
-    while (true) {
-        const auto cm = csRe.match(s, csOff);
-        if (!cm.hasMatch()) break;
-        codes << cm.captured(0);   // 含反引号的整个 span（还原时原样回填）
-        // 贪婪 \x 陷阱："\x01EUT" 实为 0x1E+"UT"（十六进制转义吞 E 才停），
-        // 铸造/正则/哈希键三处必须用同款字面量，勿「纠正」写法——护栏
-        // （conv-byte-snapshot）会拦截破坏
-        const QString ph = "\x01EUT" + QString::number(codes.size() - 1) + "\x01";
-        s.replace(cm.capturedStart(), cm.capturedLength(), ph);
-        csOff = cm.capturedStart() + ph.length();
+    globalReplaceWith(s, csRe,
+        [&codes](const QRegularExpressionMatch &m) {
+            codes << m.captured(0);   // 含反引号的整个 span（还原时原样回填）
+            // 贪婪 \x 陷阱："\x01EUT" 实为 0x1E+"UT"（十六进制转义吞 E 才停），
+            // 铸造/正则/哈希键三处必须用同款字面量，勿「纠正」写法——护栏
+            // （conv-byte-snapshot）会拦截破坏
+            return "\x01EUT" + QString::number(codes.size() - 1) + "\x01";
+        });
+
+    // 闭标签位置索引：先单次 O(n) 收集，再在单遍重建中按名查询。
+    // 旧实现每个开标签都做一次 indexOf 尾部扫描（无闭合标签的文档 O(K·n)），
+    // 且未闭合标签的 s.replace 又要搬移整个串尾，双重平方级。
+    static const QRegularExpression closeTagRe(
+        R"(</([a-zA-Z][a-zA-Z0-9_-]*))");
+    QHash<QString, QVector<int>> closePos;
+    {
+        auto cit = closeTagRe.globalMatch(s);
+        while (cit.hasNext()) {
+            const auto cm = cit.next();
+            closePos[cm.captured(1).toLower()].append(cm.capturedStart());
+        }
     }
+    // 开标签按位置递增处理，同名闭标签游标也单调前移（O(闭标签总数)）
+    QHash<QString, int> closeCursor;
+    auto hasCloseAfter = [&closePos, &closeCursor](const QString &nameL, int pos) {
+        auto it = closePos.find(nameL);
+        if (it == closePos.end())
+            return false;
+        int &c = closeCursor[nameL];
+        while (c < it->size() && (*it)[c] < pos)
+            ++c;
+        return c < it->size();
+    };
 
     static const QRegularExpression tagRe("(?<![\\&\\\\])<[a-zA-Z/][^<>]*>");
     static const QRegularExpression nameEndRe("[\\s>]");
-    int off = 0;
-    while (true) {
-        auto m = tagRe.match(s, off);
-        if (!m.hasMatch()) break;
+    QString out;
+    out.reserve(s.size());
+    int last = 0;
+    auto tagIt = tagRe.globalMatch(s);
+    while (tagIt.hasNext()) {
+        const auto m = tagIt.next();
         const QString tok = m.captured();
         const bool isClosing = tok.startsWith("</");
         // 提取标签名（<b> → b，<a href> → a，</div> → div）
         int nameEnd = tok.indexOf(nameEndRe, 1);
         if (nameEnd < 0) nameEnd = tok.length() - 1;
-        const QString name = isClosing ? tok.mid(2, nameEnd - 2) : tok.mid(1, nameEnd - 1);
+        const QString name = isClosing ? tok.mid(2, nameEnd - 2)
+                                       : tok.mid(1, nameEnd - 1);
         const QString nameL = name.toLower();
         const bool isBr = nameL == "br";
         const bool isSelfClosing = tok.contains("/>");
-        // 短路序：isBr/isSelfClosing 先于闭合检测——曾对每个 <br>/<img> 也
-        // 现构造 QRegularExpression（编译 + JIT）并全尾扫描，粘贴大 HTML 平方级
-        if (isClosing || isBr || isSelfClosing) {
-            off = m.capturedEnd();
+        // 短路序：isBr/isSelfClosing 先于闭合检测——避免无谓查询
+        if (isClosing || isBr || isSelfClosing
+            || hasCloseAfter(nameL, m.capturedEnd()))
             continue;
-        }
-        const bool hasClose = hasClosingTag(s, nameL, m.capturedEnd());
-        if (hasClose) {
-            off = m.capturedEnd();
-            continue;
-        }
         // 未闭合容器标签 → 转义 < > 为实体，Qt 不再当标签解析
-        const QString inner = tok.mid(1, tok.length() - 2);
-        s.replace(m.capturedStart(), m.capturedLength(), "&lt;" + inner + "&gt;");
-        off = m.capturedStart() + inner.length() + 8;   // &lt;(4) + inner + &gt;(4)
+        out += s.mid(last, m.capturedStart() - last);
+        out += QStringLiteral("&lt;") + tok.mid(1, tok.length() - 2)
+             + QStringLiteral("&gt;");
+        last = m.capturedEnd();
     }
+    out += s.mid(last);
+    s = out;
 
     // 还原行内代码段（内容未参与转义；单遍重建，原逐 token replace 循环）：
     // token→备份哈希查表，一次 globalMatch 重建，免 K 个 token 各自全文扫描
@@ -1730,14 +1747,15 @@ static QString taskListInnerToMd(const QString &inner, int indent)
     QString pad(indent * 2, ' ');
     QString md;
 
-    // 平衡扫描提取顶层 taskItem 条目（嵌套 li 在条目内容中递归处理）
+    // 平衡扫描提取顶层 taskItem 条目（嵌套 li 在条目内容中递归处理）。
+    // globalMatch 单遍扫描：旧 while + match(inner, pos) 每次从 pos 扫到串尾，
+    // 条目数大时 O(K·n)（列表文档的主热点之一）。
     int depth = 0;
-    int pos = 0;
     int itemOpenEnd = -1;    // 当前顶层条目开标签的末尾位置
     bool itemChecked = false;
-    while (true) {
-        auto m = liTagRe.match(inner, pos);
-        if (!m.hasMatch()) break;
+    auto liIt = liTagRe.globalMatch(inner);
+    while (liIt.hasNext()) {
+        const auto m = liIt.next();
         if (m.captured(1).isEmpty()) {           // <li ...>
             if (depth == 0 && taskLiRe.match(m.captured()).hasMatch()) {
                 itemOpenEnd = m.capturedEnd();
@@ -1817,7 +1835,6 @@ static QString taskListInnerToMd(const QString &inner, int indent)
                 itemOpenEnd = -1;
             }
         }
-        pos = m.capturedEnd();
     }
     return md;
 }
@@ -1882,11 +1899,12 @@ static QString generalListInnerToMd(const QString &inner, int indent,
     QString md;
     int n = start;
     int depth = 0;
-    int pos = 0;
     int itemStart = -1;
-    while (true) {
-        auto m = liTagRe.match(inner, pos);
-        if (!m.hasMatch()) break;
+    // globalMatch 单遍扫描（同 taskListInnerToMd，避免 match(inner,pos) 的
+    // O(K·n) 尾部扫描）
+    auto liIt = liTagRe.globalMatch(inner);
+    while (liIt.hasNext()) {
+        const auto m = liIt.next();
         if (m.captured(1).isEmpty()) {           // <li ...>
             if (depth == 0) itemStart = m.capturedEnd();
             ++depth;
@@ -1958,7 +1976,6 @@ static QString generalListInnerToMd(const QString &inner, int indent,
                 itemStart = -1;
             }
         }
-        pos = m.capturedEnd();
     }
     return md;
 }
@@ -2155,22 +2172,21 @@ static void expandPlaceholdersInPlace(QString &s, const QStringList &phs,
     for (int i = 0; i < phs.size(); ++i)
         phMap.insert(phs[i], backups[i]);
     for (int pass = 0; pass < 8; ++pass) {
-        if (!anyTokRe.match(s).hasMatch())
+        // 单遍重建（globalReplaceWith）：旧 while + match(s, pos) 每次调用都
+        // 从 pos 扫到串尾（Qt 的 match(subject, offset) 行为），K 个 token 即
+        // O(K·n)。未命中表的用户字面 token 原样保留，且不计入 replaced——
+        // 只有真正展开过才需要下一趟。
+        bool replaced = false;
+        globalReplaceWith(s, anyTokRe,
+            [&phMap, &replaced](const QRegularExpressionMatch &m) {
+                const auto itr = phMap.constFind(m.captured());
+                if (itr == phMap.constEnd())
+                    return m.captured(0);
+                replaced = true;
+                return itr.value();
+            });
+        if (!replaced)
             break;
-        QString rebuilt;
-        int pos = 0;
-        while (true) {
-            const auto tm = anyTokRe.match(s, pos);
-            if (!tm.hasMatch()) {
-                rebuilt += s.mid(pos);
-                break;
-            }
-            rebuilt += s.mid(pos, tm.capturedStart() - pos);
-            const auto itr = phMap.constFind(tm.captured());
-            rebuilt += (itr != phMap.constEnd()) ? itr.value() : tm.captured();
-            pos = tm.capturedEnd();
-        }
-        s = rebuilt;
     }
 }
 
@@ -2237,6 +2253,22 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     // 破坏字面文本/行内代码，如 audit 文档中的 `BRMARKER`）。
 
     QStringList lines = markdown.split('\n');
+    // 通用列表块「本行及之后是否含任务项」预计算。主循环的通用列表分支需
+    // 判断「本连续列表块是否含任务项」；旧实现每个列表行都向后扫描整个块，
+    // 长列表 O(n²)。从后向前单遍：连续列表块内累计，块外复位。
+    QVector<bool> listTaskAhead(lines.size(), false);
+    {
+        bool ahead = false;
+        for (int k = lines.size() - 1; k >= 0; --k) {
+            if (!isListItemLine(lines[k])) {
+                ahead = false;
+                continue;
+            }
+            if (isTaskItemLine(lines[k]))
+                ahead = true;
+            listTaskAhead[k] = ahead;
+        }
+    }
     QString processed;
     int codeFenceLen = 0; // 当前代码块开启围栏的字符数（0 = 不在代码块；``` 或 ~~~）
     QChar codeFenceChar = QLatin1Char('`');   // 开启围栏的字符（闭合须同字符，CommonMark）
@@ -2262,7 +2294,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     QStringList taskLists; // 任务列表 HTML（TipTap taskList 契约），后处理还原
     QStringList footnoteRefs;   // 脚注引用 <sup> HTML（后处理还原）
     QStringList footnoteDefs;   // 脚注定义 def HTML（按 id 去重，首次定义顺序）
-    QStringList footnoteDefIds; // 已收集的定义 id（去重用）
+    QSet<QString> footnoteDefIds; // 已收集的定义 id（去重用；QSet 避免长列表 O(n²) 查找）
     QStringList escapedEqBackups;  // 转义等号 \= → ZZES 保护
     QStringList escapedDelimBackups; // 转义扩展定界符 \~~/\~/\^ → ZZED 保护（还原为字面定界符）
     QStringList htmlInlineBackups; // 原始 HTML 内联标签（<span style> / <u>）
@@ -2736,12 +2768,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             // 若含（如「通用有序列表下嵌套任务列表」），Qt setMarkdown 无法在
             // 通用列表下产出 TipTap 任务列表契约（任务行会被拍平/提升），
             // 整块走统一自绘；否则逐行直通既有路径（保持纯通用列表行为不变）。
-            int j = i;
-            bool hasTask = false;
-            while (j < lines.size() && isListItemLine(lines[j])) {
-                if (isTaskItemLine(lines[j])) { hasTask = true; break; }
-                ++j;
-            }
+            const bool hasTask = listTaskAhead.at(i);
             if (hasTask) {
                 QStringList listLines;
                 while (i < lines.size() && isListItemLine(lines[i]))
@@ -3685,14 +3712,14 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             // 1) 按列聚合对齐（列内首个非空值）
             QStringList colAligns;
             {
-                int coff = 0;
-                while (true) {
-                    auto cm = cellPAlignRe.match(region, coff);
-                    if (!cm.hasMatch()) break;
+                // globalMatch 单遍（旧 while + match(region, coff) 每个对齐
+                // 匹配都从 coff 扫到表格区尾，大表格 O(K·n)）
+                auto alignIt = cellPAlignRe.globalMatch(region);
+                while (alignIt.hasNext()) {
+                    const auto cm = alignIt.next();
                     int col = columnOf(cm.capturedStart());
                     while (colAligns.size() < col + 1) colAligns << QString();
                     if (colAligns[col].isEmpty()) colAligns[col] = cm.captured(3);
-                    coff = cm.capturedEnd();
                 }
             }
             const bool hasAlign = colAligns.contains(QLatin1String("center"))
@@ -3705,23 +3732,29 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                         "<p\\b([^>]*?)\\s*\\balign\\s*=\\s*\"(?:center|right|left)\"([^>]*)>")),
                     QStringLiteral("<p\\1\\2>"));
                 // 3) 给该列有对齐且无 style 的单元格标签注入 text-align
-                //    （含表头行 —— GFM 列对齐语义覆盖整列）
-                int coff = 0;
-                while (true) {
-                    auto cm = cellOpenRe.match(region, coff);
-                    if (!cm.hasMatch()) break;
-                    int col = columnOf(cm.capturedStart());
-                    QString a = (col < colAligns.size()) ? colAligns[col] : QString();
-                    QString tag = cm.captured();
-                    if (!a.isEmpty() && !tag.contains(QLatin1String("style"))) {
-                        QString newTag = tag.left(tag.size() - 1)
-                                       + QStringLiteral(" style=\"text-align:") + a + QStringLiteral("\">");
-                        region.replace(cm.capturedStart(), cm.capturedLength(), newTag);
-                        coff = cm.capturedStart() + newTag.size();
-                    } else {
-                        coff = cm.capturedEnd();
-                    }
-                }
+                //    （含表头行 —— GFM 列对齐语义覆盖整列）。
+                //    单遍重建（globalReplaceWith）：旧 while + match + replace
+                //    在处理过程中改写 region，每次 replace 都搬移串尾且位置
+                //    随之漂移，大表格 O(K·n)。列号按匹配顺序统计：自上格以来
+                //    出现 <tr 即换行。
+                int col = -1;
+                int lastCellEnd = 0;
+                globalReplaceWith(region, cellOpenRe,
+                    [&](const QRegularExpressionMatch &cm) {
+                        const int tr = region.indexOf(QLatin1String("<tr"), lastCellEnd);
+                        if (tr >= 0 && tr < cm.capturedStart())
+                            col = -1;   // 新行：下方 ++col 归零
+                        ++col;
+                        lastCellEnd = cm.capturedEnd();
+                        const QString a = (col < colAligns.size())
+                            ? colAligns[col] : QString();
+                        const QString tag = cm.captured();
+                        if (!a.isEmpty() && !tag.contains(QLatin1String("style")))
+                            return tag.left(tag.size() - 1)
+                                 + QStringLiteral(" style=\"text-align:") + a
+                                 + QStringLiteral("\">");
+                        return tag;
+                    });
             }
             return m.captured(1) + region + m.captured(3);
         });
@@ -4291,6 +4324,59 @@ static QString serializeMarkdownNoWrap(const QTextDocument &doc)
     return md;
 }
 
+// 表格单元格文本中的字面 | → ZZPP 占位符（fromHtml 侧）。
+// Qt toMarkdown 不对单元格文本里的 | 做转义，输出 `| a | b | c |`；到步骤 6
+// 归一化时单元格边界已不可恢复（splitTableCells 只能看到裸 |），重载即多列，
+// 后续单元格被吞。故在 setHtml 前按 HTML 单元格结构把文本 | 占位，toMarkdown
+// 后统一还原为 GFM 转义形式 \|（不经过 Qt，版本无关）。
+// code span 内不处理：CommonMark 代码段不解析反斜杠，写成 `a\|b` 会显示多出的
+// 反斜杠；而 splitTableCells 本身反引号感知，保留裸 | 即可正确往返。
+static QString protectTableCellPipes(const QString &cell, QSet<QString> &collisions,
+                                     QStringList &placeholders, QStringList &backups,
+                                     int &n)
+{
+    QString out;
+    out.reserve(cell.size());
+    int i = 0;
+    int codeDepth = 0;
+    while (i < cell.size()) {
+        if (cell.at(i) == QLatin1Char('<')) {
+            const int j = cell.indexOf(QLatin1Char('>'), i);
+            if (j < 0) {                       // 残缺标签：原样保留
+                out += cell.mid(i);
+                break;
+            }
+            const QString tag = cell.mid(i, j - i + 1);
+            const QString lower = tag.toLower();
+            if (lower.startsWith(QLatin1String("<code")))
+                ++codeDepth;
+            else if (lower.startsWith(QLatin1String("</code")))
+                codeDepth = qMax(0, codeDepth - 1);
+            out += tag;
+            i = j + 1;
+            continue;
+        }
+        int j = cell.indexOf(QLatin1Char('<'), i);
+        if (j < 0) j = cell.size();
+        if (codeDepth > 0) {
+            out += cell.mid(i, j - i);         // code span 内原样保留
+        } else {
+            for (int k = i; k < j; ++k) {
+                if (cell.at(k) == QLatin1Char('|')) {
+                    const QString ph = collisionFreePlaceholder(collisions, "PP", n++);
+                    placeholders << ph;
+                    backups << QStringLiteral("\\|");
+                    out += ph;
+                } else {
+                    out += cell.at(k);
+                }
+            }
+        }
+        i = j;
+    }
+    return out;
+}
+
 QString MarkdownHandler::fromHtml(const QString &html)
 {
     // 占位符碰撞索引：源 HTML 中全部 ZZ\w+ZZ 形态子串，供 collisionFreePlaceholder
@@ -4382,7 +4468,12 @@ QString MarkdownHandler::fromHtml(const QString &html)
             });
     }
 
-    // 1) 代码块：多重 <pre>（每行一个，QTextDocument 特有）→ 合并
+    // 1) 代码块：每个 <pre> 独立成一个代码块
+    //    早期实现把「之间仅空白」的连续 <pre> 合并为一个代码块，假设
+    //    QTextDocument 每源码行输出一个 <pre>。Qt 6.8/6.10 实测每个代码块
+    //    只输出一个 <pre>（块间仅以换行分隔），该假设不成立——相邻的两个
+    //    独立代码块（尤其语言不同）会被误合并，第二个块的语言与块边界丢失。
+    //    故按 globalMatch 逐一处理，不再跨 <pre> 合并。
     {
         QRegularExpression preRe(
             R"(<pre[^>]*>(.*?)</pre>)",
@@ -4390,41 +4481,18 @@ QString MarkdownHandler::fromHtml(const QString &html)
         static const QRegularExpression langRe(
             "class=\"language-([^\"]+)\"");
         static const QRegularExpression stripTagRe("<[^>]*>");
-        // 单遍重建：globalMatch 一次取全部 <pre>，仅空白分隔的连续 <pre> 合并为
-        // 同一组（同一代码块）；逐组生成占位符并拼接 result。替代 while(true)
-        // preRe.match(processed, searchFrom) + processed.replace 的 O(K·n) 模式。
-        // 分组判定基于原始串中相邻 <pre> 间的空白（与原实现一致），占位符串由
-        // collisionFreePlaceholder 在原始串上碰撞检测（比原「已替换串」检测更
-        // 保守但同样安全，仅占位符编号可能不同，还原按存储值回填不受影响）。
-        QVector<QRegularExpressionMatch> matches;
-        auto preIt = preRe.globalMatch(processed);
-        while (preIt.hasNext())
-            matches << preIt.next();
 
         QString result;
         result.reserve(processed.size());
         int last = 0;
         int n = 0;
-        int i = 0;
-        while (i < matches.size()) {
-            int blockStart = matches[i].capturedStart();
-            int blockEnd = matches[i].capturedEnd();
-            QStringList lines;
-            lines << matches[i].captured(1);
-            ++i;
-            while (i < matches.size()) {
-                const QString between = processed.mid(blockEnd,
-                    matches[i].capturedStart() - blockEnd);
-                if (!between.trimmed().isEmpty())
-                    break;
-                lines << matches[i].captured(1);
-                blockEnd = matches[i].capturedEnd();
-                ++i;
-            }
+        auto preIt = preRe.globalMatch(processed);
+        while (preIt.hasNext()) {
+            const auto pm = preIt.next();
+            result += processed.mid(last, pm.capturedStart() - last);
+            last = pm.capturedEnd();
 
-            result += processed.mid(last, blockStart - last);
-
-            QString code = lines.join('\n');
+            QString code = pm.captured(1);
             // 提取语言（TipTap codeBlock 输出 <code class="language-xxx">）
             QString lang;
             auto lm = langRe.match(code);
@@ -4432,7 +4500,13 @@ QString MarkdownHandler::fromHtml(const QString &html)
             if (lm.hasMatch()) lang = unescapeHtmlEntities(lm.captured(1));
             code.remove(stripTagRe);
             code = unescapeHtmlEntities(code);
-            code = code.trimmed();
+            // 只剥离 HTML 包装在首尾产生的单个换行。不得 trimmed()：代码块
+            // 首行缩进、行尾空白、首尾空行都是内容（Python/YAML 代码首行缩进
+            // 极常见，trimmed 会直接毁掉缩进）。
+            if (code.startsWith(QLatin1Char('\n')))
+                code.remove(0, 1);
+            if (code.endsWith(QLatin1Char('\n')))
+                code.chop(1);
             // 占位符序号须避开输入 HTML/已产出内容中的字面同串（如文档里示例的
             // `ZZCB0ZZ`），否则还原时用户文本被误替换。序号存 placeholders（可非
             // 连续），还原按存储值回填；n 仍作数组序号递增。
@@ -4456,7 +4530,6 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString fence(fenceLen, QLatin1Char('`'));
             backups << fence + lang + "\n" + code + "\n" + fence;
             result += wrapBlock(ph);
-            last = blockEnd;
         }
         result += processed.mid(last);
         processed = result;
@@ -4741,12 +4814,16 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString inner = processed.mid(om.capturedEnd(),
                                           closeStart - om.capturedEnd());
             QString mdBlock;
-            int doff = 0;
-            while (true) {
-                auto dm = defOpenRe.match(inner, doff);
-                if (!dm.hasMatch()) break;
+            // globalMatch 单遍（旧 while + match(inner, doff) 每个定义都从
+            // doff 扫到串尾，定义多的脚注容器 O(K·n)）
+            int defsConsumedTo = 0;
+            auto defIt = defOpenRe.globalMatch(inner);
+            while (defIt.hasNext()) {
+                const auto dm = defIt.next();
+                if (dm.capturedStart() < defsConsumedTo)
+                    continue;   // 已随外层定义消费的嵌套 def
                 int defClose = findMatchingDivClose(inner, dm.capturedStart());
-                if (defClose < 0) { doff = dm.capturedEnd(); continue; }
+                if (defClose < 0) continue;
                 auto iim = defIdRe.match(dm.captured());
                 // 实体解码（与上方脚注引用、escapeHtmlAttr 成对）
                 QString id = iim.hasMatch() ? unescapeHtmlEntities(iim.captured(1))
@@ -4793,7 +4870,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
                         mdBlock += QStringLiteral("    ") + outLines[li];
                 }
                 mdBlock += '\n';
-                doff = defClose + 6;   // 跳过 </div>
+                defsConsumedTo = defClose + 6;   // 跳过 </div>
             }
             const QString ph = collisionFreePlaceholder(collisions, "FD", n++);
             placeholders << ph;
@@ -5696,6 +5773,29 @@ QString MarkdownHandler::fromHtml(const QString &html)
             });
     }
 
+    // 表格单元格文本中的字面 |：先按 HTML 单元格结构占位（Qt toMarkdown 不
+    // 转义，且到步骤 6 时单元格边界已不可恢复——见 protectTableCellPipes）。
+    {
+        static const QRegularExpression cellRe(
+            R"(<(t[dh])\b[^>]*>(.*?)</\1>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        int n = 0;
+        globalReplaceWith(processed, cellRe,
+            [&](const QRegularExpressionMatch &m) {
+                const QString whole = m.captured(0);
+                const QString inner = m.captured(2);
+                // 嵌套表格：非贪婪配对会截断外层单元格，保守跳过（现状不变）
+                if (inner.contains(QLatin1String("<td"), Qt::CaseInsensitive)
+                    || inner.contains(QLatin1String("<th"), Qt::CaseInsensitive))
+                    return whole;
+                const int innerOffset = m.capturedStart(2) - m.capturedStart(0);
+                return whole.left(innerOffset)
+                     + protectTableCellPipes(inner, collisions, placeholders,
+                                             backups, n)
+                     + whole.mid(innerOffset + inner.size());
+            });
+    }
+
     QTextDocument doc;
     doc.setHtml(processed);
     QString md = serializeMarkdownNoWrap(doc);
@@ -5805,7 +5905,12 @@ QString MarkdownHandler::fromHtml(const QString &html)
             phMap.insert(placeholders[i], backups[i]);
         static const QRegularExpression allRe(
             R"(ZZ[A-Z]+[0-9]+ZZ ?)");  // 尾随空格：needsWrapGuardSpace 的防折行空格
-        for (;;) {
+        // 趟数上限（护栏）：正常嵌套深度 ≤8，单趟展开。碰撞检测保证备份中不会
+        // 出现本次生成的 token（用户字面前缀已由 buildPlaceholderCollisionSet
+        // 登记），但若未来出现未预见的自繁殖输入，宁可留下未还原 token（Debug
+        // 由 assertNoPlaceholderLeak 暴露）也不能让保存/加载线程死循环。
+        constexpr int kMaxRestorePasses = 64;
+        for (int pass = 0; pass < kMaxRestorePasses; ++pass) {
             bool replaced = false;
             globalReplaceWith(md, allRe,
                 [&phMap, &replaced](const QRegularExpressionMatch &m) {
@@ -5845,12 +5950,11 @@ QString MarkdownHandler::fromHtml(const QString &html)
         QSet<QString> phSet(brSoftPlaceholders.cbegin(), brSoftPlaceholders.cend());
         QString out;
         int pos = 0;
-        while (true) {
-            const auto m = brTokRe.match(md, pos);
-            if (!m.hasMatch()) {
-                out += md.mid(pos);
-                break;
-            }
+        // globalMatch 单遍（旧 while + match(md,pos) 每个 token 扫到串尾，
+        // 3 万软换行 × 1MB 文档即平方级）
+        auto brIt = brTokRe.globalMatch(md);
+        while (brIt.hasNext()) {
+            const auto m = brIt.next();
             const int idx = m.capturedStart();
             out += md.mid(pos, idx - pos);
             QString repl = m.captured();
@@ -5880,6 +5984,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
             out += repl;
             pos = m.capturedEnd();
         }
+        out += md.mid(pos);
         md = out;
     }
 
