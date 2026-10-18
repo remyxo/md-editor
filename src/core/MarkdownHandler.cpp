@@ -4537,11 +4537,14 @@ static QString blockquoteInnerInlineToMd(const QString &inner)
     QString r = mdEquivTagsToSyntax(inner, "blockquote");
     // 链接：<a href="URL">TEXT</a> → [TEXT](URL)。置于 mdEquiv 之后：链接文本
     // 内的 strong/em 先转 **/*，得到 [**b**](u) 嵌套形态。正则内含 )" 序列，
-    // 原始字符串须用自定义定界符 re，否则 )" 提前终结字面量
-    globalReplaceWith(r,
-        QRegularExpression(
-            R"re(<a\b[^>]*\bhref\s*=\s*"([^"]*)"[^>]*>(.*?)</a>)re",
-            QRegularExpression::DotMatchesEverythingOption),
+    // 原始字符串须用自定义定界符 re，否则 )" 提前终结字面量。
+    // 提升为函数级 static（同 imgTagRe）：本函数由裸 margin-p 引用 pass 逐段
+    // 调用，调用内临时构造的 PCRE 编译是引用文档 fromHtml 的耗时主体
+    //（4000 引用文档 8000 次命中实测占 ~0.5s）
+    static const QRegularExpression aTagRe(
+        R"re(<a\b[^>]*\bhref\s*=\s*"([^"]*)"[^>]*>(.*?)</a>)re",
+        QRegularExpression::DotMatchesEverythingOption);
+    globalReplaceWith(r, aTagRe,
         [](const QRegularExpressionMatch &m) {
             return "[" + m.captured(2) + "]("
                    + unescapeHtmlEntities(m.captured(1)) + ")";
@@ -5722,12 +5725,17 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QRegularExpression bqRe(
                 R"(<p[^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*>(.*?)</p>)",
                 QRegularExpression::DotMatchesEverythingOption);
+            // 回调内两处正则提升为 static：每命中一段都要执行，调用内临时
+            // 构造的 PCRE 编译是本 pass 耗时主体（与 blockquoteInnerInlineToMd
+            // 的 aTagRe 同因）
+            static const QRegularExpression brTagRe("<br\\b[^>]*>");
+            static const QRegularExpression anyTagRe("<[^>]*>");
             globalReplaceWith(processed, bqRe,
                 [&n, &collisions, &placeholders, &backups, &wrapBlock]
                 (const QRegularExpressionMatch &m) {
                     QString text = blockquoteInnerInlineToMd(m.captured(1));
-                    text.replace(QRegularExpression("<br\\b[^>]*>"), "\n");
-                    text.remove(QRegularExpression("<[^>]*>"));
+                    text.replace(brTagRe, "\n");
+                    text.remove(anyTagRe);
                     text = text.trimmed();
                     QStringList lines = text.split('\n');
                     QString quoted;
