@@ -3591,14 +3591,18 @@ window.editorApi = {
         if (this.bridge) this.bridge.contentChanged(false);
     },
 
-    // 保存快照：内容 + 文档版本（见 _docVersion 注释）
+    // 保存快照：内容 + 文档版本（见 _docVersion 注释）。
+    // ok=false 表示编辑器不存在（TipTap 初始化失败/脚本异常）——C++ 侧据此
+    // 拒绝保存：空 HTML 不得覆盖原文件（曾把文档写成空串并清掉脏标）。
     getSaveSnapshot: function() {
-        return { html: this.editor ? this.editor.getHTML() : '',
+        return { ok: this.editor != null,
+                 html: this.editor ? this.editor.getHTML() : '',
                  version: this._docVersion };
     },
     getSourceSnapshot: function() {
         var sv = document.getElementById('source-view');
-        return { source: sv ? sv.value : '', version: this._docVersion };
+        return { ok: sv != null, source: sv ? sv.value : '',
+                 version: this._docVersion };
     },
     markCleanIfUnchanged: function(v) {
         if (this._docVersion === v) this.markClean();

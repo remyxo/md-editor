@@ -1075,6 +1075,21 @@ private slots:
         QVERIFY2(md.contains(QStringLiteral("  y = 2   \n")), qPrintable(md));
     }
 
+    void testIndentedCodeBlockRoundTrip() {
+        // CommonMark 缩进代码块：不得退化为行内代码 + <br data-brk>
+        const QString md = "    a simple\n      indented code block\n";
+        const QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(html.contains(QStringLiteral("<pre><code>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("a simple\n  indented code block")),
+                 qPrintable(html));
+        const QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains(QStringLiteral("```")), qPrintable(md2));
+        QVERIFY2(md2.contains(QStringLiteral("a simple\n  indented code block")),
+                 qPrintable(md2));
+        // 不得再出现行内代码 + 软换行形态
+        QVERIFY(!html.contains(QStringLiteral("<br data-brk>")));
+    }
+
     void testPlaceholderLiteralExtendedTokenFromHtml() {
         // 用户字面 ZZCB0ZZZZ 不得被当作生成占位符 ZZCB0ZZ 的前缀：
         // 旧实现碰撞集只登记整串，还原时可自繁殖/死循环

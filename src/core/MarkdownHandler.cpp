@@ -1308,6 +1308,17 @@ static bool isListItemLine(const QString &line)
     return re.match(line).hasMatch();
 }
 
+// 列表标记行（允许空内容：`-` / `1.` 单独成项）。isListItemLine 要求标记后
+// 有内容，识别不了空项；缩进代码块判定须知道「上一行是列表项」——否则
+// `-` 后紧跟 6 空格缩进行会被当成顶层代码块（CommonMark 中它属于列表项内
+// 的缩进代码）。--- 等水平线不匹配（标记后须空白或行尾）。
+static bool isListMarkerLine(const QString &line)
+{
+    static const QRegularExpression re(
+        R"(^\s{0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$))");
+    return re.match(line).hasMatch();
+}
+
 // 行是否以「文本形态」进入转换中间流（processed）——md4c 视其为段落的懒
 // 延续行而非新块起始。闭合围栏的代码块占位符 ZZCB 是独立文本行，若紧随的
 // 行也是文本形态，setMarkdown 会把两者并进同一段落，还原后产出
@@ -2801,6 +2812,56 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                 processed += cl + '\n';
                 lastBlock = BT_LIST;
             }
+        } else if (codeFenceLen == 0 && !inMathBlock && !inTableRegion
+                   && lastBlock != BT_PARA && listCtxIndent < 0
+                   && !(i > 0 && isListMarkerLine(lines[i - 1]))
+                   && (line.startsWith(QLatin1String("    "))
+                       || line.startsWith(QLatin1Char('\t')))) {
+            // CommonMark 缩进代码块（4 空格或 1 Tab）：Qt setMarkdown 会把它
+            // 渲染成等宽字体普通段落，后处理再误判为行内代码并注入 <br data-brk>
+            // ——缩进块语义与换行结构全部丢失。此处整块抽取为代码块占位符
+            // （与围栏共用 codeBlocks/codeBlockPhs 还原链）。
+            // 仅顶层、且不能打断段落（lastBlock != BT_PARA）；列表项内缩进是
+            // 项内容续行（listCtxIndent >= 0），不得当代码块。
+            QStringList codeLines;
+            int j = i;
+            while (j < lines.size()) {
+                const QString &l = lines[j];
+                if (l.startsWith(QLatin1String("    "))) {
+                    codeLines << l.mid(4);
+                    ++j;
+                } else if (l.startsWith(QLatin1Char('\t'))) {
+                    codeLines << l.mid(1);
+                    ++j;
+                } else if (l.trimmed().isEmpty()) {
+                    // 空行仅在其后仍有缩进行时属于代码块（尾部空行不算）
+                    int k = j;
+                    while (k < lines.size() && lines[k].trimmed().isEmpty())
+                        ++k;
+                    if (k < lines.size()
+                        && (lines[k].startsWith(QLatin1String("    "))
+                            || lines[k].startsWith(QLatin1Char('\t')))) {
+                        while (j < k) {
+                            codeLines << QString();
+                            ++j;
+                        }
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            i = j - 1;   // for 循环会 ++i
+            const QString content = codeLines.join('\n');
+            codeBlocks << QStringLiteral("<pre><code>")
+                              + content.toHtmlEscaped() + QStringLiteral("</code></pre>");
+            codeBlockPhs << collisionFreePlaceholder(collisions,
+                "CB", codeBlocks.size() - 1);
+            if (!processed.isEmpty() && !processed.endsWith("\n\n"))
+                processed += '\n';
+            processed += codeBlockPhs.last() + "\n\n";
+            lastBlock = BT_NONE;
         } else if (isImageOnlyLine(line)) {
             // 图片独占行 → 强制独立块级图片（前后空行隔离），使 setMarkdown 产出
             // <p><img/></p>（后处理解包为裸 <img>）。否则 md4c 的 lazy-continuation

@@ -1336,14 +1336,46 @@ void MainWindow::writeTabToFile(EditorTab *tab, const QString &path, bool setPat
     // 源码模式下编辑器文档是进入源码前的旧快照：取 source-view 内容——本身即
     // MD，无需 fromHtml（免转换，保持同步路径）；否则源码编辑被静默丢弃
     const bool sourceMode = tab->isSourceMode();
+    // 异步收尾只允许一次。tab 在保存窗口期被关闭时页面随之销毁，runJavaScript
+    // 回调被丢弃——旧实现下关闭队列/关闭-保存 pending 会永久挂起；destroyed
+    // 兜底以失败语义收尾（cb 只触发一次）。
+    auto done = std::make_shared<bool>(false);
+    auto finishOnce = [cb, done](bool ok) {
+        if (*done)
+            return;
+        *done = true;
+        if (cb)
+            cb(ok);
+    };
+    connect(tab, &QObject::destroyed, this,
+            [finishOnce]() { finishOnce(false); });
+    const QPointer<EditorTab> tabGuard(tab);
     tab->webView()->page()->runJavaScript(
         sourceMode ? QStringLiteral("window.editorApi.getSourceSnapshot();")
                    : QStringLiteral("window.editorApi.getSaveSnapshot();"),
-        [this, tab, path, setPathAfter, sourceMode, cb](const QVariant &result) {
+        [this, tabGuard, path, setPathAfter, sourceMode, finishOnce](const QVariant &result) {
+            if (!tabGuard) {
+                finishOnce(false);
+                return;
+            }
+            EditorTab *tab = tabGuard.data();
             const QVariantMap snap = result.toMap();
+            // 编辑器不存在（TipTap 初始化失败/脚本异常）：快照中的空内容不是
+            // 用户文档，拒绝写盘，避免空串覆盖原文件
+            if (!snap.value(QStringLiteral("ok"), false).toBool()) {
+                m_statusBar->showMessage(tr("编辑器尚未就绪，已取消保存"), 3000);
+                finishOnce(false);
+                return;
+            }
             const int docVersion = snap.value(QStringLiteral("version"), -1).toInt();
             // 落盘公共尾段：fromHtml 产出（或源码模式直取）后仍在 GUI 线程执行
-            auto finishSave = [this, tab, path, setPathAfter, cb, docVersion](const QString &md) {
+            auto finishSave = [this, tabGuard, path, setPathAfter, finishOnce,
+                               docVersion](const QString &md) {
+                if (!tabGuard) {
+                    finishOnce(false);
+                    return;
+                }
+                EditorTab *tab = tabGuard.data();
                 const bool ok = m_fileManager->writeFile(path, md);
                 if (ok) {
                     m_statusBar->showMessage(tr("已保存"), 2000);
@@ -1366,8 +1398,7 @@ void MainWindow::writeTabToFile(EditorTab *tab, const QString &path, bool setPat
                         tr("无法写入 %1：\n%2").arg(path,
                             m_lastWriteError.isEmpty() ? tr("未知错误") : m_lastWriteError));
                 }
-                if (cb)
-                    cb(ok);
+                finishOnce(ok);
             };
             if (sourceMode) {
                 finishSave(snap.value(QStringLiteral("source")).toString());
