@@ -1304,6 +1304,14 @@ static QString extractFootnoteRefs(QString line, QStringList &refs, QStringList 
 // 脚注定义内容（MD，可多行块级）→ footnoteDef 契约 HTML（marker + 块级 content）。
 // 内容经完整 MD→HTML 主管线嵌套转换（数学/任务列表/高亮/上下标等占位符全套生效，
 // 嵌套层禁用脚注提取：内层 [^x] 按字面处理，嵌套脚注不支持）。
+// 脚注定义容器包装（id 属性/标记文本均转义；内容为已转换的 HTML）
+static QString wrapFootnoteDefHtml(const QString &id, const QString &inner)
+{
+    return "<div data-type=\"footnoteDef\" data-id=\"" + escapeHtmlAttr(id) + "\">"
+         + "<span class=\"footnote-marker\">" + escapeHtmlAttr(id) + "</span>"
+         + "<div class=\"footnote-content\">" + inner + "</div></div>";
+}
+
 static QString buildFootnoteDefHtml(const QString &id, const QString &contentMd)
 {
     QString inner;
@@ -1325,9 +1333,7 @@ static QString buildFootnoteDefHtml(const QString &id, const QString &contentMd)
         inner.remove(QStringLiteral("<!--StartFragment-->"));
         inner.remove(QStringLiteral("<!--EndFragment-->"));
     }
-    return "<div data-type=\"footnoteDef\" data-id=\"" + escapeHtmlAttr(id) + "\">"
-         + "<span class=\"footnote-marker\">" + escapeHtmlAttr(id) + "</span>"
-         + "<div class=\"footnote-content\">" + inner + "</div></div>";
+    return wrapFootnoteDefHtml(id, inner);
 }
 
 // ===== 任务列表（GFM task list ↔ TipTap taskList/taskItem 契约）=====
@@ -2218,14 +2224,12 @@ static void wrapDiscardedEmphCode(QString &html, const QString &processed)
 // （碰撞检测保证真占位符不与用户文本同串）。供脚注定义 / 块引用内容等
 // 「递归产出 MD 后需在父级上下文展开外层占位符」的场景共用——多行备份必须
 // 先展开再逐行加前缀/缩进，否则只有首行获得前缀（围栏/多行内容逃出容器）。
-static void expandPlaceholdersInPlace(QString &s, const QStringList &phs,
-                                      const QStringList &backups)
+// 已建表版本：批量调用方（引用/脚注定义）复用同一张表，避免每个块都重建
+// 全部外层占位符的 QHash（旧逐块调用在 N 块 × K 占位符时退化为 O(N·K)）。
+static void expandPlaceholdersWithMap(QString &s,
+                                      const QHash<QString, QString> &phMap)
 {
     static const QRegularExpression anyTokRe(QStringLiteral("ZZ[A-Z]+[0-9]+ZZ"));
-    QHash<QString, QString> phMap;
-    phMap.reserve(phs.size());
-    for (int i = 0; i < phs.size(); ++i)
-        phMap.insert(phs[i], backups[i]);
     for (int pass = 0; pass < 8; ++pass) {
         // 单遍重建（globalReplaceWith）：旧 while + match(s, pos) 每次调用都
         // 从 pos 扫到串尾（Qt 的 match(subject, offset) 行为），K 个 token 即
@@ -2243,6 +2247,16 @@ static void expandPlaceholdersInPlace(QString &s, const QStringList &phs,
         if (!replaced)
             break;
     }
+}
+
+static void expandPlaceholdersInPlace(QString &s, const QStringList &phs,
+                                      const QStringList &backups)
+{
+    QHash<QString, QString> phMap;
+    phMap.reserve(phs.size());
+    for (int i = 0; i < phs.size(); ++i)
+        phMap.insert(phs[i], backups[i]);
+    expandPlaceholdersWithMap(s, phMap);
 }
 
 // 阶段 4（审查 P2-8）：复杂块引用预抽取（toHtml 侧）。
@@ -2349,6 +2363,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     QStringList taskLists; // 任务列表 HTML（TipTap taskList 契约），后处理还原
     QStringList footnoteRefs;   // 脚注引用 <sup> HTML（后处理还原）
     QStringList footnoteDefs;   // 脚注定义 def HTML（按 id 去重，首次定义顺序）
+    QStringList footnoteDefOrder;  // 定义 id（与 footnoteDefMd 一一对应）
+    QStringList footnoteDefMd;     // 定义原文（循环内收集，循环后批量转换）
     QSet<QString> footnoteDefIds; // 已收集的定义 id（去重用；QSet 避免长列表 O(n²) 查找）
     QStringList escapedEqBackups;  // 转义等号 \= → ZZES 保护
     QStringList escapedDollarBackups;  // 转义美元 \$ → ZZDL 保护
@@ -2702,7 +2718,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             }
             if (!footnoteDefIds.contains(fid)) {   // 同 id 取首次定义
                 footnoteDefIds << fid;
-                footnoteDefs << buildFootnoteDefHtml(fid, contentMd);
+                footnoteDefOrder << fid;
+                footnoteDefMd << contentMd;
             }
             processed += '\n';   // 行被移除，留空行维持段落分隔
             i = j - 1;           // 跳过已消费的续行
@@ -3969,6 +3986,79 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     // 还原脚注引用占位符 ZZFR → <sup data-type="footnoteRef">
     batchReplaceExact(html, footnoteRefPhs, footnoteRefs);
 
+    // 脚注定义批量转换（toHtml 侧）：所有定义内容合并为一次 toHtml 调用，
+    // 块间以 ZZFS 哨兵段落分隔——摊薄每个定义一次完整管线的固定开销
+    // （旧实现 buildFootnoteDefHtml 每定义一次 toHtml：4000 条约 4.4s）。
+    // 哨兵被吞（未闭合围栏/块级公式等）时回退逐定义转换，保证正确性。
+    if (!footnoteDefMd.isEmpty()) {
+        QStringList markers;
+        QVector<bool> batchable(footnoteDefMd.size(), false);
+        QString combined;
+        int nonEmpty = 0;
+        for (int k = 0; k < footnoteDefMd.size(); ++k) {
+            // 空定义与纯 &nbsp; 行（空段的往返表示）不批量：哨兵会把 nbsp
+            // 折叠成空行，改变原有 `<p><br></p>` 语义
+            if (footnoteDefMd[k].trimmed().isEmpty()
+                || isNbspLiteralLine(footnoteDefMd[k])) {
+                markers << QString();
+                continue;
+            }
+            batchable[k] = true;
+            const QString mk =
+                collisionFreePlaceholder(collisions, "FS", nonEmpty);
+            ++nonEmpty;
+            markers << mk;
+            // 哨兵与内容之间必须空行（单换行会被当作同一段落的软换行）
+            combined += mk + QStringLiteral("\n\n") + footnoteDefMd[k]
+                      + QStringLiteral("\n\n");
+        }
+        QStringList bodies(footnoteDefMd.size());
+        bool batchOk = false;
+        if (nonEmpty > 0) {
+            const QString h = MarkdownHandler::toHtml(combined, false);
+            static const QRegularExpression bodyRe(
+                QStringLiteral("<body[^>]*>(.*)</body>"),
+                QRegularExpression::DotMatchesEverythingOption);
+            auto bm = bodyRe.match(h);
+            const QString body = bm.hasMatch() ? bm.captured(1) : h;
+            static const QRegularExpression mkRe(
+                R"(<p\b[^>]*>\s*(ZZFS[0-9]+ZZ)\s*</p>)");
+            QHash<QString, int> mkToBlock;
+            for (int k = 0; k < markers.size(); ++k)
+                if (!markers[k].isEmpty())
+                    mkToBlock.insert(markers[k], k);
+            QVector<QRegularExpressionMatch> ms;
+            auto mit = mkRe.globalMatch(body);
+            while (mit.hasNext())
+                ms << mit.next();
+            batchOk = (ms.size() == nonEmpty);
+            if (batchOk) {
+                for (int mi = 0; mi < ms.size(); ++mi) {
+                    const int block = mkToBlock.value(ms[mi].captured(1), -1);
+                    if (block < 0) { batchOk = false; break; }
+                    const int start = ms[mi].capturedEnd();
+                    const int end = (mi + 1 < ms.size())
+                        ? ms[mi + 1].capturedStart() : body.size();
+                    QString chunk = body.mid(start, end - start).trimmed();
+                    chunk.remove(QLatin1String("<!--StartFragment-->"));
+                    chunk.remove(QLatin1String("<!--EndFragment-->"));
+                    bodies[block] = chunk;
+                }
+            }
+        }
+        for (int k = 0; k < footnoteDefMd.size(); ++k) {
+            if (footnoteDefMd[k].trimmed().isEmpty()) {
+                footnoteDefs << wrapFootnoteDefHtml(footnoteDefOrder[k],
+                                                    QStringLiteral("<p></p>"));
+            } else if (batchable[k] && batchOk) {
+                footnoteDefs << wrapFootnoteDefHtml(footnoteDefOrder[k], bodies[k]);
+            } else {
+                footnoteDefs << buildFootnoteDefHtml(footnoteDefOrder[k],
+                                                     footnoteDefMd[k]);
+            }
+        }
+    }
+
     // 追加脚注定义容器（仅当存在定义）
     if (!footnoteDefs.isEmpty()) {
         QString container = "<div data-type=\"footnoteContainer\">";
@@ -4991,8 +5081,10 @@ QString MarkdownHandler::fromHtml(const QString &html)
             QString inner = processed.mid(om.capturedEnd(),
                                           closeStart - om.capturedEnd());
             QString mdBlock;
-            // globalMatch 单遍（旧 while + match(inner, doff) 每个定义都从
-            // doff 扫到串尾，定义多的脚注容器 O(K·n)）
+            // 1) 收集定义（配平扫描 + content 提取；globalMatch 单遍，旧 while +
+            //    match(inner, doff) 每个定义都从 doff 扫到串尾，O(K·n)）
+            struct FnDef { QString id; QString contentHtml; };
+            QVector<FnDef> fnDefs;
             int defsConsumedTo = 0;
             auto defIt = defOpenRe.globalMatch(inner);
             while (defIt.hasNext()) {
@@ -5003,51 +5095,92 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 if (defClose < 0) continue;
                 auto iim = defIdRe.match(dm.captured());
                 // 实体解码（与上方脚注引用、escapeHtmlAttr 成对）
-                QString id = iim.hasMatch() ? unescapeHtmlEntities(iim.captured(1))
-                                            : QString();
+                FnDef d;
+                d.id = iim.hasMatch() ? unescapeHtmlEntities(iim.captured(1))
+                                      : QString();
                 QString defInner = inner.mid(dm.capturedEnd(),
                                              defClose - dm.capturedEnd());
                 auto com = contentOpenRe.match(defInner);
-                QString contentHtml;
                 if (com.hasMatch()) {
                     const bool isDiv = (com.captured(1) == QLatin1String("div"));
                     int contentClose = isDiv
                         ? findMatchingDivClose(defInner, com.capturedStart())
                         : findMatchingSpanClose(defInner, com.capturedStart());
-                    contentHtml = (contentClose >= 0)
+                    d.contentHtml = (contentClose >= 0)
                         ? defInner.mid(com.capturedEnd(),
                                        contentClose - com.capturedEnd())
                         : defInner.mid(com.capturedEnd());
                 } else {
-                    contentHtml = defInner;   // 无 content 容器（异常兜底）
+                    d.contentHtml = defInner;   // 无 content 容器（异常兜底）
                 }
-                // 块级 HTML → MD：嵌套完整 fromHtml（任务列表/数学/行内代码等
-                // 占位保护对称生效；内容内若含嵌套脚注容器，转出的 [^x]: 行
-                // 即字面文本，与 toHtml 端字面处理对称）
-                QString cm = MarkdownHandler::fromHtml(contentHtml);
-                // cm 内的外层占位符（块级公式 ZZBM / 代码块 ZZCB / 任务列表
-                // ZZTL 等）若留给末段统一还原，多行备份的内部行不携带本定义的
-                // 续行缩进——重载时定义在首个非缩进内部行处断裂（块级公式形态
-                // 还会使嵌套 toHtml 遇到未闭合 $$——该形态曾触发 mathBlockPhs/
-                // mathBlocks 错配崩溃，现已由 toHtml 的 EOF 收尾按字面透传消解）。
-                // 故先在 cm 内就地展开（逆序 = 外层先展开，与末段
-                // 多趟还原语义一致），使多行备份的每一行都进入下方缩进续行输出。
-                // 碰撞检测保证 cm 中与占位符同串的必为真占位符；漏网 token 由
-                // 末段多趟还原兜底（无缩进，与未展开时的旧行为一致）。
-                // 就地展开外层占位符（见 expandPlaceholdersInPlace 注释：
-                // 多行备份展开后再缩进续行，内部行才携带定义的续行缩进）
-                expandPlaceholdersInPlace(cm, placeholders, backups);
+                fnDefs << d;
+                defsConsumedTo = defClose + 6;   // 跳过 </div>
+            }
+            // 2) 批量转换：一次 fromHtml 处理全部定义内容，块间以哨兵段落分隔，
+            //    摊薄每定义一次完整管线的固定开销（QTextDocument/静态正则/序列化）
+            QStringList defSentinels;
+            QString combined;
+            for (int k = 0; k < fnDefs.size(); ++k) {
+                const QString sep =
+                    collisionFreePlaceholder(collisions, "BS", k);
+                defSentinels << sep;
+                combined += QStringLiteral("<p>") + sep + QStringLiteral("</p>\n");
+                combined += fnDefs[k].contentHtml;
+                // 只在块间补一个换行；末尾多补空行会让 Qt 在内容行尾留下
+                // 伪影空格（纯文本内容被当段落延续）
+                if (k + 1 < fnDefs.size())
+                    combined += QLatin1Char('\n');
+            }
+            const QString combinedMd =
+                fnDefs.isEmpty() ? QString() : MarkdownHandler::fromHtml(combined);
+            QStringList mdLines = combinedMd.split('\n');
+            QHash<QString, int> defSentLine;
+            {
+                const QSet<QString> sentSet(defSentinels.cbegin(),
+                                            defSentinels.cend());
+                for (int li = 0; li < mdLines.size(); ++li) {
+                    const QString t = mdLines[li].trimmed();
+                    if (sentSet.contains(t))
+                        defSentLine.insert(t, li);
+                }
+            }
+            // 外层占位符表一次构建，供所有定义复用
+            QHash<QString, QString> outerMap;
+            outerMap.reserve(placeholders.size());
+            for (int k = 0; k < placeholders.size(); ++k)
+                outerMap.insert(placeholders[k], backups[k]);
+            // 3) 逐定义切分 + 缩进续行输出。
+            //  cm 内的外层占位符（块级公式 ZZBM / 代码块 ZZCB / 任务列表
+            //  ZZTL 等）须就地展开：多行备份展开后再缩进续行，内部行才携带
+            //  本定义的续行缩进（否则首个非缩进内部行处断裂；未闭合 $$ 形态
+            //  曾触发 mathBlockPhs/mathBlocks 错配）。漏网 token 由末段多趟
+            //  还原兜底（无缩进，与未展开时的旧行为一致）。
+            for (int k = 0; k < fnDefs.size(); ++k) {
+                QString cm;
+                const int sl = defSentLine.value(defSentinels[k], -1);
+                if (sl < 0) {
+                    // 哨兵未存活（防御）：单定义回退
+                    cm = MarkdownHandler::fromHtml(fnDefs[k].contentHtml);
+                } else {
+                    int s = sl + 1;
+                    int e = (k + 1 < fnDefs.size())
+                        ? defSentLine.value(defSentinels[k + 1], mdLines.size())
+                        : mdLines.size();
+                    while (s < e && mdLines[s].trimmed().isEmpty()) ++s;
+                    while (e > s && mdLines[e - 1].trimmed().isEmpty()) --e;
+                    cm = mdLines.mid(s, e - s).join('\n');
+                }
+                expandPlaceholdersWithMap(cm, outerMap);
                 while (cm.endsWith('\n')) cm.chop(1);
                 // 缩进续行输出：首行接 [^id]: 之后，其余行补 4 空格（空行不缩进）
                 QStringList outLines = cm.split('\n');
-                mdBlock += "[^" + id + "]: " + outLines.value(0);
+                mdBlock += "[^" + fnDefs[k].id + "]: " + outLines.value(0);
                 for (int li = 1; li < outLines.size(); ++li) {
                     mdBlock += '\n';
                     if (!outLines[li].trimmed().isEmpty())
                         mdBlock += QStringLiteral("    ") + outLines[li];
                 }
                 mdBlock += '\n';
-                defsConsumedTo = defClose + 6;   // 跳过 </div>
             }
             const QString ph = collisionFreePlaceholder(collisions, "FD", n++);
             placeholders << ph;
@@ -5319,30 +5452,105 @@ QString MarkdownHandler::fromHtml(const QString &html)
             // 首行得到 > 前缀，围栏重开即逃出引用。嵌套 <blockquote> 由递归
             // 转出内层 "> " 行，外层再统一加一级前缀（> > a）。
             static const QRegularExpression bqOpenRe(R"(<blockquote\b[^>]*>)");
-            globalExtractWith(processed, bqOpenRe,
-                [&n, &collisions, &placeholders, &backups, &wrapBlock, &processed]
-                (const QRegularExpressionMatch &m, QString &outReplacement, int &consumedTo) {
+            // 1) 收集全部顶层引用块（开标签匹配互斥；已被外层消费的区域跳过）
+            struct BqBlock {
+                int start;
+                int end;
+                QString raw;
+                bool hasNested;
+                bool flatQt;
+            };
+            QVector<BqBlock> bqBlocks;
+            {
+                int consumed = 0;
+                auto bqIt = bqOpenRe.globalMatch(processed);
+                while (bqIt.hasNext()) {
+                    const auto m = bqIt.next();
+                    if (m.capturedStart() < consumed)
+                        continue;
                     // 平衡配对（嵌套引用取同层闭合，见 findMatchingBlockquoteClose）
-                    const int closeStart = findMatchingBlockquoteClose(processed, m.capturedStart());
+                    const int closeStart =
+                        findMatchingBlockquoteClose(processed, m.capturedStart());
                     if (closeStart < 0)
-                        return false;   // 未闭合：留原样交后续宽容解析
-                    const QString raw = processed.mid(m.capturedEnd(),
-                                                      closeStart - m.capturedEnd());
+                        continue;   // 未闭合：留原样交后续宽容解析
+                    BqBlock b;
+                    b.start = m.capturedStart();
+                    b.end = closeStart + 13;   // 含 </blockquote>
+                    b.raw = processed.mid(m.capturedEnd(),
+                                          closeStart - m.capturedEnd());
                     // 内层形态三分支：
                     // ① 含嵌套 <blockquote>（toHtml 复杂引用预抽取产物）：递归已
                     //    转出内层 "> " 行，外层整体再加一级（> > a）；
                     // ② Qt 扁平形态（<p margin-left:40px>，老简单引用路径产物）：
                     //    递归的 bqRe 已加过一级，直通不再加（曾双重前缀）；
                     // ③ 普通内容：递归转块级结构（列表/hr/围栏），逐行加一级。
-                    const bool hasNestedBq = raw.contains(QLatin1String("<blockquote"));
+                    b.hasNested = b.raw.contains(QLatin1String("<blockquote"));
                     static const QRegularExpression flatQuoteRe(
                         R"(<(p|pre)\b[^>]*margin-left:\s*40px)");
-                    const bool flatQtQuote =
-                        !hasNestedBq && flatQuoteRe.match(raw).hasMatch();
-                    QString innerMd = MarkdownHandler::fromHtml(raw);
-                    expandPlaceholdersInPlace(innerMd, placeholders, backups);
+                    b.flatQt = !b.hasNested && flatQuoteRe.match(b.raw).hasMatch();
+                    bqBlocks << b;
+                    consumed = b.end;
+                }
+            }
+            if (!bqBlocks.isEmpty()) {
+                // 2) 批量转换：一次 fromHtml 处理全部引用内文，块间以哨兵段落
+                //    分隔——摊薄每块一次完整管线的固定开销（QTextDocument、
+                //    静态正则扫描、序列化）。哨兵经碰撞检测，用户字面同串不冲突。
+                QString combined;
+                QStringList sentinels;
+                sentinels.reserve(bqBlocks.size());
+                for (int k = 0; k < bqBlocks.size(); ++k) {
+                    const QString sep =
+                        collisionFreePlaceholder(collisions, "BS", k);
+                    sentinels << sep;
+                    combined += QStringLiteral("<p>") + sep
+                              + QStringLiteral("</p>\n");
+                    combined += bqBlocks[k].raw;
+                    // 同上：末尾不补空行，避免内容行尾伪影空格
+                    if (k + 1 < bqBlocks.size())
+                        combined += QLatin1Char('\n');
+                }
+                const QString combinedMd = MarkdownHandler::fromHtml(combined);
+                QStringList mdLines = combinedMd.split('\n');
+                QHash<QString, int> sentLine;
+                {
+                    const QSet<QString> sentSet(sentinels.cbegin(),
+                                                sentinels.cend());
+                    for (int li = 0; li < mdLines.size(); ++li) {
+                        const QString t = mdLines[li].trimmed();
+                        if (sentSet.contains(t))
+                            sentLine.insert(t, li);
+                    }
+                }
+                // 3) 外层占位符表一次构建，供所有块复用（旧实现每块重建，
+                //    N 块 × K 占位符退化为 O(N·K)）
+                QHash<QString, QString> outerMap;
+                outerMap.reserve(placeholders.size());
+                for (int k = 0; k < placeholders.size(); ++k)
+                    outerMap.insert(placeholders[k], backups[k]);
+
+                QString rebuilt;
+                rebuilt.reserve(processed.size());
+                int last = 0;
+                for (int k = 0; k < bqBlocks.size(); ++k) {
+                    const BqBlock &b = bqBlocks[k];
+                    QString innerMd;
+                    const int sl = sentLine.value(sentinels[k], -1);
+                    if (sl < 0) {
+                        // 哨兵未存活（防御）：单块回退
+                        innerMd = MarkdownHandler::fromHtml(b.raw);
+                    } else {
+                        int s = sl + 1;
+                        int e = (k + 1 < bqBlocks.size())
+                            ? sentLine.value(sentinels[k + 1], mdLines.size())
+                            : mdLines.size();
+                        while (s < e && mdLines[s].trimmed().isEmpty()) ++s;
+                        while (e > s && mdLines[e - 1].trimmed().isEmpty()) --e;
+                        innerMd = mdLines.mid(s, e - s).join('\n');
+                    }
+                    expandPlaceholdersWithMap(innerMd, outerMap);
                     QString quoted;
-                    if (flatQtQuote) {
+                    if (b.flatQt) {
                         quoted = innerMd.trimmed();
                     } else {
                         QStringList ls = innerMd.split('\n');
@@ -5355,13 +5563,17 @@ QString MarkdownHandler::fromHtml(const QString &html)
                         }
                         quoted = quoted.trimmed();
                     }
-                    QString ph = collisionFreePlaceholder(collisions, "BQ", n++);
+                    const QString ph =
+                        collisionFreePlaceholder(collisions, "BQ", n++);
                     placeholders << ph;
                     backups << quoted;
-                    consumedTo = closeStart + 13;   // 含 </blockquote>
-                    outReplacement = wrapBlock(ph);
-                    return true;
-                });
+                    rebuilt += processed.mid(last, b.start - last);
+                    rebuilt += wrapBlock(ph);
+                    last = b.end;
+                }
+                rebuilt += processed.mid(last);
+                processed = rebuilt;
+            }
             // 裸 margin-left <p>（未被 <blockquote> 包裹的）
             QRegularExpression bqRe(
                 R"(<p[^>]*margin-left:\s*40px[^>]*margin-right:\s*40px[^>]*>(.*?)</p>)",

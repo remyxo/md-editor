@@ -1113,6 +1113,23 @@ private slots:
         QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2)), md2);
     }
 
+    void testBlockquoteAndFootnoteBatchSentinels() {
+        // 引用/脚注定义批量转换：哨兵不得泄漏，内容/顺序保留，二次往返收敛
+        QString md;
+        for (int i = 0; i < 20; ++i)
+            md += QStringLiteral("> 引用 %1\n\n").arg(i);
+        md += QStringLiteral("正文[^a][^b]\n\n[^a]: 定义甲\n\n[^b]: 定义乙\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(!html.contains(QStringLiteral("ZZFS")), qPrintable(html));
+        const QString back = MarkdownHandler::fromHtml(html);
+        QVERIFY2(!back.contains(QStringLiteral("ZZBS")), qPrintable(back));
+        QVERIFY2(!back.contains(QStringLiteral("ZZFS")), qPrintable(back));
+        QVERIFY2(back.contains(QStringLiteral("引用 19")), qPrintable(back));
+        QVERIFY2(back.contains(QStringLiteral("[^a]: 定义甲")), qPrintable(back));
+        QVERIFY2(back.contains(QStringLiteral("[^b]: 定义乙")), qPrintable(back));
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(back)), back);
+    }
+
     void testIndentedCodeBlockRoundTrip() {
         // CommonMark 缩进代码块：不得退化为行内代码 + <br data-brk>
         const QString md = "    a simple\n      indented code block\n";

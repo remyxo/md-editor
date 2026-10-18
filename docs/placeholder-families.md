@@ -2,7 +2,7 @@
 
 - 基准提交：`d3548fb`（行号以该版本 `src/core/MarkdownHandler.cpp` 为准，6067 行；后续提交行号会漂移，家族名与语义以 grep 复核为准）
 - 枚举方法：`grep -n collisionFreePlaceholder src/core/MarkdownHandler.cpp` 全集 + 逐点阅读归属
-- 统计口径：**ZZ 家族 49 种**（76 个铸造调用点；ZZPP 与 ZZDL/ZZSR 为 2026-10-18 新增，见 §3）、`\x01` 哨兵 3 种、HTML 注释标记 1 种（ZZLB）、toHtml 后处理瞬态 token 2 种。**活路径口径 47 家族**：ZZBQ 家族的 toHtml 半边与 ZZBQSEP 全族自 8b55a63 起铸造路径不可达（遗留机制，见 §2 注 ①）
+- 统计口径：**ZZ 家族 51 种**（79 个铸造调用点；ZZPP/ZZDL/ZZSR/ZZBS/ZZFS 为 2026-10-18 新增，见 §2/§3）、`\x01` 哨兵 3 种、HTML 注释标记 1 种（ZZLB）、toHtml 后处理瞬态 token 2 种。**活路径口径 49 家族**：ZZBQ 家族的 toHtml 半边与 ZZBQSEP 全族自 8b55a63 起铸造路径不可达（遗留机制，见 §2 注 ①）
 - 契约断言：`tests/test_markdownhandler.cpp` 的 `testContract*` 系列用例（索引见文末）
 - 关联文档：[br 与软换行往返机制](br-and-softbreak-roundtrip.md)（速查表收录早期 9 家族，本文为其全集超集）
 
@@ -36,7 +36,7 @@
 
 ## 2. toHtml 侧家族（MD → HTML，toHtml :2166 起）
 
-铸造于 toHtml 的家族共 20 种（其中 11 种与 fromHtml 同名复用，见 §4）；另有 ZZLB 为 HTML 注释标记，不走 collisionFreePlaceholder（§5）。
+铸造于 toHtml 的家族共 21 种（其中 11 种与 fromHtml 同名复用，见 §4）；另有 ZZLB 为 HTML 注释标记，不走 collisionFreePlaceholder（§5）。
 
 | 前缀 | 语义（触发形态） | 铸造点 | 备份容器 | 还原点 | 还原机制 → 产物 |
 |------|----------------|--------|---------|--------|----------------|
@@ -47,6 +47,7 @@
 | ZZES | 转义 `\=\=`（防 ==→mark 误转） | :930 | `escapedEqPhs`/`escapedEqBackups` | :3475 | batchReplaceExact → 字面 `==` |
 | ZZED | 转义扩展定界符 `\~~` `\~` `\^` | :980 | `escapedDelimPhs`/`escapedDelimBackups` | :3889 | batchReplaceExact → 字面 `~~`/`~`/`^`（**toHtml 最后一步**） |
 | ZZDL | 转义美元 `\$`（防成对转义被 `$…$` 数学正则重配） | `extractEscapedDollars` | `escapedDollarPhs`/`escapedDollarBackups` | 数学 span 保护之后 | batchReplaceExact → 字面 `$` |
+| ZZFS | 脚注定义批量转换的块间哨兵（一次 toHtml 处理全部定义） | 脚注定义批量块 | （无） | 按 `<p>ZZFS…</p>` 切分后删除 | 不还原；哨兵不全时回退逐定义转换 |
 | ZZHI | 行内 HTML 标签 8 类：`<span style>` `<u>` `<kbd>` `<small>` `<mark>` `<sub>` `<sup>` `<br>` | :1050/:1063/:1076/:1089/:1102/:1115/:1128/:1141 | `htmlInlinePhs`/`htmlInlineBackups` | :3734-3739 | 多趟 batchReplaceExact ≤8 趟 → 原标签 |
 | ZZFR | 脚注引用 `[^id]` | :1184 | `footnoteRefPhs`/`footnoteRefs` | :3741 | batchReplaceExact → `<sup data-type="footnoteRef">` |
 | ZZMB | 块级公式 `$$…$$`（闭合 :2322 / EOF 兜底 :2335） | :2322、:2335 | `mathBlockPhs`/`mathBlocks` | :3821 | batchRestorePlaceholders → `<div data-type="block-math">` |
@@ -65,7 +66,7 @@
 
 ## 3. fromHtml 侧家族（HTML → MD，fromHtml :4217 起）
 
-铸造于 fromHtml 的家族共 40 种（29 种仅 fromHtml + 11 种与 toHtml 同名复用）。除注明外均铸入主线 `placeholders`/`backups`，经 :5724-5754 通用多趟还原；多行备份在 :5667-5691 独占行分离。
+铸造于 fromHtml 的家族共 41 种（30 种仅 fromHtml + 11 种与 toHtml 同名复用）。除注明外均铸入主线 `placeholders`/`backups`，经 :5724-5754 通用多趟还原；多行备份在 :5667-5691 独占行分离。
 
 | 前缀 | 语义（触发形态） | 铸造点 | 备份内容 | 还原产物（md 语法） |
 |------|----------------|--------|---------|-------------------|
@@ -94,6 +95,7 @@
 | ZZPP | 表格单元格文本中的字面竖线（setHtml 前按 `<td>/<th>` 结构占位；code span 内不处理） | `protectTableCellPipes` | `\|` | `\|`（GFM 转义竖线） |
 | ZZDL | 字面 `$`（真实公式已先转 ZZIM/ZZBM；写回 `\$` 供 toHtml 识别） | `protectLiteralDollars` | `\$` | `\$` |
 | ZZSR | 单行表格哨兵数据行（迫使 Qt 输出分隔行；**不进入还原表**） | 单行表格补行 | （无） | 步骤 6 整行删除，不还原 |
+| ZZBS | 引用/脚注定义批量转换的块间哨兵（一次 fromHtml 处理全部块） | 引用/脚注定义批量块 | （无） | 按哨兵整行切分后删除 | 不还原；哨兵缺失时单块回退 |
 | ZZA | 段落/标题 text-align | :5231 | `<div align="…">` | `<div align="…">` |
 | ZZBL | 空段落 | :5289 | `blankLinePhs`（副线容器） | `&nbsp;` 独占行（:5700 还原；列表/表格容器内跳过） |
 | ZZNB | 连续 `&nbsp;` | :5312 | 原 nbsp 串 | ` …` |
