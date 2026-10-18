@@ -8,18 +8,26 @@ import {
   searchNext, searchPrev, replaceOne, replaceAll, clearSearch, searchCurrent
 } from './searchPlugin.js';
 
-// 最小 schema：doc / paragraph / text
+// 最小 schema：doc / paragraph / text + 行内原子（hardBreak / image）
 const schema = new Schema({
   nodes: {
     doc: { content: 'block+' },
-    paragraph: { group: 'block', content: 'text*', toDOM: () => ['p', 0] },
-    text: { group: 'inline' }
+    paragraph: { group: 'block', content: '(text|hardBreak|image)*', toDOM: () => ['p', 0] },
+    text: { group: 'inline' },
+    hardBreak: { group: 'inline', inline: true, atom: true, toDOM: () => ['br'] },
+    image: { group: 'inline', inline: true, atom: true, toDOM: () => ['img'] }
   }
 });
 
 function makeDoc(lines) {
   const paras = lines.map(l => schema.node('paragraph', null, l ? schema.text(l) : []));
   return schema.node('doc', null, paras);
+}
+
+function makeInlineDoc(parts) {
+  const children = parts.map(p =>
+    typeof p === 'string' ? schema.text(p) : p);
+  return schema.node('doc', null, [schema.node('paragraph', null, children)]);
 }
 
 let view, plugin;
@@ -115,5 +123,30 @@ describe('searchPlugin', () => {
     });
     requestSearch(view, 'hello', {});
     expect(searchKey.getState(view.state).matches.length).toBe(0);
+  });
+
+  it('跨行内原子（<br>）不匹配，也不被替换删除', () => {
+    view.destroy();
+    view = new EditorView(document.createElement('div'), {
+      state: EditorState.create({
+        doc: makeInlineDoc(['foo', schema.node('hardBreak'), 'bar']),
+        plugins: [plugin = createSearchPlugin()]
+      })
+    });
+    // 字面查询跨 hardBreak：拼接文本是 foobar，但区间含原子分隔符
+    requestSearch(view, 'oob', {});
+    expect(searchKey.getState(view.state).matches.length).toBe(0);
+    // 正则 \S+ 同样不得跨原子
+    requestSearch(view, 'o.b', { regex: true });
+    expect(searchKey.getState(view.state).matches.length).toBe(0);
+    // 全部替换不得删除 <br>
+    requestSearch(view, 'oob', {});
+    expect(replaceAll(view, 'X')).toBe(0);
+    expect(view.state.doc.child(0).child(1).type.name).toBe('hardBreak');
+    // 原子两侧各自的文本仍可命中
+    requestSearch(view, 'foo', {});
+    expect(searchKey.getState(view.state).matches.length).toBe(1);
+    requestSearch(view, 'bar', {});
+    expect(searchKey.getState(view.state).matches.length).toBe(1);
   });
 });

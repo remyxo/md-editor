@@ -343,3 +343,39 @@ describe('窗口缩放后重绘（2026-10-08 用户报告：恢复/最大化窗�
     }
   });
 });
+
+describe('源码模式搜索语义与 WYSIWYG 对齐', () => {
+  function matchesOf(text, query, caseSensitive, regex, wholeWord) {
+    const api = window.editorApi;
+    document.getElementById('source-view').value = text;
+    api._srcSearch = null;
+    api._srcStartSearch(query, !!caseSensitive, !!regex, !!wholeWord, 0);
+    return api._srcSearch.matches;
+  }
+
+  it('全词匹配：汉字不作为词字符（与 WYSIWYG 一致）', () => {
+    expect(matchesOf('你好世界', '你好', false, false, true).length).toBe(1);
+    expect(matchesOf('你好世界', '世界', false, false, true).length).toBe(1);
+    expect(matchesOf('café', 'caf', false, false, true).length).toBe(0);
+  });
+
+  it('零宽匹配不计入（与 WYSIWYG 一致）', () => {
+    expect(matchesOf('bbb', 'a*', false, true, false).length).toBe(0);
+  });
+
+  it('正则替换展开 $1；字面替换不展开', () => {
+    const api = window.editorApi;
+    const sv = document.getElementById('source-view');
+    sv.value = 'a1b';
+    api._srcSearch = null;
+    api._srcStartSearch('(\\d)', false, true, false, 0);
+    api._srcReplaceAll('[$1]');
+    expect(sv.value).toBe('a[1]b');
+
+    sv.value = 'foo';
+    api._srcSearch = null;
+    api._srcStartSearch('foo', false, false, false, 0);
+    api._srcReplaceAll('$1');
+    expect(sv.value).toBe('$1');
+  });
+});

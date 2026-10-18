@@ -2811,15 +2811,19 @@ window.editorApi = {
     _srcEscapeRegExp: function(s) {
         return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     },
+    // 词字符判定：与 searchMatcher 的 isWordChar 单一语义（拉丁字母/数字/
+    // 下划线；CJK 汉字除外——中文无空格分词，汉字参与全词判定会让「你好世界」
+    // 搜「你好」全部失效）。
+    _srcIsWordChar: function(ch) {
+        return !!ch && /[\p{L}\p{N}_]/u.test(ch) && !/\p{Script=Han}/u.test(ch);
+    },
     _srcBuildRegex: function() {
         var s = this._srcSearch;
         if (!s || !s.query) return null;
         var flags = s.caseSensitive ? 'g' : 'gi';
         var pattern = s.regex ? s.query : this._srcEscapeRegExp(s.query);
-        if (s.wholeWord) {
-            // 整词匹配：中英文/数字/下划线均视为词字符，前后不得紧邻词字符。
-            pattern = '(?<![一-龥A-Za-z0-9_])(?:' + pattern + ')(?![一-龥A-Za-z0-9_])';
-        }
+        // 整词改为命中后过滤（见 _srcFindMatches）：lookaround 字符类无法表达
+        // 「汉字不算词字符」，两模式曾因此语义相反（汉字 vs 非汉字单词）。
         try { return new RegExp(pattern, flags); } catch (e) { return null; }
     },
     _srcFindMatches: function() {
@@ -2830,11 +2834,20 @@ window.editorApi = {
         if (!sv || !s.query) return;
         var re = this._srcBuildRegex();
         if (!re) return;
+        var text = sv.value;
         var m;
-        while ((m = re.exec(sv.value)) !== null) {
-            s.matches.push({ from: m.index, to: m.index + m[0].length });
-            // 零宽匹配（如正则 `^`）会让 lastIndex 停在原地造成死循环，手动推进。
-            if (m[0].length === 0) re.lastIndex++;
+        while ((m = re.exec(text)) !== null) {
+            var start = m.index, end = start + m[0].length;
+            // 零宽匹配（如 a* / ^）与 WYSIWYG 一致跳过：两边都不计入/不替换。
+            // 仍须推进 lastIndex，避免死循环。
+            if (m[0].length === 0) { re.lastIndex++; continue; }
+            if (s.wholeWord) {
+                var before = start > 0 ? text[start - 1] : '';
+                var after = end < text.length ? text[end] : '';
+                if (this._srcIsWordChar(before) || this._srcIsWordChar(after))
+                    continue;
+            }
+            s.matches.push({ from: start, to: end });
         }
         if (s.matches.length) s.current = 0;
     },
@@ -3143,6 +3156,16 @@ window.editorApi = {
         this._srcRenderHighlights();
         this._notifySearchCount();
     },
+    // 替换串展开：正则模式支持 $1/$&/$$（与 WYSIWYG 的 resolveReplacement
+    // 同款，对命中文本单独执行一次非 g 正则）；字面模式原样插入。
+    _srcExpandReplacement: function(matchedText, rep) {
+        var s = this._srcSearch;
+        if (!s || !s.regex) return rep;
+        try {
+            var single = new RegExp(s.query, s.caseSensitive ? '' : 'i');
+            return matchedText.replace(single, rep);
+        } catch (e) { return rep; }
+    },
     _srcReplaceOne: function(rep) {
         var sv = document.getElementById('source-view');
         var s = this._srcSearch;
@@ -3150,8 +3173,9 @@ window.editorApi = {
         var mk = s.matches[s.current];
         // 替换后光标落在替换文本之后，重算匹配并定位到该位置之后的第一处
         // （对齐 WYSIWYG replaceOne 替换后跳到下一处；末尾无后续则回到第一处）。
-        var cursorAfter = mk.from + rep.length;
-        sv.value = sv.value.slice(0, mk.from) + rep + sv.value.slice(mk.to);
+        var repl = this._srcExpandReplacement(sv.value.slice(mk.from, mk.to), rep);
+        var cursorAfter = mk.from + repl.length;
+        sv.value = sv.value.slice(0, mk.from) + repl + sv.value.slice(mk.to);
         this._srcSearch = { query: s.query, caseSensitive: s.caseSensitive, regex: s.regex, wholeWord: s.wholeWord, matches: [], current: -1 };
         this._srcFindMatches();
         var ns = this._srcSearch;
@@ -3171,8 +3195,24 @@ window.editorApi = {
         if (!sv || !s || !s.query) return;
         var re = this._srcBuildRegex();
         if (!re) return;
-        // 用函数形式替换，避免替换文本中的 `$` 序列被当作捕获组引用展开。
-        var out = sv.value.replace(re, function() { return rep; });
+        var s0 = s;
+        var self = this;
+        var text = sv.value;
+        // 函数形式：正则模式展开 $1/$&（与 WYSIWYG 一致），字面模式原样插入；
+        // 全词过滤不命中的原样保留；零宽匹配与 WYSIWYG 一致跳过。
+        var out = text.replace(re, function() {
+            var match = arguments[0];
+            if (match.length === 0) return match;
+            var offset = arguments[arguments.length - 2];
+            if (s0.wholeWord) {
+                var before = offset > 0 ? text[offset - 1] : '';
+                var after = offset + match.length < text.length
+                    ? text[offset + match.length] : '';
+                if (self._srcIsWordChar(before) || self._srcIsWordChar(after))
+                    return match;
+            }
+            return self._srcExpandReplacement(match, rep);
+        });
         if (out === sv.value) { this._notifySearchCount(); return; }
         sv.value = out;
         this._srcSearch = { query: s.query, caseSensitive: s.caseSensitive, regex: s.regex, wholeWord: s.wholeWord, matches: [], current: -1 };

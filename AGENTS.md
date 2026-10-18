@@ -135,7 +135,7 @@ ctest --output-on-failure
 
 ## 已知问题 & 待完善
 
-- `tiptap-all.js` 更新需在 `src/resources/web/` 下运行 `npx esbuild tiptap-entry.js --bundle --outfile=tiptap-all.js --format=iife`
+- `tiptap-all.js` 更新：在 `src/resources/web/` 下运行 `bash build-tiptap.sh`（脚本含 `--target=es2017 --minify`；缺 minify 会产出 2MB 未压缩包，与仓库既有制品不一致）
 - **colorSpan 单 mark 无法嵌套继承（已知边界，2026-09-13 记录）**：TipTap/ProseMirror 的 mark 是集合语义，同型 mark 不能嵌套——嵌套 `<span style="color:red">外<span style="background-color:yellow">内</span>尾</span>` 载入编辑器时，内层 colorSpan **替换**外层（非叠加）：「内」= 默认色 + 黄底（CSS 规范应为继承的红字），且 getHTML 扁平化为兄弟 span。文字内容无损，视觉语义一轮往返改变。根治需把 colorSpan 拆为 color / background-color 两个独立 mark（牺牲「整串 style 原样保真」设计），属 schema 级重构，待独立需求评估。DOCX 导出的颜色栈（DocxExporter RunFormat）对嵌套/扁平两种输入各按其语义正确渲染
 - **源码搜索高亮（2026-10-08 机制重构）**：旧「全文档折行点预测量 + 跨会话缓存」冷启动 318 行文档 13-20s、4k 分钟级，且编辑/窗口缩放使整表失效后长时间渲染陈旧坐标（色块漂移，用户实测）。已重构为**按需局部测量**：行号 = `linesOf(slice(0,p+1))−1`（一次 scrollHeight 读）、行首在 [p−256, p+1] 窗口内二分（T8 修正语义）——单匹配 ~15ms 与文档规模无关，渐进分片渲染（当前匹配优先）、resize 防抖自动重绘、每次渲染按当前文本现算（无缓存无失效态）。见 editor.js「匹配定位测量」节与 srcsearch-highlight.test.js（含限定读次数断言）
 - **Linux/Windows 无单实例（待完善，2026-09-19 记录）**：双击文件各开独立实例——两平台文件管理器只按关联再拉进程，无系统级单实例服务；macOS 由 Launch Services 天然单实例，再开文件经 QFileOpenEvent 进既有实例新标签。对齐方案预留：QLocalServer 每用户 socket，新进程发现既有实例 → 发送文件路径后自退出；注意 Wayland 下窗口置前受限（或只能任务栏提醒）
