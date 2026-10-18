@@ -1000,6 +1000,50 @@ static QString extractEscapedEquals(QString line, QStringList &out, QStringList 
     return line;
 }
 
+// 提取转义美元符 \$ → ZZDL 占位符（数学后处理之后还原为字面 $）。
+// md4c 消费 \$ 的反斜杠，使「转义美元」与「行内公式定界符」在 HTML 层同形：
+// `cost \$5 and \$6` 会被 $...$ 正则配成公式（语义丢失）。提前占位后，字面 $
+// 在整个数学识别阶段不可见，还原置于数学 span 保护（__IMATH）之后。
+// 行内代码内的 \$ 是字面文本，先暂存；反斜杠 run 奇偶校验（\\$ 是「字面 \ +
+// 裸 $」，不得保护）。
+static QString extractEscapedDollars(QString line, QStringList &out, QStringList &phs,
+                                     QSet<QString> &collisions)
+{
+    static const QRegularExpression codeSpanRe("`([^`]+)`");
+    static const QRegularExpression re(R"(\\\$)");
+    QStringList codes;
+    int off = 0;
+    while (true) {
+        auto m = codeSpanRe.match(line, off);
+        if (!m.hasMatch()) break;
+        codes << m.captured(0);
+        QString cph = "\x01CODE" + QString::number(codes.size() - 1) + "\x01";
+        line.replace(m.capturedStart(), m.capturedLength(), cph);
+        off = m.capturedStart() + cph.length();
+    }
+    int offset = 0;
+    while (true) {
+        auto m = re.match(line, offset);
+        if (!m.hasMatch()) break;
+        int bs = 0;
+        for (int j = m.capturedStart() - 1;
+             j >= 0 && line.at(j) == QLatin1Char('\\'); --j)
+            ++bs;
+        if (bs % 2 == 1) {   // 该反斜杠本身被转义：$ 是裸的，交给数学识别
+            offset = m.capturedStart() + 1;
+            continue;
+        }
+        out << "$";
+        phs << collisionFreePlaceholder(collisions, "DL", out.size() - 1);
+        QString ph = phs.last();
+        line.replace(m.capturedStart(), m.capturedLength(), ph);
+        offset = m.capturedStart() + ph.length();
+    }
+    for (int i = 0; i < codes.size(); ++i)
+        line.replace("\x01CODE" + QString::number(i) + "\x01", codes[i]);
+    return line;
+}
+
 // 提取转义扩展定界符 \~~、\~、\^ → ZZED 占位符（toHtml 末尾还原为字面 ~~ / ~ / ^）。
 // md4c 会消费反斜杠转义（\^ → 字面 ^），使转义与未转义形态在 HTML 层不可区分：
 // 后处理 ^x^→<sup> 把转义字面量重新解释为上标（语义丢失）；extractSubscripts
@@ -2307,6 +2351,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     QStringList footnoteDefs;   // 脚注定义 def HTML（按 id 去重，首次定义顺序）
     QSet<QString> footnoteDefIds; // 已收集的定义 id（去重用；QSet 避免长列表 O(n²) 查找）
     QStringList escapedEqBackups;  // 转义等号 \= → ZZES 保护
+    QStringList escapedDollarBackups;  // 转义美元 \$ → ZZDL 保护
     QStringList escapedDelimBackups; // 转义扩展定界符 \~~/\~/\^ → ZZED 保护（还原为字面定界符）
     QStringList htmlInlineBackups; // 原始 HTML 内联标签（<span style> / <u>）
     QStringList hrMarkers;       // 水平线 --- → 占位符保护（后处理还原为 <hr/>）
@@ -2326,6 +2371,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     QStringList divPhs;          // ZZDV（手写 <div>，与 divBackups 对应）
     QStringList divBackups;      // ZZDV 备份（函数级：复杂块引用预抽取在行循环前写入）
     QStringList escapedEqPhs;    // ZZES（转义等号，与 escapedEqBackups 对应）
+    QStringList escapedDollarPhs; // ZZDL（转义美元，与 escapedDollarBackups 对应）
     QStringList escapedDelimPhs; // ZZED（转义扩展定界符，与 escapedDelimBackups 对应）
     QStringList subPhs;          // ZZSB（下标，与 subContents 对应）
     QStringList footnoteRefPhs;  // ZZFR（脚注引用，与 footnoteRefs 对应）
@@ -2802,6 +2848,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                                           tableCellPhs, collisions);
                 cl = extractEscapedEquals(cl, escapedEqBackups, escapedEqPhs,
                                           collisions);
+                cl = extractEscapedDollars(cl, escapedDollarBackups,
+                                           escapedDollarPhs, collisions);
                 cl = extractEscapedExtDelims(cl, escapedDelimBackups,
                                              escapedDelimPhs, collisions);
                 cl = extractSubscripts(cl, subContents, subPhs, collisions);
@@ -2872,6 +2920,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             QString cl = line;
             cl = extractEscapedEquals(cl, escapedEqBackups, escapedEqPhs,
                                       collisions);
+            cl = extractEscapedDollars(cl, escapedDollarBackups,
+                                       escapedDollarPhs, collisions);
             cl = extractEscapedExtDelims(cl, escapedDelimBackups,
                                          escapedDelimPhs, collisions);
             cl = extractSubscripts(cl, subContents, subPhs, collisions);
@@ -2903,6 +2953,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
             QString cl = line;
             cl = extractEscapedEquals(cl, escapedEqBackups, escapedEqPhs,
                                       collisions);
+            cl = extractEscapedDollars(cl, escapedDollarBackups,
+                                       escapedDollarPhs, collisions);
             cl = extractEscapedExtDelims(cl, escapedDelimBackups,
                                          escapedDelimPhs, collisions);
             cl = extractSubscripts(cl, subContents, subPhs, collisions);
@@ -2962,6 +3014,8 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
                                       tableCellPhs, collisions);
             cl = extractEscapedEquals(cl, escapedEqBackups, escapedEqPhs,
                                       collisions);
+            cl = extractEscapedDollars(cl, escapedDollarBackups,
+                                       escapedDollarPhs, collisions);
             cl = extractEscapedExtDelims(cl, escapedDelimBackups,
                                          escapedDelimPhs, collisions);
             cl = extractSubscripts(cl, subContents, subPhs, collisions);
@@ -3364,8 +3418,12 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     // 返回整段匹配原样保留（两侧空格不被吞）。
     if (!brSoftPhs.isEmpty()) {
         QSet<QString> phSet(brSoftPhs.cbegin(), brSoftPhs.cend());
+        // 只匹配本族前缀 ZZBR（不再用通用 token 模式）：通用模式会把前一个
+        // 占位符（如行尾的 ZZDL/ZZES）连同其后的空格一起吞进「未命中→原样
+        // 返回」的匹配段，使空格不再被 BR 匹配消费，留下行尾空格（\$\$ 等
+        // 行尾转义序列二趟往返因此漂移）。
         globalReplaceWith(html,
-            QRegularExpression(QStringLiteral(" ?(ZZ[A-Z]+[0-9]+ZZ) ?")),
+            QRegularExpression(QStringLiteral(" ?(ZZBR[0-9]+ZZ) ?")),
             [&phSet](const QRegularExpressionMatch &m) {
                 return phSet.contains(m.captured(1))
                            ? QStringLiteral("<br data-brk>") : m.captured(0);
@@ -3628,6 +3686,9 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
         }
         // 还原转义等号 ZZES → =（在 ==→<mark> 之后，避免还原的 = 参与匹配）
         batchReplaceExact(html, escapedEqPhs, escapedEqBackups);
+        // 还原转义美元 ZZDL → $（在 $...$ 数学识别之后，否则转义美元会被
+        // 重新配对成公式）
+        batchReplaceExact(html, escapedDollarPhs, escapedDollarBackups);
         // 恢复 <code>/<pre>：__CODE<n>__ → 原始 <pre>/<code>（map 兜底未命中原样
         // 保留，防用户字面 __CODE\d+__ 越界，与旧逐 token replace 行为一致）
         if (!codeBlocks.isEmpty()) {
@@ -4063,7 +4124,7 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     assertNoPlaceholderLeak(html,
         {&codeBlockPhs, &blankLinePhs, &mathBlockPhs, &bqCodeBlockPhs,
          &bqSepPhs, &taskListPhs, &brSoftPhs, &hrPhs, &divPhs,
-         &escapedEqPhs, &escapedDelimPhs, &subPhs, &footnoteRefPhs,
+         &escapedEqPhs, &escapedDollarPhs, &escapedDelimPhs, &subPhs, &footnoteRefPhs,
          &htmlInlinePhs, &tableCellPhs, &emphCodePhs, &emptyAltSentinels});
 #endif
 
@@ -4438,6 +4499,58 @@ static QString protectTableCellPipes(const QString &cell, QSet<QString> &collisi
     return out;
 }
 
+// 字面 $ → ZZDL 占位符（fromHtml 侧）。真实公式已在此之前转成 ZZIM/ZZBM
+// 占位符，剩余的 $ 都是字面文本；写回 `\$` 形式，使下次载入时 toHtml 的
+// extractEscapedDollars 能识别为字面（不会参与 $...$ 配对）。
+// 跳过 HTML 标签（属性内 $ 不是文本）与 code/pre 内容（若仍有未占位的代码）。
+static void protectLiteralDollars(QString &html, QSet<QString> &collisions,
+                                  QStringList &placeholders, QStringList &backups,
+                                  int &n)
+{
+    QString out;
+    out.reserve(html.size());
+    int i = 0;
+    int codeDepth = 0;
+    while (i < html.size()) {
+        if (html.at(i) == QLatin1Char('<')) {
+            const int j = html.indexOf(QLatin1Char('>'), i);
+            if (j < 0) {
+                out += html.mid(i);
+                break;
+            }
+            const QString tag = html.mid(i, j - i + 1);
+            const QString lower = tag.toLower();
+            if (lower.startsWith(QLatin1String("<code"))
+                || lower.startsWith(QLatin1String("<pre")))
+                ++codeDepth;
+            else if (lower.startsWith(QLatin1String("</code"))
+                     || lower.startsWith(QLatin1String("</pre")))
+                codeDepth = qMax(0, codeDepth - 1);
+            out += tag;
+            i = j + 1;
+            continue;
+        }
+        int j = html.indexOf(QLatin1Char('<'), i);
+        if (j < 0) j = html.size();
+        if (codeDepth > 0) {
+            out += html.mid(i, j - i);
+        } else {
+            for (int k = i; k < j; ++k) {
+                if (html.at(k) == QLatin1Char('$')) {
+                    const QString ph = collisionFreePlaceholder(collisions, "DL", n++);
+                    placeholders << ph;
+                    backups << QStringLiteral("\\$");
+                    out += ph;
+                } else {
+                    out += html.at(k);
+                }
+            }
+        }
+        i = j;
+    }
+    html = out;
+}
+
 QString MarkdownHandler::fromHtml(const QString &html)
 {
     // 占位符碰撞索引：源 HTML 中全部 ZZ\w+ZZ 形态子串，供 collisionFreePlaceholder
@@ -4461,6 +4574,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
     QList<QStringList> tableAligns;
     // 表格整行合并记录（每表 body 行索引列表，步骤 6b 折叠回单格用）：见下方提取块。
     QList<QList<int>> tableFullMergeRows;
+    // 单行表格的哨兵数据行占位符（迫使 Qt 输出分隔行；步骤 6 整行删除，
+    // 不进入 placeholders，故不参与还原/泄漏断言）
+    QStringList syntheticRowPhs;
     // 段落空行占位符 ZZBL*（&nbsp; 空行方案）：识别空段落（<p></p> / <p><br></p> /
     // <p>&nbsp;</p> 含 NBSP 字符）替换为占位符段落，toMarkdown 后占位符独占一行，
     // 还原时替换为字面 &nbsp; 行（跨编辑器可移植空行）。与 placeholders 分开记录
@@ -5821,16 +5937,64 @@ QString MarkdownHandler::fromHtml(const QString &html)
             [&collisions, &placeholders, &backups, &n]
             (const QRegularExpressionMatch &m) {
                 QString marker = m.captured(2);
-                // 转义标记中的标点字符：1.→1\. / 1)→1\) / -→\- / +→\+
-                QString escaped;
-                if (marker.size() == 2)
-                    escaped = marker.left(1) + QStringLiteral("\\") + marker.right(1);
-                else
-                    escaped = QStringLiteral("\\") + marker;
+                // 转义标记中的标点字符：1.→1\. / 10)→10\) / -→\- / +→\+
+                // （反斜杠必须落在最后的标点前：旧实现对多位编号输出
+                // "\2024."，重载后显示字面反斜杠）
+                QString escaped = marker.left(marker.size() - 1)
+                                + QStringLiteral("\\") + marker.right(1);
                 QString ph = collisionFreePlaceholder(collisions, "LM", n++);
                 placeholders << ph;
                 backups << escaped;
                 return m.captured(1) + ph;   // 保留 <p> 前缀，只替换标记部分
+            });
+    }
+
+    // 单行表格：Qt toMarkdown 只输出 `| a | b |`（无分隔行），重载后变成普通
+    // 段落（表格丢失）。在 setHtml 前为「仅 1 行」的表格补一行哨兵数据行，
+    // 迫使 Qt 输出分隔行；该哨兵行在步骤 6 归一化时整行删除。哨兵用独立前缀
+    // 并登记碰撞（不进入 placeholders，还原表与泄漏断言均不涉及）。
+    {
+        static const QRegularExpression tableRe(
+            R"(<table\b[^>]*>(.*?)</table>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        static const QRegularExpression rowRe(
+            R"(<tr\b[^>]*>(.*?)</tr>)",
+            QRegularExpression::DotMatchesEverythingOption);
+        static const QRegularExpression rowCellRe(R"(<t[dh]\b[^>]*>)");
+        int n = 0;
+        globalReplaceWith(processed, tableRe,
+            [&](const QRegularExpressionMatch &m) {
+                const QString inner = m.captured(1);
+                if (inner.contains(QLatin1String("<table"), Qt::CaseInsensitive))
+                    return m.captured(0);   // 嵌套表格：保守跳过
+                QVector<QRegularExpressionMatch> rows;
+                auto rit = rowRe.globalMatch(inner);
+                while (rit.hasNext())
+                    rows << rit.next();
+                if (rows.size() != 1)
+                    return m.captured(0);
+                const QString row = rows.first().captured(1);
+                // 合并单元格会改变列对齐/宽度语义，保守跳过
+                if (row.contains(QLatin1String("colspan"), Qt::CaseInsensitive)
+                    || row.contains(QLatin1String("rowspan"), Qt::CaseInsensitive))
+                    return m.captured(0);
+                int cols = 0;
+                auto cit = rowCellRe.globalMatch(row);
+                while (cit.hasNext()) {
+                    cit.next();
+                    ++cols;
+                }
+                if (cols <= 0)
+                    return m.captured(0);
+                const QString ph = collisionFreePlaceholder(collisions, "SR", n++);
+                syntheticRowPhs << ph;
+                QString synth = QStringLiteral("<tr>");
+                for (int k = 0; k < cols; ++k)
+                    synth += QStringLiteral("<td>") + ph + QStringLiteral("</td>");
+                synth += QStringLiteral("</tr>");
+                QString whole = m.captured(0);
+                const int close = whole.lastIndexOf(QLatin1String("</table>"));
+                return whole.left(close) + synth + whole.mid(close);
             });
     }
 
@@ -5855,6 +6019,12 @@ QString MarkdownHandler::fromHtml(const QString &html)
                                              backups, n)
                      + whole.mid(innerOffset + inner.size());
             });
+    }
+
+    // 字面 $ 占位保护：真实公式已是 ZZIM/ZZBM，剩余 $ 按字面写回 \$
+    {
+        int n = 0;
+        protectLiteralDollars(processed, collisions, placeholders, backups, n);
     }
 
     QTextDocument doc;
@@ -6138,6 +6308,7 @@ QString MarkdownHandler::fromHtml(const QString &html)
     {
         int tableIdx = 0;
         QStringList lines = md.split('\n');
+        QVector<int> syntheticRows;   // 单行表格哨兵行下标（本步末尾删除）
         static const QRegularExpression leadingWsRe(QStringLiteral("^[ \t]+"));
         // 围栏状态机：代码围栏内的 |...| 行是字面代码内容，不参与规范化，
         // 伪分隔行也不得抢占 tableAligns 对位（围栏行进出翻转）
@@ -6145,6 +6316,18 @@ QString MarkdownHandler::fromHtml(const QString &html)
         int fenceLen = 0;
         for (int i = 0; i < lines.size(); ++i) {
             QString line = lines[i];
+            // 单行表格的哨兵数据行：整行删除（其作用是让 Qt 输出分隔行）
+            bool isSyntheticRow = false;
+            for (const QString &ph : syntheticRowPhs) {
+                if (line.contains(ph)) {
+                    isSyntheticRow = true;
+                    break;
+                }
+            }
+            if (isSyntheticRow) {
+                syntheticRows << i;
+                continue;
+            }
             QString t = line.trimmed();
             if (updatesFenceState(t, inFence, fenceLen)) continue;
             if (inFence) continue;
@@ -6207,6 +6390,9 @@ QString MarkdownHandler::fromHtml(const QString &html)
                 lines[i] = prefix + "|" + padded.join('|') + "|";
             }
         }
+        // 删除单行表格的哨兵数据行（保留 Qt 生成的分隔行）
+        for (int k = syntheticRows.size() - 1; k >= 0; --k)
+            lines.removeAt(syntheticRows[k]);
         md = lines.join('\n');
     }
 

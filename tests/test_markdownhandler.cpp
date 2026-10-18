@@ -794,6 +794,19 @@ private slots:
                  qPrintable("表格结构与内容应完好，实际:\n" + md));
     }
 
+    void testSingleRowTableKeepsSeparator() {
+        // 单行表格：Qt toMarkdown 只输出 | a | b |，重载变普通段落；哨兵行
+        // 机制应补出分隔行并整行删除哨兵
+        const QString html = QStringLiteral(
+            "<table><tr><td>a</td><td>b</td></tr></table>");
+        const QString md = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md.contains(QStringLiteral("| --- | --- |")), qPrintable(md));
+        QVERIFY2(!md.contains(QStringLiteral("ZZSR")), qPrintable(md));
+        const QString html2 = MarkdownHandler::toHtml(md);
+        QVERIFY2(html2.contains(QStringLiteral("<table")), qPrintable(html2));
+        QCOMPARE(MarkdownHandler::fromHtml(html2), md);
+    }
+
     void testTableColumnAlignFullCppRoundTrip() {
         // C++ 层全链路：toHtml 输出（已含 td style）直接喂 fromHtml，
         // 分隔行对齐标记应原样往返（不经过 TipTap 的下限验证）
@@ -929,11 +942,12 @@ private slots:
                          qPrintable(QString("[%1] 未闭合 $$ 不应产出公式块，实际: %2")
                                         .arg(c.name, html)));
             // 往返保真：字面内容保留 + 收敛后 round2 ↔ round3 字节等价。
-            // 字面 ^ 在正文中由序列化器转义为 \^（防上标误读的无损表示），
-            // 比较 needle 前先还原转义形态
+            // 字面 ^ / $ 在正文中由序列化器转义为 \^ / \$（防上标/公式误读的
+            // 无损表示），比较 needle 前先还原转义形态
             QString md2 = MarkdownHandler::fromHtml(html);
             QString md2Unescaped = md2;
             md2Unescaped.replace(QStringLiteral("\\^"), QStringLiteral("^"));
+            md2Unescaped.replace(QStringLiteral("\\$"), QStringLiteral("$"));
             QVERIFY2(md2Unescaped.contains(QString::fromUtf8(c.needle)),
                      qPrintable(QString("[%1] 往返应保留原文 [%2]，实际: %3")
                                     .arg(c.name, c.needle, md2)));
@@ -1073,6 +1087,30 @@ private slots:
         const QString md = MarkdownHandler::fromHtml(html);
         QVERIFY2(md.contains(QStringLiteral("    x = 1\n")), qPrintable(md));
         QVERIFY2(md.contains(QStringLiteral("  y = 2   \n")), qPrintable(md));
+    }
+
+    void testParagraphMultiDigitListMarkerEscape() {
+        // 段落行首多位有序标记：反斜杠须落在标点前（2024\. / 10\)），
+        // 旧实现输出 \2024.，重载后显示字面反斜杠
+        QCOMPARE(MarkdownHandler::fromHtml(QStringLiteral("<p>2024. 年度报告</p>")),
+                 QStringLiteral("2024\\. 年度报告"));
+        QCOMPARE(MarkdownHandler::fromHtml(QStringLiteral("<p>10) x</p>")),
+                 QStringLiteral("10\\) x"));
+        QCOMPARE(MarkdownHandler::fromHtml(QStringLiteral("<p>- x</p>")),
+                 QStringLiteral("\\- x"));
+    }
+
+    void testEscapedDollarPairNotMath() {
+        // 成对转义美元不得被数学正则重新配对
+        const QString md = QStringLiteral("cost \\$5 and \\$6 today\n");
+        const QString html = MarkdownHandler::toHtml(md);
+        QVERIFY2(!html.contains(QStringLiteral("inline-math")),
+                 qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("cost $5 and $6 today")),
+                 qPrintable(html));
+        const QString md2 = MarkdownHandler::fromHtml(html);
+        QVERIFY2(md2.contains(QStringLiteral("\\$5 and \\$6")), qPrintable(md2));
+        QCOMPARE(MarkdownHandler::fromHtml(MarkdownHandler::toHtml(md2)), md2);
     }
 
     void testIndentedCodeBlockRoundTrip() {
