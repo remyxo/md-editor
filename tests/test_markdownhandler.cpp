@@ -4470,6 +4470,38 @@ private slots:
         }
     }
 
+    void testLargeTableChunkingPreservesRows()
+    {
+        // Qt setMarkdown 表格导入 O(行数²)，toHtml 侧按 200 数据行分块解析后
+        // 再合并回单表。校验：仍是单表、数据行顺序完整、前后小表不丢失。
+        auto makeTable = [](int rows, int first) {
+            QString t = QStringLiteral("| # | a | b |\n|---|:-:|--:|\n");
+            for (int i = first; i < first + rows; ++i)
+                t += QStringLiteral("| %1 | x%1 | y%1 |\n").arg(i);
+            return t;
+        };
+        const QString big = makeTable(450, 1);
+        const QString html = MarkdownHandler::toHtml(big);
+        QCOMPARE(html.count(QStringLiteral("<table")), 1);
+        QCOMPARE(html.count(QStringLiteral(">x450</p>")), 1);
+        // 行序不得因分块插入倒置：200 应在 250 之前、250 在 400 之前
+        const int p200 = html.indexOf(QStringLiteral(">x200</p>"));
+        const int p250 = html.indexOf(QStringLiteral(">x250</p>"));
+        const int p400 = html.indexOf(QStringLiteral(">x400</p>"));
+        QVERIFY2(p200 >= 0 && p200 < p250 && p250 < p400,
+                 "分块合并后数据行顺序错误");
+
+        // 大表前的小表不得被合并逻辑丢弃
+        const QString mixed =
+            makeTable(3, 900) + QStringLiteral("\n") + makeTable(230, 1);
+        const QString html2 = MarkdownHandler::toHtml(mixed);
+        QCOMPARE(html2.count(QStringLiteral("<table")), 2);
+        QVERIFY2(html2.contains(QStringLiteral(">x900</p>")),
+                 "大表前的小表丢失");
+        QVERIFY2(html2.contains(QStringLiteral(">x230</p>")),
+                 "大表末行丢失");
+    }
+
     void testBlockquoteParagraphSeparatorRoundTrip()
     {
         // 块引用内多段落（「> 空行」分隔）往返：两段不应被合并成一段。

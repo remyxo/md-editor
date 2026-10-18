@@ -364,6 +364,22 @@ static bool isDashHrLine(const QString &line)
     return re.match(line).hasMatch();
 }
 
+// GFM 表格分隔行（| --- | :---: | …）：用于识别完整表格块（大表分块用）。
+static bool isGfmSeparatorLine(const QString &line)
+{
+    const QString t = line.trimmed();
+    if (!t.startsWith(QLatin1Char('|')) || !t.endsWith(QLatin1Char('|')))
+        return false;
+    const QStringList cells = splitTableCells(t.mid(1, t.size() - 2));
+    if (cells.isEmpty())
+        return false;
+    static const QRegularExpression sepRe("^:?-+:?$");
+    for (const QString &c : cells)
+        if (!sepRe.match(c.trimmed()).hasMatch())
+            return false;
+    return true;
+}
+
 // 表格行（trim 后以 | 开头且以 | 结尾）：表头/分隔行/数据行的统一识别，用于表格
 // 区域跟踪。与 fromHtml 步骤 6 的 |...| 启发式一致。
 static bool isTableLine(const QString &line)
@@ -3351,12 +3367,140 @@ QString MarkdownHandler::toHtml(const QString &markdown, bool extractFootnotes)
     // 空 alt 图片保形（须在任何解析之前）：Qt setMarkdown 会整条丢弃空 alt 图片
     protectEmptyAltImages(processed, collisions, emptyAltSentinels);
 
+    // 大表格分块：Qt setMarkdown 的表格导入对行数呈 O(n²)（实测 1000/2000/4000
+    // 行 = 140/559/2411ms）。按 200 数据行切块并重复表头/分隔行，让 Qt 每次只
+    // 解析小块；toHtml 后按 tableChunkCounts 把片段合并回单表。
+    QVector<int> tableChunkCounts;
+    {
+        constexpr int kRowsPerChunk = 200;
+        const QStringList lines = processed.split('\n');
+        QStringList out;
+        out.reserve(lines.size() + 16);
+        bool inFence = false;
+        int fenceLen = 0;
+        int i = 0;
+        while (i < lines.size()) {
+            const QString t = lines[i].trimmed();
+            if (updatesFenceState(t, inFence, fenceLen)) {
+                out << lines[i++];
+                continue;
+            }
+            if (inFence || !isTableLine(t) || i + 1 >= lines.size()
+                || !isGfmSeparatorLine(lines[i + 1])) {
+                out << lines[i++];
+                continue;
+            }
+            const QString header = lines[i];
+            const QString sep = lines[i + 1];
+            int j = i + 2;
+            while (j < lines.size() && isTableLine(lines[j]))
+                ++j;
+            const int dataRows = j - (i + 2);
+            if (dataRows <= kRowsPerChunk) {
+                tableChunkCounts << 1;
+                for (int k = i; k < j; ++k)
+                    out << lines[k];
+                i = j;
+                continue;
+            }
+            int chunks = 0;
+            for (int start = i + 2; start < j; start += kRowsPerChunk) {
+                if (chunks > 0)
+                    out << QString();   // 块间空行（Qt 输出独立 <table>）
+                out << header << sep;
+                const int end = qMin(start + kRowsPerChunk, j);
+                for (int k = start; k < end; ++k)
+                    out << lines[k];
+                ++chunks;
+            }
+            tableChunkCounts << chunks;
+            i = j;
+        }
+        if (!tableChunkCounts.isEmpty())
+            processed = out.join('\n');
+    }
+
     QTextDocument doc;
     doc.setMarkdown(processed);
     // 标题基线格式清除（见 stripHeadingBaselineFormats）：必须在 toHtml 之前，
     // 伪影 span 从导出源头不产生，后续「重组/兜底剥离」正则不再承担此责
     stripHeadingBaselineFormats(doc);
     QString html = doc.toHtml();
+
+    // 合并分块的大表格：tableChunkCounts 按文档序记录每个表的片段数；后续
+    // 片段的首个 <tr> 是重复表头，丢弃后其余行并入首片段。任何对不上（例如
+    // Qt 未按预期输出表）则整体放弃合并，保留原 HTML。
+    {
+        bool hasSplit = false;
+        for (int c : tableChunkCounts) {
+            if (c > 1) { hasSplit = true; break; }
+        }
+        if (hasSplit) {
+            static const QRegularExpression tableRe(
+                R"(<table\b[^>]*>.*?</table>)",
+                QRegularExpression::DotMatchesEverythingOption);
+            static const QRegularExpression rowRe(
+                R"(<tr\b[^>]*>.*?</tr>)",
+                QRegularExpression::DotMatchesEverythingOption);
+            auto it = tableRe.globalMatch(html);
+            QString rebuilt;
+            int last = 0;
+            bool ok = true;
+            for (int p = 0; p < tableChunkCounts.size() && ok; ++p) {
+                const int n = tableChunkCounts[p];
+                if (n <= 1) {
+                    if (!it.hasNext()) { ok = false; break; }
+                    // 未分块的表连同其前缀原样抄入（否则前面的小表被 last
+                    // 跳过、从重建结果中丢失）
+                    const auto m = it.next();
+                    rebuilt += html.mid(last, m.capturedEnd() - last);
+                    last = m.capturedEnd();
+                    continue;
+                }
+                QVector<QRegularExpressionMatch> frags;
+                for (int k = 0; k < n; ++k) {
+                    if (!it.hasNext()) { ok = false; break; }
+                    frags << it.next();
+                }
+                if (!ok || frags.isEmpty()) { ok = false; break; }
+                rebuilt += html.mid(last, frags.first().capturedStart() - last);
+                QString merged = frags.first().captured(0);
+                for (int k = 1; k < frags.size(); ++k) {
+                    const QString frag = frags[k].captured(0);
+                    auto rit = rowRe.globalMatch(frag);
+                    int rowsStart = -1;   // 重复表头行末（其后即数据行）
+                    int rowsEnd = -1;
+                    int rowIndex = 0;
+                    while (rit.hasNext()) {
+                        const auto rm = rit.next();
+                        if (rowIndex++ == 0) {
+                            rowsStart = rm.capturedEnd();
+                            continue;
+                        }
+                        rowsEnd = rm.capturedEnd();
+                    }
+                    if (rowsStart < 0 || rowsEnd < rowsStart) { ok = false; break; }
+                    // 从表头行末截到末行末：保留 Qt 行间原有换行，输出与
+                    // 不分块时逐字节一致
+                    const QString rows = frag.mid(rowsStart, rowsEnd - rowsStart);
+                    // 每次重取闭合位置：上一片插入后位置已后移（复用旧位置会
+                    // 让后续片段倒序插到表头之后）
+                    const int closePos =
+                        merged.lastIndexOf(QLatin1String("</table>"));
+                    if (closePos >= 0)
+                        merged.insert(closePos, rows);
+                    else
+                        merged += rows;
+                }
+                rebuilt += merged;
+                last = frags.last().capturedEnd();
+            }
+            if (ok) {
+                rebuilt += html.mid(last);
+                html = rebuilt;
+            }
+        }
+    }
 
     // 后处理 -1: 清空空 alt 图片的占位 alt（见 protectEmptyAltImages）。
     //   占位 alt 只用于让 Qt 保留图片，此处统一还原为 alt=""。通用 token 正则
