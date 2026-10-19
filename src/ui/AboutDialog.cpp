@@ -32,18 +32,18 @@ AboutDialog::AboutDialog(QWidget *parent)
     rightLayout->addWidget(m_nameLabel);
 
     m_versionLabel = new QLabel();
-    m_versionLabel->setStyleSheet("color: #666; font-size: 13px;");
+    m_versionLabel->setObjectName("aboutVersion");
     rightLayout->addWidget(m_versionLabel);
 
     rightLayout->addSpacing(20);
 
     m_descLabel = new QLabel();
     m_descLabel->setWordWrap(true);
-    m_descLabel->setStyleSheet("color: #888; font-size: 13px;");
+    m_descLabel->setObjectName("aboutDesc");
     rightLayout->addWidget(m_descLabel);
 
     m_copyLabel = new QLabel("© 2026");
-    m_copyLabel->setStyleSheet("color: #aaa; font-size: 12px;");
+    m_copyLabel->setObjectName("aboutCopy");
     rightLayout->addWidget(m_copyLabel);
 
     rightLayout->addStretch();

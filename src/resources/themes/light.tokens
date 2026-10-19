@@ -1,0 +1,64 @@
+# 亮色主题设计令牌（Fluent 风格）
+# template.qss 中的 @令牌名@ 占位符按本表展开；亮暗两表键集合必须一致
+# （ThemeManager 对残留占位符有告警兜底）。颜色值调整请亮暗成对改。
+
+# 图标资源目录（chevron 等 SVG 的深浅版本）
+iconDir = light
+
+# 表面层级
+windowBg = #f5f5f5
+canvas = #f5f5f5
+chrome = #ffffff
+sideBg = #ffffff
+flyout = #ffffff
+inputBg = #ffffff
+
+# 描边与分隔
+stroke = #d1d1d1
+strokeButton = #8a8a8a
+strokeFlyout = #e5e5e5
+divider = #ebebeb
+
+# 文字
+text1 = #242424
+text2 = #616161
+text3 = #707070
+
+# 强调色三态与选中
+accent = #0078d4
+accentHover = #106ebe
+accentPressed = #005a9e
+accentSubtle = #ebf3fc
+accentOnSubtle = #004080
+selection = #0078d4
+
+# 交互填充
+hoverFill = #f0f0f0
+pressedFill = #edebe9
+
+# 标签页
+tabBg = #ececec
+tabHover = #e0e0e0
+tabBorder = #e0e0e0
+tabText = #555555
+tabTextSelected = #1a1a1a
+tabTextHover = #333333
+tabChildBg = #ffffff
+
+# 滚动条
+scrollbar = #c0c0c0
+scrollbarHover = #a0a0a0
+
+# 弹层阴影（rgba，QSS 与 QColor 双端解析）
+shadow = rgba(0,0,0,48)
+
+# 工具栏彩色 SVG 图标（stroke=currentColor）
+iconBold = #1a73e8
+iconItalic = #0d904f
+iconStrike = #d93025
+iconCode = #e37400
+iconUnderline = #7b1fa2
+iconHighlight = #f9ab00
+iconNeutral = #5f6368
+iconLink = #1967d2
+iconPdf = #d93025

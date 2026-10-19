@@ -93,12 +93,13 @@ JS → C++:  editor.js → QWebChannel → EditorBridge 槽 → 信号 → UI �
 | `src/ui/EditorTab.cpp` | QWebEngineView 封装 + 中文右键菜单 |
 | `src/app/ThemeManager.cpp` | QSS 主题加载（light/dark 实际主题） |
 | `src/app/SystemThemeWatcher.cpp` | 系统深浅色检测（QStyleHints::colorScheme，Qt 6.5+ 跨平台 API） |
+| `src/app/PlatformChrome.cpp` | 平台外观增强：弹层抛光（半透明+圆角+DropShadow）与 Windows DWM 标题栏/Mica（非 Windows 空实现） |
 | `src/resources/web/editor.js` | TipTap 初始化 + editorApi + 状态同步 |
 | `src/resources/web/table-column-layout.js` | 表格列宽测量/分配共享算法（编辑器与 HTML/PDF 导出单一来源；DOCX 侧经 getExportHtml 注入 live colgroup） |
 | `src/resources/web/tiptap-entry.js` | esbuild 打包入口，需 npm + esbuild 重建 |
 | `src/resources/web/vendored-lowlight-plugin.js` | vendored 代码块高亮 plugin（异步分批 + 增量重算，见 docs/vendor-lowlight-plugin.md） |
-| `src/resources/themes/light.qss` | 亮色主题 QSS |
-| `src/resources/themes/dark.qss` | 暗色主题 QSS |
+| `src/resources/themes/template.qss` | 主题 QSS 模板（`@令牌名@` 占位符，由 ThemeManager 展开；QMenu 的 margin 为阴影预留，勿删） |
+| `src/resources/themes/{light,dark}.tokens` | 亮/暗设计令牌表（Fluent 体系；两表键集合必须一致） |
 | `src/core/MarkdownHandler.cpp` | MD↔HTML 转换（基于 QTextDocument） |
 | `src/core/ConversionQueue.{h,cpp}` | 每 tab 转换任务队列：QtConcurrent worker 执行 + GUI 线程完成回调（loadFile/保存/切源码模式共用，串行次序 + 加载代次护栏，W4-1） |
 | `src/core/qt/QtMarkdownWriter.{h,cpp}` | vendored Qt 序列化器（去 80 列折行 + 版本固定，见 docs/vendor-qt-markdown-writer.md） |

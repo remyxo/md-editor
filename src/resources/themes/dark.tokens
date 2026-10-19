@@ -1,0 +1,63 @@
+# 暗色主题设计令牌（Fluent 风格）
+# 键集合与 light.tokens 保持一致，见该文件头部说明。
+
+# 图标资源目录（chevron 等 SVG 的深浅版本）
+iconDir = dark
+
+# 表面层级
+windowBg = #1e1e1e
+canvas = #1e1e1e
+chrome = #2b2b2b
+sideBg = #252526
+flyout = #2c2c2c
+inputBg = #333333
+
+# 描边与分隔
+stroke = #454545
+strokeButton = #6b6b6b
+strokeFlyout = #454545
+divider = #333333
+
+# 文字
+text1 = #ffffff
+text2 = #d6d6d6
+text3 = #b3b3b3
+
+# 强调色三态与选中
+accent = #0078d4
+accentHover = #106ebe
+accentPressed = #005a9e
+accentSubtle = #123b5c
+accentOnSubtle = #2899f5
+selection = #094771
+
+# 交互填充
+hoverFill = #333333
+pressedFill = #3d3d3d
+
+# 标签页
+tabBg = #333333
+tabHover = #3d3d3d
+tabBorder = #444444
+tabText = #999999
+tabTextSelected = #ffffff
+tabTextHover = #bbbbbb
+tabChildBg = #1e1e1e
+
+# 滚动条
+scrollbar = #4a4a4a
+scrollbarHover = #5d5d5d
+
+# 弹层阴影（rgba，QSS 与 QColor 双端解析）
+shadow = rgba(0,0,0,90)
+
+# 工具栏彩色 SVG 图标（stroke=currentColor）
+iconBold = #8ab4f8
+iconItalic = #81c995
+iconStrike = #f28b82
+iconCode = #fbbc04
+iconUnderline = #c58af9
+iconHighlight = #fdd663
+iconNeutral = #c4c9ce
+iconLink = #8ab4f8
+iconPdf = #f28b82

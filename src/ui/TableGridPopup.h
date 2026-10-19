@@ -29,6 +29,8 @@ private:
 
     void cellFromPos(const QPoint &pos, int &row, int &col) const;
     QRect cellRect(int row, int col) const;
+    // 内容区 = 窗口区去四周阴影预留边（contentsMargins）
+    QRect contentRect() const;
 };
 
 #endif

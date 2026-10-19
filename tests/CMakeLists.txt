@@ -116,9 +116,11 @@ add_test(NAME test_roundtrip_matrix COMMAND test_roundtrip_matrix)
 
 # Application 的 QFileOpenEvent 转发（macOS Finder 打开文件链路）。
 # ThemeManager 对 qrc 缺失静默容错，无需链接资源；LanguageManager 用到
-# QApplication，须链接 Qt6::Widgets（同 test_languagemanager）
+# QApplication，须链接 Qt6::Widgets（同 test_languagemanager）。
+# ThemeManager 引用 PlatformChrome::isMicaActive，需一并编译
 add_executable(test_application test_application.cpp
     ../src/app/Application.cpp ../src/app/ThemeManager.cpp
+    ../src/app/PlatformChrome.cpp
     ../src/app/LanguageManager.cpp ../src/app/SingleInstanceGuard.cpp)
 target_include_directories(test_application PRIVATE ../src)
 target_link_libraries(test_application PRIVATE Qt6::Test Qt6::Widgets Qt6::Network)

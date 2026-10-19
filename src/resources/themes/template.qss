@@ -1,0 +1,393 @@
+/*
+ * 主题模板 — 现代扁平风格（Fluent 令牌化）
+ * 与 light.tokens / dark.tokens 配套：@令牌名@ 占位符由 ThemeManager 展开。
+ * 亮暗两套令牌键集合必须一致；改选择器结构后跑一次亮暗切换确认无残留占位符告警。
+ *
+ * 弹层（QMenu 等）另有 PlatformChrome 挂的半透明 + DropShadowEffect 阴影，
+ * QMenu 的 margin 即为阴影预留空间，勿删。
+ */
+
+QMainWindow {
+    background-color: @windowBg@;
+    border: none;
+}
+QMainWindow::separator {
+    width: 0;
+    height: 0;
+}
+
+QMenuBar {
+    background-color: @chrome@;
+    border-bottom: 1px solid @divider@;
+    padding: 2px 0;
+    font-size: 13px;
+    color: @text1@;
+}
+
+QMenuBar::item {
+    padding: 4px 12px;
+    border-radius: 4px;
+    margin: 2px 2px;
+    color: @text1@;
+}
+
+QMenuBar::item:selected {
+    background-color: @hoverFill@;
+}
+
+QMenu {
+    background-color: @flyout@;
+    border: 1px solid @strokeFlyout@;
+    border-radius: 8px;
+    /* 阴影预留边（见文件头说明） */
+    margin: 8px;
+    padding: 4px 0;
+    color: @text1@;
+}
+
+QMenu::item {
+    padding: 6px 32px 6px 16px;
+    font-size: 13px;
+    color: @text1@;
+}
+
+/* 菜单项图标：左侧留几个像素，避免紧贴菜单边缘 */
+QMenu::icon {
+    left: 6px;
+}
+
+/* Fluent 语义：悬停/选中为中性灰底 + 原色文字（非蓝底白字） */
+QMenu::item:selected {
+    background-color: @hoverFill@;
+    color: @text1@;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: @divider@;
+    margin: 4px 8px;
+}
+
+QToolBar {
+    background-color: @chrome@;
+    border-bottom: none;
+    padding: 4px 6px;
+    spacing: 3px;
+}
+
+QLabel#headingLabel {
+    color: @text2@;
+    font-size: 15px;
+}
+
+QToolBar::separator {
+    width: 1px;
+    margin: 2px 4px;
+    background-color: @divider@;
+}
+
+QToolButton {
+    border: none;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 16px;
+    min-width: 24px;
+}
+
+QToolButton:hover {
+    background-color: @hoverFill@;
+}
+
+QToolButton:pressed {
+    background-color: @pressedFill@;
+}
+
+/* 侧边栏面板标题栏（CollapsibleSection）：显式文字色，防系统默认灰色看不清 */
+QToolButton#collapsibleHeader {
+    color: @text1@;
+}
+
+
+/* 文本格式 — SVG 图标的彩色（stroke=currentColor） */
+QToolButton#boldAction      { color: @iconBold@; }
+QToolButton#italicAction    { color: @iconItalic@; }
+QToolButton#strikeAction    { color: @iconStrike@; }
+QToolButton#codeAction      { color: @iconCode@; }
+QToolButton#underlineAction { color: @iconUnderline@; }
+QToolButton#highlightAction { color: @iconHighlight@; }
+
+/* 结构按钮 — 中性图标 */
+QToolButton#bulletListAction,
+QToolButton#orderedListAction,
+QToolButton#taskListAction,
+QToolButton#blockquoteAction { color: @iconNeutral@; }
+
+/* 插入按钮 — 强调色图标 */
+QToolButton#linkAction,
+QToolButton#imageAction,
+QToolButton#tableAction,
+QToolButton#hrAction,
+QToolButton#footnoteAction { color: @iconLink@; }
+
+/* 视图/导出 */
+QToolButton#sourceAction { color: @iconNeutral@; }
+QToolButton#pdfAction    { color: @iconPdf@; }
+QToolButton#pdfAction::menu-indicator {
+    image: url(:/icons/@iconDir@/chevron-down.svg);
+    subcontrol-position: right bottom;
+    subcontrol-origin: margin;
+    bottom: 4px;
+    right: 2px;
+    width: 8px;
+    height: 5px;
+}
+
+/* 对齐/上下标下拉按钮 — 中性图标，chevron 同导出规格 */
+QToolButton#alignButton,
+QToolButton#subsupButton { color: @iconNeutral@; }
+QToolButton#alignButton::menu-indicator,
+QToolButton#subsupButton::menu-indicator {
+    image: url(:/icons/@iconDir@/chevron-down.svg);
+    subcontrol-position: right bottom;
+    subcontrol-origin: margin;
+    bottom: 4px;
+    right: 2px;
+    width: 8px;
+    height: 5px;
+}
+
+/* checked 状态：强调色浅底，保留彩色图标 */
+QToolButton:checked {
+    background-color: @accentSubtle@;
+}
+
+QTreeView {
+    background-color: @sideBg@;
+    border: none;
+    font-size: 14px;
+    color: @text1@;
+}
+
+QTreeView::item {
+    padding: 4px 8px;
+    border-radius: 4px;
+    color: @text1@;
+}
+
+QTreeView::item:selected {
+    background-color: @selection@;
+    color: #ffffff;
+}
+
+QTreeView::item:hover:!selected {
+    background-color: @hoverFill@;
+}
+
+QTabWidget {
+    border: none;
+}
+QTabWidget::pane {
+    border: 1px solid @strokeFlyout@;
+    border-top: none;
+    background-color: @canvas@;
+}
+
+QTabBar {
+    background-color: @chrome@;
+}
+QTabBar::tab {
+    background-color: @tabBg@;
+    border: 1px solid @tabBorder@;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    padding: 6px 16px;
+    margin: 2px 2px 0 2px;
+    font-size: 13px;
+    color: @tabText@;
+}
+
+QTabBar::tab:selected {
+    background-color: @chrome@;
+    border-bottom: 1px solid @chrome@;
+    color: @tabTextSelected@;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: @tabHover@;
+    color: @tabTextHover@;
+}
+
+QStatusBar {
+    background-color: @chrome@;
+    border-top: 1px solid @divider@;
+    font-size: 12px;
+    color: @text2@;
+    padding: 2px 8px;
+}
+
+QMainWindow::separator {
+    width: 1px;
+    background: @divider@;
+}
+QSplitter::handle {
+    background-color: @divider@;
+    width: 1px;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: @scrollbar@;
+    border-radius: 4px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: @scrollbarHover@;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+/* 提示气泡（此前无样式，跟随系统默认） */
+QToolTip {
+    background-color: @flyout@;
+    color: @text1@;
+    border: 1px solid @strokeFlyout@;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+
+/* 对话框和表单控件 */
+QDialog {
+    background-color: @flyout@;
+}
+
+QLabel {
+    color: @text1@;
+}
+
+/* 关于对话框的文字层级（替代原内联硬编码色，暗色下可读） */
+QLabel#aboutVersion { color: @text2@; font-size: 13px; }
+QLabel#aboutDesc    { color: @text2@; font-size: 13px; }
+QLabel#aboutCopy    { color: @text3@; font-size: 12px; }
+
+QGroupBox {
+    border: 1px solid @strokeFlyout@;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding-top: 16px;
+    font-size: 13px;
+    color: @text1@;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+    color: @text1@;
+}
+
+QCheckBox {
+    color: @text1@;
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QComboBox {
+    background-color: @inputBg@;
+    border: 1px solid @stroke@;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: @text1@;
+    font-size: 13px;
+    min-width: 80px;
+}
+
+QComboBox:hover {
+    border-color: @accent@;
+}
+
+QComboBox::drop-down {
+    border: none;
+    padding-right: 6px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: @flyout@;
+    border: 1px solid @strokeFlyout@;
+    border-radius: 4px;
+    color: @text1@;
+    selection-background-color: @selection@;
+    selection-color: #ffffff;
+}
+
+QSpinBox, QFontComboBox {
+    background-color: @inputBg@;
+    border: 1px solid @stroke@;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: @text1@;
+    font-size: 13px;
+}
+
+QSpinBox:hover, QFontComboBox:hover {
+    border-color: @accent@;
+}
+
+/* Fluent 次级按钮：浅底 + 深描边（替代灰底浅描边） */
+QPushButton {
+    background-color: @inputBg@;
+    border: 1px solid @strokeButton@;
+    border-radius: 4px;
+    padding: 6px 16px;
+    color: @text1@;
+    font-size: 13px;
+}
+
+QPushButton:hover {
+    background-color: @hoverFill@;
+}
+
+QPushButton:pressed {
+    background-color: @pressedFill@;
+}
+
+QPushButton:checked {
+    background-color: @accentSubtle@;
+    border: 1px solid @accent@;
+    color: @accentOnSubtle@;
+}
+
+QLineEdit {
+    background-color: @inputBg@;
+    border: 1px solid @stroke@;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: @text1@;
+    font-size: 13px;
+}
+
+QLineEdit:focus {
+    border-color: @accent@;
+}
+
+QTabWidget QWidget {
+    background-color: @tabChildBg@;
+}
+
+/* kbd 键盘按键（web 编辑器内样式见 editor.css） */
+
+/* 搜索栏：导航/关闭等小按钮（全局 QPushButton padding 6px 16px 会挤爆窄按钮） */
+#searchBar QPushButton {
+    padding: 4px 6px;
+}

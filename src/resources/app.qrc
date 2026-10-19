@@ -1,7 +1,8 @@
 <RCC>
     <qresource prefix="/">
-        <file>themes/light.qss</file>
-        <file>themes/dark.qss</file>
+        <file>themes/template.qss</file>
+        <file>themes/light.tokens</file>
+        <file>themes/dark.tokens</file>
         <file>icons/md-editor.svg</file>
         <file>icons/export-progress.gif</file>
         <file>icons/light/bold.svg</file>

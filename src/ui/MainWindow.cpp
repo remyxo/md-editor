@@ -25,6 +25,7 @@
 #include "../core/ExportCommon.h"
 #include "../core/TableColumnNormalizer.h"
 #include "../app/Application.h"
+#include "../app/PlatformChrome.h"
 #include "../app/ThemeManager.h"
 #include "../app/SystemThemeWatcher.h"
 
@@ -177,6 +178,10 @@ void MainWindow::setupUi()
         // 仅 system 模式下跟随系统变化
         if (m_themeMode == "system") onThemeSwitch("system");
     });
+
+    // 平台外观增强（弹层阴影/圆角 + Windows DWM 标题栏/Mica）。
+    // 必须先于首次 onThemeSwitch：Mica 探测结果影响主题样式表的透明度分支
+    PlatformChrome::install();
 
     // 恢复主题偏好模式（system/light/dark，缺省 light）
     QSettings settings("md-editor", "md-editor");
