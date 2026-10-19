@@ -166,8 +166,9 @@ TabWidget::CloseResult TabWidget::requestCloseTab(int index)
     if (!tab) return CloseResult::Closed;
     bool isDirty = tabText(index).startsWith("● ");
     if (isDirty) {
+        // 弹窗文案用文件名本体，剥离标签页上的「● 」脏标记前缀
         QMessageBox box(QMessageBox::Question, tr("未保存的更改"),
-            tr("文件 '%1' 有未保存的更改。\n是否保存？").arg(tabText(index)),
+            tr("文件 '%1' 有未保存的更改。\n是否保存？").arg(tabText(index).mid(2)),
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
         box.button(QMessageBox::Save)->setText(tr("保存"));
         box.button(QMessageBox::Discard)->setText(tr("不保存并关闭"));

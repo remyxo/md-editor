@@ -1563,8 +1563,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         QString title = m_tabWidget->tabText(i);
         if (title.startsWith("● ")) {
+            // 弹窗文案用文件名本体，剥离标签页上的「● 」脏标记前缀
             QMessageBox box(QMessageBox::Question, tr("未保存的更改"),
-                tr("'%1' 有未保存的更改。\n\n是否保存后关闭？").arg(title),
+                tr("'%1' 有未保存的更改。\n\n是否保存后关闭？").arg(title.mid(2)),
                 QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
             box.button(QMessageBox::Save)->setText(tr("保存"));
             box.button(QMessageBox::Discard)->setText(tr("不保存并关闭"));
