@@ -10,6 +10,7 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <dwmapi.h> // MARGINS / DwmSetWindowAttribute / DwmExtendFrameIntoClientArea 声明
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
